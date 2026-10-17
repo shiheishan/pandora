@@ -1,9 +1,11 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { ConfirmModal, QueryView, Segmented, useToast } from '../../../ui'
+import { Button, ConfirmModal, FilterTabs, QueryView, Toolbar, useToast } from '../../../ui'
+import { PageActions } from '../../kit'
 import { GroupFormModal, RouteGroupPanel } from './RouteGroupPanel'
 import { ScopeRoutingEditor, type RoutingPayload } from './ScopeRouting'
 import css from './nodes.module.css'
@@ -11,7 +13,6 @@ import { endsIntent, useFailure, useGlobalRouting, useIntentKey, useInvalidateNo
 import { globalRoutingSaved, type GlobalRouting } from './schemas'
 
 const GLOBAL = 'global'
-const NEW = 'new'
 
 export function RoutingTab({ rest }: { rest: readonly string[] }) {
   const groups = useRouteGroups()
@@ -19,20 +20,26 @@ export function RoutingTab({ rest }: { rest: readonly string[] }) {
   const picked = rest[0] ?? GLOBAL
   const current = groups.data?.find((g) => g.id === picked)
   const scope = current ? current.id : GLOBAL
-  const options = [{ value: GLOBAL, label: '全局' }, ...(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name} · ${g.members.length}` })), { value: NEW, label: '＋ 新建路由组' }]
+  const items = [
+    { value: GLOBAL, label: '全局' },
+    ...(groups.data ?? []).map((g) => ({ value: g.id, label: `${g.name} · ${g.members.length}` })),
+  ]
 
   return (
     <div className={css.stack}>
-      <div className={css.toolbar}>
-        <Segmented<string>
+      <PageActions>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setCreating(true)}>
+          新建路由组
+        </Button>
+      </PageActions>
+      <Toolbar>
+        <FilterTabs<string>
           label="路由范围"
-          size="sm"
           value={scope}
-          onChange={(v) => (v === NEW ? setCreating(true) : navigate(v === GLOBAL ? '/nodes/routing' : `/nodes/routing/${v}`, { replace: true }))}
-          options={options}
+          items={items}
+          onChange={(v) => navigate(v === GLOBAL ? '/nodes/routing' : `/nodes/routing/${v}`, { replace: true })}
         />
-        <span className={css.faint}>生效顺序：节点私有规则 → 所在路由组（按排序）→ 全局规则；同名出站以更具体的范围为准</span>
-      </div>
+      </Toolbar>
       {current ? <RouteGroupPanel key={current.id} group={current} /> : <GlobalRouting />}
       {creating && (
         <GroupFormModal

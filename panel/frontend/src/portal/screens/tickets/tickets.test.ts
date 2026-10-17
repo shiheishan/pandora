@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ticketDetailSchema, ticketRowSchema, type TicketDetail } from './api'
-import { authorLabel, canClose, canReply, canWithdraw, messageTime, ticketRoute, ticketStatus, validateTicket } from './model'
+import { authorLabel, canClose, canReply, canWithdraw, listTime, messageTime, ticketRoute, ticketStatus, validateTicket } from './model'
 
 const ROW = {
   id: 't1',
@@ -19,7 +19,14 @@ const ROW = {
 }
 
 function detail(over: Partial<TicketDetail> = {}): TicketDetail {
-  return ticketDetailSchema.parse({ ...ROW, message_count: 0, last_reply_at: '0001-01-01T00:00:00Z', messages: [{ id: 'm1', author_kind: 'user', author_name: null, body: 'x', created_at: ROW.created_at }], ...over })
+  return ticketDetailSchema.parse({
+    ...ROW,
+    message_count: 0,
+    last_reply_at: '0001-01-01T00:00:00Z',
+    reply_blocked: false,
+    messages: [{ id: 'm1', author_kind: 'user', author_name: null, body: 'x', created_at: ROW.created_at }],
+    ...over,
+  })
 }
 
 describe('工单 schema', () => {
@@ -33,9 +40,10 @@ describe('工单 schema', () => {
     expect(ticketRowSchema.safeParse({ ...ROW, status: 'withdrawn' }).success).toBe(false)
   })
 
-  it('详情：related_order 是对象或 null，messages 不收 null', () => {
+  it('详情：related_order 是对象或 null，messages 不收 null，reply_blocked 恒在', () => {
     expect(detail({ related_order: { id: 'o1', order_no: 'PD-1' } }).related_order?.order_no).toBe('PD-1')
     expect(ticketDetailSchema.safeParse({ ...ROW, messages: null }).success).toBe(false)
+    expect(ticketDetailSchema.safeParse({ ...detail(), reply_blocked: undefined }).success).toBe(false)
   })
 })
 
@@ -51,21 +59,24 @@ describe('子路由', () => {
 
 describe('状态与按钮', () => {
   it('状态文案按契约映射，closed 按 closed_reason 分', () => {
-    const label = (status: string, closed_reason: 'withdrawn' | 'user_closed' | null = null) => ticketStatus(ticketRowSchema.parse({ ...ROW, status, closed_reason })).label
+    const label = (status: string, closed_reason: 'withdrawn' | 'user_closed' | 'auto_closed' | null = null) => ticketStatus(ticketRowSchema.parse({ ...ROW, status, closed_reason })).label
     expect(['open', 'pending_agent', 'escalated'].map((s) => label(s))).toEqual(['等待回复', '等待回复', '等待回复'])
     expect(label('pending_user')).toBe('客服已回复')
     expect(label('resolved')).toBe('已解决')
     expect(label('closed', 'withdrawn')).toBe('已撤回')
     expect(label('closed', 'user_closed')).toBe('已关闭')
+    expect(label('closed', 'auto_closed')).toBe('已自动关闭')
     expect(ticketStatus({ status: 'closed', closed_reason: null }).label).toBe('已关闭')
   })
 
-  it('撤回只在未关闭且客服没回复过时出现；关闭与回复只看是否已关闭（resolved 仍可回复）', () => {
+  it('撤回只在未关闭且客服没回复过时出现；关闭需客服已回复；回复只看是否已关闭（resolved 仍可回复）', () => {
     const agent = { id: 'm2', author_kind: 'agent' as const, author_name: null, body: 'y', created_at: ROW.created_at }
     expect(canWithdraw(detail())).toBe(true)
     expect(canWithdraw(detail({ messages: [...detail().messages, agent] }))).toBe(false)
     expect(canWithdraw(detail({ status: 'closed' }))).toBe(false)
-    expect(canClose(detail({ status: 'resolved' }))).toBe(true)
+    expect(canClose(detail())).toBe(false)
+    expect(canClose(detail({ messages: [...detail().messages, agent] }))).toBe(true)
+    expect(canClose(detail({ status: 'closed', messages: [...detail().messages, agent] }))).toBe(false)
     expect(canReply(detail({ status: 'resolved' }))).toBe(true)
     expect(canReply(detail({ status: 'closed' }))).toBe(false)
   })
@@ -83,13 +94,19 @@ describe('消息时间', () => {
     expect(messageTime(new Date(2026, 8, 12, 20, 0).toISOString(), now)).toBe('09-12 20:00')
     expect(messageTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe('2025-12-31 08:00')
   })
+
+  it('列表时间：今天时分，今年月-日，更早年-月-日', () => {
+    expect(listTime(new Date(2026, 8, 24, 9, 40).toISOString(), now)).toBe('09:40')
+    expect(listTime(new Date(2026, 8, 14, 18, 3).toISOString(), now)).toBe('09-14')
+    expect(listTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe('2025-12-31')
+  })
 })
 
 describe('新建表单校验（与 support.create 同口径）', () => {
   it('标题 4–120 字、正文 10–5000 字，去首尾空白按字数计', () => {
-    expect(validateTicket({ subject: '', body: '' })).toEqual({ subject: '请用一句话描述问题', body: '请写下详细描述' })
+    expect(validateTicket({ subject: '', body: '' })).toEqual({ subject: '请填写标题', body: '至少写 10 个字，客服才好判断' })
     expect(validateTicket({ subject: '丢包', body: '晚上很卡' }).subject).toBe('标题需在 4–120 字之间')
-    expect(validateTicket({ subject: '节点丢包', body: '  晚上很卡  ' }).body).toBe('详细描述至少 10 个字，方便客服定位问题')
+    expect(validateTicket({ subject: '节点丢包', body: '  晚上很卡  ' }).body).toBe('至少写 10 个字，客服才好判断')
     expect(validateTicket({ subject: '节点丢包严重', body: '每天晚上九点到十一点丢包' })).toEqual({})
   })
 })

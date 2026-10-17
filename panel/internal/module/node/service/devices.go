@@ -1,6 +1,6 @@
 package service
 
-// 设备数限制（p5-devices）：判定策略读写、在线设备总览、strict 名单过滤与周期重判、订阅的在线设备数。
+// 设备数限制：判定策略读写、在线设备总览、strict 名单过滤与周期重判、订阅的在线设备数。
 //
 // 两种模式：loose 下设备数随名单下发，每个节点各自限；strict 另把跨节点去重后在线设备超过「上限+宽容」的订阅
 // 从所有池的名单里整条摘掉（poolRosters 调 strictExcluded）。超限只经 deviceExceeded 判，上限只经
@@ -32,7 +32,7 @@ import (
 // DeviceSettings 是设备限制策略的读写面，由 settings service 实现。
 type DeviceSettings interface {
 	DevicePolicy(ctx context.Context) (settingssvc.DevicePolicy, error)
-	SetDevicePolicy(ctx context.Context, u settingssvc.DevicePolicyUpdate) error
+	SetDevicePolicy(ctx context.Context, u settingssvc.DevicePolicyUpdate) (bool, error)
 }
 
 // DeviceSubscriptions 是按 id 批量读订阅，由 subscription service 实现。
@@ -63,7 +63,7 @@ func (s *Service) UseDevices(st DeviceSettings, subs DeviceSubscriptions, users 
 	s.devSettings, s.devSubs, s.devUsers, s.devPlans = st, subs, users, plans
 }
 
-// deviceOverviewLimit 是在线设备总览最多列出的订阅数（与旧接口相同）。
+// deviceOverviewLimit 是在线设备总览最多列出的订阅数。
 const deviceOverviewLimit = 200
 
 // StrictSetKey 是 strict 下当前的超限订阅集合（排好序的 uuid 用逗号连起来，空集是空串），只由
@@ -125,7 +125,7 @@ func effectiveDeviceLimit(subLimit *int, v catalogsvc.Version) int {
 }
 
 // devicePolicy 读判定策略；没装配或读失败按缺省（loose、宽容 1、窗口 5 分钟）并记 warn：
-// 配置读不出来不该把所有人当成超限踢下线（与旧实现一致）。
+// 配置读不出来不该把所有人当成超限踢下线。
 func (s *Service) devicePolicy(ctx context.Context) settingssvc.DevicePolicy {
 	if s.devSettings == nil {
 		return settingssvc.DefaultDevicePolicy()
@@ -155,8 +155,9 @@ func strictDigest(ids []uuid.UUID) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// OnlineDevices 是后台在线设备总览：窗口内有在线设备的订阅，按跨节点去重设备数降序，最多 200 条，附当前策略。
-// 读数一次、订阅一次、邮箱一次、套餐一次、版本一次，与行数无关。订阅行已不存在的跳过。
+// OnlineDevices 是后台在线设备总览：窗口内有在线设备的订阅，按跨节点去重设备数降序，只统计生效中（active）的订阅；最多取 200 条在线记录再滤掉非 active，
+// 到期订阅很快被摘出名单、窗口过后就不再有在线记录，所以滤掉的只是刚到期那几分钟的少数行，附当前策略。
+// 读数一次、订阅一次、邮箱一次、套餐一次、版本一次，与行数无关。订阅行已不存在或非 active 的跳过。
 func (s *Service) OnlineDevices(ctx context.Context) (DeviceOverview, error) {
 	if s.devSettings == nil || s.devSubs == nil || s.devUsers == nil || s.devPlans == nil || s.versions == nil {
 		return DeviceOverview{}, errDeliveryPortMissing
@@ -183,6 +184,9 @@ func (s *Service) OnlineDevices(ctx context.Context) (DeviceOverview, error) {
 	}
 	var userIDs, planIDs, versionIDs []uuid.UUID
 	for _, sub := range subs {
+		if sub.Status != subsvc.StatusActive {
+			continue
+		}
 		userIDs = append(userIDs, sub.UserID)
 		planIDs = append(planIDs, sub.PlanID)
 		versionIDs = append(versionIDs, sub.PlanVersionID)
@@ -210,7 +214,7 @@ func (s *Service) OnlineDevices(ctx context.Context) (DeviceOverview, error) {
 
 	for _, r := range rows {
 		sub, ok := subs[r.SubscriptionID]
-		if !ok {
+		if !ok || sub.Status != subsvc.StatusActive {
 			continue
 		}
 		limit := effectiveDeviceLimit(sub.DeviceLimit, versions[sub.PlanVersionID])
@@ -230,8 +234,8 @@ func (s *Service) OnlineDevices(ctx context.Context) (DeviceOverview, error) {
 	return out, nil
 }
 
-// SetDevicePolicy 是后台改判定策略：校验在端口判空之前；设置与名单纪元在同一事务里登记，
-// 模式、宽容、窗口都影响 strict 名单，提交后推进名单纪元。
+// SetDevicePolicy 是后台改判定策略：校验在端口判空之前；设置与名单纪元在同一事务里登记。
+// 设置没变（settings 判定）就不推进名单纪元，避免所有节点白白重算名单。
 func (s *Service) SetDevicePolicy(ctx context.Context, in DevicePolicyInput) error {
 	u := settingssvc.DevicePolicyUpdate{Mode: in.Mode, Grace: in.Grace, WindowMinutes: in.WindowMinutes}
 	if err := settingssvc.ValidateDevicePolicyUpdate(u); err != nil {
@@ -241,10 +245,13 @@ func (s *Service) SetDevicePolicy(ctx context.Context, in DevicePolicyInput) err
 		return errDeliveryPortMissing
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		if err := s.devSettings.SetDevicePolicy(ctx, u); err != nil {
+		changed, err := s.devSettings.SetDevicePolicy(ctx, u)
+		if err != nil {
 			return err
 		}
-		s.MarkUsersChanged(ctx)
+		if changed {
+			s.MarkUsersChanged(ctx)
+		}
 		return nil
 	})
 }

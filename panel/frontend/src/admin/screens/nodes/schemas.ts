@@ -12,15 +12,22 @@ const strs = list(z.string())
 // ---------------------------------------------------------------------------
 // 节点：列表行（GET v1/nodes）、单取的详情行（GET v1/nodes?id=）与写接口回的 AdminNode
 // ---------------------------------------------------------------------------
-export const SERVING_STATUSES = ['draft', 'active', 'draining', 'disabled', 'retired'] as const
+const SERVING_STATUSES = ['draft', 'active', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
+
+// 节点补齐 Xboard（迁移 00045，node/handler 的 dto_xb_nodes.go）：时段倍率一段、本周期流量
+const rateRangeSchema = z.object({ start: z.string(), end: z.string(), rate: z.number() })
+export type RateRange = z.output<typeof rateRangeSchema>
+/** limit_bytes / reset_day 为 null 是不限、不自动重置；exceeded_at 非空 = 本周期已超限、已停止下发 */
+const nodeTrafficSchema = z.object({ limit_bytes: z.number().nullable(), reset_day: z.number().nullable(), used_bytes: z.number(), reset_at: iso, exceeded_at: iso.nullable() })
+export type NodeTraffic = z.output<typeof nodeTrafficSchema>
+const xbNodeFields = { tags: strs, traffic: nodeTrafficSchema, traffic_rate_schedule: list(rateRangeSchema) }
 
 export const nodeRowSchema = z.object({
   id: uuid,
   node_no: z.number(),
   row_version: z.number(),
   name: z.string(),
-  status: z.string(),
   serving_status: z.enum(SERVING_STATUSES),
   server_id: uuid.nullable(),
   server_name: z.string().nullable(),
@@ -32,14 +39,13 @@ export const nodeRowSchema = z.object({
   cpu_cores: z.number().nullable(),
   memory_mb: z.number().nullable(),
   disk_gb: z.number().nullable(),
-  health_score: z.number().nullable(),
-  applied_config_version: z.number().nullable(),
-  desired_config_version: z.number().nullable(),
   last_heartbeat_at: iso.nullable(),
   stale: z.boolean(),
   delivered_to_users: z.boolean(),
   delivery_note: z.string(),
   identity_serial: z.number().nullable(),
+  /** 能不能迁移到别的服务器：后端 service.nodeMovableState 算好，前端不自己判断 */
+  movable: z.boolean(),
   created_at: iso,
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
@@ -54,13 +60,11 @@ export const nodeRowSchema = z.object({
   mem_percent: z.number().nullable(),
   metrics_at: iso.nullable(),
   granted_plans: strs,
-  // 下发与运行的真实状态（nodefabric.NodeRuntimeView，w4deliver）。后端总是给；开发期假后端
+  // 下发与运行的真实状态（读模型在 node/service 的 node_list_delivery.go）。后端总是给；开发期假后端
   // 还没跟上时按「没有这项信息」处理，不让整张列表解析失败
-  desired_effective_generation: z.number().nullish().transform((v) => v ?? null),
-  applied_effective_generation: z.number().nullish().transform((v) => v ?? null),
   effective_state: z.enum(['', 'applied', 'pending', 'failed']).catch(''),
   last_apply_failure: z
-    .object({ phase: z.string(), detail: z.string(), at: iso, generation: z.number().nullable() })
+    .object({ phase: z.string(), detail: z.string(), at: iso })
     .nullish()
     .transform((v) => v ?? null),
   runtime_status: z.string().nullish().transform((v) => v ?? null),
@@ -68,22 +72,23 @@ export const nodeRowSchema = z.object({
   runtime_state_at: iso.nullish().transform((v) => v ?? null),
   runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
   delivery_degraded: z.boolean().catch(false),
+  ...xbNodeFields,
+  relay_count: z.number(),
+  ech_enabled: z.boolean(),
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
 
 /**
- * 单取（?id=）才带的编辑字段（nodefabric.AdminNodeDetail）：列表不带，1000 个节点每次刷新省掉
+ * 单取（?id=）才带的编辑字段（node/handler 的 nodeDetailResponse）：列表不带，1000 个节点每次刷新省掉
  * 全部 protocol_config。protocol_config 已由后端抹掉敏感键
  */
 export const nodeDetailSchema = nodeRowSchema.extend({
   traffic_rate: z.number(),
-  kernel: z.string(),
   protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
   protocol_schema_version: z.number(),
   config_validated_at: iso.nullable(),
-  traffic_bytes: z.number().int(),
-  // 存量协议配置不满足现行规则的提示（nodefabric.ProtocolConfigWarnings）；Go 是 omitempty
+  // 存量协议配置不满足现行规则的提示（node/service 的 AdminNode.Warnings）；Go 是 omitempty
   warnings: z.array(z.string()).min(1).optional(),
 })
 export const nodeDetailResponse = z.object({ nodes: list(nodeDetailSchema), total: z.number() })
@@ -95,12 +100,10 @@ export const adminNodeSchema = z.object({
   name: z.string(),
   server_id: uuid.nullable(),
   pool_id: uuid.nullable(),
-  status: z.string(),
   serving_status: z.enum(SERVING_STATUSES),
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
   server_port: z.number().nullable(),
-  kernel: z.string(),
   traffic_rate: z.number(),
   display_name: z.string().nullable(),
   country_code: z.string().nullable(),
@@ -110,6 +113,7 @@ export const adminNodeSchema = z.object({
   sort_order: z.number(),
   created_at: iso,
   updated_at: iso,
+  ...xbNodeFields,
   // 上线（R108 activate）与建、改、复制、迁移（保留端口提示）会带：Go 是 omitempty，没有提示时
   // 不出现这个键，出现就至少一条（R113）
   warnings: z.array(z.string()).min(1).optional(),
@@ -120,7 +124,7 @@ export type AdminNode = z.output<typeof adminNodeSchema>
 // 协议 schema（GET v1/node-protocol-schemas）。13 个 stable，表单只渲染这些。
 // 未配置的草稿 protocol_schema_version 仍是 0，那不是一种协议类型。
 // ---------------------------------------------------------------------------
-export const protocolSchemaSchema = z.object({
+const protocolSchemaSchema = z.object({
   node_type: z.string(),
   version: z.number(),
   status: z.string(),
@@ -133,14 +137,35 @@ export const protocolSchemaSchema = z.object({
   sensitive_properties: z.array(z.string()).optional(),
   /** 字段下的一句说明（按字段路径），跟着后端 schema 走 */
   hints: z.record(z.string(), z.string()).optional(),
+  /** 10-16 表单元数据：一句话备注（可缺席） */
+  note: z.string().optional(),
+  /**
+   * 字段显示顺序与显示名、条件显示、高级折叠、默认值、占位文字、枚举文案（全部可缺席；
+   * 有则按此顺序渲染，没有时退回 allowed_properties 的旧口径）。show_if 的键是另一字段的
+   * 路径，值是让本字段显示的表单取值（按表单字符串比较），所有键同时满足才显示
+   */
+  fields: z
+    .array(
+      z.object({
+        path: z.string(),
+        label: z.string(),
+        advanced: z.boolean().optional(),
+        show_if: z.record(z.string(), z.array(z.string())).optional(),
+        default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+        placeholder: z.string().optional(),
+        option_labels: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .optional(),
 })
 export const protocolSchemasResponse = z.object({ schemas: list(protocolSchemaSchema) })
 export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 
 // ---------------------------------------------------------------------------
-// 服务器（GET v1/servers 与 /servers/{id}，nodefabric.Server）：指针字段全是 null 而不是缺键
+// 服务器（GET v1/servers 与 /servers/{id}，node/handler 的 serverResponse）：指针字段全是 null 而不是缺键
 // ---------------------------------------------------------------------------
-export const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'unhealthy', 'quarantined', 'retired'] as const
+// 库里只有这五态（00018_node.sql）
+const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'retired'] as const
 export type ServerStatus = (typeof SERVER_STATUSES)[number]
 
 export const serverSchema = z.object({
@@ -164,7 +189,6 @@ export const serverSchema = z.object({
   disk_gb: z.number().nullable(),
   capacity_nodes: z.number(),
   notes: z.string().nullable(),
-  control_node_id: uuid.nullable(),
   node_count: z.number(),
   active_node_count: z.number(),
   serving_node_count: z.number(),
@@ -183,23 +207,20 @@ export const serversResponse = z.object({ servers: z.array(serverSchema), total:
 export type Server = z.output<typeof serverSchema>
 
 /** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
-export const serverNodeSchema = z.object({
+const serverNodeSchema = z.object({
   id: uuid,
   name: z.string(),
-  status: z.string(),
   serving_status: z.string(),
   node_type: z.string().nullable(),
   display_name: z.string().nullable(),
   server_host: z.string().nullable(),
   server_port: z.number().nullable(),
-  kernel: z.string(),
   traffic_rate: z.number(),
   config_validated_at: iso.nullable(),
   last_heartbeat_at: iso.nullable(),
   created_at: iso,
 })
 export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), total: z.number() })
-export type ServerNode = z.output<typeof serverNodeSchema>
 
 // ---------------------------------------------------------------------------
 // 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；
@@ -208,7 +229,7 @@ export type ServerNode = z.output<typeof serverNodeSchema>
 export const POOL_STATUSES = ['active', 'draining', 'disabled'] as const
 export type PoolStatus = (typeof POOL_STATUSES)[number]
 
-export const poolSchema = z.object({
+const poolSchema = z.object({
   id: uuid,
   code: z.string(),
   name: z.string(),
@@ -243,12 +264,10 @@ export const identitySchema = z.object({
       revoked_reason: z.string().optional(),
     })
     .nullable(),
-  server_token: z.object({ present: z.boolean(), issued_at: iso.optional(), issued_by: uuid.optional(), issued_by_name: z.string().optional() }),
   bootstrap_tokens_pending: z.number(),
 })
-export type NodeIdentity = z.output<typeof identitySchema>
 
-export const metricPointSchema = z.object({
+const metricPointSchema = z.object({
   at: iso,
   cpu_percent: z.number(),
   mem_percent: z.number(),
@@ -277,10 +296,9 @@ export const metricsSchema = z.object({
     .nullable(),
 })
 export type MetricPoint = z.output<typeof metricPointSchema>
-export type NodeMetrics = z.output<typeof metricsSchema>
 
-export const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
-export const routeSchema = z.object({
+const outboundSchema = z.object({ tag: z.string(), type: z.string(), settings: z.unknown() })
+const routeSchema = z.object({
   priority: z.number(),
   matcher: z.record(z.string(), z.unknown()),
   outbound_tag: z.string(),
@@ -290,7 +308,7 @@ export const routeSchema = z.object({
 export type Outbound = z.output<typeof outboundSchema>
 export type Route = z.output<typeof routeSchema>
 /** 节点所在的路由组（00096），按生效顺序（sort_order 小的先） */
-export const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
+const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
 export type RouteGroupRef = z.output<typeof routeGroupRefSchema>
 export const nodeRoutingSchema = z.object({ row_version: z.number(), groups: list(routeGroupRefSchema), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type NodeRouting = z.output<typeof nodeRoutingSchema>
@@ -317,14 +335,13 @@ export const routeGroupsResponse = z.object({ groups: z.array(routeGroupSchema) 
 export const groupRoutingSchema = z.object({ row_version: z.number(), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type GroupRouting = z.output<typeof groupRoutingSchema>
 /** 生效出站 / 规则的来源层；group_id / group_name 只在 scope = group 时出现（omitempty） */
-export const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
+const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
 export type RoutingSource = z.output<typeof routingSourceSchema>
 export const effectiveRoutingSchema = z.object({
   groups: z.array(routeGroupRefSchema),
   outbounds: z.array(z.object({ tag: z.string(), type: z.string(), settings: z.unknown(), source: routingSourceSchema })),
   routes: z.array(z.object({ matcher: z.record(z.string(), z.unknown()), outbound: z.string(), source: routingSourceSchema })),
 })
-export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 
 // ---------------------------------------------------------------------------
 // 写操作的响应
@@ -332,11 +349,7 @@ export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 export const okUpdated = z.object({ ok: z.literal(true), updated: z.number() })
 export const batchStatusResponse = z.object({ ok: z.literal(true), updated: z.number(), serving_status: z.string() })
 export const bootstrapTokenResponse = z.object({ token: z.string(), expires_at: iso, install_command: z.string() })
-export type BootstrapToken = z.output<typeof bootstrapTokenResponse>
-export const serverTokenResponse = z.object({ token: z.string(), node_type: z.string(), panel_url: z.string(), install_command: z.string(), hint: z.string() })
-export type ServerToken = z.output<typeof serverTokenResponse>
 export const realityKeypairResponse = z.object({ private_key: z.string(), public_key: z.string(), short_id: z.string(), hint: z.string() })
-export const publishResponse = z.object({ config_id: uuid, version: z.number(), scope: z.string(), affected_nodes: z.number() })
 export const routingSaved = z.object({ ok: z.literal(true), row_version: z.number() })
 export const okResponse = z.object({ ok: z.literal(true) })
 export const poolCreated = z.object({ id: uuid })
@@ -347,3 +360,38 @@ export const routeGroupUpdated = z.object({ group: routeGroupSchema, affected_no
 export const groupRoutingSaved = z.object({ ok: z.literal(true), row_version: z.number(), affected_nodes: z.number() })
 export const routeGroupDeleted = z.object({ deleted: z.literal(true), affected_nodes: z.number() })
 export const deletedResponse = z.object({ deleted: z.literal(true) })
+
+// ---------------------------------------------------------------------------
+// 中转、ECH（迁移 00045，node/handler 的 dto_xb_nodes.go）
+// ---------------------------------------------------------------------------
+/** 中转（Xboard parent_id）：只有自己的名称、地址、端口与可选 SNI / Host，其余全继承父节点；不占端口、不下发配置 */
+export const relaySchema = z.object({
+  id: uuid,
+  parent_node_id: uuid,
+  name: z.string(),
+  server_host: z.string(),
+  server_port: z.number(),
+  sni: z.string().nullable(),
+  host_header: z.string().nullable(),
+  enabled: z.boolean(),
+  sort_order: z.number(),
+  row_version: z.number(),
+  created_at: iso,
+  updated_at: iso,
+})
+export type Relay = z.output<typeof relaySchema>
+/** 中转列表；sni_hint 是父节点 TLS 配置给中转 SNI 的提示（REALITY 只能填 server_names 之一、IP 地址父节点要填 SNI），空串表示没有 */
+export const relaysResponse = z.object({ relays: z.array(relaySchema), sni_hint: z.string() })
+
+/** 节点 ECH 状态：config_list 是当前钥的 ECHConfigList（标准 base64，没开为 null）；retired_keys 是过渡期内还在下发的旧钥数 */
+export const echSchema = z.object({
+  supported: z.boolean(),
+  unsupported_reason: z.string(),
+  enabled: z.boolean(),
+  public_name: z.string(),
+  config_list: z.string().nullable(),
+  config_pem: z.string(),
+  created_at: iso.nullable(),
+  retired_keys: z.number(),
+})
+export type NodeECH = z.output<typeof echSchema>

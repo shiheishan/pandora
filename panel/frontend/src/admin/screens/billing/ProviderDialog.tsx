@@ -4,9 +4,24 @@ import { Button, Checkbox, Input, Modal, Select, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { providerWrittenSchema, useInvalidateBilling, type Provider } from './api'
 import css from './Billing.module.css'
-import { EPAY_METHODS, emptyProviderForm, methodLabel, minAmountHint, providerBody, providerFormFrom, providerProblems, toggleMethod, type ProviderForm } from './model'
+import {
+  EPAY_METHODS,
+  PROVIDER_ADAPTERS,
+  adapterLabel,
+  credentialLabels,
+  emptyProviderForm,
+  methodLabel,
+  minAmountHint,
+  providerBody,
+  providerFormFrom,
+  providerProblems,
+  switchAdapter,
+  toggleMethod,
+  type ProviderForm,
+} from './model'
+import { BTCPayNote, CoinPaymentsNote, FeeFields } from './ProviderFields'
 
-/** 新建（editing 为空）或编辑一个易支付渠道。每次打开都是一张新表单，也是一次新的写意图 */
+/** 新建（editing 为空）或编辑在线渠道。每次打开都是一张新表单，也是一次新的写意图 */
 export function ProviderDialog({ open, editing, onClose }: { open: boolean; editing: Provider | null; onClose: () => void }) {
   return open ? <ProviderFormModal key={editing?.id ?? 'new'} editing={editing} onClose={onClose} /> : null
 }
@@ -27,7 +42,7 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
   }
 
   const submit = async () => {
-    const problems = providerProblems(form, mode, editing?.has_credentials ?? false)
+    const problems = providerProblems(form, mode, editing?.has_credentials ?? false, editing?.has_webhook_secret ?? false)
     if (Object.keys(problems).length) return setErrors(problems)
     const body = providerBody(form, mode)
     setBusy(true)
@@ -52,14 +67,21 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
     }
   }
 
+  const cred = credentialLabels(form.adapter)
   const keepHint = editing?.has_credentials ? '已配置，不回显；留空表示不改' : undefined
+  const baseLabel = form.adapter === 'btcpay' ? 'BTCPay 服务地址' : form.adapter === 'coinpayments' ? 'API 地址' : '站点地址'
+  const basePlaceholder =
+    form.adapter === 'btcpay' ? 'https://btcpay.example.com' : form.adapter === 'coinpayments' ? 'https://a-api.coinpayments.net' : 'https://pay.example.com'
+  const baseHint = form.adapter === 'coinpayments' ? '留空用官方地址' : undefined
+
   return (
     <Modal
       open
       size="md"
       onClose={onClose}
       dismissible={!busy}
-      title={editing ? `编辑 ${editing.display_name}` : '新建易支付渠道'}
+      title={editing ? `编辑 ${editing.display_name}` : `新建${adapterLabel(form.adapter)}渠道`}
+      subtitle={editing ? '凭据留空表示不改' : '保存后默认不收新单，确认无误再打开'}
       actions={
         <>
           <Button size="dialog" onClick={onClose} disabled={busy}>
@@ -72,6 +94,14 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
       }
     >
       <div className={css.dialogBody}>
+        {!editing && (
+          <Select
+            label="渠道类型"
+            options={PROVIDER_ADAPTERS.map((a) => ({ value: a.value, label: a.label }))}
+            value={form.adapter}
+            onChange={(e) => setForm((f) => switchAdapter(f, e.target.value as ProviderForm['adapter']))}
+          />
+        )}
         <div className={css.grid2}>
           <Input
             label="渠道编码"
@@ -86,44 +116,56 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
           />
           <Input label="名称" value={form.display_name} onChange={(e) => set('display_name', e.target.value)} error={errors.display_name} />
         </div>
-        <Input label="站点地址" mono placeholder="https://pay.example.com" value={form.base_url} onChange={(e) => set('base_url', e.target.value)} error={errors.base_url} />
-        <div className={css.grid2}>
-          <Input label="下单路径" mono value={form.submit_path} onChange={(e) => set('submit_path', e.target.value)} error={errors.submit_path} />
-          <Input label="查询接口路径" mono value={form.api_path} onChange={(e) => set('api_path', e.target.value)} error={errors.api_path} />
-        </div>
-        <fieldset className={`${css.stack} ${css.fieldset}`} aria-describedby={errors.methods ? 'provider-methods-error' : undefined}>
-          <legend className={css.fieldLabel}>支付方式（结账页按勾选顺序列出）</legend>
-          <div className={css.toolbar}>
-            {EPAY_METHODS.map((m) => (
-              <Checkbox
-                key={m.value}
-                label={m.label}
-                checked={form.methods.includes(m.value)}
-                onChange={(e) => {
-                  setForm((f) => toggleMethod(f, m.value, e.target.checked))
-                  setErrors({})
-                }}
-              />
-            ))}
-          </div>
-          {errors.methods && (
-            <span id="provider-methods-error" role="alert" className={`${css.small} ${css.tone_danger}`}>
-              {errors.methods}
-            </span>
-          )}
-        </fieldset>
-        <Select
-          label="默认方式"
-          hint="用户没选方式时用它"
-          options={form.methods.map((m) => ({ value: m, label: methodLabel(m) }))}
-          value={form.default_method}
-          onChange={(e) => set('default_method', e.target.value)}
-          error={errors.default_method}
-          disabled={form.methods.length === 0}
+        <Input
+          label={baseLabel}
+          mono
+          placeholder={basePlaceholder}
+          hint={baseHint}
+          value={form.base_url}
+          onChange={(e) => set('base_url', e.target.value)}
+          error={errors.base_url}
         />
+        {form.adapter === 'epay' && (
+          <>
+            <div className={css.grid2}>
+              <Input label="下单路径" mono value={form.submit_path} onChange={(e) => set('submit_path', e.target.value)} error={errors.submit_path} />
+              <Input label="查询接口路径" mono value={form.api_path} onChange={(e) => set('api_path', e.target.value)} error={errors.api_path} />
+            </div>
+            <fieldset className={`${css.stack} ${css.fieldset}`} aria-describedby={errors.methods ? 'provider-methods-error' : undefined}>
+              <legend className={css.fieldLabel}>支付方式（结账页按勾选顺序列出）</legend>
+              <div className={css.toolbar}>
+                {EPAY_METHODS.map((m) => (
+                  <Checkbox
+                    key={m.value}
+                    label={m.label}
+                    checked={form.methods.includes(m.value)}
+                    onChange={(e) => {
+                      setForm((f) => toggleMethod(f, m.value, e.target.checked))
+                      setErrors({})
+                    }}
+                  />
+                ))}
+              </div>
+              {errors.methods && (
+                <span id="provider-methods-error" role="alert" className={`${css.small} ${css.tone_danger}`}>
+                  {errors.methods}
+                </span>
+              )}
+            </fieldset>
+            <Select
+              label="默认方式"
+              hint="用户没选方式时用它"
+              options={form.methods.map((m) => ({ value: m, label: methodLabel(m) }))}
+              value={form.default_method}
+              onChange={(e) => set('default_method', e.target.value)}
+              error={errors.default_method}
+              disabled={form.methods.length === 0}
+            />
+          </>
+        )}
         <div className={css.grid2}>
           <Input
-            label="商户号（pid）"
+            label={cred.merchant}
             mono
             autoComplete="off"
             placeholder={editing?.has_credentials ? '留空表示不改' : undefined}
@@ -133,7 +175,7 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
             error={errors.merchant_id}
           />
           <Input
-            label="商户密钥"
+            label={cred.key}
             type="password"
             mono
             autoComplete="new-password"
@@ -144,6 +186,22 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
             error={errors.key}
           />
         </div>
+        {form.adapter === 'btcpay' && (
+          <Input
+            label="Webhook 密钥"
+            type="password"
+            mono
+            autoComplete="new-password"
+            placeholder={editing?.has_webhook_secret ? '留空表示不改' : undefined}
+            hint={editing?.has_webhook_secret ? '已配置，不回显；留空表示不改' : undefined}
+            value={form.webhook_secret}
+            onChange={(e) => set('webhook_secret', e.target.value)}
+            error={errors.webhook_secret}
+          />
+        )}
+        {form.adapter === 'btcpay' && <BTCPayNote notifyUrl={editing?.notify_url ?? ''} />}
+        {form.adapter === 'coinpayments' && <CoinPaymentsNote />}
+        <FeeFields form={form} errors={errors} set={set} />
         <Input
           label="最低付款额（元）"
           inputMode="decimal"
@@ -161,7 +219,7 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
         />
         {errors.allow_private_host && <span className={`${css.small} ${css.tone_danger}`}>{errors.allow_private_host}</span>}
         <p className={css.small}>
-          保存前会按渠道规则试连一次地址（须为 https 公网地址）。商户号与密钥加密保存、不回显。改动在门户结账页最多 5 分钟后生效（各网关的渠道缓存）。
+          保存前会按渠道规则试连一次地址（须为 https 公网地址）。凭据加密保存、不回显。改动在用户端结账页最多 5 分钟后生效（各网关的渠道缓存）。
           {editing ? '' : '新建的渠道先处于「暂停收新单」，核对无误后在卡片上打开。'}
         </p>
       </div>

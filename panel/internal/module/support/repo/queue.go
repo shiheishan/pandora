@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"strings"
+
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // buildQueueWhere 拼后台队列 WHERE 子句与参数（用户输入只走占位符）。
@@ -27,7 +29,7 @@ func buildQueueWhere(f QueueFilter) (string, []any) {
 		args = append(args, *f.AssignedTo)
 	}
 	if f.Query != "" {
-		pat := likePattern(f.Query)
+		pat := db.ContainsPattern(f.Query)
 		q := "(t.ticket_no ILIKE ? ESCAPE '\\' OR t.subject ILIKE ? ESCAPE '\\'"
 		args = append(args, pat, pat)
 		if len(f.UserIDs) > 0 {
@@ -80,7 +82,7 @@ SELECT t.*, coalesce(m.cnt, 0) AS message_count, coalesce(m.last_at, t.created_a
   ) m ON true
   LEFT JOIN LATERAL (
     SELECT author_kind FROM ticket_messages
-     WHERE ticket_id = t.id AND internal_note = false
+     WHERE ticket_id = t.id AND internal_note = false AND author_kind <> 'system'
      ORDER BY created_at DESC, id DESC LIMIT 1
   ) lk ON true
  ORDER BY ` + queueOrder

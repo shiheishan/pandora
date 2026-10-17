@@ -58,7 +58,7 @@ func nextEvent(t *testing.T, ps *redis.PubSub, wait time.Duration) (realtime.Eve
 func TestRealtimeOrderCreateAndCancel(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	ps := listenUser(t, e, user)
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 	ev, ok := nextEvent(t, ps, 2*time.Second)
@@ -96,7 +96,7 @@ func TestRealtimeOrderCreateAndCancel(t *testing.T) {
 func TestRealtimeOrderRollbackNoEvent(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), nil)
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	ps := listenUser(t, e, user)
 	err := e.txm.Do(ctx, func(ctx context.Context) error {
 		if _, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID}); err != nil {

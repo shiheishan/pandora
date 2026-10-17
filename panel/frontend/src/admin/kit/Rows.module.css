@@ -1,0 +1,189 @@
+/* 行式列表：样稿 .rows / .rw / .rm / .ra / .rw.clk */
+.rows {
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.start {
+  align-items: flex-start;
+}
+
+.lead {
+  flex: none;
+}
+
+.main {
+  display: grid;
+  /* 单列且可收窄：里面不折行带省略号的文字才会截断，而不是把整行撑宽 */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  /* 网址、地址这类没有断点的长串任意处折行，不撑出行宽 */
+  overflow-wrap: anywhere;
+}
+
+.title {
+  font-size: 13.5px;
+  font-weight: var(--fw-medium);
+}
+
+.meta {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.extra {
+  min-width: 0;
+}
+
+.value {
+  font-weight: var(--fw-medium);
+  font-size: 14px;
+  min-width: 80px;
+  text-align: right;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  background: var(--surface-2);
+}
+
+.clickable:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* 批量条：样稿 .bulk。后台 --accent 是墨色、--on-accent 是反色 */
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 8px 0 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.action {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--on-accent) 25%, transparent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: color-mix(in srgb, var(--on-accent) 12%, transparent);
+}
+
+.action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-accent);
+  cursor: pointer;
+}
+
+.clear:hover {
+  background: color-mix(in srgb, var(--on-accent) 12%, transparent);
+}
+
+.action:focus-visible,
+.clear:focus-visible {
+  outline: 2px solid var(--on-accent);
+  outline-offset: 1px;
+}
+
+/* 吸底保存条：样稿 .savebar */
+.bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 10px 10px 10px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 13.5px;
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+@media (max-width: 639px) {
+  .row {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .main {
+    flex-basis: 100%;
+  }
+
+  /* 有前导（状态点、图标、头像，最宽 32）时主文案与它同行，只让出前导那一格 */
+  .lead + .main {
+    flex-basis: calc(100% - 48px);
+  }
+
+  .value {
+    min-width: 0;
+    text-align: left;
+    margin-right: auto;
+  }
+
+  .hint {
+    display: none;
+  }
+}

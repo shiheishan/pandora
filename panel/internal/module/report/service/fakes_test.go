@@ -98,19 +98,16 @@ func (f *fakeStore) HasReversal(_ context.Context, id uuid.UUID) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeStore) ListAdjustments(_ context.Context, currency string, limit int) ([]repo.AdjustmentRow, error) {
+func (f *fakeStore) ListAdjustments(_ context.Context, limit int) ([]repo.AdjustmentRow, error) {
 	if err := f.err("ListAdjustments"); err != nil {
 		return nil, err
 	}
 	out := []repo.AdjustmentRow{}
 	for i := len(f.adjustments) - 1; i >= 0 && len(out) < limit; i-- {
 		x := f.adjustments[i]
-		if currency != "" && x.Currency != currency {
-			continue
-		}
 		reversed, _ := f.HasReversal(context.Background(), x.ID)
 		out = append(out, repo.AdjustmentRow{
-			ID: x.ID, Currency: x.Currency, Amount: x.Amount, Reason: x.Reason, EffectiveOn: x.EffectiveOn,
+			ID: x.ID, Amount: x.Amount, Reason: x.Reason, EffectiveOn: x.EffectiveOn,
 			ReversalOf: x.ReversalOf, CreatedBy: x.CreatedBy, CreatedAt: x.CreatedAt, Reversed: reversed,
 		})
 	}
@@ -121,41 +118,30 @@ func (f *fakeStore) AdjustmentSumsByDay(_ context.Context, fromDay, toDay string
 	if err := f.err("AdjustmentSumsByDay"); err != nil {
 		return nil, err
 	}
-	sums := map[[2]string]decimal.Decimal{}
+	sums := map[string]decimal.Decimal{}
 	for _, x := range f.adjustments {
 		if x.EffectiveOn < fromDay || x.EffectiveOn >= toDay {
 			continue
 		}
-		k := [2]string{x.Currency, x.EffectiveOn}
-		sums[k] = sums[k].Add(x.Amount)
+		sums[x.EffectiveOn] = sums[x.EffectiveOn].Add(x.Amount)
 	}
 	out := []repo.AdjustmentDayRow{}
-	for k, v := range sums {
-		out = append(out, repo.AdjustmentDayRow{Currency: k[0], Day: k[1], Amount: v})
+	for day, v := range sums {
+		out = append(out, repo.AdjustmentDayRow{Day: day, Amount: v})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Currency != out[j].Currency {
-			return out[i].Currency < out[j].Currency
-		}
-		return out[i].Day < out[j].Day
-	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Day < out[j].Day })
 	return out, nil
 }
 
-func (f *fakeStore) AdjustmentTotals(_ context.Context) ([]repo.AdjustmentTotalRow, error) {
+func (f *fakeStore) AdjustmentTotals(_ context.Context) (decimal.Decimal, error) {
 	if err := f.err("AdjustmentTotals"); err != nil {
-		return nil, err
+		return decimal.Zero, err
 	}
-	sums := map[string]decimal.Decimal{}
+	total := decimal.Zero
 	for _, x := range f.adjustments {
-		sums[x.Currency] = sums[x.Currency].Add(x.Amount)
+		total = total.Add(x.Amount)
 	}
-	out := []repo.AdjustmentTotalRow{}
-	for c, v := range sums {
-		out = append(out, repo.AdjustmentTotalRow{Currency: c, Amount: v})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Currency < out[j].Currency })
-	return out, nil
+	return total, nil
 }
 
 func (f *fakeStore) UpsertActivity(_ context.Context, rows []model.ActivityDaily) error {
@@ -249,15 +235,15 @@ type fakePorts struct {
 	trafficQuality nodesvc.TrafficQuality
 	trafficCalls   [][2]time.Time // TrafficByNode / TrafficBySubscription 收到的 [from, to)
 
-	revenueDays   []ledgersvc.RevenueDay
-	revenueTotals []ledgersvc.RevenueTotal
-	revenueCalls  [][2]time.Time
-	drift         int64
+	revenueDays  []ledgersvc.RevenueDay
+	revenueTotal ledgersvc.RevenueTotal
+	revenueCalls [][2]time.Time
+	drift        int64
 
 	orderCounts  ordersvc.ReportOrderCounts
 	pendingStale int64
 	stuck        int64
-	withdrawals  []commissionsvc.PendingWithdrawalSum
+	withdrawals  commissionsvc.PendingWithdrawalSum
 	tickets      supportsvc.OpenTicketStats
 	backlog      notifysvc.DeliveryBacklog
 	channels     map[string]notifysvc.ChannelDeliveryCounts
@@ -282,7 +268,7 @@ func newFakePorts() *fakePorts {
 func (f *fakePorts) err(name string) error { return f.errFor[name] }
 
 func (f *fakePorts) Site(context.Context) (settingssvc.Site, error) {
-	return settingssvc.Site{Timezone: f.tz, Currency: "CNY"}, f.err("Site")
+	return settingssvc.Site{Timezone: f.tz}, f.err("Site")
 }
 
 func (f *fakePorts) ReportUserCounts(context.Context, time.Time, time.Time) (identitysvc.ReportUserCounts, error) {
@@ -355,8 +341,8 @@ func (f *fakePorts) RevenueByDay(_ context.Context, from, to time.Time) ([]ledge
 	return f.revenueDays, f.err("RevenueByDay")
 }
 
-func (f *fakePorts) RevenueTotals(context.Context) ([]ledgersvc.RevenueTotal, error) {
-	return f.revenueTotals, f.err("RevenueTotals")
+func (f *fakePorts) RevenueTotals(context.Context) (ledgersvc.RevenueTotal, error) {
+	return f.revenueTotal, f.err("RevenueTotals")
 }
 
 func (f *fakePorts) DriftAccounts(context.Context) (int64, error) {
@@ -378,7 +364,7 @@ func (f *fakePorts) StuckCallbackCount(context.Context, time.Time) (int64, error
 	return f.stuck, f.err("StuckCallbackCount")
 }
 
-func (f *fakePorts) PendingWithdrawalSums(context.Context) ([]commissionsvc.PendingWithdrawalSum, error) {
+func (f *fakePorts) PendingWithdrawalSums(context.Context) (commissionsvc.PendingWithdrawalSum, error) {
 	return f.withdrawals, f.err("PendingWithdrawalSums")
 }
 

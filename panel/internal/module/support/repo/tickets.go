@@ -178,3 +178,19 @@ SELECT t.*, coalesce(m.cnt, 0) AS message_count, coalesce(m.last_at, t.created_a
 	}
 	return rows, nil
 }
+
+// LastPublicAuthorKind 一张工单最后一条非内部备注、非系统消息的作者类型；没有这样的消息 ok 为 false。
+func (r *Repo) LastPublicAuthorKind(ctx context.Context, ticketID uuid.UUID) (string, bool, error) {
+	var authorKind string
+	res := r.d.Conn(ctx).Raw(
+		"SELECT author_kind FROM ticket_messages WHERE ticket_id = ? AND internal_note = false AND author_kind <> 'system' ORDER BY created_at DESC, id DESC LIMIT 1",
+		ticketID,
+	).Scan(&authorKind)
+	if res.Error != nil {
+		return "", false, mapErr(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return "", false, nil
+	}
+	return authorKind, true, nil
+}

@@ -5,8 +5,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // addDays 返回零点 t（带站点时区）往后 n 天的零点；按日历加，夏令时那天也落在零点。
@@ -21,11 +19,10 @@ func addDays(t time.Time, n int) time.Time {
 
 // Overview 是看板概览。
 type Overview struct {
-	Users         UserCounts
-	Subscriptions SubscriptionCounts
-	Nodes         NodeCounts
-	// Revenue 固定两行：CNY、USD（按币种分开，不同币种不能相加）
-	Revenue             []RevenueRow
+	Users               UserCounts
+	Subscriptions       SubscriptionCounts
+	Nodes               NodeCounts
+	Revenue             RevenueRow
 	Orders              OrderCounts
 	LedgerDriftAccounts int64
 }
@@ -35,9 +32,9 @@ type UserCounts struct {
 	Total, Active, Today, Last7Days int64
 }
 
-// SubscriptionCounts 是订阅计数；Active 即「生效」（subscription 的 StateLive 口径），Trialing 恒为 0（试用已取消，键保留给前端）。
+// SubscriptionCounts 是订阅计数；Active 即「生效」（subscription 的 StateLive 口径）。
 type SubscriptionCounts struct {
-	Active, Trialing, Expiring7Days, Expired, New7Days int64
+	Active, Expiring7Days, Expired, New7Days int64
 }
 
 // NodeCounts 是节点计数。
@@ -50,11 +47,9 @@ type OrderCounts struct {
 	PaidToday, Pending, FailedToday int64
 }
 
-// RevenueRow 是一个币种的收入。Actual* 是账本口径（平台收入科目净额），Adjustment* 是报表调整，
+// RevenueRow 是全站收入。Actual* 是账本口径（平台收入科目净额），Adjustment* 是报表调整，
 // 无前缀的是展示值 = 实际 + 调整。窗口都按站点时区：今天、昨天、近 7 天（含今天）、近 30 天（含今天）、全部。
 type RevenueRow struct {
-	Currency money.Currency
-
 	Today, Yesterday, Last7Days, Last30Days, Total                       decimal.Decimal
 	ActualToday, ActualYesterday, Actual7Days, Actual30Days, ActualTotal decimal.Decimal
 	AdjustmentToday, Adjustment7Days, Adjustment30Days, AdjustmentTotal  decimal.Decimal
@@ -66,7 +61,6 @@ type RevenueRow struct {
 
 // RevenueSeries 是最近 Days 天（含今天，站点时区）按日补齐的营收，以及紧邻的前一个等长区间的展示净额合计。
 type RevenueSeries struct {
-	Currency      money.Currency
 	Days          int
 	Points        []RevenuePoint
 	PreviousTotal decimal.Decimal
@@ -88,7 +82,6 @@ type RevenuePoint struct {
 // Adjustment 是一条报表调整或冲正。
 type Adjustment struct {
 	ID          uuid.UUID
-	Currency    money.Currency
 	Amount      decimal.Decimal
 	Reason      string
 	EffectiveOn string // YYYY-MM-DD（站点时区的自然日）
@@ -103,9 +96,8 @@ type Adjustment struct {
 
 // CreateAdjustmentInput 是登记一条报表调整的输入；Amount 由 handler 从整数分换成元。
 type CreateAdjustmentInput struct {
-	Currency string
-	Amount   decimal.Decimal
-	Reason   string
+	Amount decimal.Decimal
+	Reason string
 	// EffectiveOn 为空表示站点时区的今天
 	EffectiveOn string
 }
@@ -135,9 +127,9 @@ type TrafficTotals struct {
 	Reported, Attributed, Unattributed int64
 }
 
-// TrafficQuality 是窗口内的上报质量计数；Duplicate 恒为 0（新通道同一编号的重复上报不入账、不留行）。
+// TrafficQuality 是窗口内的上报质量计数（新通道同一编号的重复上报不入账、不留行，所以没有重复计数）。
 type TrafficQuality struct {
-	DuplicateReports, InvalidReports, InvalidEntries int64
+	InvalidReports, InvalidEntries int64
 }
 
 // NodeTrafficItem 是节点排行的一行。
@@ -233,16 +225,10 @@ type TicketsOpenTask struct {
 	OldestWaitSeconds *int64
 }
 
-// CurrencyAmount 是一个币种的金额。
-type CurrencyAmount struct {
-	Currency money.Currency
-	Amount   decimal.Decimal
-}
-
 // WithdrawalsPendingTask 是待审核提现。
 type WithdrawalsPendingTask struct {
-	Count   int64
-	Amounts []CurrencyAmount
+	Count  int64
+	Amount decimal.Decimal
 }
 
 // NodeRef 是失联节点样例。
@@ -300,7 +286,7 @@ type DatabaseStats struct {
 	MaxConnections int64
 }
 
-// Component 是一个组件的探测结果。Key 是 postgres、valkey、node_fabric、payment_callbacks、mail、telegram、sse、backup 之一（顺序固定）。
+// Component 是一个组件的探测结果。Key 是 postgres、redis、node_fabric、payment_callbacks、mail、telegram、sse、backup 之一（顺序固定）。
 // Metrics 的键与值由 handler 原样输出；LatencyMS 只在探测成功时有。
 type Component struct {
 	Key       string

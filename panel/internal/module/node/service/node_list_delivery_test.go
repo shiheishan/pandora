@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/node/repo"
+	"github.com/google/uuid"
 )
 
 func nodeAllDeliveryFacts() nodeDeliveryFacts {
@@ -83,6 +84,27 @@ func TestNodeDeliveryVerdict_neverSeen(t *testing.T) {
 	ok, note := nodeDeliveryVerdict(f)
 	if ok || note != nodeNoteNeverSeen {
 		t.Fatalf("got (%v, %q)", ok, note)
+	}
+}
+
+func TestNodeDeliveryVerdict_trafficExceeded(t *testing.T) {
+	// 其余事实都满足、Deliverable: false、TrafficExceeded: true → (false, nodeNoteTrafficExceeded)
+	f := nodeAllDeliveryFacts()
+	f.Deliverable = false
+	f.TrafficExceeded = true
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNoteTrafficExceeded {
+		t.Fatalf("流量超限应为 (false, %q)，got (%v, %q)", nodeNoteTrafficExceeded, ok, note)
+	}
+
+	// ServerReady: false 同时超限也回超限文案
+	f2 := nodeAllDeliveryFacts()
+	f2.Deliverable = false
+	f2.ServerReady = false
+	f2.TrafficExceeded = true
+	ok2, note2 := nodeDeliveryVerdict(f2)
+	if ok2 || note2 != nodeNoteTrafficExceeded {
+		t.Fatalf("ServerReady: false 且 TrafficExceeded 应先回超限文案，got (%v, %q)", ok2, note2)
 	}
 }
 
@@ -233,5 +255,29 @@ func TestNodeDegraded_runtimeRunningFalse(t *testing.T) {
 	}
 	if nodeDegraded(repo.NodeListRow{RuntimeStatus: nil}) {
 		t.Error("无 runtime 不应算 degraded")
+	}
+}
+
+// 面板生成配置文档失败的节点：不管节点回报过什么，列表都显示为失败，详情写明是面板这边的错。
+func TestNodeRowFromList_configSkipFailed(t *testing.T) {
+	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	bad, good := uuid.New(), uuid.New()
+	applied := "abcd"
+	x := nodeListExtras{
+		desired:     map[uuid.UUID]string{good: applied},
+		configSkips: map[uuid.UUID]configSkip{bad: {ServerID: uuid.New(), Reason: "协议配置不是 JSON 对象"}},
+	}
+
+	nr := nodeRowFromList(repo.NodeListRow{ID: bad, AppliedConfigSHA256: &applied}, now, false, x)
+	if nr.EffectiveState != "failed" || nr.LastApplyFailure == nil {
+		t.Fatalf("跳过的节点应为 failed，got %q %v", nr.EffectiveState, nr.LastApplyFailure)
+	}
+	if f := nr.LastApplyFailure; f.Phase != "failed" || f.Detail != "面板生成配置失败：协议配置不是 JSON 对象" || !f.At.Equal(now) {
+		t.Fatalf("失败详情不符: %+v", f)
+	}
+
+	nr = nodeRowFromList(repo.NodeListRow{ID: good, AppliedConfigSHA256: &applied}, now, false, x)
+	if nr.EffectiveState != "applied" || nr.LastApplyFailure != nil {
+		t.Fatalf("没被跳过的节点照旧按期望摘要算，got %q %v", nr.EffectiveState, nr.LastApplyFailure)
 	}
 }

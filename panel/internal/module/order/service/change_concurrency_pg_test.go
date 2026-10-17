@@ -34,7 +34,7 @@ func oneWins(t *testing.T, results []error) {
 		switch {
 		case err == nil:
 			ok++
-		case errors.Is(err, ErrOpenChange) || codeOf(err) == errs.Conflict:
+		case errors.Is(err, ErrOpenChange) || codeOf(err) == errs.Conflict || codeOf(err) == errs.OrderPending:
 			open++
 		default:
 			t.Fatalf("意外错误: %v", err)
@@ -50,7 +50,7 @@ func TestConcurrentPlanChanges(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
 	uctx := asUser(ctx, user)
-	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month", nil, nil)
+	planB, _, priceB := e.mkPlan(t, ctx, 10000, "month")
 
 	sub := e.activeSub(t, ctx, user, 3000, 50)
 	change := func() error {

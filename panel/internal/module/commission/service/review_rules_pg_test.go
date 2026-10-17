@@ -1,32 +1,13 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
-
-// newReviewEntryIn 同 newReviewEntry，订单币种由调用方给。
-func newReviewEntryIn(t *testing.T, e *env, ctx context.Context, referrer, buyer uuid.UUID, total string, cur money.Currency) uuid.UUID {
-	t.Helper()
-	refer(e, buyer, referrer)
-	e.svc.UseSourceMatcher(&fakeSources{same: map[[2]uuid.UUID]bool{{referrer, buyer}: true}})
-	defer e.svc.UseSourceMatcher(&fakeSources{})
-	o := newPaidOrderIn(t, e, ctx, buyer, total, cur)
-	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
-		t.Fatalf("计提: %v", err)
-	}
-	var id uuid.UUID
-	if err := e.row(ctx, `SELECT id FROM commission_entries WHERE order_id = ? AND review_required`, o.OrderID).Scan(&id); err != nil {
-		t.Fatalf("读待复核条目: %v", err)
-	}
-	return id
-}
 
 // 只计首单时，作废的佣金也算「已有首单」（用户 10-13 定）：首单佣金作废后，第二单不再计佣。
 func TestFirstOrderVoidedStillCounts(t *testing.T) {
@@ -52,38 +33,6 @@ func TestFirstOrderVoidedStillCounts(t *testing.T) {
 	}
 }
 
-// 只有作废条目的币种：不进门户汇总的币种选择，也不进提现的币种选择（06c55326）。
-func TestVoidedOnlyCurrencyIgnored(t *testing.T) {
-	e, ctx := newEnv(t)
-	admin := newUser(t, e, ctx)
-	setConfig(t, e, ctx, admin, 10, 0, "1.00", "every_order")
-	referrer := newUser(t, e, ctx)
-	// 站点币种是 testCurrency（CNY）；这条佣金是 USD
-	id := newReviewEntryIn(t, e, ctx, referrer, newUser(t, e, ctx), "100.00", money.USD)
-
-	mc, err := e.svc.MyCommission(ctx, referrer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mc.Summary.Currency != money.USD {
-		t.Fatalf("作废前汇总币种 %s，应为唯一有佣金的 USD", mc.Summary.Currency)
-	}
-	if _, err := e.svc.ReviewEntry(adminCtx(ctx, admin), id, false, "同源刷单确认"); err != nil {
-		t.Fatal(err)
-	}
-
-	mc, err = e.svc.MyCommission(ctx, referrer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mc.Summary.Currency != testCurrency || !mc.Summary.TotalEarned.IsZero() || !mc.Summary.Pending.IsZero() {
-		t.Fatalf("作废后汇总 %+v，币种应回到站点币种 %s", mc.Summary, testCurrency)
-	}
-	if _, err := e.svc.RequestWithdrawal(ctx, referrer, dec2("10.00"), "alipay a@b.test"); !errors.Is(err, ErrNoCommission) {
-		t.Fatalf("只有作废条目时提现应回「没有可提现的佣金」，得到 %v", err)
-	}
-}
-
 // 作废时推荐人的待结科目不够冲回：回 409，不动账、条目不变。
 func TestVoidUnderfundedConflict(t *testing.T) {
 	e, ctx := newEnv(t)
@@ -92,8 +41,8 @@ func TestVoidUnderfundedConflict(t *testing.T) {
 	referrer := newUser(t, e, ctx)
 	id, _ := newReviewEntry(t, e, ctx, referrer, newUser(t, e, ctx), "100.00")
 	// 模拟账本与条目对不上：直接把推荐人的待结科目清零（只在测试事务里）
-	if err := e.exec(ctx, `UPDATE ledger_accounts SET balance = 0 WHERE account_type = ? AND owner_user_id = ? AND currency = ?`,
-		string(ledgersvc.UserCommissionPending), referrer, string(testCurrency)); err != nil {
+	if err := e.exec(ctx, `UPDATE ledger_accounts SET balance = 0 WHERE account_type = ? AND owner_user_id = ?`,
+		string(ledgersvc.UserCommissionPending), referrer); err != nil {
 		t.Fatal(err)
 	}
 	revenueBefore := platformRevenue(t, e, ctx)
@@ -131,7 +80,7 @@ func TestReviewShapeChecks(t *testing.T) {
 	setConfig(t, e, ctx, admin, 10, 0, "100.00", "every_order")
 	id, _ := newReviewEntry(t, e, ctx, newUser(t, e, ctx), newUser(t, e, ctx), "100.00")
 
-	// 冲回交易借用这条的计提交易（外键只要求交易存在且币种相同）；所有写都在保存点里，回滚后条目原样。
+	// 冲回交易借用这条的计提交易（外键只要求交易存在）；所有写都在保存点里，回滚后条目原样。
 	// 管理员与条目 id 经事务内的会话参数传给 SQL（DO 块里不能带绑定参数）。
 	if err := e.exec(ctx, `SELECT set_config('pandora_test.admin', ?, true), set_config('pandora_test.entry', ?, true)`,
 		admin.String(), id.String()); err != nil {

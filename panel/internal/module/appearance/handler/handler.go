@@ -14,7 +14,7 @@ import (
 // Service 是 handler 用到的 appearance service 方法；*service.Service 实现它。
 type Service interface {
 	ListThemes(ctx context.Context) ([]service.Theme, error)
-	SaveTheme(ctx context.Context, in service.SaveThemeInput) ([]string, error)
+	SaveTheme(ctx context.Context, in service.SaveThemeInput) error
 	ActivateTheme(ctx context.Context, code string) error
 	DeleteTheme(ctx context.Context, code string) error
 	ListSlots(ctx context.Context) ([]service.Slot, error)
@@ -25,7 +25,7 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧接口）。
+// 幂等作用域。
 const (
 	ScopeThemeSave = "appearance_theme_save"
 	ScopeSlotSave  = "appearance_slot_save"
@@ -71,15 +71,15 @@ func (h *Handler) saveTheme(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	notes, err := h.svc.SaveTheme(c.Request.Context(), service.SaveThemeInput{
+	err := h.svc.SaveTheme(c.Request.Context(), service.SaveThemeInput{
 		Code: req.Code, Name: req.Name, Create: req.Create,
-		Tokens: req.Tokens, Branding: req.Branding, CustomCSS: req.CustomCSS,
+		Tokens: req.Tokens, Branding: req.Branding,
 	})
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, saveThemeResponse{Dropped: notes, Saved: true})
+	httpx.OK(c, saveThemeResponse{Saved: true})
 }
 
 func (h *Handler) activateTheme(c *gin.Context) {

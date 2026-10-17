@@ -28,6 +28,8 @@ type Auth interface {
 	RevokeSession(ctx context.Context, sid string) error
 	IssueQuickLogin(ctx context.Context) (service.QuickLoginLink, error)
 	Reauth(ctx context.Context, password string) (service.Tokens, error)
+	StartMailLogin(ctx context.Context, email, captchaToken string) error
+	ConsumeMailLogin(ctx context.Context, token string) (service.Tokens, error)
 }
 
 var _ Auth = (*service.Service)(nil)
@@ -90,6 +92,8 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/me/quick-login", k.RequireAuth, h.issueQuickLogin)
 	v1.GET("/me/sessions", k.RequireAuth, h.listSessions)
 	v1.DELETE("/me/sessions/:id", k.RequireAuth, h.revokeSession)
+	v1.POST("/auth/mail-link/start", authLimit, h.startMailLink)
+	v1.POST("/auth/mail-link/login", h.sameOrigin, authLimit, h.consumeMailLink)
 }
 
 // RegisterAdmin 注册管理端路由。/auth/login、/auth/refresh、/auth/logout、/auth/reauth 不能改名：后台只读模式按这几个模板放行。

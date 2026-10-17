@@ -13,8 +13,8 @@ import "strings"
 // defaultSiteName 是站点名没配时的回落（与 settings 的缺省站点名一致）。
 const defaultSiteName = "Pandora"
 
-// profileNameSeparator 是站点名与备注名（或套餐名）之间的分隔。
-const profileNameSeparator = " · "
+// ProfileNameSeparator 是站点名与备注名（或套餐名）之间的分隔；门户提示「名字已用在『备注名 · 套餐名』上」也用它。
+const ProfileNameSeparator = " · "
 
 // ProfileName 是订阅在 App 里显示的配置名，全站唯一来源：「站点名 · 备注名」，
 // 没起名时「站点名 · 套餐名」，套餐名也取不到时只有站点名。
@@ -30,7 +30,7 @@ func ProfileName(site, label, planName string) string {
 	if name == "" {
 		return site
 	}
-	return site + profileNameSeparator + name
+	return site + ProfileNameSeparator + name
 }
 
 // ContentDisposition 生成订阅响应的 Content-Disposition 头，入参是完整的配置名

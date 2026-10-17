@@ -1,6 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { resetDoneSchema, userDetailSchema } from '../src/admin/screens/users/schemas'
 import { generationJobSchema, generationJobsSchema, trafficGrantedSchema } from '../src/admin/screens/users/opsSchemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
@@ -15,22 +16,30 @@ describe('mock api · admin users ops', () => {
   afterAll(() => close(server))
 
   const SEED_USER = '1a2b3c42-0000-4000-8000-000000000002'
+  const USER_3 = '1a2b3c43-0000-4000-8000-000000000003'
   // 第 6 位种子用户：布置了两份同款订阅（「常用」「备用」）
   const TWIN_USER = '1a2b3c46-0000-4000-8000-000000000006'
   const get = (path: string) => mockFetch(base, auth, 'GET', path)
   const send = (method: string, path: string, body: unknown, key?: string) => mockFetch(base, auth, method, path, body, key)
-  type SubRow = { id: string; label: string | null; plan_name: string; status: string; current_period_end: string | null; quotas: Array<{ consumed: number }>; pack_remaining_bytes: number }
+  type SubRow = { id: string; label: string | null; plan_name: string; status: string; current_period_end: string | null; quotas: Array<{ metric: string; period: string; limit: number | null; consumed: number; remaining: number | null }> }
   const subsOf = async (id: string) => ((await (await get(`/v1/users/${id}`)).json()) as { subscriptions: SubRow[] }).subscriptions
   const reauth = async () => {
     const res = await fetch(`${base}/v1/auth/reauth`, { method: 'POST', headers: auth, body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }) })
     auth = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
   }
 
-  it('shows per-subscription labels and the pack left on each one in the user detail', async () => {
+  it('shows per-subscription labels, plan kinds and no pack or currency fields in the user detail', async () => {
+    const detailRaw = await (await get(`/v1/users/${SEED_USER}`)).json()
+    const parsed = userDetailSchema.parse(detailRaw)
+    expect(typeof parsed.stats.paid_total).toBe('number')
+    expect('unattached_pack_bytes' in (detailRaw as Record<string, unknown>)).toBe(false)
+    for (const sub of (detailRaw as { subscriptions: Array<Record<string, unknown>> }).subscriptions) {
+      expect('pack_remaining_bytes' in sub).toBe(false)
+      expect('currency' in sub).toBe(false)
+    }
+
     const duo = await subsOf(SEED_USER)
     expect(duo.map((x) => x.label).sort()).toEqual(['妈妈的 iPad', '我的手机'])
-    expect(duo.find((x) => x.label === '我的手机')!.pack_remaining_bytes).toBe(30 * 1024 ** 3)
-    expect(duo.find((x) => x.label === '妈妈的 iPad')!.pack_remaining_bytes).toBe(0)
     // 没起名的订阅 label 是 null 而不是缺键
     const none = (await (await get('/v1/users?sub_state=active&limit=100')).json()) as { users: Array<{ id: string }> }
     const some = await Promise.all(none.users.slice(0, 20).map((u) => subsOf(u.id)))
@@ -38,9 +47,15 @@ describe('mock api · admin users ops', () => {
     const twin = await subsOf(TWIN_USER)
     expect(twin).toHaveLength(2)
     expect(new Set(twin.map((x) => x.plan_name)).size).toBe(1)
+
+    // 第 3 位用户有一份 quotas[0].period === 'total' 的一次性订阅
+    const user3Subs = await subsOf(USER_3)
+    const oneTimeSub = user3Subs.find((s) => s.quotas[0]?.period === 'total')
+    expect(oneTimeSub).toBeDefined()
+    expect(oneTimeSub!.plan_name).toBe('流量畅用 500G')
   })
 
-  it('resets traffic one subscription at a time, only after reauth, and logs it', async () => {
+  it('resets traffic one subscription at a time, only after reauth', async () => {
     const [first, second] = await subsOf(SEED_USER)
     const path = (id: string) => `/v1/subscriptions/${id}/traffic-reset`
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
@@ -53,7 +68,7 @@ describe('mock api · admin users ops', () => {
     expect(await short.json()).toMatchObject({ error: { fields: { note: expect.any(String) } } })
     expect((await send('POST', path(first!.id), { note: '补偿断线时长', user_id: SEED_USER }, 'reset-0b')).status).toBe(400)
     expect((await send('POST', path('00000000-0000-4000-8000-000000000000'), { note: '补偿断线时长' }, 'reset-0c')).status).toBe(404)
-    // 按用户重置的老接口删了
+    // 没有按用户重置流量的接口，应回 404
     expect((await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '补偿断线时长' }, 'reset-0d')).status).toBe(404)
 
     const before = first!.quotas[0]!.consumed
@@ -61,17 +76,15 @@ describe('mock api · admin users ops', () => {
     expect(before).toBeGreaterThan(0)
     expect(otherBefore).toBeGreaterThan(0)
     const done = await send('POST', path(first!.id), { note: '补偿断线时长' }, 'reset-1')
-    expect(await done.json()).toEqual({ reset: true, freed_bytes: before })
+    expect(done.status).toBe(200)
+    const doneData = resetDoneSchema.parse(await done.json())
+    expect(doneData).toEqual({ reset: true, freed_bytes: before })
     // 只清了点中的这一份，另一份的用量原样
     const after = await subsOf(SEED_USER)
     expect(after.find((x) => x.id === first!.id)!.quotas[0]!.consumed).toBe(0)
     expect(after.find((x) => x.id === second!.id)!.quotas[0]!.consumed).toBe(otherBefore)
     const replay = await send('POST', path(first!.id), { note: '补偿断线时长' }, 'reset-1')
-    expect(await replay.json()).toEqual({ reset: true, freed_bytes: before })
-
-    const history = (await (await get(`/v1/users/${SEED_USER}/traffic-resets`)).json()) as { logs: Array<Record<string, unknown>> }
-    expect(history.logs[0]).toMatchObject({ reason: 'manual', plan_name: first!.plan_name, consumed_before: before, actor_email: MOCK_ACCOUNTS.admin.email, note: '补偿断线时长' })
-    expect((await get('/v1/traffic-resets?reason=admin')).status).toBe(400)
+    expect(resetDoneSchema.parse(await replay.json())).toEqual({ reset: true, freed_bytes: before })
   })
 
   it('answers 422 without fields for a subscription that is not active', async () => {
@@ -128,28 +141,52 @@ describe('mock api · admin users ops', () => {
     expect(await bad.json()).toMatchObject({ error: { fields: { group_id: '分组不存在' } } })
   })
 
-  it('grants a non-expiring traffic pack to the one subscription it was clicked on', async () => {
+  it('grants bonus traffic to the one subscription it was clicked on', async () => {
     const [mine, other] = (await subsOf(SEED_USER)).sort((a, b) => (b.label ?? '').localeCompare(a.label ?? ''))
-    // 排序后 mine 是「我的手机」（种子里挂着 30 GB 流量包），other 是「妈妈的 iPad」（0）
     expect(mine!.label).toBe('我的手机')
     const sub = mine!.id
     const short = await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 1024, reason: '短' }, 'tp-0')
     expect(short.status).toBe(422)
     expect(await short.json()).toMatchObject({ error: { fields: { reason: expect.any(String) } } })
-    const granted = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 10 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-1')).json())
-    // remaining_bytes_total 是这一份的余量：种子 30 GB 加这次发的 10 GB
-    expect(granted).toMatchObject({ subscription_id: sub, user_id: SEED_USER, granted_bytes: 10 * 1024 ** 3, remaining_bytes_total: 40 * 1024 ** 3 })
-    // 同键重放回同一份结果，不再发一笔
-    const replay = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 10 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-1')).json())
-    expect(replay.grant_id).toBe(granted.grant_id)
-    // 另一份的余量没动；用户详情里按份显示
+
+    const initialLimit = mine!.quotas[0]!.limit ?? 0
+    const addBytes = 10 * 1024 ** 3
+    const granted = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: addBytes, reason: '补偿线路故障' }, 'tp-1')).json())
+    expect(granted).toMatchObject({
+      subscription_id: sub,
+      user_id: SEED_USER,
+      granted_bytes: addBytes,
+      bonus_bytes: addBytes,
+    })
+
+    // 同键重放回同一份结果，不再多加
+    const replay = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: addBytes, reason: '补偿线路故障' }, 'tp-1')).json())
+    expect(replay).toEqual(granted)
+
+    // 详情里该订阅流量配额的 limit 变大，bonus_bytes 累加；另一份的未动
     const after = await subsOf(SEED_USER)
-    expect(after.find((x) => x.id === sub)!.pack_remaining_bytes).toBe(40 * 1024 ** 3)
-    expect(after.find((x) => x.id === other!.id)!.pack_remaining_bytes).toBe(0)
-    // 给另一份发，各记各的
-    const second = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${other!.id}/traffic-pack`, { bytes: 5 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-3')).json())
-    expect(second.remaining_bytes_total).toBe(5 * 1024 ** 3)
+    expect(after.find((x) => x.id === sub)!.quotas[0]!.limit).toBe(initialLimit + addBytes)
+    const otherInitialLimit = other!.quotas[0]!.limit ?? 0
+    expect(after.find((x) => x.id === other!.id)!.quotas[0]!.limit).toBe(otherInitialLimit)
+
+    // 再加一次，bonus_bytes 累加
+    const grantedSecond = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 5 * 1024 ** 3, reason: '再次补偿线路故障' }, 'tp-1b')).json())
+    expect(grantedSecond.bonus_bytes).toBe(addBytes + 5 * 1024 ** 3)
+
     expect((await send('POST', '/v1/subscriptions/00000000-0000-4000-8000-000000000000/traffic-pack', { bytes: 1, reason: '补偿线路故障' }, 'tp-2')).status).toBe(404)
+
+    // 对已过期订阅 422 无 fields
+    const users = (await (await get('/v1/users?limit=100')).json()) as { users: Array<{ id: string }> }
+    let endedId: string | undefined
+    for (const u of users.users) {
+      endedId = (await subsOf(u.id)).find((x) => x.status !== 'active')?.id
+      if (endedId) break
+    }
+    const expiredRes = await send('POST', `/v1/subscriptions/${endedId!}/traffic-pack`, { bytes: 1024, reason: '测试已过期' }, 'tp-expired')
+    expect(expiredRes.status).toBe(422)
+    const expiredBody = (await expiredRes.json()) as { error: { message: string; fields?: unknown } }
+    expect(expiredBody.error.message).toBe('这一份订阅不在生效中')
+    expect(expiredBody.error.fields).toBeUndefined()
   })
 
   it('refuses to delete a group that still has members, deletes an empty one', async () => {
@@ -160,6 +197,46 @@ describe('mock api · admin users ops', () => {
     const created = (await (await send('POST', '/v1/user-groups', { name: '渠道测试' })).json()) as { id: string }
     expect((await send('POST', '/v1/user-groups', { name: '渠道测试', code: 'vip' })).status).toBe(409)
     expect((await send('DELETE', `/v1/user-groups/${created.id}`, {})).status).toBe(200)
+  })
+
+  it('disables a group: hidden from new members, existing ones untouched, can be re-enabled', async () => {
+    const created = (await (await send('POST', '/v1/user-groups', { name: '停用测试' })).json()) as { id: string }
+    const gid = created.id
+    // 两位种子用户原来的分组，用例结束时还原（后面的用例按种子分组计数）
+    const groupOf = async (id: string) => ((await (await get(`/v1/users/${id}`)).json()) as { group_id: string | null }).group_id ?? ''
+    const seedGroup = await groupOf(SEED_USER)
+    const twinGroup = await groupOf(TWIN_USER)
+
+    expect((await send('POST', `/v1/users/${SEED_USER}/group`, { group_id: gid })).status).toBe(200)
+    expect((await send('POST', `/v1/user-groups/${gid}/status`, { disabled: true })).status).toBe(200)
+
+    const { groups } = (await (await get('/v1/user-groups')).json()) as { groups: Array<{ id: string; status: string }> }
+    expect(groups.find((g) => g.id === gid)?.status).toBe('disabled')
+
+    expect((await send('POST', `/v1/users/${SEED_USER}/group`, { group_id: gid })).status).toBe(200)
+    const conflict = await send('POST', `/v1/users/${TWIN_USER}/group`, { group_id: gid })
+    expect(conflict.status).toBe(409)
+
+    const missing = await send('POST', `/v1/user-groups/${gid}/status`, {})
+    expect(missing.status).toBe(422)
+    expect(await missing.json()).toMatchObject({ error: { fields: { disabled: expect.any(String) } } })
+
+    const badField = await send('POST', `/v1/user-groups/${gid}/status`, { disabled: true, x: 1 })
+    expect(badField.status).toBe(400)
+
+    const notFound = await send('POST', '/v1/user-groups/00000000-0000-4000-8000-000000000000/status', { disabled: true })
+    expect(notFound.status).toBe(404)
+
+    await reauth()
+    const genBad = await send('POST', '/v1/users/bulk/generate', { count: 1, email_prefix: 'gen', email_domain: 'example.com', reason: '停用组测试生成', group_id: gid }, 'gen-disabled')
+    expect(genBad.status).toBe(422)
+    expect(await genBad.json()).toMatchObject({ error: { fields: { group_id: '分组已停用' } } })
+
+    expect((await send('POST', `/v1/user-groups/${gid}/status`, { disabled: false })).status).toBe(200)
+    expect((await send('POST', `/v1/users/${TWIN_USER}/group`, { group_id: gid })).status).toBe(200)
+
+    expect((await send('POST', `/v1/users/${SEED_USER}/group`, { group_id: seedGroup })).status).toBe(200)
+    expect((await send('POST', `/v1/users/${TWIN_USER}/group`, { group_id: twinGroup })).status).toBe(200)
   })
 
   it('validates the global device mode and reflects it in GET v1/devices', async () => {
@@ -217,7 +294,7 @@ describe('mock api · admin users ops', () => {
     let ended: string | undefined
     for (const u of users.users) {
       const d = (await (await get(`/v1/users/${u.id}`)).json()) as Detail
-      ended = d.subscriptions.find((s) => s.status === 'expired' || s.status === 'cancelled')?.id
+      ended = d.subscriptions.find((s) => s.status === 'expired')?.id
       if (ended) break
     }
     const refused = await send('POST', `/v1/subscriptions/${ended!}/extend`, body, 'extend-3')

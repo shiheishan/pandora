@@ -110,7 +110,8 @@ type portalMessageDTO struct {
 
 type portalDetailDTO struct {
 	ticketRowDTO
-	Messages []portalMessageDTO `json:"messages"`
+	ReplyBlocked bool               `json:"reply_blocked"`
+	Messages     []portalMessageDTO `json:"messages"`
 }
 
 type adminTicketDTO struct {
@@ -231,7 +232,11 @@ func ticketRowFrom(t service.Ticket) ticketRowDTO {
 }
 
 func portalDetailFrom(d service.TicketDetail) portalDetailDTO {
-	out := portalDetailDTO{ticketRowDTO: ticketRowFrom(d.Ticket), Messages: make([]portalMessageDTO, 0, len(d.Messages))}
+	out := portalDetailDTO{
+		ticketRowDTO: ticketRowFrom(d.Ticket),
+		ReplyBlocked: d.ReplyBlocked,
+		Messages:     make([]portalMessageDTO, 0, len(d.Messages)),
+	}
 	for _, m := range d.Messages {
 		out.Messages = append(out.Messages, portalMessageDTO{
 			ID: m.ID.String(), AuthorKind: m.AuthorKind, AuthorName: m.AuthorName,

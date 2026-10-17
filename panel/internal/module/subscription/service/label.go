@@ -18,12 +18,6 @@ const (
 	msgLabelInvalid = "名字里不能有换行、制表符之类的特殊字符"
 )
 
-// defaultSiteName 是站点名没配时配置名里用的名字。
-const defaultSiteName = "Pandora"
-
-// profileNameSeparator 是配置名里站点名与订阅名的分隔符。
-const profileNameSeparator = " · "
-
 // NormalizeLabel 规范化订阅备注名：去首尾空白；空串表示不起名；最多 16 个字；
 // 不含控制字符与不可见的格式字符（会进 Content-Disposition 头，也会显示在 App 里）。允许零宽连接符 U+200D（组合表情要用）。
 func NormalizeLabel(s string) (string, error) {
@@ -56,20 +50,4 @@ func LabelWithSuffix(label string, n int) string {
 		runes = runes[:keep]
 	}
 	return strings.TrimRight(string(runes), " ") + suffix
-}
-
-// ProfileName 是订阅在 App 里显示的配置名：「站点名 · 备注名」，没起名时「站点名 · 套餐名」，都没有时只有站点名。
-func ProfileName(site, label, planName string) string {
-	site = strings.TrimSpace(site)
-	if site == "" {
-		site = defaultSiteName
-	}
-	name := strings.TrimSpace(label)
-	if name == "" {
-		name = strings.TrimSpace(planName)
-	}
-	if name == "" {
-		return site
-	}
-	return site + profileNameSeparator + name
 }

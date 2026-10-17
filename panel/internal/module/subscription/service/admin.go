@@ -14,7 +14,7 @@ const (
 	minReasonRunes = 5
 	maxReasonRunes = 500
 	maxDeviceLimit = 1000
-	// maxAdminGrantBytes 是后台一次加流量的上限（10 TiB），只管后台入口；通用发放入口的上限见 maxPackBytes。
+	// maxAdminGrantBytes 是后台一次加流量的上限（10 TiB），只管后台入口。
 	maxAdminGrantBytes int64 = 10 << 40
 )
 
@@ -30,6 +30,9 @@ func (s *Service) AdminExtend(ctx context.Context, subID uuid.UUID, days int, re
 	}
 	var out AdminExtendResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeletedOwner(ctx, subID); err != nil {
+			return err
+		}
 		res, err := s.Extend(ctx, Extension{
 			SubscriptionID: subID,
 			Days:           days,
@@ -63,59 +66,51 @@ func (s *Service) AdminExtend(ctx context.Context, subID uuid.UUID, days int, re
 	return out, err
 }
 
-// AdminGrantTraffic 是后台给一份生效中的订阅加一笔流量包（来源 admin，source_id 为新生成的 id），写审计。
+// AdminGrantTraffic 是后台给一份生效中的订阅加本期流量（当期有效），写审计。
 func (s *Service) AdminGrantTraffic(ctx context.Context, subID uuid.UUID, bytes int64, reason string) (AdminTrafficGrantResult, error) {
-	if _, err := adminPrincipal(ctx); err != nil {
+	p, err := adminPrincipal(ctx)
+	if err != nil {
 		return AdminTrafficGrantResult{}, err
 	}
 	if bytes < 1 || bytes > maxAdminGrantBytes {
 		return AdminTrafficGrantResult{}, errs.Invalid(map[string]string{"bytes": "流量须在 1 字节到 10 TiB 之间"})
 	}
-	reason, err := cleanText(reason, minReasonRunes, maxReasonRunes, "reason", "请写清原因，5 到 500 个字")
+	reason, err = cleanText(reason, minReasonRunes, maxReasonRunes, "reason", "请写清原因，5 到 500 个字")
 	if err != nil {
 		return AdminTrafficGrantResult{}, err
 	}
-	sourceID, err := uuid.NewV7()
-	if err != nil {
-		return AdminTrafficGrantResult{}, errs.Wrap(errs.Internal, err)
-	}
 	var out AdminTrafficGrantResult
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}
-		pack, err := s.GrantTrafficPack(ctx, PackGrant{
-			UserID:         m.UserID,
-			SubscriptionID: &m.ID,
-			Source:         PackSourceAdmin,
-			SourceID:       sourceID,
+		bonus, err := s.GrantBonus(ctx, BonusGrant{
+			SubscriptionID: m.ID,
 			Bytes:          bytes,
+			Source:         BonusAdmin,
+			ActorID:        &p.UserID,
+			Note:           reason,
 		})
 		if err != nil {
 			return err
-		}
-		left, err := s.repo.PackRemainingBySubscriptions(ctx, []uuid.UUID{m.ID})
-		if err != nil {
-			return subErr(err)
 		}
 		emails, err := s.users.Emails(ctx, []uuid.UUID{m.UserID})
 		if err != nil {
 			return err
 		}
 		out = AdminTrafficGrantResult{
-			SubscriptionID:      m.ID,
-			UserID:              m.UserID,
-			UserEmail:           emails[m.UserID],
-			GrantID:             pack.ID,
-			GrantedBytes:        pack.GrantedBytes,
-			RemainingBytesTotal: left[m.ID],
+			SubscriptionID: m.ID,
+			UserID:         m.UserID,
+			UserEmail:      emails[m.UserID],
+			GrantedBytes:   bytes,
+			BonusBytes:     bonus,
 		}
 		return s.writeAudit(ctx, ActionTrafficGranted, m.ID, map[string]any{
-			"user_id":  m.UserID,
-			"grant_id": pack.ID,
-			"bytes":    bytes,
-			"reason":   reason,
+			"user_id":     m.UserID,
+			"bytes":       bytes,
+			"bonus_after": bonus,
+			"reason":      reason,
 		})
 	})
 	return out, err
@@ -134,7 +129,7 @@ func (s *Service) AdminResetTraffic(ctx context.Context, subID uuid.UUID, note s
 	actorID := p.UserID
 	var freed int64
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}
@@ -166,7 +161,7 @@ func (s *Service) AdminSetDeviceLimit(ctx context.Context, subID uuid.UUID, limi
 		return errs.Invalid(map[string]string{"limit": "设备数须在 0 到 1000 之间，留空沿用套餐"})
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		m, err := s.lockOwned(ctx, subID, nil)
+		m, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}

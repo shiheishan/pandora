@@ -9,7 +9,7 @@ import { MODULES, NAV_GROUPS, type ModuleKey } from '../src/admin/modules'
 // 后台模块登记点守卫：新模块在 admin/modules.ts 登记之后，
 // 侧栏 NAV_GROUPS 与 dev 假后端也要登记（dev/mock/admin/index.ts 的 ADMIN_MODULES），
 // 否则侧栏没有入口，或 dev:admin 上该页整页 404。
-// w9cert 合入时假后端漏过一次，由总协调手补（fdc0ae2）。SCREENS 由类型管。
+// SCREENS 由类型管。
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const keys = Object.keys(MODULES) as ModuleKey[]
@@ -35,7 +35,8 @@ function screenCalls(key: ModuleKey): Array<{ method: string; path: string }> {
 
 describe('admin module registry · sidebar', () => {
   it('puts every module exactly once in the NAV_GROUPS group its MODULES entry names', () => {
-    const placed = NAV_GROUPS.flatMap(([group, members]) => members.map((key) => `${key}@${group}`)).sort()
+    // 第一组（仪表盘、工单）不画组标题，标题为 null，按组内模块自己的 group 记
+    const placed = NAV_GROUPS.flatMap(([group, members]) => members.map((key) => `${key}@${group ?? MODULES[key].group}`)).sort()
     expect(placed).toEqual(keys.map((key) => `${key}@${MODULES[key].group}`).sort())
   })
 })

@@ -27,8 +27,9 @@ const kickTaskID = TaskDispatch + ":kick"
 
 // deliveryPayload 是封存在 payload_enc 里的内容。
 type deliveryPayload struct {
-	To   string            `json:"to"`
-	Vars map[string]string `json:"vars"`
+	To       string            `json:"to"`
+	Vars     map[string]string `json:"vars"`
+	TicketID string            `json:"ticket_id,omitempty"` // 管理员工单提醒带上工单 id，派发成功后记映射；其余投递为空
 }
 
 // deliveryAAD 是封存 payload 的附加数据，绑定到投递 id，防止密文被挪到别的行。

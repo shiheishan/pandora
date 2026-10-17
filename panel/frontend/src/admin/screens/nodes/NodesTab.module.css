@@ -1,0 +1,292 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.filters .spacer {
+  flex: 1;
+}
+
+.dimmed {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.hideNarrow {
+  display: inline-flex;
+}
+
+.chipf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-2);
+  box-sizing: border-box;
+}
+
+.chipf b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.chipfSet {
+  border-style: solid;
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.box {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 28px minmax(200px, 1.6fr) 100px minmax(110px, 1fr) 64px 120px 90px 150px;
+  gap: var(--space-12);
+  align-items: center;
+  min-width: 920px;
+  padding: 0 var(--space-16);
+}
+
+.head {
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.line {
+  min-height: 60px;
+  border-bottom: 1px solid var(--border);
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 60px;
+}
+
+.line:last-of-type {
+  border-bottom: 0;
+}
+
+.picked {
+  background: var(--surface-3);
+}
+
+.line:hover {
+  background: var(--surface-2);
+}
+
+.line.picked:hover {
+  background: var(--surface-3);
+}
+
+.retired {
+  opacity: 0.55;
+}
+
+.nameCell {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nameCell:disabled {
+  cursor: default;
+}
+
+.nameCell:hover:not(:disabled) .nameLine {
+  text-decoration: underline;
+}
+
+.nameBlock {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nameLine {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc {
+  flex: none;
+  width: 18px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.nsub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: 26px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  min-width: 0;
+}
+
+.nsubAddr {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.mobileSummary {
+  display: none;
+  margin-left: 26px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  white-space: normal;
+}
+
+.load {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 96px;
+}
+
+.loadBar {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.loadFill {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--text-2);
+}
+
+.warm {
+  background: var(--warn);
+}
+
+.hot {
+  background: var(--danger);
+}
+
+.loadPct {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.trafficLine {
+  display: block;
+}
+
+.trafficFaint {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.trafficWarn {
+  color: var(--warn);
+}
+
+.stateCell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.runTag {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relayCount {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+.tfoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 var(--space-16);
+  font-size: 13px;
+  color: var(--text-2);
+  border-top: 1px solid var(--border);
+}
+
+.tfoot .spacer {
+  flex: 1;
+}
+
+@media (max-width: 639px) {
+  .hideNarrow {
+    display: none !important;
+  }
+
+  .grid {
+    grid-template-columns: 28px minmax(0, 1fr) minmax(100px, auto);
+    min-width: 0;
+  }
+
+  .colHideMobile {
+    display: none !important;
+  }
+
+  .mobileSummary {
+    display: block;
+  }
+
+  .stateCell {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .head > span:last-child,
+  .line > span:last-child {
+    text-align: right;
+  }
+}
+

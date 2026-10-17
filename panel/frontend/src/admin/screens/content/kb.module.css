@@ -1,0 +1,282 @@
+/* 知识库（KbTab + KbEditor）专用样式 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+/* 已归档的行整行淡显（样稿 tr.dimrow td） */
+.dimRow td {
+  opacity: 0.5;
+}
+
+/* 表格标题列：主标题 + slug */
+.titleCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.titleMain {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleSlug {
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat {
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plats {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.ver {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ---- 弹窗 ---- */
+.headRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.headMeta {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+}
+
+.banner {
+  padding: 8px 12px;
+  border: 1px solid var(--info-line);
+  border-radius: var(--radius-control);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: var(--fs-caption);
+}
+
+.bannerWarn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.bannerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.bannerSpacer {
+  flex: 1;
+}
+
+.titleInput {
+  height: 44px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.titleInput:focus {
+  border-bottom-color: var(--text);
+  outline: none;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.slugInput {
+  height: 30px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.slugInput:focus {
+  border-bottom-color: var(--text);
+  outline: none;
+}
+
+.platformRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.platformLabel {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.platformBtn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.platformBtn:hover {
+  border-color: var(--border-hover);
+}
+
+.platformBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.platformBtnOn {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--on-ink);
+}
+
+.platformBtnOn:hover {
+  border-color: var(--text);
+}
+
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-caption);
+}
+
+.picker:hover {
+  border-color: var(--border-hover);
+}
+
+.pickerText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerMenu {
+  width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.dangerText {
+  color: var(--danger);
+}
+
+.historyHead {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.historyRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.historyVer {
+  flex: none;
+  width: 36px;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+}
+
+.historyTag {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.historyMeta {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.historyEmpty {
+  padding: 14px 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* 手机上标题与标识折行，不把表撑出屏宽 */
+@media (max-width: 639px) {
+  .titleMain,
+  .titleSlug {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

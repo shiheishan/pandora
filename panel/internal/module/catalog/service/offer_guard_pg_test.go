@@ -1,6 +1,6 @@
 package service
 
-// 下单快照的守卫：建单加锁与库存不死锁、续费价格必须属于订阅的套餐、
+// 下单快照的守卫：建单加锁与改价互斥、续费价格必须属于订阅的套餐、
 // 当前版本不是 published 时按没有版本处理、已删用户浏览门户按匿名。
 
 import (
@@ -8,70 +8,113 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
-// 多笔「Offer(Lock) + ReserveStock」并发：全部成功或售罄，不能死锁（40P01）。
-func TestOfferLockThenReserveNoDeadlock(t *testing.T) {
+// 一个事务 Offer(Lock) 持有套餐与价格的 FOR SHARE 期间，另一提交态事务 UpdatePrices 应被阻塞直到前者结束。
+func TestOfferLockBlocksUpdatePrices(t *testing.T) {
 	e, ctx := newEnvCommitted(t)
 	ctx, _ = seedAdmin(t, ctx, e)
-	const stock = 5
-	st := stock
-	plan := publishedPlan(t, ctx, e, publishedPlanOpts{StockTotal: &st})
-	if len(plan.Prices) == 0 {
-		t.Fatal("套餐没有价格")
-	}
+
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name: "锁阻塞改价",
+		Tiers: []TierInput{
+			{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: decimal.RequireFromString("9.90")},
+			{BillingInterval: IntervalMonth, IntervalCount: 3, UnitAmount: decimal.RequireFromString("27.00")},
+		},
+	})
 	priceID := plan.Prices[0].ID
 	buyer := seedUser(t, ctx, e, nil)
 
-	const workers = 20
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		okCount int
-		soldOut int
+		locked   sync.WaitGroup
+		release  = make(chan struct{})
+		holdDone sync.WaitGroup
 	)
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		go func() {
-			defer wg.Done()
-			err := e.svc.tx.Do(ctx, func(ctx context.Context) error {
-				off, err := e.svc.Offer(ctx, priceID, OfferRequest{Use: UseNew, UserID: &buyer, Lock: true})
-				if err != nil {
-					return err
-				}
-				_, err = e.svc.ReserveStock(ctx, off.Plan.ID, 1)
-				return err
-			})
-			mu.Lock()
-			defer mu.Unlock()
-			switch {
-			case err == nil:
-				okCount++
-			case errors.Is(err, ErrSoldOut):
-				soldOut++
-			default:
-				t.Errorf("Offer(Lock)+ReserveStock: %v", err)
+	locked.Add(1)
+	holdDone.Add(1)
+
+	go func() {
+		defer holdDone.Done()
+		holdOK := false
+		defer func() {
+			if !holdOK {
+				locked.Done()
 			}
 		}()
-	}
-	wg.Wait()
+		err := e.svc.tx.Do(ctx, func(ctx context.Context) error {
+			_, err := e.svc.Offer(ctx, priceID, OfferRequest{Use: UseNew, UserID: &buyer, Lock: true})
+			if err != nil {
+				return err
+			}
+			holdOK = true
+			locked.Done()
+			select {
+			case <-release:
+			case <-time.After(10 * time.Second):
+				return errors.New("测试超时：未收到释放信号")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("持锁 Offer: %v", err)
+		}
+	}()
 
-	if okCount != stock || soldOut != workers-stock {
-		t.Fatalf("期望 %d 成功、%d 售罄，得到 %d、%d", stock, workers-stock, okCount, soldOut)
+	locked.Wait()
+
+	updateErr := make(chan error, 1)
+	go func() {
+		detail, err := e.svc.GetPlan(ctx, plan.ID)
+		if err != nil {
+			updateErr <- err
+			return
+		}
+		_, err = e.svc.UpdatePrices(ctx, plan.ID, PricesUpdate{
+			ExpectedRowVersion: detail.RowVersion,
+			Tiers: []TierChange{
+				{BillingInterval: IntervalMonth, IntervalCount: 1, UnitAmount: ptrDecOfferGuard("10.00")},
+				{BillingInterval: IntervalMonth, IntervalCount: 3, UnitAmount: ptrDecOfferGuard("28.00")},
+			},
+		})
+		updateErr <- err
+	}()
+
+	select {
+	case err := <-updateErr:
+		close(release)
+		holdDone.Wait()
+		t.Fatalf("持锁期间 UpdatePrices 不应立刻完成: %v", err)
+	case <-time.After(400 * time.Millisecond):
 	}
-	if n := scanInt64(t, ctx, e, `SELECT stock_reserved FROM plans WHERE id = ?`, plan.ID); n != stock {
-		t.Fatalf("stock_reserved 期望 %d，得到 %d", stock, n)
+
+	close(release)
+	holdDone.Wait()
+
+	select {
+	case err := <-updateErr:
+		if err != nil {
+			t.Fatalf("释放锁后 UpdatePrices 应成功: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("释放锁后 UpdatePrices 超时")
 	}
+}
+
+func ptrDecOfferGuard(s string) *decimal.Decimal {
+	d := decimal.RequireFromString(s)
+	return &d
 }
 
 func TestOfferPriceMustBelongToPlan(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
-	a := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	b := publishedPlan(t, ctx, e, publishedPlanOpts{})
+	a := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "套餐甲"})
+	b := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "套餐乙"})
 	priceB := b.Prices[0].ID
 	buyer := seedUser(t, ctx, e, nil)
 
@@ -97,19 +140,29 @@ func TestOfferPriceMustBelongToPlan(t *testing.T) {
 	}
 }
 
-// 当前版本被直写成草稿（库里不兜「已发布」）时，读侧一律按没有发布版本处理。
 func TestOfferTreatsDraftCurrentVersionAsNone(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
-	plan := publishedPlan(t, ctx, e, publishedPlanOpts{})
+	plan := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "草稿当前"})
 	priceID := plan.Prices[0].ID
 	buyer := seedUser(t, ctx, e, nil)
 
-	draft, err := e.svc.CreateVersion(ctx, plan.ID)
+	detail, err := e.svc.GetPlan(ctx, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.exec(ctx, `UPDATE plans SET current_version_id = ? WHERE id = ?`, draft.ID, plan.ID); err != nil {
+	_, err = e.svc.UpdateUsage(ctx, plan.ID, UsageUpdate{
+		ExpectedRowVersion: detail.RowVersion,
+		Usage:              UsageInput{TrafficBytes: int64PtrOfferGuard(20 * 1024 * 1024 * 1024)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err = e.svc.GetPlan(ctx, plan.ID)
+	if err != nil || detail.DraftVersionID == nil {
+		t.Fatalf("应有草稿版本: err=%v draft=%v", err, detail.DraftVersionID)
+	}
+	if err := e.exec(ctx, `UPDATE plans SET current_version_id = ? WHERE id = ?`, *detail.DraftVersionID, plan.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -137,12 +190,16 @@ func TestOfferTreatsDraftCurrentVersionAsNone(t *testing.T) {
 	}
 }
 
-// 令牌还有效但用户已被删：门户目录按匿名处理，下单快照仍报错。
+func int64PtrOfferGuard(n int64) *int64 { return &n }
+
 func TestPortalCatalogDeletedUserAsAnonymous(t *testing.T) {
 	e, ctx := newEnv(t)
 	ctx, _ = seedAdmin(t, ctx, e)
-	public := publishedPlan(t, ctx, e, publishedPlanOpts{})
-	authOnly := publishedPlan(t, ctx, e, publishedPlanOpts{Visibility: VisibilityAuthenticated})
+	public := publishedPlan(t, ctx, e, publishedPlanOpts{Name: "公开"})
+	authOnly := publishedPlan(t, ctx, e, publishedPlanOpts{
+		Name:       "仅登录",
+		Visibility: VisibilityAuthenticated,
+	})
 
 	ghost := uuid.New()
 	e.users.deleted = map[uuid.UUID]bool{ghost: true}

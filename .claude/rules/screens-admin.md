@@ -1,13 +1,15 @@
 ---
 paths:
   - "panel/frontend/src/admin/screens/**"
+  - "panel/frontend/src/admin/kit/**"
 ---
 
 # 后台页面通用约定
 
-- 页面只改自己模块目录。`admin/screens/index.ts` 的 `SCREENS` 登记表：新建模块在这里登记，其余情况不动；标签读权限在 `admin/modules.ts` 的 `MODULES` 里由 Shell 先判，页面内只按写权限（`useCan`）隐藏按钮。
-- 页面内接口回 404 一律按「无权限或不存在」处理（缺权限的接口回 404），不当作报错。
+- 页面只改自己模块目录。`admin/screens/index.ts` 的 `SCREENS` 登记表：新建模块在这里登记，其余情况不动；后台权限只分有和没有，页面不按权限隐藏入口或按钮，新模块只在 `admin/modules.ts` 的 `MODULES` 登记（见 frontend-shells.md）。
+- 页面内接口回 404 统一显示「不存在或已删除」（`ui/QueryView`），不提权限。
 - 选中项、筛选、搜索、分页、抽屉标签都放在地址上（`rest` 路径段 + 查询串），刷新、分享、前进后退要落在同一处；改地址用 `core/router` 的 `navigate` / `href`，筛选类回写用 `replace`。
+- 「打开某一条」的地址被外框引用，改路径时同步改外框：`/users/list/<用户id>`、`/billing/orders/<订单id>`、`/nodes/nodes/<节点id>`（⌘K 实体搜索，`admin/entity-search.ts`），再加 `/tickets/<工单id>`、`/nodes/servers/<服务器id>`、`/plans/<套餐id>`（实时事件，`admin/events.ts`）
 - 模块内分层沿用：schemas（zod）→ queries / api（查询键前缀，写后按前缀整体失效）→ logic / model（纯函数，配单测）→ 组件；新逻辑放进纯函数层并补测试，组件只负责摆放。
 - zod schema 按 Go 实际编码写严：无 omitempty 的字段必填，指针字段 nullable，omitempty 字段 optional，nil 切片 nullable 后归一成 `[]`；后端恒回的字段不要为它写降级分支，也不要为了「兼容」放宽 schema。
 - 各模块的 schema（`schemas.ts` / `api.ts`）同时被 `panel/frontend/tests/mock-admin-<模块>.test.ts`（核对 dev 假后端）与 `tests/smoke/`（对真实网关冒烟）引用，改 schema 要连这两处一起跑、一起改。
@@ -17,5 +19,37 @@ paths:
   - `billing/schemas.ts` 的订单列表行也是用户详情「最近订单」的形状（`users/api.ts` 从这里取）
   - `users/model.ts` 的 `ORDER_STATUS_VIEW` / `orderWhat` / `parseYuan` 与 `plans/model.ts` 的周期文案被订单页复用
   - `plans/api.ts` 的 `planOptionsKey` 给用户、内容两个模块各自查套餐目录，挂在 `PK` 下，套餐页写后一并失效
-  - `users/api.ts` 的 `useUserGroups` 被套餐页（可见用户组、组专属价）借用
-- 设计稿之外按契约补了不少功能（各模块的筛选、确认框、抽屉、状态等），照设计稿改版时不要把它们删掉。
+  - `users/api.ts` 的 `useUserGroups` 被套餐页（可见用户组）借用
+- 10-16 起按设计稿显示效果还原：设计稿没显示的功能前后端一起删，安全项保留（见 redesign-2026-10-16.md）。
+- 外框（样稿 admin-v4，详见 frontend-shells.md）：外框画页头——20px 标题（模块名）+ 可选计数 + 「?」帮助 + 操作插槽，下面是页签栏。「?」在标题行右侧（手机隐藏），读 `admin/page-help.ts` 的 `PAGE_HELP`，键是 `模块:页签`（没有页签的模块用模块名）。新页面或改页签时在那里补一条（`{label, sections:[{title, ordered?, items}]}`，items 是字符串或 `{term, text}`），`admin.test.ts` 核对每个键都落在真实页面上。
+  - 页头按钮用 kit 的 `PageActions`（portal 进外框插槽，手机上外框自动换到顶栏右侧；按钮可随页签变：按 `tab` 决定渲染哪些），标题后的数字用 `PageCount value={n}`。页面不要自己再画模块标题。
+  - 详情页（打开某一条）用 kit 的 `DetailPage`，并在 `admin/modules.ts` 的 `DETAIL_ROUTES` 登记（`isDetailRoute(module, tab, rest)`：登记的「模块:页签」且 rest 非空才算详情；现有 `users:list`、`billing:orders`、`nodes:nodes`、`nodes:servers`、`plans`）。详情模式下外框不画页头和页签栏，返回链接、标题、操作、详情页签都由 `DetailPage` 画。没登记的路径 rest 非空也照常画页头（如路由页把 rest 当范围用）。
+  - 全幅模式：`MODULES` 上的 `fullBleed: true`（只有工单）——外框不画页头和页签栏、内容区无边距不限宽，页面拿到一块 `height: 100vh`（窄屏减去 52 顶栏）的纵向 flex 容器，自己画栏头铺满。
+  - 自画页头：`ownHead: true`（只有仪表盘）——外框不画标题行，页面自己画问候语与「?」（可直接用 `admin/PageHelp.tsx` 的 `PageHelpTip` + `pageHelp('dash', null)`）。
+- `admin/modules.ts` 的 `PENDING_TABS` 是「还没按新设计做出来」的页签，外壳给它们显示空状态；页面接好后从集合里删掉那一项。套餐模块没有页签，详情路径是 `/plans/<id>`（详情整页的页签接在后面：`/plans/<id>/<prices|pools|versions>`）。
+- 颜色：后台没有品牌色。`--brand` / `--accent` 在后台都是墨色（主按钮、选中、批量条），蓝色是 `--info`（链接、聚焦环、「进行中」）；成功 / 警告 / 危险用 `--ok` / `--warn` / `--danger` 及其 `-soft` / `-line`。新代码不要写 `--brand*`，要墨色写 `--text` 或 `--accent`，要蓝写 `--info`。层次：页面 `--bg`、卡片 `--surface`、悬停 `--surface-2`、选中 `--surface-3`；线 `--border` / `--border-strong` / `--border-hover`；圆角 `--radius-tag` 4 / `-sm` 7 / `-md` 10 / `-lg` 12 / `-pill`。
+- kit 组件（后台专用，`admin/kit/index.ts`，页面 `import { … } from '../../kit'`；样稿类名写在各组件注释里）：
+  - `DetailPage<T>({ back: {href, label}, title, lead?, meta?, actions?, tabs?: {label, items: {value, label, badge?}[], value, onChange}, side?, children })`：详情页骨架。返回链接 + 标题行（`lead` 是标题前的头像 / 地区码，`meta` 是标题下一行的状态、ID、复制按钮），右侧 `actions`；有 `side` 时两栏（右栏 300 宽、贴顶），窄于 960 变单栏
+  - `SideFacts({ label?, children })` + `SideFact({ label, children, action? })`：详情右栏的条目（dl）
+  - `KvList({ boxed?, labelWidth = 120, children })` + `KvRow({ label, children, action?, muted? })`：左标签右值的键值行；`boxed` 装进带框盒子
+  - `StatusDot({ tone: 'ok'|'warn'|'off'|'bad', children })`：带圆点的状态文字
+  - `SectionTitle({ children, hint?, action?, variant?: 'block'|'group', as?: 'h2'|'h3' })`：块标题（block）/ 设置分组标题（group）
+  - `Avatar({ text, size?: 'sm'|'lg' })`：首字头像
+  - `Callout({ children, action? })`：灰底提示条；`DangerRow({ title, description?, actionLabel, onAction, busy?, disabled? })`：红框危险操作行；`CopyButton({ value, label })`：复制图标按钮（成功 toast「已复制」）
+  - `SettingRow({ icon?, title, description?, checked, onChange, disabled?, tone?, children? })`：（图标 +）说明 + 开关的设置行，不传 `icon` 就不画图标列；`children` 是打开后展开的子设置
+  - `RadioCards<T>({ label, options: {value, title, description?, disabled?}[], value, onChange, columns?: 2|3 })`：单选卡片（radiogroup，方向键跳过禁用项）
+  - `TagInput({ label, values, onChange, max = 100, placeholder?, normalize?, validate?, hint?, disabled? })`：标签输入（回车、逗号、粘贴多行拆分，去重、上限）；纯函数 `splitTagInput` / `mergeTags` 也导出
+  - `RowList({ label?, children })` + `Row({ lead?, title, meta?, extra?, value?, actions?, onClick?, align? })`：表格之外的逐行列表；给 `onClick` 整行可点（键盘 Enter / 空格），行里就不要再放按钮
+  - `BulkBar({ count, onClear, children })` + `BulkAction({ onClick, disabled?, busy?, children })`：勾选后出现的墨色批量条，`count` 为 0 不渲染
+  - `SaveBar({ dirty, onSave, onReset, busy?, message?, hint?, saveLabel?, resetLabel? })`：有未保存改动时吸底的保存条
+  - `PageActions({ children })` / `PageCount({ value })`：见上面「外框」
+- 共用组件（都从 `ui/index.ts` 取）：
+  - `Modal`：`size` 取 `'sm'|'md'|'lg'`（400 / 560 / 720）或 `ModalWidth` 数值（400、440、480、520、560、640、680、720、760），另有 `subtitle`、`headExtra`、`footerStart`、`tall`、`divided`、`bodyClassName`；结构是头 / 体 / 底，体内滚动
+  - `Select`：自绘 listbox，props 与旧的原生版兼容，`onChange` 的 `e.target.value` 照旧可用；不要再往里塞 `<option>`
+  - `FilterTabs`（带计数的筛选页签，`items: {value,label,count?}[]`）、`Toolbar` + `SearchField`（列表上方的筛选条，`SearchField` 必须给 `aria-label`）
+  - `Button` 可给 `icon`（文字前 15px 图标，样稿「新建」的加号、详情页头操作的图标）
+  - `Table`：列可设 `sortable`，配 `sort` / `onSortChange`；另有 `footer`、`stickyHeader`、`boxed`（装进带框盒子，样稿 `.box` 里的表）、`rowClassName(row)`；列可设 `hideOnMobile`（≤639 整列隐藏，对应样稿 `.h-m`；有列收起的表在手机上撤掉 560 最小宽），手机上一律只留两三列、不靠横向滚动；收起列里要紧的信息补在留下的格里，用全局类 `m-only`（另起一行）/ `m-only-inline`（接在同一行），定义在 `styles/base.css`，对应样稿 `.m-only`，只在 ≤639 出现，不在模块 CSS 里各写一份；分页放进表尾用 `<Pager inline>`
+  - `Card({ title?, subtitle?, extra?, footer?, tint?, flush? })`：头 48 高带底线、`footer` 是带顶线的底栏（说明 + 保存按钮）；表格、行列表放进去用 `flush`
+  - `Button` 的 `variant="danger"` 在后台是红字红框；图标按钮用 `IconButton({ label, icon, size?: 'md'|'sm'|'xs' })`（`label` 同时是 aria-label 与 title）
+  - `Switch` 另有 `tone="danger"`（打开是红色，危险开关用）；`Checkbox`、`Tabs`、`Segmented`、`Tag`、`StatStrip` 的外观已按样稿，页面不要再覆盖它们的颜色与尺寸
+- 金额只有人民币：`formatMoney(minor)` 只收一个参数；带币种的两参写法是过渡用的 `@deprecated` 重载，改到哪个模块就去掉哪里的第二个参数，全部改完删重载。

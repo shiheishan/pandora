@@ -64,9 +64,30 @@ describe('兑换卡', () => {
     const v = redeemViews({ card: days, held: [MINE, MOM], naming: naming2, monthPrice: month, now: NOW }, [{ key: 'extend_days:b', kind: 'extend_days', subscription_id: 'b', badge: 'soonest_expiry', period_end: '2026-10-12T12:00:00', new_period_end: '2026-11-11T12:00:00' }], 'extend_days:b')[0]!
     expect([v.label, v.desc, v.badge, v.verb]).toEqual(['「妈妈的 iPad · 基础版」', '到期日 10月12日 → 11月11日', '最快到期', '兑换，加 30 天'])
     const reset = redeemViews({ card: card({ rewards: { reset_quota: true } }), held: [MINE, MOM], naming: naming2, monthPrice: month, now: NOW }, [{ key: 'reset_traffic:a', kind: 'reset_traffic', subscription_id: 'a', traffic_used: 93 * 1024 ** 3, traffic_cap: 100 * 1024 ** 3, badge: 'most_used' }], 'reset_traffic:a')[0]!
-    expect([reset.desc, reset.badge, reset.verb]).toEqual(['这个月已用 93G（93%） → 0', '用得最多', '兑换，流量清零重算'])
+    expect([reset.desc, reset.badge, reset.verb]).toEqual(['本期已用 93G（93%） → 0', '用得最多', '兑换，流量清零重算'])
     expect(simpleRedeem(card({ rewards: { balance: 1000 } }))).toEqual({ sentence: '¥10.00 直接进钱包余额，结账时自动先用。', verb: '兑换，余额 +¥10.00' })
     expect(placementBlocked(card({ rewards: { expire_days: 7 } }))).toBe(true)
-    expect(placementBlocked(card({ rewards: { traffic_bytes: 1 } }))).toBe(false)
+    expect(placementBlocked(card({ rewards: { traffic_bytes: 1 } }))).toBe(true)
+  })
+
+  it('一次性同款叠加 stack：写总流量加上与顺延到期', () => {
+    const once = card({ type: 'plan', plan_name: '大包', plan_kind: 'one_time', validity_days: 30, rewards: { plan_id: 'once' } })
+    const opts: PlacementOption[] = [
+      { key: 'stack:a', kind: 'stack', subscription_id: 'a', new_period_end: '2026-11-30T12:00:00Z' },
+    ]
+    const v = redeemViews({ card: once, held: [MINE], naming: makeNaming([MINE], undefined), monthPrice: month, now: NOW }, opts, 'stack:a')[0]!
+    // 只有一份时按套餐名称呼
+    expect(v.label).toBe('叠加到大包')
+    expect(v.desc).toBe('总流量加上，天数顺延到 11月30日，链接不变')
+    expect(v.verb).toBe('兑换，叠加')
+  })
+
+  it('new_permanent：到期说明写永久有效，不显示顺延日期', () => {
+    const once = card({ type: 'plan', plan_name: '永久档', plan_kind: 'one_time', rewards: { plan_id: 'once' } })
+    const opts: PlacementOption[] = [{ key: 'new', kind: 'new', new_permanent: true }]
+    const v = redeemViews({ card: once, held: [], naming: makeNaming([], undefined), monthPrice: month, now: NOW }, opts, 'new')[0]!
+    expect(v.desc).toBe('永久有效 · 会得到一个新链接，要另外添加到 App')
+    expect(v.sentence).toContain('永久有效')
+    expect(v.sentence).not.toContain('到 11月')
   })
 })

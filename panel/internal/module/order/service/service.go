@@ -1,10 +1,12 @@
-// Package service 是 order 模块的业务层：报价、下单（新购、续费、流量包、充值）、结算编排（实现 payment 的 Settler）、
+// Package service 是 order 模块的业务层：报价、落点、下单（新购、续费、叠加、换套餐、流量重置、充值）、结算编排（实现 payment 的 Settler）、
 // 取消与超时释放、我的订单与后台订单。别的模块只调本包。
 //
-// 锁序（全模块同向，避免 40P01）：订单 → 订阅 → 套餐行 → 限购计数 → 券 → 账务科目（用户余额、冻结、平台收入、渠道）。
-// 建单没有订单锁：续费、流量包先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
-// 结算先确认预留（库存、限购、券）再记账，见 SettlePayment。
+// 锁序（全模块同向，避免 40P01）：订单 → 订阅 → 套餐行 → 券 → 账务科目（用户余额、冻结、平台收入、渠道）。
+// 建单没有订单锁：续费、叠加、换套餐、流量重置先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
+// 结算先确认预留（券）再记账，见 SettlePayment。
 // 下单事务里一律先插订单行，再调 promo.Reserve、ledger.HoldForOrder 等（它们的 order_id 有外键）。
+// 带券时插订单之前先 promo.Lock 把券行锁成 FOR UPDATE：订单 coupon_id 的外键检查给券行加 KEY SHARE，
+// 若之后才由 Reserve 升级成 FOR UPDATE，同券并发建单会各拿着 KEY SHARE 互等。新购的套餐行只是 FOR SHARE，挡不住同套餐并发。
 package service
 
 import (
@@ -25,7 +27,7 @@ import (
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
@@ -42,17 +44,18 @@ type Catalog interface {
 	ListOffers(ctx context.Context, req catalogsvc.OfferRequest) ([]catalogsvc.OfferPlan, error)
 	// GetPlan 是后台套餐详情（含全部价格档）：人工开单预览用它确认套餐存在、取价格档
 	GetPlan(ctx context.Context, planID uuid.UUID) (catalogsvc.PlanDetail, error)
-	PackOffer(ctx context.Context, packID uuid.UUID, lock bool) (catalogsvc.TrafficPack, error)
-	ReserveStock(ctx context.Context, planID uuid.UUID, qty int) (bool, error)
-	ReleaseStock(ctx context.Context, planID uuid.UUID, qty int) error
-	CaptureStock(ctx context.Context, planID uuid.UUID, qty int) error
+	// PlansByIDs 也是流量重置价与次数上限的来源（Plan.ResetPrice、Plan.ResetLimit）
 	PlansByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Plan, error)
+	// PlanStatuses 只取套餐状态（一条 SQL）：结算时判断订单行套餐是否已归档
+	PlanStatuses(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	VersionsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Version, error)
+	// PricesByIDs 读价格档（含已归档；价格行不可改，履约时据订单行的 price_id 取一次性价的有效天数）
+	PricesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]catalogsvc.Price, error)
 }
 
 // Ledger 是 ledger service 用到的面。
 type Ledger interface {
-	Balance(ctx context.Context, userID uuid.UUID, cur money.Currency) (decimal.Decimal, error)
+	Balance(ctx context.Context, userID uuid.UUID) (decimal.Decimal, error)
 	HoldForOrder(ctx context.Context, in ledgersvc.HoldInput) (ledgersvc.Hold, error)
 	ReleaseOrderHold(ctx context.Context, orderID uuid.UUID, memo string) (bool, error)
 	CaptureFromBalance(ctx context.Context, in ledgersvc.HoldInput) (ledgersvc.Hold, uuid.UUID, error)
@@ -63,6 +66,7 @@ type Ledger interface {
 // Promo 是 promo service 用到的面。
 type Promo interface {
 	Evaluate(ctx context.Context, code string, t promosvc.Target) (*promosvc.Applied, error)
+	Lock(ctx context.Context, code string) error
 	Reserve(ctx context.Context, code string, t promosvc.Target, o promosvc.OrderRef) (*promosvc.Applied, error)
 	Release(ctx context.Context, orderID uuid.UUID, reason string) error
 	Capture(ctx context.Context, orderID uuid.UUID) error
@@ -74,32 +78,41 @@ type Subscriptions interface {
 	Get(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (subsvc.Subscription, error)
 	Lock(ctx context.Context, id uuid.UUID, owner *uuid.UUID) (subsvc.Subscription, error)
 	ByUser(ctx context.Context, userID uuid.UUID) (subsvc.UserSubscriptions, error)
+	// RenewableForPlan 是本人这个套餐还没停用的一份（订阅套餐可续、一次性套餐可叠加）
 	RenewableForPlan(ctx context.Context, userID, planID uuid.UUID, lock bool) (subsvc.Subscription, bool, error)
-	CheckPackTarget(ctx context.Context, userID, subID uuid.UUID) error
 	Provision(ctx context.Context, in subsvc.Provision) (subsvc.Subscription, error)
 	Renew(ctx context.Context, in subsvc.Renewal) (subsvc.RenewalResult, error)
-	GrantTrafficPack(ctx context.Context, in subsvc.PackGrant) (subsvc.Pack, error)
+	// Stack 是一次性套餐叠加单的履约
+	Stack(ctx context.Context, in subsvc.Stacking) (subsvc.RenewalResult, error)
 	ChangePlan(ctx context.Context, in subsvc.PlanChange) (subsvc.PlanChangeResult, error)
 	Quotas(ctx context.Context, subID uuid.UUID) ([]subsvc.Quota, error)
+	// ResetTraffic 把订阅当期已用流量清零（与后台手动重置、礼品卡同一个方法），流量重置单履约时调，Reason 用 subsvc.ResetOrder
+	ResetTraffic(ctx context.Context, in subsvc.TrafficReset) (int64, error)
+	// ResetsUsed 是本周期（订阅套餐）或有效期内（一次性套餐）已付费重置的次数：建流量重置单时与 Plan.ResetLimit 比
+	ResetsUsed(ctx context.Context, subID uuid.UUID) (int, error)
 	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
 	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
 }
 
 // Payments 是 payment service 用到的面。
 type Payments interface {
-	CreateIntent(ctx context.Context, in paymentsvc.CreateIntentInput) (paymentsvc.IntentResult, error)
+	BeginIntent(ctx context.Context, in paymentsvc.CreateIntentInput) (paymentsvc.IntentDraft, error)
+	CompleteIntent(ctx context.Context, d paymentsvc.IntentDraft) (paymentsvc.IntentResult, error)
 	CloseOrderIntents(ctx context.Context, orderID uuid.UUID, to paymentsvc.IntentStatus) (int64, error)
 	RecordOffline(ctx context.Context, in paymentsvc.OfflineInput) (paymentsvc.RecordResult, error)
 	Query(ctx context.Context, orderID uuid.UUID) (paymentsvc.QueryResult, error)
 	OrderHistory(ctx context.Context, orderID uuid.UUID) (paymentsvc.OrderHistory, error)
 	OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) (map[uuid.UUID]paymentsvc.OrderPaymentSummary, error)
-	MinPayment(ctx context.Context, cur money.Currency) (decimal.Decimal, error)
+	MinPayment(ctx context.Context) (decimal.Decimal, error)
 }
 
 // Users 是 identity service 用到的面。
 type Users interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	IDsByEmail(ctx context.Context, q string, limit int) ([]uuid.UUID, error)
+	// IsDeleted 报告用户是否已注销（不存在回 false），读时给用户行加共享锁并持有到事务提交：
+	// 下单、开单的事务一开头先调它，与注销互斥（见 rejectDeleted）。
+	IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // idempotency 是 idempotency service 的业务事务内完成。
@@ -116,7 +129,7 @@ type auditWriter interface {
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	catalog  Catalog
 	ledger   Ledger
 	promo    Promo
@@ -156,42 +169,6 @@ func (s *Service) UsePaidHook(h PaidHook) { s.hook = h }
 
 // clock 取当前时间（UTC）。
 func (s *Service) clock() time.Time { return s.now().UTC() }
-
-// orderTransitions 是订单状态的转换表。paid 只在结算事务里短暂停留，随即转 fulfilled。
-var orderTransitions = map[string][]string{
-	StatusPending: {StatusPaid, StatusCancelled, StatusExpired},
-	StatusPaid:    {StatusFulfilled},
-}
-
-// CanTransition 查订单状态转换表。
-func CanTransition(from, to string) bool {
-	for _, t := range orderTransitions[from] {
-		if t == to {
-			return true
-		}
-	}
-	return false
-}
-
-// reservationTransitions 是预留状态的转换表：held 只走一次，到 captured 或 released。
-var reservationTransitions = map[string][]string{
-	ReservationHeld: {ReservationCaptured, ReservationReleased},
-}
-
-// CanTransitionReservation 查预留状态转换表。
-func CanTransitionReservation(from, to string) bool {
-	for _, t := range reservationTransitions[from] {
-		if t == to {
-			return true
-		}
-	}
-	return false
-}
-
-// IsTerminal 表示订单已不会再变。
-func IsTerminal(status string) bool {
-	return status == StatusFulfilled || status == StatusCancelled || status == StatusExpired
-}
 
 // completeCreate 在建单事务里把幂等认领完成并绑定到订单；ctx 里没有认领（测试、内部调用）时什么都不做。
 func (s *Service) completeCreate(ctx context.Context, orderID uuid.UUID, build func() (idemsvc.Response, error)) error {
@@ -243,4 +220,22 @@ func actorFrom(p authn.Principal) Actor {
 		return Actor{Kind: ActorAdmin, ID: &id}
 	}
 	return Actor{Kind: ActorUser, ID: &id}
+}
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"PaidHook", s.hook != nil},
+		{"PluginEvents", s.events != nil},
+		{"Realtime", s.rt != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
 }

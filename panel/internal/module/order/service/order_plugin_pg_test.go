@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"testing"
 
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
@@ -76,7 +76,7 @@ func TestPluginOrderCreatedNew(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), intp(3))
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	c := e.buyNew(t, ctx, user, planID, priceID, Checkout{})
 
 	created := rec.find("order.created")
@@ -97,9 +97,6 @@ func TestPluginOrderCreatedNew(t *testing.T) {
 	if payloadStr(p, "user_id") != user.String() {
 		t.Fatalf("user_id %v", p["user_id"])
 	}
-	if payloadStr(p, "currency") != "CNY" {
-		t.Fatalf("currency %v", p["currency"])
-	}
 	if payloadFloat(p, "total") != float64(money.MustCents(c.Total)) {
 		t.Fatalf("total %v，期望 %d 分", p["total"], money.MustCents(c.Total))
 	}
@@ -114,7 +111,7 @@ func TestPluginOrderPaidZeroPay(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month", intp(5), intp(2))
+	planID, _, priceID := e.mkPlan(t, ctx, 2000, "month")
 	code := couponCode()
 	e.mkCoupon(t, ctx, code, 500)
 	e.giveBalance(t, ctx, user, 5000)
@@ -138,10 +135,7 @@ func TestPluginOrderPaidZeroPay(t *testing.T) {
 	if o.SubscriptionID == nil || subID != o.SubscriptionID.String() {
 		t.Fatalf("subscription_id %s vs 订单 %v", subID, o.SubscriptionID)
 	}
-	// 0 元单照旧代码口径：currency 为 ""、amount 为 0
-	if v, ok := paid["currency"]; !ok || v != "" {
-		t.Fatalf("currency %v", paid["currency"])
-	}
+	// 0 元单：amount 为 0
 	if v, ok := paid["amount"]; !ok || v != float64(0) {
 		t.Fatalf("amount %v", paid["amount"])
 	}
@@ -156,13 +150,13 @@ func TestPluginOrderPaidWebhook(t *testing.T) {
 	rec := &pluginRec{}
 	e.svc.UsePluginEvents(rec)
 
-	code := demoCode()
-	e.mkDemoProvider(t, ctx, code)
+	code := payCode()
+	e.mkPayProvider(t, ctx, code)
 	user, _, orderID := e.pendingWithEverything(t, ctx)
 
 	ack := e.payAndNotify(t, ctx, user, orderID, code, "pay-"+randHex(8))
-	if ack.HTTPStatus != http.StatusOK {
-		t.Fatalf("回执 %d", ack.HTTPStatus)
+	if !ackOK(ack) {
+		t.Fatalf("回执: %s", ack.Body)
 	}
 
 	paid := rec.find("order.paid")
@@ -220,7 +214,7 @@ func TestPluginOrderCancelled(t *testing.T) {
 	}
 }
 
-// 超时作废：事件里的 reason 沿用旧值 reservation_expired，预留的 release_reason 仍是 expired。
+// 超时作废：事件里的 reason 固定是 reservation_expired，预留的 release_reason 仍是 expired。
 func TestPluginOrderExpiredReason(t *testing.T) {
 	e, ctx := newEnv(t)
 	rec := &pluginRec{}
@@ -250,11 +244,11 @@ func TestPluginOrderExpiredReason(t *testing.T) {
 	}
 }
 
-// 0 元续费照旧代码不发 order.paid（旧代码只有新购与流量包的 0 元单发）。
+// 0 元续费不发 order.paid（只有新购与流量包的 0 元单发，插件事件口径是产品决定）。
 func TestPluginZeroPayRenewalNoPaid(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
+	planID, v1, priceID := e.mkPlan(t, ctx, 1000, "month")
 	sub := e.provision(t, ctx, user, planID, v1, priceID, 1000)
 	e.giveBalance(t, ctx, user, 5000)
 
@@ -275,19 +269,34 @@ func TestPluginZeroPayRenewalNoPaid(t *testing.T) {
 	}
 }
 
-func TestPluginPackOrderCreated(t *testing.T) {
+func TestPluginStackOrderCreated(t *testing.T) {
 	e, ctx := newEnv(t)
 	rec := &pluginRec{}
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, versionID, priceID := e.mkPlan(t, ctx, 1000, "month", nil, nil)
-	sub := e.provision(t, ctx, user, planID, versionID, priceID, 1000)
-	packID := e.mkPack(t, ctx, 600, 50*gib)
-
-	c, err := e.svc.CreatePackOrder(asUser(ctx, user), PackOrderInput{PackID: packID, SubscriptionID: sub.ID})
+	planID, versionID, priceID := e.mkOneTimePlan(t, ctx, 1000, 100*gib, intp(30))
+	pid := priceID
+	sub, err := e.subs.Provision(ctx, subsvc.Provision{
+		UserID:        user,
+		PlanID:        planID,
+		PlanVersionID: versionID,
+		Price: subsvc.PriceSnapshot{
+			PriceID:       &pid,
+			Amount:        money.FromCents(1000),
+			Interval:      "one_time",
+			IntervalCount: 1,
+			ValidityDays:  intp(30),
+		},
+		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
+	})
 	if err != nil {
-		t.Fatalf("流量包建单: %v", err)
+		t.Fatalf("开通一次性订阅: %v", err)
+	}
+
+	c, err := e.svc.CreateStackOrder(asUser(ctx, user), StackOrderInput{SubscriptionID: sub.ID})
+	if err != nil {
+		t.Fatalf("叠加建单: %v", err)
 	}
 	created := rec.find("order.created")
 	if len(created) != 1 {
@@ -305,7 +314,7 @@ func TestPluginEmitErrorFailsOrder(t *testing.T) {
 	e.svc.UsePluginEvents(rec)
 
 	user := e.mkUser(t, ctx)
-	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month", intp(10), intp(3))
+	planID, _, priceID := e.mkPlan(t, ctx, 3000, "month")
 	_, err := e.svc.CreateNewOrder(asUser(ctx, user), NewOrderInput{PlanID: planID, PriceID: priceID, Checkout: Checkout{}})
 	if err == nil {
 		t.Fatal("期望建单失败")

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Button, Modal, useToast } from '../../../ui'
+import { useToast } from '../../../ui'
+import { Btn, Sheet } from '../../kit'
 import { appLink, CLIENTS, copyText, DEVICE_SAY, DEVICES, detectDevice, guessDeviceFromName, shareMessage, type ClientApp, type Device } from './clients'
 import { Chips, ChoiceList, flowCss } from './Flow'
 import css from './ImportSheet.module.css'
@@ -21,9 +22,9 @@ export interface ImportTarget {
 
 export function ImportSheet({ target, naming, onClose }: { target: ImportTarget | null; naming: Naming; onClose: () => void }) {
   return (
-    <Modal open={target !== null} onClose={onClose} title={target ? `把${naming.multi ? `「${naming.sn(target.sub)}」` : '这份'}添加到 App` : ''}>
+    <Sheet open={target !== null} onClose={onClose} title={target ? `把${naming.multi ? `「${naming.sn(target.sub)}」` : '这份'}添加到 App` : ''}>
       {target && <ImportBody key={target.sub.id} target={target} naming={naming} onClose={onClose} />}
-    </Modal>
+    </Sheet>
   )
 }
 
@@ -42,9 +43,6 @@ function ImportBody({ target, naming, onClose }: { target: ImportTarget; naming:
       {step === 'ask' && <Ask sub={sub} onPick={setStep} />}
       {step === 'here' && <Here sub={sub} url={url} onOther={() => setStep('other')} onDone={onClose} />}
       {step === 'other' && <Other sub={sub} url={url} onHere={() => setStep('here')} />}
-      <Button block onClick={onClose}>
-        关闭
-      </Button>
     </div>
   )
 }
@@ -91,8 +89,8 @@ function Here({ sub, url, onOther, onDone }: { sub: Subscription; url: string; o
           {app.note && <small>{app.note}</small>}
         </span>
         {link ? (
-          <a
-            className={flowCss.miniPrimary}
+          <Btn
+            size="sm"
             href={link}
             onClick={() => {
               toast(`正在打开 ${app.name}，会添加「${sub.client_name}」`)
@@ -100,11 +98,11 @@ function Here({ sub, url, onOther, onDone }: { sub: Subscription; url: string; o
             }}
           >
             添加
-          </a>
+          </Btn>
         ) : (
-          <button type="button" className={flowCss.mini} onClick={() => void copy(app)}>
+          <Btn size="sm" tone="soft" onClick={() => void copy(app)}>
             复制链接
-          </button>
+          </Btn>
         )}
       </div>
     )
@@ -138,9 +136,9 @@ function Here({ sub, url, onOther, onDone }: { sub: Subscription; url: string; o
         <summary>其他 App（{apps.rest.length} 个）</summary>
         {apps.rest.map(row)}
       </details>
-      <Button block onClick={() => void copy()}>
+      <Btn full tone="soft" onClick={() => void copy()}>
         没有这些 App？复制链接，手动粘贴
-      </Button>
+      </Btn>
       <button type="button" className={flowCss.altButton} onClick={onOther}>
         ← 其实是要添加到别的设备
       </button>
@@ -179,16 +177,16 @@ function Other({ sub, url, onHere }: { sub: Subscription; url: string; onHere: (
             <div className={flowCss.faint}>已复制，直接转发给对方这段话：</div>
             <p>{message}</p>
           </div>
-          <Button block onClick={() => void copy(true)}>
+          <Btn full tone="soft" onClick={() => void copy(true)}>
             再复制一次这段话
-          </Button>
+          </Btn>
         </>
       ) : (
-        <Button variant="primary" block onClick={() => void copy(false)}>
+        <Btn full onClick={() => void copy(false)}>
           复制链接和说明，发给对方
-        </Button>
+        </Btn>
       )}
-      <p className={flowCss.warnBox}>这条链接谁拿到谁能用，只发给本人。发错了可以在卡片底部「换新链接」。</p>
+      <p className={flowCss.warnBox}>这条链接谁拿到谁能用，只发给本人。发错了可以在我的套餐里「换新链接」。</p>
       <details className={css.more}>
         <summary>对方就在你旁边？让他扫码</summary>
         <div className={css.qrSide}>

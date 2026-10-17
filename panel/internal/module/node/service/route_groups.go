@@ -1,4 +1,4 @@
-// 本文件归 p5-routing：路由组的增删改查。
+// 路由组的增删改查。
 package service
 
 import (

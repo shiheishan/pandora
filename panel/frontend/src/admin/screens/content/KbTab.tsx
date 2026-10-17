@@ -1,221 +1,199 @@
-import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
-import { isApiError } from '../../../core/api'
-import { formatDateTime } from '../../../core/format'
-import { navigate } from '../../../core/router'
-import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, QueryView, Segmented, Skeleton, TextArea, useToast } from '../../../ui'
-import css from './content.module.css'
+import { useCallback, useEffect, useState } from 'react'
+import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
+import { navigate, useHashLocation } from '../../../core/router'
+import { Button, Empty, FilterTabs, Modal, QueryView, Table, Tag, Toolbar, SearchField, IconClose } from '../../../ui'
+import { PageActions } from '../../kit'
 import { KbEditor } from './KbEditor'
-import { groupArticles, groupByCategory, kbBody, kbFormFrom, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, type Article } from './logic'
-import { useContentPage, useContentPages, useFailure, useIntentKey, useInvalidateContent } from './queries'
-import { KINDS, pageArchived, pageSaved, type Kind, type Page } from './schemas'
+import css from './kb.module.css'
+import { articleRows, groupArticles, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, platformsLabel, type Article } from './logic'
+import { useContentPage, useContentPages } from './queries'
+import { KINDS, type Kind } from './schemas'
 
-const open = (slug: string) => navigate(`/content/kb/${slug}`)
-const STATUS_TONE = { draft: css.warn, published: css.ok, archived: css.muted } as const
+const LIST_PATH = '/content/kb'
+
+const STATUS_TONE = { draft: 'warn', published: 'ok', archived: 'neutral' } as const
+
+function isKind(v: string | null): v is Kind {
+  return v !== null && (KINDS as readonly string[]).includes(v)
+}
+
+/** 列表地址上的 k / q：默认类型不写 k */
+function listQuery(kind: Kind, q: string): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  if (kind !== 'kb_article') out.k = kind
+  const trimmed = q.trim()
+  if (trimmed) out.q = trimmed
+  return Object.keys(out).length > 0 ? out : undefined
+}
 
 export function KbTab({ rest }: { rest: string[] }) {
-  const [kind, setKind] = useState<Kind>('kb_article')
-  const [q, setQ] = useState('')
+  const { query: urlQuery } = useHashLocation()
+  const rawKind = urlQuery.get('k')
+  const kind: Kind = isKind(rawKind) ? rawKind : 'kb_article'
+  const q = urlQuery.get('q') ?? ''
   const pages = useContentPages(kind)
   const selected = rest[0] ?? null
 
-  return (
-    <QueryView query={pages} rows={6} empty={null} isEmpty={() => false}>
-      {(list) => {
-        const articles = groupArticles(list)
-        const groups = groupByCategory(articles, q)
-        const first = groups[0]?.items[0] ?? null
-        const current: Article | 'new' | null = selected === 'new' ? 'new' : (articles.find((a) => a.slug === selected) ?? first)
-        return (
-          <div className={css.kbLayout}>
-            <nav className={css.tree} aria-label="文章目录">
-              <div className={css.treeTools}>
-                <Segmented size="sm" label="内容类型" value={kind} options={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))} onChange={setKind} />
-                <Input size="sm" type="search" aria-label="搜索标题或标识" placeholder="搜索标题或标识" value={q} onChange={(e) => setQ(e.target.value)} />
-              </div>
-              {groups.map((g) => (
-                <div key={g.cat}>
-                  <div className={css.treeCat}>{g.cat}</div>
-                  {g.items.map((a) => (
-                    <button
-                      key={a.slug}
-                      type="button"
-                      className={`${css.treeItem} ${current !== 'new' && current?.slug === a.slug ? css.treeCurrent : ''} ${a.archived ? css.dim : ''}`}
-                      aria-current={(current !== 'new' && current?.slug === a.slug) || undefined}
-                      onClick={() => open(a.slug)}
-                    >
-                      <span className={css.itemTitle}>{a.latest.title}</span>
-                      <span className={css.treeVersion}>v{a.latest.version}</span>
-                    </button>
-                  ))}
-                </div>
-              ))}
-              {groups.length === 0 && (
-                <div className={css.treeEmpty}>
-                  <Empty bare title={q ? '没有匹配的文章' : `还没有${KIND_LABEL[kind]}`} description={q ? '换个关键词，或清空搜索。' : '点下方「＋ 新文章」写第一篇。'} />
-                </div>
-              )}
-              <div className={css.treeFoot}>
-                <Button size="sm" className={css.dashed} onClick={() => open('new')}>
-                  ＋ 新文章
-                </Button>
-              </div>
-            </nav>
-            {current === 'new' ? (
-              <>
-                <KbEditor key={`new:${kind}`} article={null} page={null} kind={kind} categories={knownCategories(articles)} takenSlugs={articles.map((a) => a.slug)} />
-                <section className={css.history}>
-                  <div className={css.historyHead}>版本历史</div>
-                  <div className={css.treeEmpty}>
-                    <span className={css.faint}>保存后在这里看到每个版本。</span>
-                  </div>
-                </section>
-              </>
-            ) : current ? (
-              <ArticlePane key={current.slug} article={current} categories={knownCategories(articles)} />
-            ) : (
-              <section className={`${css.panel} ${css.spanRest}`}>
-                <Empty bare title="没有选中的文章" description="左侧选一篇文章，或新建一篇。" />
-              </section>
-            )}
-          </div>
-        )
-      }}
-    </QueryView>
+  const setList = useCallback(
+    (next: { kind?: Kind; q?: string }) => {
+      const k = next.kind ?? kind
+      const text = next.q ?? q
+      const query = listQuery(k, text)
+      // 换类型回到列表（开着的文章不属于新类型）；只改搜索时保留开着的弹窗
+      const keep = selected && next.kind === undefined
+      navigate(keep ? `${LIST_PATH}/${encodeURIComponent(selected)}` : LIST_PATH, { replace: true, query })
+    },
+    [kind, q, selected],
   )
-}
 
-/** 中栏与右栏：编辑最新版，或只读查看历史里的某一版 */
-function ArticlePane({ article, categories }: { article: Article; categories: readonly string[] }) {
-  // 记 id 不记行：写后列表重拉，状态要跟着新行走
-  const [viewing, setViewing] = useState<string | null>(null)
-  const latest = useContentPage(article.latest.id, article.slug)
-  const shown = article.rows.find((r) => r.id === viewing && r.id !== article.latest.id) ?? null
+  const open = (slug: string) => navigate(`${LIST_PATH}/${encodeURIComponent(slug)}`, { query: listQuery(kind, q) })
+  const close = () => navigate(LIST_PATH, { replace: true, query: listQuery(kind, q) })
+  const startNew = () => open('new')
 
   return (
     <>
-      {shown ? (
-        <VersionView article={article} row={shown} onBack={() => setViewing(null)} />
-      ) : latest.data ? (
-        <KbEditor article={article} page={latest.data} kind={article.latest.kind} categories={categories} takenSlugs={[]} />
-      ) : (
-        <section className={css.panel}>
-          <QueryView query={latest} rows={6} empty={null}>
-            {() => null}
-          </QueryView>
-        </section>
-      )}
-      <section className={css.history} aria-label="版本历史">
-        <div className={css.historyHead}>版本历史</div>
-        {article.rows.map((r) => {
-          const isLatest = r.id === article.latest.id
+      <PageActions>
+        <Button variant="primary" icon={Add01Icon} onClick={startNew}>
+          新建文章
+        </Button>
+      </PageActions>
+      <QueryView query={pages} rows={6} empty={null} isEmpty={() => false}>
+        {(list) => {
+          const articles = groupArticles(list)
+          const rows = articleRows(articles, q)
+          const current: Article | 'new' | null = selected === 'new' ? 'new' : selected ? (articles.find((a) => a.slug === selected) ?? null) : null
           return (
-            <button key={r.id} type="button" className={`${css.historyRow} ${(shown ? shown.id === r.id : isLatest) ? css.treeCurrent : ''}`} aria-current={(shown ? shown.id === r.id : isLatest) || undefined} onClick={() => setViewing(isLatest ? null : r.id)}>
-              <span className={css.historyVersion}>
-                v{r.version}
-                {isLatest ? ' · 当前' : ''}
-                <span className={STATUS_TONE[r.status]}>{PAGE_STATUS_LABEL[r.status]}</span>
-              </span>
-              <span className={css.faint}>
-                {r.created_by_name ?? '未知作者'} · {formatDateTime(r.created_at).slice(5, 10)}
-              </span>
-            </button>
+            <div className={css.page}>
+              <Toolbar>
+                <SearchBox value={q} onChange={(text) => setList({ q: text })} />
+                <FilterTabs
+                  label="按类型筛选"
+                  value={kind}
+                  items={KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))}
+                  onChange={(k) => setList({ kind: k })}
+                />
+              </Toolbar>
+              <Table
+                boxed
+                label="文章列表"
+                rows={rows}
+                rowKey={(a) => a.slug}
+                rowClassName={(a) => (a.archived ? css.dimRow : undefined)}
+                onRowClick={(a) => open(a.slug)}
+                columns={[
+                  {
+                    key: 'title',
+                    header: '标题',
+                    render: (a) => (
+                      <span className={css.titleCell}>
+                        <span className={css.titleMain}>{a.latest.title}</span>
+                        <span className={css.titleSlug}>{a.slug}</span>
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'category',
+                    header: '分类',
+                    hideOnMobile: true,
+                    width: '112px',
+                    render: (a) => <span className={css.cat}>{a.latest.category?.trim() || '未分类'}</span>,
+                  },
+                  {
+                    key: 'platforms',
+                    header: '平台',
+                    hideOnMobile: true,
+                    width: '140px',
+                    render: (a) => <span className={css.plats}>{platformsLabel(a.latest.target_platforms)}</span>,
+                  },
+                  {
+                    key: 'status',
+                    header: '状态',
+                    width: '72px',
+                    render: (a) => <Tag tone={STATUS_TONE[a.latest.status]}>{PAGE_STATUS_LABEL[a.latest.status]}</Tag>,
+                  },
+                  {
+                    key: 'version',
+                    header: '版本',
+                    width: '56px',
+                    align: 'right',
+                    render: (a) => <span className={css.ver}>v{a.latest.version}</span>,
+                  },
+                ]}
+                empty={
+                  articles.length === 0 ? (
+                    <Empty bare title={`还没有${KIND_LABEL[kind]}`} description="点「新建文章」写第一篇。" />
+                  ) : q.trim() ? (
+                    <Empty bare title="没有匹配的文章" description="换个关键词，或清空搜索。" />
+                  ) : (
+                    <Empty bare title={`还没有${KIND_LABEL[kind]}`} />
+                  )
+                }
+              />
+              {selected === null ? null : current === 'new' ? (
+                <KbEditor key={`new:${kind}`} article={null} page={null} kind={kind} categories={knownCategories(articles)} takenSlugs={articles.map((a) => a.slug)} onClose={close} />
+              ) : current ? (
+                <KbArticleModal key={current.slug} article={current} categories={knownCategories(articles)} onClose={close} />
+              ) : (
+                <Modal
+                  open
+                  size={720}
+                  title="文章"
+                  onClose={close}
+                  headExtra={
+                    <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
+                      <IconClose />
+                    </Button>
+                  }
+                >
+                  <Empty bare title="文章不存在或已删除" />
+                </Modal>
+              )}
+            </div>
           )
-        })}
-      </section>
+        }}
+      </QueryView>
     </>
   )
 }
 
-/** 历史版本只读：以此版本内容再发布成新版本（后端「每次保存生成新版本」），仍在发布的旧版可单独归档 */
-function VersionView({ article, row, onBack }: { article: Article; row: Page; onBack: () => void }) {
-  const api = useApi()
-  const toast = useToast()
-  const fail = useFailure()
-  const intent = useIntentKey()
-  const invalidate = useInvalidateContent()
-  const detail = useContentPage(row.id, article.slug)
-  const [archiving, setArchiving] = useState(false)
-  const latestVersion = article.latest.latest_version ?? article.latest.version
-
-  const restore = useMutation({
-    mutationFn: (p: Page) => {
-      const body = kbBody(kbFormFrom(p), 'published', latestVersion, p)
-      return api.post('v1/content-pages', pageSaved, { body, idempotencyKey: intent.keyFor([p.id, 'restore', body]) })
-    },
-    onSuccess: (r) => {
-      intent.reset()
-      toast(`已用 v${row.version} 的内容发布为 v${r.page.version}`)
-      void invalidate('pages')
-      onBack()
-    },
-    onError: (error) => {
-      if (isApiError(error, 'conflict')) void invalidate('pages')
-      fail(error, { intent })
-    },
-  })
-
-  const archive = useMutation({
-    mutationFn: (p: Page) => api.post(`v1/content-pages/${p.id}/archive`, pageArchived, { body: { expected_version: p.version }, idempotencyKey: intent.keyFor([p.id, 'archive', p.version]) }),
-    onSuccess: () => {
-      intent.reset()
-      toast(`v${row.version} 已归档`)
-      void invalidate('pages')
-    },
-    onError: (error) => {
-      if (isApiError(error, 'conflict')) void invalidate('pages')
-      fail(error, { intent })
-    },
-  })
-
-  const busy = restore.isPending || archive.isPending
+/** 已有文章：先拉最新版全文再进编辑弹窗 */
+function KbArticleModal({ article, categories, onClose }: { article: Article; categories: readonly string[]; onClose: () => void }) {
+  const latest = useContentPage(article.latest.id, article.slug)
+  if (latest.data) {
+    return <KbEditor article={article} page={latest.data} kind={article.latest.kind} categories={categories} takenSlugs={[]} onClose={onClose} />
+  }
   return (
-    <section className={css.panel} aria-label={`查看 v${row.version}`}>
-      <div className={css.banner}>
-        正在查看 v{row.version}（{PAGE_STATUS_LABEL[row.status]}，{row.created_by_name ?? '未知作者'} · {formatDateTime(row.created_at)}），只读。
-      </div>
-      {detail.data ? (
-        <>
-          <div className={css.titleRow}>
-            <Input aria-label="文章标题" className={css.kbTitle} value={detail.data.title} readOnly />
-            <Input aria-label="分类" className={css.kbTitle} value={detail.data.category ?? ''} placeholder="未分类" readOnly />
-          </div>
-          <TextArea aria-label="文章正文" mono rows={14} value={detail.data.body ?? ''} readOnly />
-        </>
-      ) : detail.isPending ? (
-        <Skeleton height={320} />
-      ) : (
-        <QueryView query={detail} empty={null}>
-          {() => null}
-        </QueryView>
-      )}
-      <div className={css.editorBar}>
-        <Button variant="ghost" onClick={onBack}>
-          回到最新版
+    <Modal
+      open
+      size={720}
+      divided
+      title="编辑文章"
+      onClose={onClose}
+      headExtra={
+        <Button variant="ghost" size="sm" aria-label="关闭" onClick={onClose}>
+          <IconClose />
         </Button>
-        <span className={css.spacer} />
-        {row.status === 'published' && (
-          <Button variant="danger" disabled={busy} busy={archive.isPending} onClick={() => setArchiving(true)}>
-            归档此版本
-          </Button>
-        )}
-        <Button variant="primary" disabled={busy || !detail.data} busy={restore.isPending} onClick={() => detail.data && restore.mutate(detail.data)}>
-          以此版本恢复为 v{latestVersion + 1}
-        </Button>
-      </div>
-      <ConfirmModal
-        open={archiving}
-        title={`归档 v${row.version}？`}
-        body="这一版不再对门户用户展示。其他版本不受影响。"
-        confirmLabel="归档"
-        tone="danger"
-        onConfirm={() => {
-          archive.mutate(row)
-          setArchiving(false)
-        }}
-        onCancel={() => setArchiving(false)}
-      />
-    </section>
+      }
+    >
+      <QueryView query={latest} rows={6} empty={null}>
+        {() => null}
+      </QueryView>
+    </Modal>
   )
+}
+
+/** 搜索框：输入 300ms 后才回写地址 */
+function SearchBox({ value, onChange }: { value: string; onChange: (q: string) => void }) {
+  const [text, setText] = useState(value)
+  const [synced, setSynced] = useState(value)
+  if (value !== synced) {
+    setSynced(value)
+    setText(value)
+  }
+  useEffect(() => {
+    if (text === value) return
+    const timer = setTimeout(() => onChange(text), 300)
+    return () => clearTimeout(timer)
+  }, [text, value, onChange])
+  return <SearchField value={text} onChange={(e) => setText(e.target.value)} placeholder="标题或标识" aria-label="搜索文章" width={240} />
 }

@@ -27,7 +27,7 @@ describe('mock api · admin nodes', () => {
     expect(all.some((n) => n.serving_status === 'retired')).toBe(true)
     // 列表不带编辑字段；按 id 单取才带，且读接口抹掉敏感键
     const raw = (await (await call('GET', '/v1/nodes')).json()) as { nodes: Array<Record<string, unknown>> }
-    expect(raw.nodes.some((n) => 'protocol_config' in n || 'kernel' in n || 'traffic_rate' in n)).toBe(false)
+    expect(raw.nodes.some((n) => 'protocol_config' in n || 'traffic_rate' in n)).toBe(false)
     const one = nodeDetailResponse.parse(await (await call('GET', `/v1/nodes?id=${rows[0]!.id}`)).json())
     expect(one.nodes).toHaveLength(1)
     expect(one.nodes[0]!.id).toBe(rows[0]!.id)
@@ -36,7 +36,7 @@ describe('mock api · admin nodes', () => {
     expect(nodeDetailResponse.parse(await (await call('GET', '/v1/nodes?id=00000000-0000-4000-8000-000000000000')).json())).toEqual({ nodes: [], total: 0 })
   })
 
-  it('searches, filters and pages on the server like nodefabric.QueryAdminNodes', async () => {
+  it('searches, filters and pages on the server like GET /v1/nodes', async () => {
     const page = async (query: string) => nodesResponse.parse(await (await call('GET', `/v1/nodes?${query}`)).json())
     const all = await page('state=all')
     expect(all.nodes.every((n) => n.serving_status !== 'retired')).toBe(true)
@@ -44,7 +44,7 @@ describe('mock api · admin nodes', () => {
     expect((await page('state=retired')).nodes.every((n) => n.serving_status === 'retired')).toBe(true)
     expect((await page('state=retired')).total).toBeGreaterThan(0)
     expect((await page('state=offline')).nodes.every((n) => n.serving_status === 'active' && n.stale)).toBe(true)
-    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'draining' || (n.serving_status === 'active' && !n.stale))).toBe(true)
+    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'active' && !n.stale)).toBe(true)
     expect((await page('state=disabled')).nodes.every((n) => n.serving_status === 'draft' || n.serving_status === 'disabled')).toBe(true)
     // 搜索：名称、国家（不分大小写）、编号
     const hk = await page('q=hk')
@@ -74,10 +74,19 @@ describe('mock api · admin nodes', () => {
     const draft = await call('POST', '/v1/nodes/status:batch', { items: [{ id: src!.id, row_version: src!.row_version }], serving_status: 'draft' }, 'batch-1')
     expect(draft.status).toBe(409)
     expect(await draft.json()).toMatchObject({ error: { fields: { serving_status: 'active -> draft' } } })
+    // 停用节点不可迁移：列表 movable=false，强行迁移 409
     const disabled = (await list()).find((n) => n.serving_status === 'disabled')!
+    expect(disabled.movable).toBe(false)
     const move = await call('POST', `/v1/nodes/${disabled.id}/move`, { server_id: src!.server_id, row_version: disabled.row_version }, 'move-1')
     expect(move.status).toBe(409)
-    expect(await move.json()).toMatchObject({ error: { fields: { active_identities: '1' } } })
+    expect(await move.json()).toMatchObject({ error: { code: 'conflict', message: '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点' } })
+    // 已接入服务器上的新草稿可迁移：副本建在在役节点（服务器有心跳、有身份）的那台服务器上，movable=true，能迁到另一台就绪的服务器
+    const fresh = (await list()).find((n) => n.id === created.id)!
+    expect(fresh).toMatchObject({ serving_status: 'draft', server_id: src!.server_id, movable: true })
+    const target = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id !== src!.server_id && s.status === 'ready')!
+    const moved = await call('POST', `/v1/nodes/${fresh.id}/move`, { server_id: target.id, row_version: fresh.row_version }, 'move-2')
+    expect(moved.status).toBe(200)
+    expect(((await moved.json()) as { server_id: string }).server_id).toBe(target.id)
   })
 
   it('validates protocol config against the schema and rejects unknown fields', async () => {
@@ -132,7 +141,7 @@ describe('mock api · admin nodes infra', () => {
 
   it('refuses to shrink capacity below the nodes in use and cascades on delete', async () => {
     const kr = (await servers()).find((x) => x.name === 'kr-sel-edge-1')!
-    const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.pandora.run', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
+    const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.example.test', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
     expect(made.status).toBe(201)
     const low = await call('PATCH', `/v1/servers/${kr.id}`, { row_version: kr.row_version, capacity_nodes: 0 })
     expect(low.status).toBe(422)
@@ -149,13 +158,21 @@ describe('mock api · admin nodes infra', () => {
     expect(await tight.json()).toMatchObject({ error: { code: 'conflict', fields: { capacity_nodes: expect.stringMatching(/^minimum=[2-9]$/) } } })
   })
 
-  it('issues server install tokens idempotently', async () => {
+  it('issues server install tokens once per idempotency key', async () => {
     const hk = (await servers()).find((x) => x.name === 'hk-hkg-edge-1')!
     const first = await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 30 }, 'srv-tok-1')
     expect(first.status).toBe(201)
+    const firstJson = (await first.json()) as { token: string }
     const again = await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 30 }, 'srv-tok-1')
-    expect(await again.json()).toEqual(await first.json())
+    expect(again.status).toBe(409)
+    const againJson = (await again.json()) as { error: { code: string } }
+    expect(againJson.error.code).toBe('conflict')
+    expect(JSON.stringify(againJson)).not.toContain(firstJson.token)
     expect((await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 20 }, 'srv-tok-1')).status).toBe(409)
+    const otherKey = await call('POST', `/v1/servers/${hk.id}/bootstrap-token`, { ttl_minutes: 30 }, 'srv-tok-2')
+    expect(otherKey.status).toBe(201)
+    const otherJson = (await otherKey.json()) as { token: string }
+    expect(otherJson.token).not.toBe(firstJson.token)
   })
 
   it('creates, edits and guards pool deletion', async () => {
@@ -279,41 +296,41 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     expect(cleared.reality_settings.private_key).toBeNull()
   })
 
-  it('R108/R113: activate walks an attesting node to active, readies its server, replays, and refuses others with 409', async () => {
+  it('R108/R113: activate takes a draft node to active, readies its server, replays, and refuses others with 409', async () => {
     const n = (await list()).find((x) => x.name === '大阪 01（待上线）')!
-    expect(n.status).toBe('attesting')
+    expect(n.serving_status).toBe('draft')
     const res = await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')
     expect(res.status).toBe(200)
     const body = adminNodeSchema.parse(await res.json())
-    expect(body).toMatchObject({ status: 'active', serving_status: 'active', row_version: n.row_version + 1 })
+    expect(body).toMatchObject({ serving_status: 'active', row_version: n.row_version + 1 })
     // R113：池绑着套餐，没有提示时不出现 warnings 这个键
     expect(body).not.toHaveProperty('warnings')
     // 同键重放拿到同一结果；已是 active 再上线是 200 不改动，且先于版本号判断（带过期版本号也回 200）
     expect(adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')).json())).toEqual(body)
     expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-2')).status).toBe(200)
     // 无池的在役节点：200 并带「未划入节点池」提示
-    const noPool = (await list()).find((x) => x.pool_id === null && x.status === 'active')!
+    const noPool = (await list()).find((x) => x.pool_id === null && x.serving_status === 'active')!
     const warned = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${noPool.id}/activate`, { row_version: noPool.row_version }, 'act-5')).json())
     expect(warned.warnings).toEqual(['未划入节点池，不服务任何用户'])
     // 首次搭建：池还没绑套餐，上线成功并带提示
     const fresh = (await list()).find((x) => x.name === '大阪 02（新池待上线）')!
     const unbound = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${fresh.id}/activate`, { row_version: fresh.row_version }, 'act-8')).json())
-    expect(unbound).toMatchObject({ status: 'active', warnings: ['所在节点池没有绑定任何套餐，暂时不服务任何用户'] })
+    expect(unbound).toMatchObject({ serving_status: 'active', warnings: ['所在节点池没有绑定任何套餐，暂时不服务任何用户'] })
     // 版本号非法先回 422（httpx.Invalid）
     expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: 0 }, 'act-6')).status).toBe(422)
     const srv = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id === n.server_id)!
     expect(srv.status).toBe('ready')
     // 版本冲突、终态
     const retired = (await list()).find((x) => x.serving_status === 'retired')!
-        const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
+    const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
     expect(refused.status).toBe(409)
-    expect(((await refused.json()) as { error: { message: string } }).error.message).toContain('retired')
+    expect(((await refused.json()) as { error: { message: string } }).error.message).toContain('已退役')
     // 过期版本号对未上线节点回 409
-    const pending = (await list()).find((x) => x.status === 'draft')!
+    const pending = (await list()).find((x) => x.serving_status === 'draft' && x.identity_serial === null)!
     expect((await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version + 9 }, 'act-3')).status).toBe(409)
-    // 还在接入：同版本号回 409 并说「还没完成接入」
+    // 没接入的草稿：同版本号回 409 并说服务器还没接入
     const early = await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version }, 'act-7')
-    expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没完成接入')
+    expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没接入')
   })
 
   it('W2: delivery notes follow the subscription rule, and a serving node cannot drop its pool', async () => {

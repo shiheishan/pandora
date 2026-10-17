@@ -107,7 +107,9 @@ run_once() {
   node_pid=""
   python3 - "${node_port}" <<'PY'
 import socket,sys
-s=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
+# 探活连接在节点侧留下 TIME_WAIT；开 SO_REUSEADDR 只容忍它，仍在监听时照样 EADDRINUSE
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
 PY
 }
 
@@ -152,7 +154,9 @@ run_offline() {
   node_pid=""
   python3 - "${node_port}" <<'PY'
 import socket,sys
-s=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
+# 探活连接在节点侧留下 TIME_WAIT；开 SO_REUSEADDR 只容忍它，仍在监听时照样 EADDRINUSE
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
 PY
 }
 

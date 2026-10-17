@@ -1,6 +1,6 @@
 import { formatBytes } from '../../../core/format'
 import { href } from '../../../core/router'
-import { Card, Empty, Skeleton } from '../../../ui'
+import { Empty, Skeleton } from '../../../ui'
 import { LoadError } from './Blocks'
 import css from './common.module.css'
 import { useSubscriptionUsage } from './subscriptions'
@@ -8,27 +8,30 @@ import { buildUsageBars, bytesParts, projectUsage, type TrafficSummary } from '.
 
 interface UsageCardProps {
   subscriptionId: string
-  /** 主卡算好的流量摘要（含流量包）；没有流量额度时为 null，只画柱不预测 */
+  /** 主卡算好的流量摘要；没有流量额度时为 null，只画柱不预测 */
   summary: TrafficSummary | null
   resetAt: string | null
+  /** 开了付费流量重置才给「流量不够？」链到重置页 */
+  resetPrice: number | null
 }
 
-export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) {
+export function UsageCard({ subscriptionId, summary, resetAt, resetPrice }: UsageCardProps) {
   const usage = useSubscriptionUsage(subscriptionId)
 
   if (usage.isPending) {
     return (
-      <Card aria-busy="true" className={css.usage}>
+      <section className={css.usage} aria-busy="true">
         <Skeleton width={180} height={18} />
         <Skeleton height={120} radius="var(--radius-md)" />
-      </Card>
+      </section>
     )
   }
   if (usage.isError) {
     return (
-      <Card title="本期用量" className={css.usage}>
+      <section className={css.usage}>
+        <h2 className={css.usageName}>本期用量</h2>
         <LoadError error={usage.error} onRetry={() => void usage.refetch()} what="用量" />
-      </Card>
+      </section>
     )
   }
 
@@ -38,7 +41,7 @@ export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) 
   const dense = chart.bars.length > 40
 
   return (
-    <Card className={css.usage}>
+    <section className={css.usage}>
       <div className={css.usageHead}>
         <div className={css.usageTitle}>
           <div className={css.usageTitleRow}>
@@ -48,9 +51,9 @@ export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) 
           {projection && (
             <div className={projection.short ? css.projectionShort : css.projection}>
               {projection.text}
-              {projection.short && (
-                <a className={css.inlineLink} href={href('/plans', { tab: 'packs' })}>
-                  买流量包 →
+              {projection.short && resetPrice !== null && (
+                <a className={css.inlineLink} href={href(`/subs/${subscriptionId}/traffic`)}>
+                  流量不够？
                 </a>
               )}
             </div>
@@ -96,6 +99,6 @@ export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) 
       ) : (
         <Empty bare title="本期还没有用量记录" description="App 连上节点后，每天的用量会显示在这里。" />
       )}
-    </Card>
+    </section>
   )
 }

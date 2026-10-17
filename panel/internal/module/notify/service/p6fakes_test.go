@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// P6 各测试共用的跨模块假实现与夹具。
+// 站内信、公告、Telegram、扫描等测试共用的跨模块假实现与夹具。
 
 // fakeDir 是内存里的 identity：邮箱、用户组、用户所在组。
 type fakeDir struct {
@@ -23,10 +23,11 @@ type fakeDir struct {
 	emails    map[uuid.UUID]string
 	groups    []identitysvc.Group
 	userGroup map[uuid.UUID]*uuid.UUID
+	inactive  map[uuid.UUID]bool // 停用的账号（ActiveUserGroups 不返回）
 }
 
 func newFakeDir() *fakeDir {
-	return &fakeDir{emails: map[uuid.UUID]string{}, userGroup: map[uuid.UUID]*uuid.UUID{}}
+	return &fakeDir{emails: map[uuid.UUID]string{}, userGroup: map[uuid.UUID]*uuid.UUID{}, inactive: map[uuid.UUID]bool{}}
 }
 
 func (f *fakeDir) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
@@ -56,7 +57,7 @@ func (f *fakeDir) ListGroups(context.Context) ([]identitysvc.Group, error) {
 // fakePlans 是内存里的 catalog 套餐。
 type fakePlans struct{ plans []catalogsvc.Plan }
 
-func (f *fakePlans) ListPlans(context.Context) ([]catalogsvc.PlanSummary, error) {
+func (f *fakePlans) ListPlans(context.Context, catalogsvc.PlanFilter) ([]catalogsvc.PlanSummary, error) {
 	out := make([]catalogsvc.PlanSummary, 0, len(f.plans))
 	for _, p := range f.plans {
 		out = append(out, catalogsvc.PlanSummary{Plan: p})
@@ -198,6 +199,19 @@ type fakeTG struct {
 	webhooks   []fakeTGWebhook
 	sendErr    error
 	webhookErr error
+
+	commands    [][]botCommand
+	commandsErr error
+	joins       []fakeTGJoin
+	joinErr     error
+}
+
+// fakeTGJoin 是一次批准/拒绝入群申请。
+type fakeTGJoin struct {
+	ChatID  int64
+	UserID  int64
+	Approve bool
+	Decline bool
 }
 
 // fakeTGMessage 是一条发出的消息。
@@ -209,21 +223,52 @@ type fakeTGMessage struct {
 
 // fakeTGWebhook 是一次 setWebhook 调用。
 type fakeTGWebhook struct {
-	Token  string
-	URL    string
-	Secret string
+	Token          string
+	URL            string
+	Secret         string
+	AllowedUpdates []string
+	DropPending    bool
 }
 
-func (f *fakeTG) SendMessage(_ context.Context, token string, chatID int64, text string) error {
+func (f *fakeTG) SendMessage(_ context.Context, token string, chatID int64, text string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, fakeTGMessage{Token: token, ChatID: chatID, Text: text})
-	return f.sendErr
+	if f.sendErr != nil {
+		return 0, f.sendErr
+	}
+	return int64(1000 + len(f.sent)), nil
 }
 
-func (f *fakeTG) SetWebhook(_ context.Context, token, url, secret string) error {
+func (f *fakeTG) SetWebhook(_ context.Context, token, url, secret string, allowedUpdates []string, dropPending bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.webhooks = append(f.webhooks, fakeTGWebhook{Token: token, URL: url, Secret: secret})
+	f.webhooks = append(f.webhooks, fakeTGWebhook{
+		Token: token, URL: url, Secret: secret, AllowedUpdates: allowedUpdates, DropPending: dropPending,
+	})
 	return f.webhookErr
+}
+
+func (f *fakeTG) SetMyCommands(_ context.Context, token string, cmds []botCommand) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = token
+	f.commands = append(f.commands, append([]botCommand(nil), cmds...))
+	return f.commandsErr
+}
+
+func (f *fakeTG) ApproveChatJoinRequest(_ context.Context, token string, chatID, userID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = token
+	f.joins = append(f.joins, fakeTGJoin{ChatID: chatID, UserID: userID, Approve: true})
+	return f.joinErr
+}
+
+func (f *fakeTG) DeclineChatJoinRequest(_ context.Context, token string, chatID, userID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_ = token
+	f.joins = append(f.joins, fakeTGJoin{ChatID: chatID, UserID: userID, Decline: true})
+	return f.joinErr
 }

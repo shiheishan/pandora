@@ -6,11 +6,11 @@ paths:
 # 面板前端：购买路径的无头浏览器测试
 
 - 分工：`tests/smoke/` 证明页面拿真数据不崩，`panel/tests/*.sh` 证明接口在真库上对，这里证明「用户在门户和后台的页面上点得通，看到的金额、到期日、按钮、错误提示都对」
-  - 路径清单照 w8walk 第 2 节的 31 步改写，登记在 `paths.ts`（结果表按它的顺序出行，没跑到的也占一行）
+  - 路径清单登记在 `paths.ts`（结果表按它的顺序出行，没跑到的也占一行）
   - 每步用 `fixtures.ts` 的 `step(page, id, body)`：换一个来源地址、跑完截一张 1280 宽的图，`body` 返回「页面上看到的」那句，写进产物里的 `steps.jsonl`；关键页面另用 `narrowShot` 截 375 宽
 - 只在 CI 的 `panel-smoke.yml` 里跑，排在压测之后、最后一个：
   - 起栈之前 `make -C panel frontend-embed`，网关嵌的是真前端产物：门户在门户网关根上，后台在后台网关根上（冒烟栈没有 nginx 前缀）
-  - 种子 `seed.ts` 是 globalSetup，只经后台真实接口造：五个套餐（绑冒烟种子的节点池）、12G 流量包、六种礼品卡模板、演示易支付渠道 `w9pay`（随机商户号与密钥，`allow_private_host` 只在非生产放行）
+  - 种子 `seed.ts` 是 globalSetup，只经后台真实接口造：五个订阅套餐与一个一次性套餐（`POST /v1/plans` 带 `kind`、`publish: true`，绑冒烟种子的节点池；价格 id 按周期对回，不信响应顺序）、六种礼品卡模板、演示易支付渠道 `w9pay`（随机商户号与密钥，`allow_private_host` 只在非生产放行）
   - 它把其余 CNY 渠道暂停收新单，让站点最低付款额变成 ¥1.00（凑最低额、免零头、低于最低额被拦都要这个前提），所以必须排在所有会下单的步骤之后；再轮询门户报价直到 `min_payment` 为 100（各网关按进程缓存一分钟），不用固定等待
   - 结果表由 `table.ts` 出，写进 job summary；截图、失败的 trace、HTML 报告在产物 `browser-paths`
   - 查失败先看产物里的 `shots/<步骤>-fail.png` 与 `test-results/*/trace.zip`：测试自己开上下文（门户、后台各一个），Playwright 的 `error-context.md` 里的页面快照取的不一定是出错的那个页面
@@ -20,6 +20,7 @@ paths:
   - 种子写在状态目录的 `browser-world.json`（0600），文件在就整份复用，同一套栈重跑不撞套餐编码
   - 类型检查走 `npm run typecheck`（`tsconfig.node.json` 收 `tests/` 下除 smoke 外的文件），lint 走 `npm run lint`
 - 选择器只用角色与可见文字（`getByRole` / `getByText` / `getByLabel`），不为测试给组件加 `data-testid`
+  - 选购页有「按时间 / 一次性」分段控件（`radiogroup`「套餐类型」，10-16 样稿）：一次性套餐要先点「一次性」；有份时买别的套餐先过落点选择（`radiogroup`「<套餐名>放到哪里」，不预选）
   - 我的套餐的卡片是 `<article>`、套餐卡是 `<section>`，按标题 heading 过滤（`card` / `planCard`）；完成页按「发生了什么」下的列表读（`happened`）
   - 开关（ui/Switch）的透明 checkbox 被轨道盖住，点外面那层 label（`setSwitch`），和人点的是同一处
   - 后台写操作要重新认证时，`openAdmin` 挂的 `addLocatorHandler` 自动在弹框里填口令；登录自带 15 分钟窗口，通常不出现

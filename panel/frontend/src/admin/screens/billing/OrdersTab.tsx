@@ -1,12 +1,14 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useCallback, useEffect, useState } from 'react'
 import { formatMoney, relativeTime } from '../../../core/format'
 import { href, navigate, useHashLocation, type RouteQuery } from '../../../core/router'
-import { Button, Empty, IconClose, Pager, QueryView, Segmented, Table, Tag, type TableColumn } from '../../../ui'
+import { Button, Empty, FilterTabs, IconClose, Pager, QueryView, SearchField, Table, Tag, Toolbar, type TableColumn } from '../../../ui'
+import { PageActions } from '../../kit'
 import { ORDERS_PAGE, useOrders, type OrderRow } from './api'
-import css from './Billing.module.css'
 import { ManualOrder } from './ManualOrder'
+import { OrderPage } from './OrderPage'
+import css from './Orders.module.css'
 import { channelLabel, filterStatuses, isOrderFilter, ORDER_FILTERS, ORDER_STATUS_VIEW, orderWhat, type OrderFilter } from './model'
-import { OrderDrawer } from './OrderDrawer'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -34,18 +36,50 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
     // 非法 uuid 后端回 400：不带上去，筛选标签也不画
     userId: UUID.test(userParam) ? userParam : '',
   }
+  // 详情是整页（外框 DETAIL_ROUTES 登记了 billing:orders）；列表的查询串留在地址上，返回链接带回去
+  const selected = rest[0] ?? null
+
+  if (selected) {
+    return (
+      <OrderPage id={selected} now={now} back={{ href: href('/billing/orders', query(state)), label: '订单' }} />
+    )
+  }
+
   const newParam = location.query.get('new')
   const manualFor = newParam && UUID.test(newParam) ? newParam : null
-  // 从用户抽屉某一份订阅的「给这份开单」进来：#/billing/orders?new=<用户 id>&sub=<订阅 id>，只用来预选落点
+  // 从用户详情某一份订阅的「给这份开单」进来：#/billing/orders?new=<用户 id>&sub=<订阅 id>，只用来预选落点
   const subParam = location.query.get('sub')
   const entrySubscription = manualFor && subParam && UUID.test(subParam) ? subParam : null
   const manualOpen = newParam !== null
-  const selected = rest[0] ?? null
 
+  return (
+    <OrdersList
+      state={state}
+      manualFor={manualFor}
+      entrySubscription={entrySubscription}
+      manualOpen={manualOpen}
+      now={now}
+    />
+  )
+}
+
+function OrdersList({
+  state,
+  manualFor,
+  entrySubscription,
+  manualOpen,
+  now,
+}: {
+  state: ListState
+  manualFor: string | null
+  entrySubscription: string | null
+  manualOpen: boolean
+  now: Date
+}) {
   const change = useCallback(
-    (next: Partial<ListState>) => navigate(path(selected), { replace: true, query: query({ ...state, ...next }) }),
+    (next: Partial<ListState>) => navigate(path(null), { replace: true, query: query({ ...state, ...next }) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- state 由地址派生，按其原始值比较
-    [selected, state.filter, state.q, state.offset, state.userId],
+    [state.filter, state.q, state.offset, state.userId],
   )
 
   const orders = useOrders({ q: state.q.trim() || undefined, status: filterStatuses(state.filter), user_id: state.userId || undefined, offset: state.offset })
@@ -56,12 +90,20 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
 
   return (
     <div className={css.page}>
-      <div className={css.toolbar}>
-        <SearchBox value={state.q} onChange={(q) => change({ q, offset: 0 })} />
-        <Segmented
-          size="sm"
+      <PageActions>
+        <Button
+          variant="primary"
+          icon={PlusSignIcon}
+          onClick={() => navigate(path(null), { query: query(state, { new: state.userId || '1' }) })}
+        >
+          人工开单
+        </Button>
+      </PageActions>
+      <Toolbar>
+        <DebouncedSearch value={state.q} onChange={(q) => change({ q, offset: 0 })} />
+        <FilterTabs
           label="订单状态"
-          options={ORDER_FILTERS.map(([value, label]) => ({ value, label }))}
+          items={ORDER_FILTERS.map(([value, label]) => ({ value, label }))}
           value={state.filter}
           onChange={(filter) => change({ filter, offset: 0 })}
         />
@@ -73,43 +115,55 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
             </button>
           </span>
         )}
-        <span className={css.spacer} />
-        {orders.data && <span className={css.small}>共 {total.toLocaleString('en-US')} 单</span>}
-        <Button size="sm" variant="primary" onClick={() => navigate(path(selected), { query: query(state, { new: state.userId || '1' }) })}>
-          人工开单
-        </Button>
-      </div>
-      <div className={`${css.tableBox} ${css.wide}`}>
-        <QueryView
-          query={orders}
-          rows={8}
-          isEmpty={(d) => d.orders.length === 0}
-          empty={
-            <Empty
-              bare
-              title={filtered ? '没有符合条件的订单' : '还没有订单'}
-              description={filtered ? '换个关键词或状态再看看。' : '用户在门户下单，或管理员人工开单后，订单会出现在这里。'}
-            />
-          }
-        >
-          {(d) => (
-            <Table
-              label="订单列表"
-              columns={columns(now)}
-              rows={d.orders}
-              rowKey={(o) => o.id}
-              onRowClick={(o) => window.location.assign(href(path(o.id), query(state)))}
-            />
-          )}
-        </QueryView>
-      </div>
-      <Pager total={total} limit={ORDERS_PAGE} offset={state.offset} onChange={(offset) => change({ offset })} />
-      <OrderDrawer id={selected} onClose={() => navigate(path(null), { query: query(state) })} now={now} />
+      </Toolbar>
+      <QueryView
+        query={orders}
+        rows={8}
+        isEmpty={(d) => d.orders.length === 0}
+        empty={
+          <Empty
+            bare
+            title={filtered ? '没有符合条件的订单' : '还没有订单'}
+            description={filtered ? '换个关键词或状态再看看。' : '用户在用户端下单，或管理员人工开单后，订单会出现在这里。'}
+          />
+        }
+      >
+        {(d) => (
+          <Table
+            label="订单列表"
+            columns={columns(now)}
+            rows={d.orders}
+            rowKey={(o) => o.id}
+            boxed
+            onRowClick={(o) => navigate(path(o.id), { query: query(state) })}
+            footer={
+              d.orders.length > 0
+                ? (
+                    <>
+                      <span className={css.footerText}>
+                        {total > ORDERS_PAGE
+                          ? '点一行查看详情'
+                          : `共 ${total.toLocaleString('en-US')} 条 · 点一行查看详情`}
+                      </span>
+                      <Pager
+                        inline
+                        total={total}
+                        limit={ORDERS_PAGE}
+                        offset={state.offset}
+                        onChange={(offset) => change({ offset })}
+                      />
+                    </>
+                  )
+                : undefined
+            }
+          />
+        )}
+      </QueryView>
       <ManualOrder
         open={manualOpen}
         userId={manualFor}
         entrySubscriptionId={entrySubscription}
-        onClose={(createdId) => navigate(path(createdId ?? selected), { replace: createdId === undefined, query: query(state) })}
+        onClose={(createdId) => navigate(path(createdId ?? null), { replace: createdId === undefined, query: query(state) })}
       />
     </div>
   )
@@ -120,38 +174,56 @@ function columns(now: Date): TableColumn<OrderRow>[] {
     {
       key: 'no',
       header: '订单号',
-      width: '160px',
+      width: '190px',
       mono: true,
       render: (o) => (
         <>
           {o.order_no}
           {o.manual && (
-            <Tag tone="outline" className={css.manualTag}>
+            <Tag tone="neutral" className={css.manualTag}>
               人工
             </Tag>
           )}
+          <small className={`${css.mSub} m-only`}>
+            {o.user_email} · {orderWhat(o)}
+          </small>
         </>
       ),
     },
-    { key: 'user', header: '用户', render: (o) => <span className={css.ellipsis}>{o.user_email}</span> },
-    { key: 'what', header: '内容', render: (o) => <span className={`${css.muted} ${css.ellipsis}`}>{orderWhat(o)}</span> },
-    { key: 'amount', header: '金额', width: '100px', align: 'right', mono: true, render: (o) => formatMoney(o.total_amount, o.currency) },
-    { key: 'channel', header: '渠道', width: '104px', render: (o) => <span className={css.muted}>{channelLabel(o)}</span> },
+    { key: 'user', header: '用户', hideOnMobile: true, render: (o) => <span className={css.ellipsis}>{o.user_email}</span> },
+    { key: 'what', header: '内容', hideOnMobile: true, render: (o) => <span className={`${css.muted} ${css.ellipsis}`}>{orderWhat(o)}</span> },
+    {
+      key: 'amount',
+      header: '金额',
+      width: '100px',
+      align: 'right',
+      mono: true,
+      render: (o) => (
+        <>
+          {formatMoney(o.total_amount)}
+          <small className={`${css.mSub} m-only`}>
+            <Tag tone={ORDER_STATUS_VIEW[o.status].tone}>{ORDER_STATUS_VIEW[o.status].label}</Tag>
+          </small>
+        </>
+      ),
+    },
+    { key: 'channel', header: '渠道', width: '120px', hideOnMobile: true, render: (o) => <span className={css.muted}>{channelLabel(o)}</span> },
     {
       key: 'status',
       header: '状态',
-      width: '84px',
+      width: '80px',
+      hideOnMobile: true,
       render: (o) => {
         const v = ORDER_STATUS_VIEW[o.status]
         return <Tag tone={v.tone}>{v.label}</Tag>
       },
     },
-    { key: 'at', header: '创建时间', width: '96px', align: 'right', render: (o) => <span className={css.small}>{relativeTime(o.created_at, now)}</span> },
+    { key: 'at', header: '创建时间', width: '90px', align: 'right', hideOnMobile: true, render: (o) => <span className={css.small}>{relativeTime(o.created_at, now)}</span> },
   ]
 }
 
 /** 搜索框：输入 300ms 后才回写地址；地址被外部改了（前进后退）跟着地址走 */
-function SearchBox({ value, onChange }: { value: string; onChange: (q: string) => void }) {
+function DebouncedSearch({ value, onChange }: { value: string; onChange: (q: string) => void }) {
   const [text, setText] = useState(value)
   const [synced, setSynced] = useState(value)
   if (value !== synced) {
@@ -163,5 +235,12 @@ function SearchBox({ value, onChange }: { value: string; onChange: (q: string) =
     const timer = setTimeout(() => onChange(text), 300)
     return () => clearTimeout(timer)
   }, [text, value, onChange])
-  return <input className={css.search} type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="订单号或用户邮箱" aria-label="搜索订单" />
+  return (
+    <SearchField
+      aria-label="搜索订单"
+      placeholder="订单号或用户邮箱"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+    />
+  )
 }

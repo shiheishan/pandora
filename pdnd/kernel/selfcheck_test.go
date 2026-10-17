@@ -23,8 +23,8 @@ func TestValidateNativeCapabilityMatrixRejectsDrift(t *testing.T) {
 }
 
 func TestNativeSelfCheckReport(t *testing.T) {
-	report := NativeSelfCheckFor(true)
-	if report.Status != "ok" || !report.NativeOnly || report.Kernel != "pandora-native" {
+	report := NativeSelfCheck()
+	if report.Status != "ok" || report.Kernel != "pandora-native" {
 		t.Fatalf("unexpected self-check report: %+v", report)
 	}
 	if report.CapabilityCount != len(NativeCapabilities()) {

@@ -1,23 +1,22 @@
 package repo
 
-// 本文件归 p5-inventory：节点的读写与写库错误的翻译。
+// 节点的读写与写库错误的翻译。
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/module/node/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 var (
 	// ErrNodeNameTaken 表示节点名称已被未删除的节点占用（nodes_name_live_key）。
 	ErrNodeNameTaken = errors.New("node: 节点名称已存在")
-	// ErrListenClaimTaken 表示同一服务器上未退役的节点已占用这个 (端口, L4)（nodes_listen_claim_key）。
+	// ErrListenClaimTaken 表示同一服务器上未退役的节点已占用这个端口上冲突的 L4（nodes_listen_tcp_claim_key / nodes_listen_udp_claim_key）。
 	ErrListenClaimTaken = errors.New("node: 同机端口已被占用")
 	// ErrServerNameTaken 表示服务器名称已被未删除的服务器占用（servers_name_live_key）。
 	ErrServerNameTaken = errors.New("node: 服务器名称已存在")
@@ -25,36 +24,26 @@ var (
 	ErrInventoryCheck = errors.New("node: 数据不满足库约束")
 )
 
-// inventoryErr 把写服务器、节点时的约束错误译成本包哨兵。GORM 的错误翻译用 %w 包着原错误，
-// 约束名仍能取到：端口门禁的唯一索引与重名分开报。
-func inventoryErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		return err
-	}
-	switch pgErr.Code {
-	case "23505":
-		switch pgErr.ConstraintName {
-		case "nodes_listen_claim_key":
-			return ErrListenClaimTaken
-		case "servers_name_live_key":
-			return ErrServerNameTaken
-		}
-		return ErrNodeNameTaken
-	case "23514":
-		return fmt.Errorf("%w: %v", ErrInventoryCheck, err)
-	}
-	return err
+// inventoryErrs 把写服务器、节点时的约束错误译成本包哨兵：端口门禁的唯一索引与重名按约束名分开报，其余唯一冲突当节点重名。
+var inventoryErrs = db.ConstraintErrors{
+	ByCode: map[string]error{db.CodeUnique: ErrNodeNameTaken, db.CodeCheck: ErrInventoryCheck},
+	ByName: map[string]error{
+		"nodes_listen_tcp_claim_key": ErrListenClaimTaken,
+		"nodes_listen_udp_claim_key": ErrListenClaimTaken,
+		"servers_name_live_key":      ErrServerNameTaken,
+	},
 }
+
+// inventoryErr 把写服务器、节点时的约束错误译成本包哨兵。
+func inventoryErr(err error) error { return inventoryErrs.Map(err) }
 
 // nodeColumns 是读 nodes 一行的列清单（别名 n）；jsonb 以文本取出。
 const nodeColumns = `n.id, n.node_no, n.server_id, n.pool_id, n.name, n.display_name, n.country_code,
- n.serving_status, n.node_type, n.server_host, n.server_port, n.listen_l4, n.kernel,
+ n.serving_status, n.node_type, n.server_host, n.server_port, n.listen_l4,
  n.protocol_config::text AS protocol_config, n.protocol_schema_version, n.config_validated_at,
  n.traffic_rate, n.sort_order, n.row_version,
+ n.tags::text AS tags, n.traffic_limit_bytes, n.traffic_reset_day, n.traffic_used_bytes, n.traffic_reset_at,
+ n.traffic_exceeded_at, n.traffic_rate_schedule::text AS traffic_rate_schedule,
  n.runtime_status, n.runtime_reason, n.runtime_reason_node_id, n.runtime_state_at,
  n.applied_config_sha256, n.applied_config_at,
  n.apply_failed_sha256, n.apply_failed_reason, n.apply_failed_detail, n.apply_failed_at,
@@ -107,6 +96,16 @@ type nodeInserted struct {
 	NodeNo    int64     `gorm:"column:node_no"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"`
+	// TrafficResetAt 是库里 now() 写的用量起算时刻
+	TrafficResetAt time.Time `gorm:"column:traffic_reset_at"`
+}
+
+// jsonArrayText 把 jsonb 数组列的文本缺省成 "[]"（model 里空串表示没填）。
+func jsonArrayText(s string) string {
+	if s == "" {
+		return "[]"
+	}
+	return s
 }
 
 // InsertNode 插入一个节点，回填 ID、NodeNo、CreatedAt、UpdatedAt。
@@ -114,33 +113,41 @@ func (r *Repo) InsertNode(ctx context.Context, n *model.Node) error {
 	var got nodeInserted
 	err := r.d.Conn(ctx).Raw(`INSERT INTO nodes
 		(server_id, pool_id, name, display_name, country_code, serving_status, node_type, server_host,
-		 server_port, listen_l4, kernel, protocol_config, protocol_schema_version, config_validated_at,
-		 traffic_rate, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?)
-		RETURNING id, node_no, created_at, updated_at`,
+		 server_port, listen_l4, protocol_config, protocol_schema_version, config_validated_at,
+		 traffic_rate, sort_order, tags, traffic_limit_bytes, traffic_reset_day, traffic_rate_schedule)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, CAST(? AS jsonb))
+		RETURNING id, node_no, created_at, updated_at, traffic_reset_at`,
 		n.ServerID, n.PoolID, n.Name, n.DisplayName, n.CountryCode, n.ServingStatus, n.NodeType, n.ServerHost,
-		n.ServerPort, n.ListenL4, n.Kernel, n.ProtocolConfig, n.ProtocolSchemaVersion, n.ConfigValidatedAt,
-		n.TrafficRate, n.SortOrder,
+		n.ServerPort, n.ListenL4, n.ProtocolConfig, n.ProtocolSchemaVersion, n.ConfigValidatedAt,
+		n.TrafficRate, n.SortOrder, jsonArrayText(n.Tags), n.TrafficLimitBytes, n.TrafficResetDay, jsonArrayText(n.TrafficRateSchedule),
 	).Scan(&got).Error
 	if err != nil {
 		return inventoryErr(err)
 	}
 	n.ID, n.NodeNo, n.CreatedAt, n.UpdatedAt = got.ID, got.NodeNo, got.CreatedAt, got.UpdatedAt
+	n.TrafficResetAt = got.TrafficResetAt
 	n.RowVersion = 1
 	return nil
 }
 
 // UpdateNodeSpec 整体改写节点的可编辑列并把 row_version 加一；只改 row_version = expected 的未删除行。
+// traffic_exceeded_at 由调用方按已锁住的行算好（有上限且已用 >= 上限时非空，否则为空，库里 nodes_traffic_exceeded_shape 兜底）；
+// traffic_used_bytes 不在这里改（流量入账与重置各有专门的写）；traffic_reset_at 只会被推后：写 GREATEST(原值, n.TrafficResetAt)，
+// 设或改重置日时调用方传本周期起点，其余情况传读出的原值（或零值），都不会把它往前拨。
 func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64, n *model.Node) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET
 		name = ?, display_name = ?, country_code = ?, pool_id = ?, node_type = ?, server_host = ?,
-		server_port = ?, listen_l4 = ?, kernel = ?, protocol_config = CAST(? AS jsonb),
+		server_port = ?, listen_l4 = ?, protocol_config = CAST(? AS jsonb),
 		protocol_schema_version = ?, config_validated_at = ?, traffic_rate = ?,
+		tags = CAST(? AS jsonb), traffic_limit_bytes = ?, traffic_reset_day = ?, traffic_exceeded_at = ?,
+		traffic_rate_schedule = CAST(? AS jsonb), traffic_reset_at = GREATEST(traffic_reset_at, ?),
 		row_version = row_version + 1, updated_at = now()
 		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`,
 		n.Name, n.DisplayName, n.CountryCode, n.PoolID, n.NodeType, n.ServerHost,
-		n.ServerPort, n.ListenL4, n.Kernel, n.ProtocolConfig,
+		n.ServerPort, n.ListenL4, n.ProtocolConfig,
 		n.ProtocolSchemaVersion, n.ConfigValidatedAt, n.TrafficRate,
+		jsonArrayText(n.Tags), n.TrafficLimitBytes, n.TrafficResetDay, n.TrafficExceededAt,
+		jsonArrayText(n.TrafficRateSchedule), n.TrafficResetAt,
 		id, expected,
 	)
 	if res.Error != nil {
@@ -218,12 +225,15 @@ type nodeNameRow struct {
 	Name string `gorm:"column:name"`
 }
 
-// NodePortHolder 返回同服务器上占着 (port, l4) 的未退役节点的名字；exclude 非 nil 时排除它自己。
-func (r *Repo) NodePortHolder(ctx context.Context, serverID uuid.UUID, port int, l4 string, exclude *uuid.UUID) (string, bool, error) {
+// NodePortHolder 返回同服务器同端口上 L4 落在 l4s 里（调用方传与新节点冲突的全部取值）的未退役节点的名字；exclude 非 nil 时排除它自己。
+func (r *Repo) NodePortHolder(ctx context.Context, serverID uuid.UUID, port int, l4s []string, exclude *uuid.UUID) (string, bool, error) {
+	if len(l4s) == 0 {
+		return "", false, nil
+	}
 	q := `SELECT n.name FROM nodes n
-		WHERE n.server_id = ? AND n.server_port = ? AND n.listen_l4 = ?
+		WHERE n.server_id = ? AND n.server_port = ? AND n.listen_l4 IN ?
 		  AND n.serving_status <> 'retired' AND n.deleted_at IS NULL`
-	args := []any{serverID, port, l4}
+	args := []any{serverID, port, l4s}
 	if exclude != nil {
 		q += " AND n.id <> ?"
 		args = append(args, *exclude)

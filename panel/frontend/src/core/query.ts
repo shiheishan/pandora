@@ -3,12 +3,12 @@ import type { ApiError } from './api'
 import { isApiError } from './api'
 
 // ---------------------------------------------------------------------------
-// 实时 topic：platform/realtime/listener.go 的 topicFor，外加 admin / public 的
-// tickets.go 直接发到用户频道的 ticket.updated，以及 admin handlers.go 降级开关
-// 切换后直接发到管理端频道的 switches.changed（R58）。事件只是「哪块该刷新」
+// 实时 topic：与 Go panel/internal/pkg/realtime/realtime.go 的 Topic* 常量逐个对应，
+// 守卫是 realtime 包的 TestRealtimeTopicsMatchFrontend。事件只是「哪块该刷新」
 // 的信号，不带业务内容；查询在 meta.topics 里声明自己关心哪些 topic，
 // 失效器按它精确失效，页面之间互不知道对方。
 // ---------------------------------------------------------------------------
+/** @public 本文件外无人引用也要导出：Go 侧 TestRealtimeTopicsMatchFrontend 按源码比对这张表 */
 export const REALTIME_TOPICS = [
   'orders.changed',
   'subscriptions.changed',
@@ -16,11 +16,10 @@ export const REALTIME_TOPICS = [
   'plans.changed',
   'nodes.changed',
   'announcements.changed',
-  'data.changed',
   'ticket.updated',
   'switches.changed',
 ] as const
-export type RealtimeTopic = (typeof REALTIME_TOPICS)[number]
+type RealtimeTopic = (typeof REALTIME_TOPICS)[number]
 
 declare module '@tanstack/react-query' {
   interface Register {
@@ -58,7 +57,7 @@ export function createQueryClient(): QueryClient {
 // 首个事件立即失效，窗口内再来的合并成窗口结束时的一次。
 // 重连时事件已丢失、id 不能续传，直接失效全部查询（react-query 只重拉活跃的）。
 // ---------------------------------------------------------------------------
-export interface RealtimeInvalidator {
+interface RealtimeInvalidator {
   onEvent(topic: string): void
   onReconnect(): void
   dispose(): void

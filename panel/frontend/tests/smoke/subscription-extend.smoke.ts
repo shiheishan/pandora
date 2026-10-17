@@ -6,7 +6,7 @@ import { linksSchema } from '../../src/portal/screens/common/subscriptions'
 import { lastHeaders, pageClient, record, state } from './harness'
 
 // ============================================================================
-//  后台加时长（第 2 波 w2sub）：对真实网关走一遍 权限 → 重认证窗口 → 幂等 → 同事务完成幂等记录。
+//  后台加时长：对真实网关走一遍 权限 → 重认证窗口 → 幂等 → 同事务完成幂等记录。
 //  按文件名排在两张读表之后、writes.smoke.ts 之前；种子订阅延期后仍是 active，后面的写路径照常
 // ============================================================================
 
@@ -46,12 +46,11 @@ describe('后台加时长', () => {
       const after = await admin.get(`v1/users/${s.portal.user_id}`, userDetailSchema)
       const end = after.subscriptions.find((x) => x.id === s.subscription_id)?.current_period_end
       expect(Date.parse(end ?? ''), '用户详情里的到期没变').toBe(Date.parse(first.period_end))
-      // 新栈的链接不单独过期（expires_at 恒为 null），能不能用只看订阅本身：延期后照常可用
+      // 链接不单独过期，能不能用只看订阅本身：延期后照常可用
       const links = await pageClient('portal').get('v1/me/subscription-links', linksSchema)
       const link = links.links.find((l) => l.subscription_id === s.subscription_id)
       expect(link, '门户链接列表里没有这份订阅').toBeTruthy()
       expect(link?.expired, '延期后门户链接却显示已过期').toBe(false)
-      expect(link?.expires_at, '链接不应再带单独的到期时间').toBeNull()
 
       record('write', { at, path }, '已验', `到期 ${first.previous_end} → ${first.period_end}，同键重放回同一份，门户链接照常可用`)
     } catch (error) {

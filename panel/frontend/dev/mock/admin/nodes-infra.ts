@@ -40,14 +40,13 @@ export interface InfraNode {
   node_no: number
   name: string
   display_name: string | null
-  status: string
+  deleted: boolean
   serving_status: string
   server_id: string | null
   pool_id: string | null
   node_type: string | null
   server_host: string | null
   server_port: number | null
-  kernel: string
   traffic_rate: number
   sort_order: number
   last_heartbeat_at: string | null
@@ -120,15 +119,15 @@ function server(name: string, region: string, ip: string, opts: Partial<MockServ
 
 export const servers: MockServer[] = []
 servers.push(
-  server('hk-hkg-edge-1', '香港', '103.151.12.8', { cpu: 58, mem: 64, disk: 31 }),
-  server('jp-tyo-edge-2', '东京', '45.76.201.33', { cpu: 71, mem: 52, disk: 44 }),
-  server('sg-sin-edge-1', '新加坡', '139.180.140.7', { cpu: 91, mem: 78, disk: 38 }),
-  server('us-lax-edge-1', '洛杉矶', '149.28.72.190', { cpu: 34, mem: 40, disk: 22, agent_version: 'core r52' }),
-  server('de-fra-edge-1', '法兰克福', '78.47.110.2', { status: 'maintenance', status_reason: '更换网卡', cpu: 22, mem: 30, disk: 18, notes: 'Hetzner FSN1，工单 #88213' }),
-  server('tw-tpe-edge-1', '台北', '61.216.4.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
+  server('hk-hkg-edge-1', '香港', '192.0.2.8', { cpu: 58, mem: 64, disk: 31 }),
+  server('jp-tyo-edge-2', '东京', '192.0.2.33', { cpu: 71, mem: 52, disk: 44 }),
+  server('sg-sin-edge-1', '新加坡', '192.0.2.7', { cpu: 91, mem: 78, disk: 38 }),
+  server('us-lax-edge-1', '洛杉矶', '192.0.2.190', { cpu: 34, mem: 40, disk: 22, agent_version: 'core r52' }),
+  server('de-fra-edge-1', '法兰克福', '192.0.2.2', { status: 'maintenance', status_reason: '更换网卡', cpu: 22, mem: 30, disk: 18, notes: 'Hetzner FSN1，工单 #88213' }),
+  server('tw-tpe-edge-1', '台北', '192.0.2.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
   server('kr-sel-edge-1', '首尔', '', { status: 'draft', public_ipv4: null, hostname: null, architecture: null, os_name: null, agent_version: null, last_heartbeat_at: null, cpu_cores: null, memory_mb: null, disk_gb: null, capacity_nodes: 32 }),
   // R108：刚装好、还在草稿的新服务器，上面有一个接入完成待上线的节点（nodes.ts 的「大阪 01（待上线）」）
-  server('jp-osa-edge-1', '大阪', '45.77.30.12', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
+  server('jp-osa-edge-1', '大阪', '203.0.113.30', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
 )
 // 列表按 created_at 倒序：让第一台最新，顺序与设计稿一致
 servers.forEach((s, i) => (s.created_at = s.updated_at = ago(86400 * (10 + i))))
@@ -141,7 +140,6 @@ function serverOut(s: MockServer, nodes: readonly InfraNode[]) {
   return {
     ...rest,
     heartbeat_online: s.status === 'ready' && !!s.last_heartbeat_at && Date.now() - new Date(s.last_heartbeat_at).getTime() <= 90_000,
-    control_node_id: null,
     node_count: mine.length,
     active_node_count: active.length,
     serving_node_count: active.filter((n) => n.last_heartbeat_at).length,
@@ -157,11 +155,9 @@ function serverOut(s: MockServer, nodes: readonly InfraNode[]) {
 
 const SERVER_EDGES: Readonly<Record<string, readonly string[]>> = {
   draft: ['ready', 'maintenance', 'retired'],
-  ready: ['draining', 'unhealthy', 'quarantined'],
+  ready: ['draining', 'maintenance'],
   draining: ['ready', 'maintenance', 'retired'],
-  maintenance: ['ready', 'retired'],
-  unhealthy: ['draining', 'maintenance', 'quarantined', 'retired'],
-  quarantined: ['draining', 'maintenance', 'retired'],
+  maintenance: ['ready', 'draining', 'retired'],
   retired: [],
 }
 
@@ -254,8 +250,8 @@ function slugify(name: string): string {
 // ---------------------------------------------------------------------------
 export const globalRouting: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Json[] } = {
   outbounds: [
-    { tag: 'US-LAX-01', type: 'trojan', settings: { server: 'us1.pandora.run', port: 443 } },
-    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.pandora.run', port: 8388 } },
+    { tag: 'US-LAX-01', type: 'trojan', settings: { server: 'us1.example.test', server_port: 443 } },
+    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.example.test', server_port: 8388 } },
   ],
   routes: [
     { priority: 10, matcher: { domain_suffix: ['doubleclick.net', 'googlesyndication.com'] }, outbound_tag: 'block', enabled: true, note: '广告' },
@@ -305,7 +301,7 @@ let danglingOf: (nodes: readonly InfraNode[]) => Set<string> = (nodes) => {
   const out = new Set<string>()
   const global = new Set(globalRouting.outbounds.map((o) => o.tag))
   for (const n of nodes) {
-    if (n.status === 'destroyed') continue
+    if (n.deleted) continue
     for (const r of n.routing.routes) {
       const tag = text(r.outbound_tag)
       if (!isBuiltin(tag) && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
@@ -326,11 +322,11 @@ const revisionOf = () => createHash('sha256').update(JSON.stringify({ outbounds:
 // 节点存储由 nodes.ts 经 infraRoutes 交进来；按池统计的在线节点数给套餐假后端用，
 // 与 GET v1/node-pools 的 active_nodes 同一口径（生命周期 active 且已定协议）
 let nodeStore: readonly InfraNode[] = []
-export const activeNodesInPool = (poolId: string): number => nodeStore.filter((n) => n.pool_id === poolId && n.status === 'active' && n.node_type).length
+export const activeNodesInPool = (poolId: string): number => nodeStore.filter((n) => n.pool_id === poolId && n.serving_status === 'active' && n.node_type).length
 
 export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
   nodeStore = nodes
-  const live = () => nodes.filter((n) => n.status !== 'destroyed')
+  const live = () => nodes.filter((n) => !n.deleted)
   return {
     // ---- 全局路由（静态段 routing 先于 /nodes/:id 系列）----
     'GET /v1/nodes/routing': (ctx) => {
@@ -360,7 +356,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
           Object.assign(globalRouting, prev)
           return err(409, 'conflict', `要删除的全局出站仍被规则引用：${fresh.join('、')}`)
         }
-        const affected = live().filter((n) => n.status !== 'retired' && n.serving_status !== 'retired').length
+        const affected = live().filter((n) => n.serving_status !== 'retired').length
         return { status: 200, body: { ok: true, revision: revisionOf(), affected_nodes: affected } }
       })
     },
@@ -404,7 +400,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       const rows = nodes
         .filter((n) => n.server_id === s.id)
         .sort((a, b) => a.sort_order - b.sort_order)
-        .map((n) => ({ id: n.id, name: n.name, status: n.status, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, kernel: n.kernel, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
+        .map((n) => ({ id: n.id, name: n.name, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
       ctx.send(200, { nodes: rows, total: rows.length })
     },
     'PATCH /v1/servers/:id': async (ctx) => {
@@ -443,7 +439,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (Object.keys(f).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', f)
       if (body.row_version !== s.row_version) return reply(ctx, serverConflict(s))
       if (!SERVER_EDGES[s.status]!.includes(to)) return ctx.fail(409, 'conflict', '不允许的服务器状态转换', { status: `${s.status} -> ${to}` })
-      if (to === 'ready' && !nodes.some((n) => n.server_id === s.id && n.serving_status === 'active' && n.node_type && n.status !== 'destroyed')) {
+      if (to === 'ready' && !nodes.some((n) => n.server_id === s.id && n.serving_status === 'active' && n.node_type && !n.deleted)) {
         return ctx.fail(409, 'conflict', '服务器没有通过协议校验且可服务的活动节点，不能进入 ready', { nodes: 'requires_valid_active_node' })
       }
       s.status = to
@@ -484,7 +480,8 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         const minutes = Number.isInteger(ttl) && ttl >= 1 && ttl <= 30 ? ttl : 20
         return {
           status: 201,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.pandora.run/pdnd/install.sh | sudo bash -s -- --enroll' },
+          unreplayable: true,
+          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.example.test/pdnd/install.sh | sudo bash -s -- --enroll' },
         }
       })
     },
@@ -496,7 +493,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         .map((p) => {
           const mine = nodes.filter((n) => n.pool_id === p.id)
           const members = mine
-            .filter((n) => n.status !== 'destroyed')
+            .filter((n) => !n.deleted)
             .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
             .map((n) => ({ id: n.id, name: n.name, node_no: n.node_no }))
           return {

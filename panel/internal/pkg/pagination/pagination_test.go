@@ -1,7 +1,6 @@
 package pagination
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -58,27 +57,5 @@ func TestParseNonInteger(t *testing.T) {
 	_, _, err := parseQuery(t, "limit=abc", 20, 100)
 	if err == nil {
 		t.Fatal("应失败")
-	}
-}
-
-func TestNewPageNilItemsJSON(t *testing.T) {
-	p := NewPage[struct{}](nil, 0)
-	b, err := json.Marshal(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != `{"items":[],"total":0}` {
-		t.Fatalf("%s", b)
-	}
-}
-
-func TestNewPageWithItems(t *testing.T) {
-	p := NewPage([]int{1, 2}, 2)
-	b, err := json.Marshal(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != `{"items":[1,2],"total":2}` {
-		t.Fatalf("%s", b)
 	}
 }

@@ -26,23 +26,30 @@ type fakeSvc struct {
 	Service
 	my          service.MyCommission
 	withdrawals []service.AdminWithdrawal
+	gotStatuses []string
 	overview    service.Overview
 	gotAmount   decimal.Decimal
 	gotPayout   string
+	gotMethod   string
 	gotConfig   service.ConfigUpdate
 	gotApprove  bool
 	gotReason   string
 	reviewPage  service.ReviewEntryPage
 	gotCursor   string
 	gotLimit    int
+	overrides   []service.UserOverride
+	gotOverride service.OverrideInput
+	gotDeleted  uuid.UUID
+	gotRef      string
+	gotPaidUSDT *decimal.Decimal
 }
 
 func (f *fakeSvc) MyCommission(context.Context, uuid.UUID) (service.MyCommission, error) {
 	return f.my, nil
 }
 
-func (f *fakeSvc) RequestWithdrawal(_ context.Context, _ uuid.UUID, amount decimal.Decimal, payout string) (uuid.UUID, error) {
-	f.gotAmount, f.gotPayout = amount, payout
+func (f *fakeSvc) RequestWithdrawal(_ context.Context, _ uuid.UUID, amount decimal.Decimal, method, payout string) (uuid.UUID, error) {
+	f.gotAmount, f.gotMethod, f.gotPayout = amount, method, payout
 	return uuid.New(), nil
 }
 
@@ -55,7 +62,8 @@ func (f *fakeSvc) AdminOverview(context.Context) (service.Overview, error) {
 	return f.overview, nil
 }
 
-func (f *fakeSvc) AdminWithdrawals(context.Context, string) ([]service.AdminWithdrawal, error) {
+func (f *fakeSvc) AdminWithdrawals(_ context.Context, statuses []string) ([]service.AdminWithdrawal, error) {
+	f.gotStatuses = statuses
 	return f.withdrawals, nil
 }
 
@@ -69,6 +77,25 @@ func (f *fakeSvc) ReviewWithdrawal(_ context.Context, _ uuid.UUID, approve bool,
 
 func (f *fakeSvc) SetConfig(_ context.Context, u service.ConfigUpdate) error {
 	f.gotConfig = u
+	return nil
+}
+
+func (f *fakeSvc) MarkWithdrawalPaid(_ context.Context, _ uuid.UUID, reference string, paidUSDT *decimal.Decimal) error {
+	f.gotRef, f.gotPaidUSDT = reference, paidUSDT
+	return nil
+}
+
+func (f *fakeSvc) ListOverrides(context.Context) ([]service.UserOverride, error) {
+	return f.overrides, nil
+}
+
+func (f *fakeSvc) SetOverride(_ context.Context, in service.OverrideInput) (service.UserOverride, error) {
+	f.gotOverride = in
+	return service.UserOverride{UserID: uuid.New(), Email: in.Email, RatePercent: in.RatePercent, Scope: in.Scope, UpdatedAt: time.Now().UTC()}, nil
+}
+
+func (f *fakeSvc) DeleteOverride(_ context.Context, userID uuid.UUID) error {
+	f.gotDeleted = userID
 	return nil
 }
 
@@ -147,8 +174,9 @@ func TestRoutes(t *testing.T) {
 	}
 	adm := routesOf(newEngine(&fakeSvc{}, true, &admScopes))
 	wantAdm := []string{
-		"GET /v1/commission/entries", "GET /v1/commission/overview", "GET /v1/withdrawals",
-		"POST /v1/commission/config", "POST /v1/commission/entries/:id/review",
+		"DELETE /v1/commission/overrides/:user_id",
+		"GET /v1/commission/entries", "GET /v1/commission/overrides", "GET /v1/commission/overview", "GET /v1/withdrawals",
+		"POST /v1/commission/config", "POST /v1/commission/entries/:id/review", "POST /v1/commission/overrides",
 		"POST /v1/withdrawals/:id/paid", "POST /v1/withdrawals/:id/review",
 	}
 	if strings.Join(adm, ",") != strings.Join(wantAdm, ",") {
@@ -162,10 +190,10 @@ func TestRoutes(t *testing.T) {
 func TestMyCommissionShape(t *testing.T) {
 	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
 	f := &fakeSvc{my: service.MyCommission{
-		Summary: service.Summary{Currency: "CNY", MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10},
+		Summary: service.Summary{MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10},
 		Entries: []service.EntryView{{
 			Amount: decimal.RequireFromString("12.34"), Base: decimal.RequireFromString("123.45"), RateBP: 1000,
-			Currency: "CNY", Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "al***@x.test",
+			Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "al***@x.test",
 		}},
 		Withdrawals: []service.WithdrawalView{},
 		Transfers:   []service.TransferView{},
@@ -197,16 +225,20 @@ func TestMyCommissionShape(t *testing.T) {
 func TestRequestWithdrawal(t *testing.T) {
 	f := &fakeSvc{}
 	e := newEngine(f, false, nil)
-	w := do(e, http.MethodPost, "/v1/me/withdrawals", `{"amount":0,"payout_detail":"alipay"}`)
+	w := do(e, http.MethodPost, "/v1/me/withdrawals", `{"amount":0,"method":"alipay","payout_detail":"alipay"}`)
 	if w.Code != http.StatusUnprocessableEntity || errCode(t, w) != "validation_failed" {
 		t.Fatalf("金额 0：%d %s", w.Code, w.Body)
 	}
 	w = do(e, http.MethodPost, "/v1/me/withdrawals", `{"amount":1234,"payout_detail":"alipay a@b.test"}`)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), `"method"`) {
+		t.Fatalf("缺提现方式：%d %s", w.Code, w.Body)
+	}
+	w = do(e, http.MethodPost, "/v1/me/withdrawals", `{"amount":1234,"method":" alipay ","payout_detail":"alipay a@b.test"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("状态 %d %s", w.Code, w.Body)
 	}
-	if !f.gotAmount.Equal(decimal.RequireFromString("12.34")) || f.gotPayout != "alipay a@b.test" {
-		t.Fatalf("收到 %s %q", f.gotAmount, f.gotPayout)
+	if !f.gotAmount.Equal(decimal.RequireFromString("12.34")) || f.gotMethod != "alipay" || f.gotPayout != "alipay a@b.test" {
+		t.Fatalf("收到 %s %q %q", f.gotAmount, f.gotMethod, f.gotPayout)
 	}
 }
 
@@ -258,7 +290,7 @@ func TestSetConfigOnlyGivenFields(t *testing.T) {
 func TestListWithdrawalsShape(t *testing.T) {
 	f := &fakeSvc{withdrawals: []service.AdminWithdrawal{{
 		ID: uuid.New(), UserID: uuid.New(), Email: "a@b.test", Amount: decimal.RequireFromString("30"),
-		Currency: "CNY", Status: "requested", PayoutDetail: "alipay", RequestedAt: time.Now().UTC(),
+		Status: "requested", PayoutDetail: "alipay", RequestedAt: time.Now().UTC(),
 		EarnedTotal: decimal.RequireFromString("50.5"),
 	}}}
 	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/withdrawals", "")
@@ -278,9 +310,24 @@ func TestListWithdrawalsShape(t *testing.T) {
 	if _, ok := row["completed_at"]; !ok {
 		t.Fatal("completed_at 字段应输出为 null")
 	}
+	if f.gotStatuses != nil {
+		t.Fatalf("不带 status 不应筛状态: %v", f.gotStatuses)
+	}
 }
 
-// 审核、打款、改配置、佣金复核必须挂 RecentReauth：把它换成直接回 428 的桩，这四条应被挡下、三条只读的不受影响。
+// status 逗号分隔多个状态（去空白、丢空段），原样交给 service 校验。
+func TestListWithdrawalsStatusList(t *testing.T) {
+	f := &fakeSvc{}
+	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/withdrawals?status=requested,%20approved,", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(f.gotStatuses) != 2 || f.gotStatuses[0] != "requested" || f.gotStatuses[1] != "approved" {
+		t.Fatalf("statuses %v", f.gotStatuses)
+	}
+}
+
+// 审核、打款、改配置、佣金复核、单独佣金设置的增删必须挂 RecentReauth：把它换成直接回 428 的桩，这六条应被挡下、四条只读的不受影响。
 func TestAdminWritesRequireRecentReauth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
@@ -301,46 +348,42 @@ func TestAdminWritesRequireRecentReauth(t *testing.T) {
 		"/v1/withdrawals/" + id + "/paid":          `{"payout_reference":"TX-1"}`,
 		"/v1/commission/config":                    `{"rate_percent":10}`,
 		"/v1/commission/entries/" + id + "/review": `{"action":"void","reason":"同源刷单确认"}`,
+		"/v1/commission/overrides":                 `{"email":"a@b.test","rate_percent":10}`,
 	}
 	for path, body := range guarded {
 		if w := do(e, http.MethodPost, path, body); w.Code != http.StatusPreconditionRequired {
 			t.Errorf("POST %s 应要求近期重认证，得到 %d", path, w.Code)
 		}
 	}
-	for _, path := range []string{"/v1/commission/overview", "/v1/withdrawals", "/v1/commission/entries?review=required"} {
+	if w := do(e, http.MethodDelete, "/v1/commission/overrides/"+id, ""); w.Code != http.StatusPreconditionRequired {
+		t.Errorf("DELETE 单独佣金设置应要求近期重认证，得到 %d", w.Code)
+	}
+	for _, path := range []string{"/v1/commission/overview", "/v1/withdrawals", "/v1/commission/entries?review=required", "/v1/commission/overrides"} {
 		if w := do(e, http.MethodGet, path, ""); w.Code == http.StatusPreconditionRequired {
 			t.Errorf("GET %s 是只读的，不该要求重认证", path)
 		}
 	}
 }
 
-// 概览：顶层是站点币种那一组，by_currency 按币种列出。
+// 概览：金额为全站合计（分）。
 func TestOverviewShape(t *testing.T) {
 	f := &fakeSvc{overview: service.Overview{
-		Currency: "USD", Pending: decimal.RequireFromString("1.5"), Entries: 3, NeedReview: 1,
+		Pending: decimal.RequireFromString("20"), Entries: 3, NeedReview: 1,
 		MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order",
-		ByCurrency: []service.CurrencyOverview{
-			{Currency: "CNY", Pending: decimal.RequireFromString("20"), Entries: 2, NeedReview: 1},
-			{Currency: "USD", Pending: decimal.RequireFromString("1.5"), Entries: 1},
-		},
 	}}
 	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/commission/overview", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 	var resp struct {
-		Currency   string           `json:"currency"`
-		Pending    int64            `json:"pending"`
-		NeedReview int64            `json:"need_review"`
-		ByCurrency []map[string]any `json:"by_currency"`
+		Pending    int64 `json:"pending"`
+		NeedReview int64 `json:"need_review"`
+		Entries    int64 `json:"entries"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Currency != "USD" || resp.Pending != 150 || resp.NeedReview != 1 || len(resp.ByCurrency) != 2 {
+	if resp.Pending != 2000 || resp.NeedReview != 1 || resp.Entries != 3 {
 		t.Fatalf("概览 %s", w.Body)
-	}
-	if resp.ByCurrency[0]["currency"] != "CNY" || resp.ByCurrency[0]["pending"] != float64(2000) || resp.ByCurrency[0]["need_review"] != float64(1) {
-		t.Fatalf("by_currency %v", resp.ByCurrency[0])
 	}
 }

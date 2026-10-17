@@ -13,9 +13,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// envelope 是所有任务载荷的外层：{"req_id": "...", "data": <业务载荷>}。
+// envelope 是所有任务载荷的外层：{"req_id": "...", "data": <业务载荷>}；定时任务不带 req_id（见 newPeriodicTask）。
 type envelope struct {
-	ReqID string          `json:"req_id"`
+	ReqID string          `json:"req_id,omitempty"`
 	Data  json.RawMessage `json:"data"`
 }
 
@@ -55,15 +55,20 @@ func Decode(t *asynq.Task, dst any) error {
 	return nil
 }
 
-// Middleware 把载荷里的 req_id 放进 ctx 和日志，任务结束记一行结果。
+// Middleware 把载荷里的 req_id 与 asynq 任务 id 放进 ctx 和日志，任务结束记一行结果。
 func Middleware(base *zap.Logger) asynq.MiddlewareFunc {
 	return func(next asynq.Handler) asynq.Handler {
 		return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
-			// 载荷解析失败时 env.ReqID 为空，Normalize 会生成新的。
+			// 载荷没带 req_id（定时任务）或解析失败时为空，Normalize 生成新的。
 			var env envelope
 			_ = json.Unmarshal(t.Payload(), &env)
 			ctx = plog.WithReqID(ctx, base, reqid.Normalize(env.ReqID))
-			lg := plog.From(ctx).With(zap.String("task", t.Type()))
+			fields := []zap.Field{zap.String("task", t.Type())}
+			// asynq 处理任务时 ctx 里带任务 id，日志据此对上 asynq 里的那条任务（重试、归档）。
+			if id, ok := asynq.GetTaskID(ctx); ok {
+				fields = append(fields, zap.String("task_id", id))
+			}
+			lg := plog.From(ctx).With(fields...)
 			ctx = plog.With(ctx, lg)
 
 			start := time.Now()
@@ -77,6 +82,14 @@ func Middleware(base *zap.Logger) asynq.MiddlewareFunc {
 			return err
 		})
 	}
+}
+
+// newPeriodicTask 构造定时任务，载荷固定为 {"data":{}}。
+// 定时任务的载荷不带 req_id，由 Middleware 每次运行时生成新的；
+// 载荷固定不变，asynq.Unique（按载荷算键）在不同 Scheduler 实例与重启前后都能去重。
+func newPeriodicTask(typ string) *asynq.Task {
+	payload, _ := json.Marshal(envelope{Data: json.RawMessage("{}")})
+	return asynq.NewTask(typ, payload)
 }
 
 // Periodic 是模块声明的定时任务。
@@ -97,16 +110,34 @@ func Register(mux *asynq.ServeMux, sched *asynq.Scheduler, mods ...Module) error
 	for _, m := range mods {
 		m.Register(mux)
 		for _, p := range m.Periodic() {
-			task, err := NewTask(context.Background(), p.Type, nil)
-			if err != nil {
-				return err
-			}
+			task := newPeriodicTask(p.Type)
 			if _, err := sched.Register(p.Cronspec, task, p.Opts...); err != nil {
 				return fmt.Errorf("jobs: 注册定时任务 %s: %w", p.Type, err)
 			}
 		}
 	}
 	return nil
+}
+
+// PurgeInBatches 是保留期清理的分批循环：反复调 purge（每次最多删 batch 行），直到某次删的行数 < batch
+// 或已调满 maxBatches 次（删不完留给下一个周期），返回合计删除行数。ctx 取消即停并返回已删的合计与 ctx 的错误；
+// purge 出错同样返回已删的合计与该错误。
+func PurgeInBatches(ctx context.Context, batch, maxBatches int, purge func(ctx context.Context, limit int) (int64, error)) (int64, error) {
+	var total int64
+	for i := 0; i < maxBatches; i++ {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		n, err := purge(ctx, batch)
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(batch) {
+			break
+		}
+	}
+	return total, nil
 }
 
 // ZapLogger 让 asynq 的 Server 与 Scheduler 用 zap 写日志。

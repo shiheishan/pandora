@@ -56,15 +56,14 @@ func TestCheckBasicsOrder(t *testing.T) {
 
 	baseCoupon := func() model.Coupon {
 		return model.Coupon{
-			Status:         model.CouponActive,
-			Currency:       "CNY",
+			Status:         StatusActive,
 			MinOrderAmount: decimal.Zero,
 			MaxRedemptions: nil,
 			RedeemedCount:  0,
 			ReservedCount:  0,
 		}
 	}
-	baseTarget := Target{Currency: "CNY", Subtotal: dec("50.00")}
+	baseTarget := Target{Subtotal: dec("50.00")}
 
 	cases := []struct {
 		name string
@@ -72,7 +71,7 @@ func TestCheckBasicsOrder(t *testing.T) {
 		want error
 	}{
 		{"正常", func(c *model.Coupon) {}, nil},
-		{"paused", func(c *model.Coupon) { c.Status = model.CouponPaused }, ErrCouponNotFound},
+		{"paused", func(c *model.Coupon) { c.Status = StatusPaused }, ErrCouponNotFound},
 		{"未开始", func(c *model.Coupon) { c.ValidFrom = ptrTime(future) }, ErrCouponNotFound},
 		{"已过期", func(c *model.Coupon) { c.ValidUntil = ptrTime(past) }, ErrCouponExpired},
 		{"容量用尽", func(c *model.Coupon) {
@@ -80,10 +79,9 @@ func TestCheckBasicsOrder(t *testing.T) {
 			c.RedeemedCount = 1
 			c.ReservedCount = 1
 		}, ErrCouponUsedUp},
-		{"币种不符", func(c *model.Coupon) { c.Currency = "USD" }, ErrCouponNotFound},
 		{"未达门槛", func(c *model.Coupon) { c.MinOrderAmount = dec("60.00") }, ErrCouponMinAmount},
 		{"暂停优先于过期", func(c *model.Coupon) {
-			c.Status = model.CouponPaused
+			c.Status = StatusPaused
 			c.ValidUntil = ptrTime(past)
 		}, ErrCouponNotFound},
 	}
@@ -161,7 +159,6 @@ func TestValidateSpec(t *testing.T) {
 	valid := Spec{
 		Name:       "夏季",
 		Face:       Face{Kind: KindPercent, PercentBP: 1000},
-		Currency:   "cny",
 		MinOrder:   decimal.Zero,
 		MaxPerUser: 1,
 		PlanIDs:    []uuid.UUID{planA, planB, planA},
@@ -169,9 +166,6 @@ func TestValidateSpec(t *testing.T) {
 	out, err := validateSpec(valid)
 	if err != nil {
 		t.Fatalf("合法规格: %v", err)
-	}
-	if out.Currency != "CNY" {
-		t.Fatalf("币种大写: %q", out.Currency)
 	}
 	if len(out.PlanIDs) != 2 || out.PlanIDs[0] != planA || out.PlanIDs[1] != planB {
 		t.Fatalf("去重顺序: %v", out.PlanIDs)
@@ -182,18 +176,17 @@ func TestValidateSpec(t *testing.T) {
 		spec Spec
 		key  string
 	}{
-		{"percent 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 0}, Currency: "CNY", MaxPerUser: 1}, "discount_value"},
-		{"percent 10001", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 10001}, Currency: "CNY", MaxPerUser: 1}, "discount_value"},
-		{"fixed 0", Spec{Name: "x", Face: Face{Kind: KindFixed, AmountOff: decimal.Zero}, Currency: "CNY", MaxPerUser: 1}, "discount_value"},
-		{"fixed 0.001", Spec{Name: "x", Face: Face{Kind: KindFixed, AmountOff: dec("0.001")}, Currency: "CNY", MaxPerUser: 1}, "discount_value"},
-		{"kind x", Spec{Name: "x", Face: Face{Kind: "x"}, Currency: "CNY", MaxPerUser: 1}, "discount_type"},
-		{"EUR", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "EUR", MaxPerUser: 1}, "currency"},
-		{"fixed 带封顶", Spec{Name: "x", Face: Face{Kind: KindFixed, AmountOff: dec("1")}, Currency: "CNY", MaxDiscount: ptrDec("1"), MaxPerUser: 1}, "max_discount"},
-		{"percent 封顶 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MaxDiscount: ptrDec("0"), MaxPerUser: 1}, "max_discount"},
-		{"门槛 -1", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MinOrder: dec("-1"), MaxPerUser: 1}, "min_order_amount"},
-		{"max_redemptions 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MaxRedemptions: ptrInt(0), MaxPerUser: 1}, "max_redemptions"},
-		{"max_per_user 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MaxPerUser: 0}, "max_redemptions_per_user"},
-		{"valid_until", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MaxPerUser: 1, ValidFrom: ptrTime(until), ValidUntil: ptrTime(from)}, "valid_until"},
+		{"percent 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 0}, MaxPerUser: 1}, "discount_value"},
+		{"percent 10001", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 10001}, MaxPerUser: 1}, "discount_value"},
+		{"fixed 0", Spec{Name: "x", Face: Face{Kind: KindFixed, AmountOff: decimal.Zero}, MaxPerUser: 1}, "discount_value"},
+		{"fixed 0.001", Spec{Name: "x", Face: Face{Kind: KindFixed, AmountOff: dec("0.001")}, MaxPerUser: 1}, "discount_value"},
+		{"kind x", Spec{Name: "x", Face: Face{Kind: "x"}, MaxPerUser: 1}, "discount_type"},
+		{"fixed 带封顶", Spec{Name: "x", Face: Face{Kind: KindFixed, AmountOff: dec("1")}, MaxDiscount: ptrDec("1"), MaxPerUser: 1}, "max_discount"},
+		{"percent 封顶 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, MaxDiscount: ptrDec("0"), MaxPerUser: 1}, "max_discount"},
+		{"门槛 -1", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, MinOrder: dec("-1"), MaxPerUser: 1}, "min_order_amount"},
+		{"max_redemptions 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, MaxRedemptions: ptrInt(0), MaxPerUser: 1}, "max_redemptions"},
+		{"max_per_user 0", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, MaxPerUser: 0}, "max_redemptions_per_user"},
+		{"valid_until", Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, MaxPerUser: 1, ValidFrom: ptrTime(until), ValidUntil: ptrTime(from)}, "valid_until"},
 	}
 	for _, tc := range invalid {
 		t.Run(tc.name, func(t *testing.T) {
@@ -212,7 +205,7 @@ func TestValidateSpec(t *testing.T) {
 	for i := range many {
 		many[i] = uuid.New()
 	}
-	_, err = validateSpec(Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MaxPerUser: 1, PlanIDs: many})
+	_, err = validateSpec(Spec{Name: "x", Face: Face{Kind: KindPercent, PercentBP: 100}, MaxPerUser: 1, PlanIDs: many})
 	if err == nil {
 		t.Fatal("201 套餐应失败")
 	}
@@ -221,7 +214,7 @@ func TestValidateSpec(t *testing.T) {
 	}
 
 	for _, name := range []string{"\x00", "   "} {
-		_, err := validateSpec(Spec{Name: name, Face: Face{Kind: KindPercent, PercentBP: 100}, Currency: "CNY", MaxPerUser: 1})
+		_, err := validateSpec(Spec{Name: name, Face: Face{Kind: KindPercent, PercentBP: 100}, MaxPerUser: 1})
 		if err == nil || errs.As(err).Fields["name"] == "" {
 			t.Fatalf("name %q: %v", name, err)
 		}
@@ -276,7 +269,6 @@ func TestInvalidCodeNotFound(t *testing.T) {
 	s := &Service{now: time.Now}
 	tg := Target{
 		UserID:   uuid.New(),
-		Currency: "CNY",
 		Subtotal: decimal.RequireFromString("10.00"),
 	}
 	badCodes := []string{
@@ -298,7 +290,7 @@ func TestInvalidCodeNotFound(t *testing.T) {
 			t.Fatalf("Reserve %q 不应 Internal", code)
 		}
 		pid, prid := uuid.New(), uuid.New()
-		_, err = s.Preview(ctx, tg.UserID, code, PreviewItem{PlanID: &pid, PriceID: &prid})
+		_, err = s.Preview(ctx, tg.UserID, code, PreviewItem{PlanID: pid, PriceID: prid})
 		if !errors.Is(err, ErrCouponNotFound) {
 			t.Fatalf("Preview %q: %v", code, err)
 		}

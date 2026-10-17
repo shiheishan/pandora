@@ -39,6 +39,18 @@ func (r *Repo) OrderByID(ctx context.Context, id uuid.UUID, lock Lock) (model.Or
 	return o, true, nil
 }
 
+// PendingOrdersForUser 按 id 升序锁住一个用户的全部待付订单（FOR NO KEY UPDATE），注销账号时逐张释放。
+func (r *Repo) PendingOrdersForUser(ctx context.Context, userID uuid.UUID) ([]model.Order, error) {
+	var rows []model.Order
+	err := r.d.Conn(ctx).Raw(
+		"SELECT * FROM orders WHERE user_id = ? AND status = 'pending_payment' ORDER BY id FOR NO KEY UPDATE", userID,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return rows, nil
+}
+
 // OrderForUser 按 id 与用户读订单（可加行锁）；不存在或不属于该用户返回 false。
 func (r *Repo) OrderForUser(ctx context.Context, id, userID uuid.UUID, lock Lock) (model.Order, bool, error) {
 	var o model.Order
@@ -105,21 +117,26 @@ SELECT * FROM orders
 	return o, true, nil
 }
 
-// OpenChangeOrderExists 该订阅是否已有未完结的续费或换套餐单。
-func (r *Repo) OpenChangeOrderExists(ctx context.Context, subscriptionID uuid.UUID) (bool, error) {
-	var n int64
+// OpenChangeOrder 找该订阅最近一张未完结（待付或已付未履约）的续费、叠加或换套餐单；库里唯一索引保证至多一张。
+func (r *Repo) OpenChangeOrder(ctx context.Context, subscriptionID uuid.UUID) (model.Order, bool, error) {
+	var o model.Order
 	err := r.d.Conn(ctx).Raw(`
-SELECT COUNT(*) FROM orders
+SELECT * FROM orders
  WHERE subscription_id = ?
-   AND kind IN ('renewal', 'upgrade')
-   AND status IN ('pending_payment', 'paid')`, subscriptionID).Scan(&n).Error
+   AND kind IN ('renewal', 'upgrade', 'stack')
+   AND status IN ('pending_payment', 'paid')
+ ORDER BY created_at DESC
+ LIMIT 1`, subscriptionID).Scan(&o).Error
 	if err != nil {
-		return false, mapErr(err)
+		return model.Order{}, false, mapErr(err)
 	}
-	return n > 0, nil
+	if o.ID == uuid.Nil {
+		return model.Order{}, false, nil
+	}
+	return o, true, nil
 }
 
-// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费或变更单的订阅（OpenChangeOrderExists 的批量版，报价与开单预览用）。
+// OpenChangeSubscriptions 是 subIDs 里挂着未完结续费、叠加或换套餐单的订阅（OpenChangeOrder 的批量版，报价与开单预览用）。
 func (r *Repo) OpenChangeSubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
 	out := make(map[uuid.UUID]bool, len(subIDs))
 	if len(subIDs) == 0 {
@@ -128,7 +145,7 @@ func (r *Repo) OpenChangeSubscriptions(ctx context.Context, subIDs []uuid.UUID) 
 	rows, err := r.d.Conn(ctx).Raw(`
 SELECT DISTINCT subscription_id FROM orders
  WHERE subscription_id IN ?
-   AND kind IN ('renewal', 'upgrade')
+   AND kind IN ('renewal', 'upgrade', 'stack')
    AND status IN ('pending_payment', 'paid')`, subIDs).Rows()
 	if err != nil {
 		return nil, mapErr(err)

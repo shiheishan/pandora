@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -19,24 +18,23 @@ func TestAdjustCredit(t *testing.T) {
 	reason := "补偿线路故障"
 	susp := PlatformAccount(Suspense, RefManualAdjust)
 	// suspense/manual_adjust 是全库共用的平台科目，只核对本用例带来的变化
-	suspBefore := e.accountBalance(t, ctx, susp, money.USD)
+	suspBefore := e.accountBalance(t, ctx, susp)
 
 	res, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID:   user,
-		Amount:   dec("12.50"),
-		Currency: "USD",
-		Reason:   reason,
+		UserID: user,
+		Amount: dec("12.50"),
+		Reason: reason,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Currency != money.USD || !res.Balance.Equal(dec("12.50")) || res.TxnID == uuid.Nil {
+	if !res.Balance.Equal(dec("12.50")) || res.TxnID == uuid.Nil {
 		t.Fatalf("结果不对: %+v", res)
 	}
-	if !e.balanceOf(t, ctx, user, money.USD).Equal(dec("12.50")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("12.50")) {
 		t.Fatalf("用户余额应为 12.50")
 	}
-	if got := e.accountBalance(t, ctx, susp, money.USD).Sub(suspBefore); !got.Equal(dec("12.50")) {
+	if got := e.accountBalance(t, ctx, susp).Sub(suspBefore); !got.Equal(dec("12.50")) {
 		t.Fatalf("suspense/manual_adjust 应增加 12.50，得 %s", got)
 	}
 
@@ -66,15 +64,14 @@ func TestAdjustDebit(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	user := e.mkUser(t, ctx)
 	ctx = asAdmin(ctx, admin)
-	cur := money.USD
 
 	if _, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("10.00"), Currency: string(cur), Reason: "先加十个字原因",
+		UserID: user, Amount: dec("10.00"), Reason: "先加十个字原因",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	res, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("-4.00"), Currency: string(cur), Reason: "再减四个字原因",
+		UserID: user, Amount: dec("-4.00"), Reason: "再减四个字原因",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,15 +87,14 @@ func TestAdjustOverdraft(t *testing.T) {
 	admin := e.mkUser(t, ctx)
 	user := e.mkUser(t, ctx)
 	ctx = asAdmin(ctx, admin)
-	cur := money.USD
 
 	if _, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("3.00"), Currency: string(cur), Reason: "初始加三个字",
+		UserID: user, Amount: dec("3.00"), Reason: "初始加三个字",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("-5.00"), Currency: string(cur), Reason: "扣减五个字原因",
+		UserID: user, Amount: dec("-5.00"), Reason: "扣减五个字原因",
 	})
 	if codeOf(err) != errs.Conflict {
 		t.Fatalf("code 应为 conflict，得 %s %v", codeOf(err), err)
@@ -106,7 +102,7 @@ func TestAdjustOverdraft(t *testing.T) {
 	if errs.As(err).Message != "余额不足，无法扣减这么多" {
 		t.Fatalf("文案不对: %q", errs.As(err).Message)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("3.00")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("3.00")) {
 		t.Fatalf("余额应仍为 3")
 	}
 	var auditN int64
@@ -119,31 +115,6 @@ func TestAdjustOverdraft(t *testing.T) {
 	}
 }
 
-func TestAdjustDefaultCurrency(t *testing.T) {
-	e, ctx := newEnv(t)
-	admin := e.mkUser(t, ctx)
-	user := e.mkUser(t, ctx)
-	ctx = asAdmin(ctx, admin)
-
-	def, err := e.svc.DefaultCurrency(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("1.00"), Currency: "", Reason: "默认币种五个字",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Currency != def {
-		t.Fatalf("币种应为站点缺省 %s，得 %s", def, res.Currency)
-	}
-	if def != money.CNY {
-		t.Fatalf("测试环境站点缺省应为 CNY，得 %s", def)
-	}
-}
-
 func TestAdjustValidation(t *testing.T) {
 	e, ctx := newEnv(t)
 	admin := e.mkUser(t, ctx)
@@ -151,14 +122,14 @@ func TestAdjustValidation(t *testing.T) {
 	ctx = asAdmin(ctx, admin)
 
 	_, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: decimal.Zero, Currency: "USD", Reason: "原因够五个字",
+		UserID: user, Amount: decimal.Zero, Reason: "原因够五个字",
 	})
 	if codeOf(err) != errs.ValidationFailed {
 		t.Fatalf("金额 0: code=%s err=%v", codeOf(err), err)
 	}
 
 	_, err = e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("1.00"), Currency: "USD", Reason: "太短",
+		UserID: user, Amount: dec("1.00"), Reason: "太短",
 	})
 	if codeOf(err) != errs.ValidationFailed {
 		t.Fatalf("原因太短: code=%s", codeOf(err))
@@ -167,23 +138,12 @@ func TestAdjustValidation(t *testing.T) {
 	if pe.Fields == nil || pe.Fields["reason"] == "" {
 		t.Fatalf("应有 reason 字段错误: %v", pe.Fields)
 	}
-
-	_, err = e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: user, Amount: dec("1.00"), Currency: "EUR", Reason: "币种错误五个字",
-	})
-	if codeOf(err) != errs.ValidationFailed {
-		t.Fatalf("EUR: code=%s", codeOf(err))
-	}
-	pe = errs.As(err)
-	if pe.Fields == nil || pe.Fields["currency"] == "" {
-		t.Fatalf("应有 currency 字段错误: %v", pe.Fields)
-	}
 }
 
 func TestAdjustAuth(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	adj := Adjustment{UserID: user, Amount: dec("1.00"), Currency: "USD", Reason: "权限测试五个字"}
+	adj := Adjustment{UserID: user, Amount: dec("1.00"), Reason: "权限测试五个字"}
 
 	_, err := e.svc.AdjustBalance(ctx, adj)
 	if codeOf(err) != errs.Unauthorized {
@@ -203,9 +163,52 @@ func TestAdjustUnknownUser(t *testing.T) {
 	ghost := uuid.New()
 
 	_, err := e.svc.AdjustBalance(ctx, Adjustment{
-		UserID: ghost, Amount: dec("1.00"), Currency: "USD", Reason: "不存在用户五个",
+		UserID: ghost, Amount: dec("1.00"), Reason: "不存在用户五个",
 	})
 	if !errors.Is(err, ErrUserNotFound) && codeOf(err) != errs.NotFound {
 		t.Fatalf("期望 not_found，得 %s %v", codeOf(err), err)
+	}
+}
+
+// 已注销的账号：加钱 409、不记账；扣减照常成功并记账（线下退款后冲平余额）。
+func TestAdjustDeletedUser(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.mkUser(t, ctx)
+	ctx = asAdmin(ctx, admin)
+	gone := e.mkUser(t, ctx)
+	if _, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("8.00"), Reason: "注销前留下的余额",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.accounts.deleted[gone] = true
+
+	_, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("5.00"), Reason: "给已注销账号加钱",
+	})
+	if codeOf(err) != errs.Conflict {
+		t.Fatalf("加钱期望 conflict，得 %s %v", codeOf(err), err)
+	}
+	var n int64
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE source_id = ?`, gone).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("加钱不该记账：n=%d err=%v", n, err)
+	}
+
+	res, err := e.svc.AdjustBalance(ctx, Adjustment{
+		UserID: gone, Amount: dec("-8.00"), Reason: "线下已退款，冲平余额",
+	})
+	if err != nil {
+		t.Fatalf("扣减应成功：%v", err)
+	}
+	if !res.Balance.IsZero() {
+		t.Fatalf("冲平后余额 %s，期望 0", res.Balance)
+	}
+	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions WHERE source_id = ?`, gone).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("扣减应记账：n=%d err=%v", n, err)
+	}
+
+	bare := &Service{}
+	if got := bare.MissingPorts(); len(got) != 1 || got[0] != "AccountStates" {
+		t.Fatalf("MissingPorts %v", got)
 	}
 }

@@ -18,7 +18,7 @@ import (
 
 // Config 是 payment 的部署参数，app 从配置装配。
 type Config struct {
-	// PublicBaseURL 是门户对外地址（如 https://example.com），拼回调地址与回跳地址；末尾的 / 会去掉。为空时 CreateIntent 报错。
+	// PublicBaseURL 是门户对外地址（如 https://example.com），拼回调地址与回跳地址；末尾的 / 会去掉。为空时 BeginIntent 报错。
 	PublicBaseURL string
 	// AllowPrivateHosts 只在开发环境打开（装配时按 cfg 的环境传 env == development）：允许渠道地址是内网或 http。
 	// 生产必须为 false：查单请求在拨号时按真实 IP 拦内网、环回、链路本地与元数据地址，防 SSRF。
@@ -40,9 +40,11 @@ type emailDirectory interface {
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
-// siteReader 是 settings service 的站点设置（取时区算「今日成交」）。
-type siteReader interface {
+// settingsReader 是 settings service 的站点设置与支付回调设置。
+type settingsReader interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
+	PaymentCallback(ctx context.Context) (settingssvc.PaymentCallback, error)
+	SetPaymentCallback(ctx context.Context, notifyBaseURL string) error
 }
 
 // auditWriter 是 audit service 的写入面。
@@ -62,7 +64,7 @@ type Service struct {
 	tx       txRunner
 	ledger   ledgerPoster
 	identity emailDirectory
-	settings siteReader
+	settings settingsReader
 	audit    auditWriter
 	sealer   sealer
 	cfg      Config
@@ -93,3 +95,12 @@ func New(r *repo.Repo, txm *tx.Manager, ledger *ledgersvc.Service, identity *ide
 
 // UseSettler 注册订单结算回调；order 构造时调用。没注册时收款入账一律报错回滚。
 func (s *Service) UseSettler(st Settler) { s.settler = st }
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	if s.settler == nil {
+		out = append(out, "Settler")
+	}
+	return out
+}

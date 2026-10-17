@@ -13,7 +13,7 @@ var errDuplicateJSONKey = errors.New("duplicate JSON object key")
 
 // validateKernelShape 校验一次协议写入。未填协议类型的草稿返回 version 0；
 // 已填的必须是当前服务端 schema。
-func validateKernelShape(nodeType, kernel string, port int, raw json.RawMessage) (int, map[string]string) {
+func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, map[string]string) {
 	fields := map[string]string{}
 	nodeType = CanonicalType(nodeType)
 	if nodeType == "" {
@@ -22,8 +22,6 @@ func validateKernelShape(nodeType, kernel string, port int, raw json.RawMessage)
 	if port < 1 || port > 65535 {
 		fields["server_port"] = "端口必须在 1–65535 之间"
 	}
-	// sing-box / xray-core 已不再接受新写入，见 validate_policy.go。
-	validateKernelChoice(fields, kernel)
 	if !containsString(stableTypes[:], nodeType) {
 		fields["node_type"] = "不支持的协议类型"
 		return 0, fields
@@ -133,7 +131,7 @@ func validateKernelShape(nodeType, kernel string, port int, raw json.RawMessage)
 		} else {
 			validateShadowTLSServer(fields, server, cfg.ServerPort)
 		}
-		if method := strings.ToLower(strings.TrimSpace(cfg.Method)); method != "" && !containsString(shadowsocksMethods, method) {
+		if method := strings.ToLower(strings.TrimSpace(cfg.Method)); method != "" && !containsString(shadowsocksAEADMethods, method) {
 			fields["protocol_config.method"] = "ShadowTLS 仅支持当前 NativeCore 的 Shadowsocks 方法"
 		}
 	case "hysteria2":
@@ -371,9 +369,9 @@ func validateKernelShape(nodeType, kernel string, port int, raw json.RawMessage)
 			CertPath             string            `json:"cert_path"`
 			KeyPath              string            `json:"key_path"`
 
-			// REALITY。它是 TLS 之外的另一条路，也是目前唯一能落地的一条：
-			// 普通 TLS 要证书，而证书生命周期还没做完；REALITY 借用真实站点
-			// 的握手，服务端只要一对 x25519 密钥，不碰证书。
+			// REALITY。它是 TLS 之外的另一条路，也是 vless 目前唯一开放的加密方式：
+			// vless / vmess 的普通 TLS 还没开放（要先支持 file 模式证书路径）；REALITY 借用
+			// 真实站点的握手，服务端只要一对 x25519 密钥，不碰证书。
 			Security    string   `json:"security"`
 			Dest        string   `json:"dest"`
 			ServerNames []string `json:"server_names"`

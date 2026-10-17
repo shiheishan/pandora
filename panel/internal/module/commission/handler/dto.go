@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/commission/service"
@@ -8,14 +9,26 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// listWithdrawalsQuery 是后台提现列表的查询参数。
+// listWithdrawalsQuery 是后台提现列表的查询参数；status 逗号分隔，如 requested,approved。
 type listWithdrawalsQuery struct {
 	Status string `form:"status"`
+}
+
+// statuses 把逗号分隔的状态拆开（去空白、丢空段）；为空表示不筛。
+func (q listWithdrawalsQuery) statuses() []string {
+	var out []string
+	for _, p := range strings.Split(q.Status, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // withdrawalRequest 是门户发起提现的请求体。
 type withdrawalRequest struct {
 	Amount       int64  `json:"amount"`
+	Method       string `json:"method"`
 	PayoutDetail string `json:"payout_detail"`
 }
 
@@ -55,7 +68,8 @@ type reviewResponse struct {
 
 // markPaidRequest 是标记已打款的请求体。
 type markPaidRequest struct {
-	PayoutReference string `json:"payout_reference"`
+	PayoutReference string  `json:"payout_reference"`
+	PaidUSDTAmount  *string `json:"paid_usdt_amount"`
 }
 
 // markPaidResponse 是标记已打款成功响应。
@@ -65,10 +79,16 @@ type markPaidResponse struct {
 
 // configRequest 是后台改分销参数的请求体。
 type configRequest struct {
-	RatePercent *int    `json:"rate_percent"`
-	FreezeDays  *int    `json:"freeze_days"`
-	MinWithdraw *int64  `json:"min_withdraw"`
-	Scope       *string `json:"scope"`
+	RatePercent         *int      `json:"rate_percent"`
+	FreezeDays          *int      `json:"freeze_days"`
+	MinWithdraw         *int64    `json:"min_withdraw"`
+	Scope               *string   `json:"scope"`
+	DistributionEnabled *bool     `json:"distribution_enabled"`
+	DistributionL1      *int      `json:"distribution_l1"`
+	DistributionL2      *int      `json:"distribution_l2"`
+	DistributionL3      *int      `json:"distribution_l3"`
+	WithdrawEnabled     *bool     `json:"withdraw_enabled"`
+	WithdrawMethods     *[]string `json:"withdraw_methods"`
 }
 
 // okResponse 是只回 ok 的写操作响应。
@@ -78,39 +98,43 @@ type okResponse struct {
 
 // commissionSummaryResponse 是门户佣金汇总。
 type commissionSummaryResponse struct {
-	Currency     string `json:"currency"`
-	Pending      int64  `json:"pending"`
-	Available    int64  `json:"available"`
-	Withdrawing  int64  `json:"withdrawing"`
-	Settled      int64  `json:"settled"`
-	Invitees     int64  `json:"invitees"`
-	Orders       int64  `json:"orders"`
-	PaidInvitees int64  `json:"paid_invitees"`
-	TotalEarned  int64  `json:"total_earned"`
-	RatePercent  int    `json:"rate_percent"`
-	MinWithdraw  int64  `json:"min_withdraw"`
-	Scope        string `json:"scope"`
+	Pending         int64    `json:"pending"`
+	Available       int64    `json:"available"`
+	Withdrawing     int64    `json:"withdrawing"`
+	Settled         int64    `json:"settled"`
+	Invitees        int64    `json:"invitees"`
+	Orders          int64    `json:"orders"`
+	PaidInvitees    int64    `json:"paid_invitees"`
+	TotalEarned     int64    `json:"total_earned"`
+	RatePercent     int      `json:"rate_percent"`
+	MinWithdraw     int64    `json:"min_withdraw"`
+	Scope           string   `json:"scope"`
+	DirectRateBP    int64    `json:"direct_rate_bp"`
+	WithdrawEnabled bool     `json:"withdraw_enabled"`
+	WithdrawMethods []string `json:"withdraw_methods"`
 }
 
 // commissionEntryResponse 是门户佣金明细一行。
 type commissionEntryResponse struct {
-	Amount      int64     `json:"amount"`
-	Base        int64     `json:"base"`
-	RatePercent int64     `json:"rate_percent"`
-	Currency    string    `json:"currency"`
-	Status      string    `json:"status"`
-	FrozenUntil time.Time `json:"frozen_until"`
-	CreatedAt   time.Time `json:"created_at"`
-	OrderNo     string    `json:"order_no"`
-	From        string    `json:"from"`
+	Amount       int64     `json:"amount"`
+	Base         int64     `json:"base"`
+	RatePercent  int64     `json:"rate_percent"`
+	RateBP       int64     `json:"rate_bp"`
+	Level        int       `json:"level"`
+	SharePercent int       `json:"share_percent"`
+	Status       string    `json:"status"`
+	FrozenUntil  time.Time `json:"frozen_until"`
+	CreatedAt    time.Time `json:"created_at"`
+	OrderNo      string    `json:"order_no"`
+	From         string    `json:"from"`
 }
 
 // myWithdrawalResponse 是门户提现记录一行。
 type myWithdrawalResponse struct {
 	ID           string     `json:"id"`
 	Amount       int64      `json:"amount"`
-	Currency     string     `json:"currency"`
 	Status       string     `json:"status"`
+	Method       string     `json:"method"`
 	RejectReason string     `json:"reject_reason"`
 	RequestedAt  time.Time  `json:"requested_at"`
 	CompletedAt  *time.Time `json:"completed_at"`
@@ -120,7 +144,6 @@ type myWithdrawalResponse struct {
 type myTransferResponse struct {
 	LedgerTxnID string    `json:"ledger_txn_id"`
 	Amount      int64     `json:"amount"`
-	Currency    string    `json:"currency"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -132,51 +155,42 @@ type myCommissionResponse struct {
 	Transfers   []myTransferResponse      `json:"transfers"`
 }
 
-// currencyOverviewResponse 是后台分销概览里某一币种的一组（金额为分）。
-type currencyOverviewResponse struct {
-	Currency           string `json:"currency"`
-	Pending            int64  `json:"pending"`
-	Available          int64  `json:"available"`
-	PaidOut            int64  `json:"paid_out"`
-	ThisMonth          int64  `json:"this_month"`
-	TotalEarned        int64  `json:"total_earned"`
-	Entries            int64  `json:"entries"`
-	NeedReview         int64  `json:"need_review"`
-	WaitingWithdrawals int64  `json:"waiting_withdrawals"`
-}
-
-// overviewResponse 是后台分销概览：平铺的金额字段是站点币种（currency）那一组，笔数是全部币种合计；by_currency 按币种列出。
+// overviewResponse 是后台分销概览（金额为分）。
 type overviewResponse struct {
-	Currency           string                     `json:"currency"`
-	ByCurrency         []currencyOverviewResponse `json:"by_currency"`
-	Pending            int64                      `json:"pending"`
-	Available          int64                      `json:"available"`
-	PaidOut            int64                      `json:"paid_out"`
-	ThisMonth          int64                      `json:"this_month"`
-	TotalEarned        int64                      `json:"total_earned"`
-	Entries            int64                      `json:"entries"`
-	NeedReview         int64                      `json:"need_review"`
-	WaitingWithdrawals int64                      `json:"waiting_withdrawals"`
-	InvitedUsers       int64                      `json:"invited_users"`
-	RatePercent        int                        `json:"rate_percent"`
-	FreezeDays         int                        `json:"freeze_days"`
-	MinWithdraw        int64                      `json:"min_withdraw"`
-	Scope              string                     `json:"scope"`
+	Pending             int64    `json:"pending"`
+	Available           int64    `json:"available"`
+	PaidOut             int64    `json:"paid_out"`
+	ThisMonth           int64    `json:"this_month"`
+	TotalEarned         int64    `json:"total_earned"`
+	Entries             int64    `json:"entries"`
+	NeedReview          int64    `json:"need_review"`
+	WaitingWithdrawals  int64    `json:"waiting_withdrawals"`
+	InvitedUsers        int64    `json:"invited_users"`
+	RatePercent         int      `json:"rate_percent"`
+	FreezeDays          int      `json:"freeze_days"`
+	MinWithdraw         int64    `json:"min_withdraw"`
+	Scope               string   `json:"scope"`
+	DistributionEnabled bool     `json:"distribution_enabled"`
+	DistributionLevels  []int    `json:"distribution_levels"`
+	WithdrawEnabled     bool     `json:"withdraw_enabled"`
+	WithdrawMethods     []string `json:"withdraw_methods"`
 }
 
 // adminWithdrawalResponse 是后台提现列表一行。
 type adminWithdrawalResponse struct {
-	ID           string     `json:"id"`
-	Email        string     `json:"email"`
-	UserID       string     `json:"user_id"`
-	Amount       int64      `json:"amount"`
-	Currency     string     `json:"currency"`
-	Status       string     `json:"status"`
-	PayoutDetail string     `json:"payout_detail"`
-	RejectReason string     `json:"reject_reason"`
-	RequestedAt  time.Time  `json:"requested_at"`
-	CompletedAt  *time.Time `json:"completed_at"`
-	EarnedTotal  int64      `json:"earned_total"`
+	ID              string     `json:"id"`
+	Email           string     `json:"email"`
+	UserID          string     `json:"user_id"`
+	Amount          int64      `json:"amount"`
+	Status          string     `json:"status"`
+	Method          string     `json:"method"`
+	PayoutDetail    string     `json:"payout_detail"`
+	PayoutReference string     `json:"payout_reference"`
+	PaidUSDTAmount  *string    `json:"paid_usdt_amount"`
+	RejectReason    string     `json:"reject_reason"`
+	RequestedAt     time.Time  `json:"requested_at"`
+	CompletedAt     *time.Time `json:"completed_at"`
+	EarnedTotal     int64      `json:"earned_total"`
 }
 
 // reviewEntryResponse 是后台待复核佣金列表一行。
@@ -186,9 +200,8 @@ type reviewEntryResponse struct {
 	ReferrerEmail string    `json:"referrer_email"`
 	RefereeEmail  string    `json:"referee_email"`
 	Amount        int64     `json:"amount"`
-	Currency      string    `json:"currency"`
 	ReviewReason  string    `json:"review_reason"`
-	ReviewSource  string    `json:"review_source"` // same_source / source_check / underfunded / other
+	ReviewSource  string    `json:"review_source"` // same_source / source_check / underfunded / account_deleted / other
 	CreatedAt     time.Time `json:"created_at"`
 	FrozenUntil   time.Time `json:"frozen_until"`
 }
@@ -233,19 +246,25 @@ func summaryFrom(s service.Summary) (commissionSummaryResponse, error) {
 	if err != nil {
 		return commissionSummaryResponse{}, err
 	}
+	withdrawMethods := s.WithdrawMethods
+	if withdrawMethods == nil {
+		withdrawMethods = []string{}
+	}
 	return commissionSummaryResponse{
-		Currency:     string(s.Currency),
-		Pending:      pending,
-		Available:    avail,
-		Withdrawing:  withdrawing,
-		Settled:      settled,
-		Invitees:     s.Invitees,
-		Orders:       s.Orders,
-		PaidInvitees: s.PaidInvitees,
-		TotalEarned:  total,
-		RatePercent:  s.RatePercent,
-		MinWithdraw:  minW,
-		Scope:        s.Scope,
+		Pending:         pending,
+		Available:       avail,
+		Withdrawing:     withdrawing,
+		Settled:         settled,
+		Invitees:        s.Invitees,
+		Orders:          s.Orders,
+		PaidInvitees:    s.PaidInvitees,
+		TotalEarned:     total,
+		RatePercent:     s.RatePercent,
+		MinWithdraw:     minW,
+		Scope:           s.Scope,
+		DirectRateBP:    s.DirectRateBP,
+		WithdrawEnabled: s.WithdrawEnabled,
+		WithdrawMethods: withdrawMethods,
 	}, nil
 }
 
@@ -259,15 +278,17 @@ func entryFrom(e service.EntryView) (commissionEntryResponse, error) {
 		return commissionEntryResponse{}, err
 	}
 	return commissionEntryResponse{
-		Amount:      amount,
-		Base:        base,
-		RatePercent: e.RateBP / 100,
-		Currency:    e.Currency,
-		Status:      e.Status,
-		FrozenUntil: e.FrozenUntil,
-		CreatedAt:   e.CreatedAt,
-		OrderNo:     e.OrderNo,
-		From:        e.From,
+		Amount:       amount,
+		Base:         base,
+		RatePercent:  e.RateBP / 100,
+		RateBP:       e.RateBP,
+		Level:        e.Level,
+		SharePercent: e.SharePercent,
+		Status:       e.Status,
+		FrozenUntil:  e.FrozenUntil,
+		CreatedAt:    e.CreatedAt,
+		OrderNo:      e.OrderNo,
+		From:         e.From,
 	}, nil
 }
 
@@ -279,8 +300,8 @@ func myWithdrawalFrom(w service.WithdrawalView) (myWithdrawalResponse, error) {
 	return myWithdrawalResponse{
 		ID:           w.ID.String(),
 		Amount:       amount,
-		Currency:     w.Currency,
 		Status:       w.Status,
+		Method:       w.Method,
 		RejectReason: w.RejectReason,
 		RequestedAt:  w.RequestedAt,
 		CompletedAt:  w.CompletedAt,
@@ -295,7 +316,6 @@ func myTransferFrom(t service.TransferView) (myTransferResponse, error) {
 	return myTransferResponse{
 		LedgerTxnID: t.LedgerTxnID.String(),
 		Amount:      amount,
-		Currency:    t.Currency,
 		CreatedAt:   t.CreatedAt,
 	}, nil
 }
@@ -340,10 +360,23 @@ func myCommissionFrom(mc service.MyCommission) (myCommissionResponse, error) {
 
 // overviewFrom 把 service.Overview 转成响应 DTO。
 func overviewFrom(o service.Overview) (overviewResponse, error) {
-	top, err := currencyOverviewFrom(service.CurrencyOverview{
-		Currency: o.Currency, Pending: o.Pending, Available: o.Available, PaidOut: o.PaidOut,
-		ThisMonth: o.ThisMonth, TotalEarned: o.TotalEarned,
-	})
+	pending, err := cents(o.Pending)
+	if err != nil {
+		return overviewResponse{}, err
+	}
+	avail, err := cents(o.Available)
+	if err != nil {
+		return overviewResponse{}, err
+	}
+	paidOut, err := cents(o.PaidOut)
+	if err != nil {
+		return overviewResponse{}, err
+	}
+	thisMonth, err := cents(o.ThisMonth)
+	if err != nil {
+		return overviewResponse{}, err
+	}
+	totalEarned, err := cents(o.TotalEarned)
 	if err != nil {
 		return overviewResponse{}, err
 	}
@@ -351,54 +384,28 @@ func overviewFrom(o service.Overview) (overviewResponse, error) {
 	if err != nil {
 		return overviewResponse{}, err
 	}
-	rows := make([]currencyOverviewResponse, 0, len(o.ByCurrency))
-	for _, c := range o.ByCurrency {
-		row, err := currencyOverviewFrom(c)
-		if err != nil {
-			return overviewResponse{}, err
-		}
-		rows = append(rows, row)
+	withdrawMethods := o.WithdrawMethods
+	if withdrawMethods == nil {
+		withdrawMethods = []string{}
 	}
 	return overviewResponse{
-		Currency:           string(o.Currency),
-		ByCurrency:         rows,
-		Pending:            top.Pending,
-		Available:          top.Available,
-		PaidOut:            top.PaidOut,
-		ThisMonth:          top.ThisMonth,
-		TotalEarned:        top.TotalEarned,
-		Entries:            o.Entries,
-		NeedReview:         o.NeedReview,
-		WaitingWithdrawals: o.WaitingWithdrawals,
-		InvitedUsers:       o.InvitedUsers,
-		RatePercent:        o.RatePercent,
-		FreezeDays:         o.FreezeDays,
-		MinWithdraw:        minW,
-		Scope:              o.Scope,
-	}, nil
-}
-
-// currencyOverviewFrom 把一组币种汇总转成分。
-func currencyOverviewFrom(c service.CurrencyOverview) (currencyOverviewResponse, error) {
-	vals := []decimal.Decimal{c.Pending, c.Available, c.PaidOut, c.ThisMonth, c.TotalEarned}
-	out := make([]int64, len(vals))
-	for i, v := range vals {
-		n, err := cents(v)
-		if err != nil {
-			return currencyOverviewResponse{}, err
-		}
-		out[i] = n
-	}
-	return currencyOverviewResponse{
-		Currency:           string(c.Currency),
-		Pending:            out[0],
-		Available:          out[1],
-		PaidOut:            out[2],
-		ThisMonth:          out[3],
-		TotalEarned:        out[4],
-		Entries:            c.Entries,
-		NeedReview:         c.NeedReview,
-		WaitingWithdrawals: c.WaitingWithdrawals,
+		Pending:             pending,
+		Available:           avail,
+		PaidOut:             paidOut,
+		ThisMonth:           thisMonth,
+		TotalEarned:         totalEarned,
+		Entries:             o.Entries,
+		NeedReview:          o.NeedReview,
+		WaitingWithdrawals:  o.WaitingWithdrawals,
+		InvitedUsers:        o.InvitedUsers,
+		RatePercent:         o.RatePercent,
+		FreezeDays:          o.FreezeDays,
+		MinWithdraw:         minW,
+		Scope:               o.Scope,
+		DistributionEnabled: o.DistributionEnabled,
+		DistributionLevels:  []int{o.DistributionLevels[0], o.DistributionLevels[1], o.DistributionLevels[2]},
+		WithdrawEnabled:     o.WithdrawEnabled,
+		WithdrawMethods:     withdrawMethods,
 	}, nil
 }
 
@@ -411,18 +418,25 @@ func adminWithdrawalFrom(w service.AdminWithdrawal) (adminWithdrawalResponse, er
 	if err != nil {
 		return adminWithdrawalResponse{}, err
 	}
+	var paidUSDT *string
+	if w.PaidUSDTAmount != nil {
+		s := w.PaidUSDTAmount.String()
+		paidUSDT = &s
+	}
 	return adminWithdrawalResponse{
-		ID:           w.ID.String(),
-		Email:        w.Email,
-		UserID:       w.UserID.String(),
-		Amount:       amount,
-		Currency:     w.Currency,
-		Status:       w.Status,
-		PayoutDetail: w.PayoutDetail,
-		RejectReason: w.RejectReason,
-		RequestedAt:  w.RequestedAt,
-		CompletedAt:  w.CompletedAt,
-		EarnedTotal:  earned,
+		ID:              w.ID.String(),
+		Email:           w.Email,
+		UserID:          w.UserID.String(),
+		Amount:          amount,
+		Status:          w.Status,
+		Method:          w.Method,
+		PayoutDetail:    w.PayoutDetail,
+		PayoutReference: w.PayoutReference,
+		PaidUSDTAmount:  paidUSDT,
+		RejectReason:    w.RejectReason,
+		RequestedAt:     w.RequestedAt,
+		CompletedAt:     w.CompletedAt,
+		EarnedTotal:     earned,
 	}, nil
 }
 
@@ -439,7 +453,6 @@ func reviewEntriesFrom(p service.ReviewEntryPage) (reviewEntriesResponse, error)
 			ReferrerEmail: e.ReferrerEmail,
 			RefereeEmail:  e.RefereeEmail,
 			Amount:        amount,
-			Currency:      e.Currency,
 			ReviewReason:  e.ReviewReason,
 			ReviewSource:  e.ReviewSource,
 			CreatedAt:     e.CreatedAt,
@@ -452,9 +465,15 @@ func reviewEntriesFrom(p service.ReviewEntryPage) (reviewEntriesResponse, error)
 // configToUpdate 把请求体转成 service.ConfigUpdate。
 func (r configRequest) configToUpdate() service.ConfigUpdate {
 	u := service.ConfigUpdate{
-		RatePercent: r.RatePercent,
-		FreezeDays:  r.FreezeDays,
-		Scope:       r.Scope,
+		RatePercent:         r.RatePercent,
+		FreezeDays:          r.FreezeDays,
+		Scope:               r.Scope,
+		DistributionEnabled: r.DistributionEnabled,
+		DistributionL1:      r.DistributionL1,
+		DistributionL2:      r.DistributionL2,
+		DistributionL3:      r.DistributionL3,
+		WithdrawEnabled:     r.WithdrawEnabled,
+		WithdrawMethods:     r.WithdrawMethods,
 	}
 	if r.MinWithdraw != nil {
 		d := money.FromCents(*r.MinWithdraw)

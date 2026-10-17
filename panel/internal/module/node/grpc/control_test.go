@@ -400,7 +400,7 @@ func TestSessionMismatchSendsFull(t *testing.T) {
 
 func TestSessionUsersFullChunks(t *testing.T) {
 	nodeID := uuid.MustParse("0190a000-0000-7000-8000-000000000004")
-	users := make([]service.RosterUser, 12001)
+	users := make([]service.RosterUser, 2*service.UsersChunkSize+1)
 	for i := range users {
 		uid := int64(i + 1)
 		users[i] = service.RosterUser{UID: uid, UUID: uuid.NewSHA1(uuid.Nil, []byte{byte(uid)})}
@@ -421,9 +421,14 @@ func TestSessionUsersFullChunks(t *testing.T) {
 	}
 	recvResp(t, stream) // Welcome
 	recvResp(t, stream) // Config
-	counts := []int{5000, 5000, 2001}
+	counts := []int{service.UsersChunkSize, service.UsersChunkSize, 1}
+	var lastSeq uint64
 	for i := 0; i < 3; i++ {
 		resp := recvResp(t, stream)
+		if i > 0 && resp.GetSeq() != lastSeq+1 {
+			t.Fatalf("chunk %d seq=%d，上一块 %d", i, resp.GetSeq(), lastSeq)
+		}
+		lastSeq = resp.GetSeq()
 		uf := resp.GetUsersFull()
 		if uf == nil {
 			t.Fatalf("chunk %d 不是 UsersFull", i)

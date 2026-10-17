@@ -12,7 +12,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-func TestActivityTimeseriesUsesFinalizedRows(t *testing.T) {
+func TestActivityTimeseriesUsesStoredRows(t *testing.T) {
 	e := newTestEnv()
 	ctx := context.Background()
 	sh, err := time.LoadLocation("Asia/Shanghai")
@@ -49,8 +49,8 @@ func TestActivityTimeseriesUsesFinalizedRows(t *testing.T) {
 	if got[1].Registered != 9 {
 		t.Fatalf("03-05 registered: %d", got[1].Registered)
 	}
-	if got[5].Registered != 4 {
-		t.Fatalf("03-09 registered: %d", got[5].Registered)
+	if got[5].Registered != 99 {
+		t.Fatalf("03-09 registered: %d want 99", got[5].Registered)
 	}
 	if got[6].Logins != 2 || got[6].ActiveUsers != 3 {
 		t.Fatalf("03-10: logins=%d active=%d", got[6].Logins, got[6].ActiveUsers)
@@ -81,7 +81,7 @@ func TestActivityTimeseriesUsesFinalizedRows(t *testing.T) {
 	}
 }
 
-func TestActivityTimeseriesAllFinalizedNoLiveCall(t *testing.T) {
+func TestActivityTimeseriesAllStoredNoLiveCall(t *testing.T) {
 	e := newTestEnv()
 	ctx := context.Background()
 	sh, err := time.LoadLocation("Asia/Shanghai")
@@ -89,9 +89,13 @@ func TestActivityTimeseriesAllFinalizedNoLiveCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalAt := time.Date(2026, 3, 12, 0, 0, 0, 0, sh)
-	for _, day := range []string{"2026-03-04", "2026-03-05", "2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09", "2026-03-10"} {
+	for i, day := range []string{"2026-03-04", "2026-03-05", "2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09", "2026-03-10"} {
+		computedAt := finalAt
+		if i >= 5 { // 包含未定稿的行
+			computedAt = testNow
+		}
 		e.store.activity["Asia/Shanghai|"+day] = model.ActivityDaily{
-			TZ: "Asia/Shanghai", Day: day, ComputedAt: finalAt,
+			TZ: "Asia/Shanghai", Day: day, ComputedAt: computedAt,
 		}
 	}
 	_, err = e.svc.ActivityTimeseries(ctx, 7)
@@ -100,6 +104,39 @@ func TestActivityTimeseriesAllFinalizedNoLiveCall(t *testing.T) {
 	}
 	if len(e.ports.activityCalls) != 0 {
 		t.Fatalf("activityCalls: %d", len(e.ports.activityCalls))
+	}
+}
+
+func TestActivityTimeseriesTodayFromStore(t *testing.T) {
+	e := newTestEnv()
+	ctx := context.Background()
+	sh, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, day := range []string{"2026-03-04", "2026-03-05", "2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09"} {
+		e.store.activity["Asia/Shanghai|"+day] = model.ActivityDaily{
+			TZ: "Asia/Shanghai", Day: day, ComputedAt: time.Date(2026, 3, 10, 0, 0, 0, 0, sh),
+		}
+	}
+	e.store.activity["Asia/Shanghai|2026-03-10"] = model.ActivityDaily{
+		TZ: "Asia/Shanghai", Day: "2026-03-10", Logins: 5,
+		ComputedAt: testNow.Add(-10 * time.Minute),
+	}
+
+	got, err := e.svc.ActivityTimeseries(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 7 {
+		t.Fatalf("points: got %d want 7", len(got))
+	}
+	last := got[len(got)-1]
+	if last.Day != "03-10" || last.Logins != 5 {
+		t.Fatalf("today point: %+v want logins=5", last)
+	}
+	if len(e.ports.activityCalls) != 0 {
+		t.Fatalf("activityCalls: %d want 0", len(e.ports.activityCalls))
 	}
 }
 
@@ -137,12 +174,14 @@ func TestRefreshActivity(t *testing.T) {
 	e.ports.activityDays = []auditsvc.ActivityDay{
 		{Day: "2026-03-08", Registered: 1, Logins: 2, Orders: 0, UniqueIPs: 3},
 		{Day: "2026-03-09", Orders: 4},
+		{Day: "2026-03-10", Logins: 8},
 	}
 	e.ports.activeUsers = []subsvc.ActiveUsersDay{
 		{Day: "2026-03-08", Users: 5},
 		{Day: "2026-03-09", Users: 6},
+		{Day: "2026-03-10", Users: 9},
 	}
-	// 大前天及更早的日子都已定稿，本用例只看前天、昨天（补漏见 TestRefreshActivityBackfillMax7Days）
+	// 大前天及更早的日子都已定稿，本用例只看前天、昨天与今天（补漏见 TestRefreshActivityBackfillMax7Days）
 	for d := time.Date(2026, 3, 7, 0, 0, 0, 0, sh); !d.Before(time.Date(2026, 3, 10, 0, 0, 0, 0, sh).AddDate(0, 0, -90)); d = d.AddDate(0, 0, -1) {
 		day := d.Format("2006-01-02")
 		e.store.activity["Asia/Shanghai|"+day] = model.ActivityDaily{TZ: "Asia/Shanghai", Day: day, ComputedAt: testNow}
@@ -151,7 +190,7 @@ func TestRefreshActivity(t *testing.T) {
 	if err := e.svc.RefreshActivity(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.store.upserts) != 1 || len(e.store.upserts[0]) != 2 {
+	if len(e.store.upserts) != 1 || len(e.store.upserts[0]) != 3 {
 		t.Fatalf("first upsert: %d batches, rows=%v", len(e.store.upserts), e.store.upserts)
 	}
 	for _, row := range e.store.upserts[0] {
@@ -169,42 +208,59 @@ func TestRefreshActivity(t *testing.T) {
 	if byDay["2026-03-09"].Orders != 4 || byDay["2026-03-09"].ActiveUsers != 6 {
 		t.Fatalf("03-09: %+v", byDay["2026-03-09"])
 	}
+	if byDay["2026-03-10"].Logins != 8 || byDay["2026-03-10"].ActiveUsers != 9 {
+		t.Fatalf("03-10: %+v", byDay["2026-03-10"])
+	}
 	wantFrom := time.Date(2026, 3, 8, 0, 0, 0, 0, sh)
-	wantTo := time.Date(2026, 3, 10, 0, 0, 0, 0, sh)
+	wantTo := time.Date(2026, 3, 11, 0, 0, 0, 0, sh)
 	if len(e.ports.activityCalls) != 1 {
 		t.Fatal("expected one activity call")
 	}
 	call := e.ports.activityCalls[0]
 	if !call[0].Equal(wantFrom) || !call[1].Equal(wantTo) {
-		t.Fatalf("Refresh window: %v %v", call[0], call[1])
+		t.Fatalf("Refresh window: %v %v want %v %v", call[0], call[1], wantFrom, wantTo)
 	}
 
-	e.ports.activityDays = []auditsvc.ActivityDay{{Day: "2026-03-09", Registered: 7}}
+	e.ports.activityDays = []auditsvc.ActivityDay{
+		{Day: "2026-03-09", Registered: 7},
+		{Day: "2026-03-10", Logins: 10},
+	}
 	e.ports.activeUsers = nil
 	if err := e.svc.RefreshActivity(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.store.upserts) != 2 || len(e.store.upserts[1]) != 1 {
+	if len(e.store.upserts) != 2 || len(e.store.upserts[1]) != 2 {
 		t.Fatalf("second upsert: %+v", e.store.upserts)
 	}
-	if e.store.upserts[1][0].Day != "2026-03-09" || e.store.upserts[1][0].Registered != 7 {
-		t.Fatalf("second row: %+v", e.store.upserts[1][0])
+	secondByDay := map[string]model.ActivityDaily{}
+	for _, row := range e.store.upserts[1] {
+		secondByDay[row.Day] = row
+	}
+	if secondByDay["2026-03-09"].Registered != 7 {
+		t.Fatalf("second 03-09 row: %+v", secondByDay["2026-03-09"])
+	}
+	if secondByDay["2026-03-10"].Logins != 10 {
+		t.Fatalf("second 03-10 row: %+v", secondByDay["2026-03-10"])
 	}
 
 	e.store.activity["Asia/Shanghai|2026-03-09"] = model.ActivityDaily{
 		TZ: "Asia/Shanghai", Day: "2026-03-09",
 		ComputedAt: time.Date(2026, 3, 11, 0, 0, 0, 0, sh),
 	}
-	callsBefore := len(e.ports.activityCalls)
-	upsertsBefore := len(e.store.upserts)
 	if err := e.svc.RefreshActivity(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.store.upserts) != upsertsBefore {
-		t.Fatalf("third refresh should not upsert")
+	if len(e.store.upserts) != 3 || len(e.store.upserts[2]) != 1 {
+		t.Fatalf("third refresh should upsert 1 row (today): %+v", e.store.upserts)
 	}
-	if len(e.ports.activityCalls) != callsBefore {
-		t.Fatalf("third refresh should not call activity port")
+	if e.store.upserts[2][0].Day != "2026-03-10" {
+		t.Fatalf("third upsert row day: %s want 2026-03-10", e.store.upserts[2][0].Day)
+	}
+	thirdCall := e.ports.activityCalls[len(e.ports.activityCalls)-1]
+	wantThirdFrom := time.Date(2026, 3, 10, 0, 0, 0, 0, sh)
+	wantThirdTo := time.Date(2026, 3, 11, 0, 0, 0, 0, sh)
+	if !thirdCall[0].Equal(wantThirdFrom) || !thirdCall[1].Equal(wantThirdTo) {
+		t.Fatalf("third refresh window: %v %v want %v %v", thirdCall[0], thirdCall[1], wantThirdFrom, wantThirdTo)
 	}
 }
 
@@ -245,13 +301,13 @@ func TestRefreshActivityBackfillMax7Days(t *testing.T) {
 		t.Fatalf("expected 1 upsert batch, got %d", len(e.store.upserts))
 	}
 	batch := e.store.upserts[0]
-	// 前天昨天已定稿，历史缺漏最多补 7 天（03-01 到 03-07）
-	if len(batch) != 7 {
-		t.Fatalf("expected 7 backfilled rows, got %d", len(batch))
+	// 前天昨天已定稿，历史缺漏最多补 7 天（03-01 到 03-07）加上今天（03-10），共 8 行
+	if len(batch) != 8 {
+		t.Fatalf("expected 8 rows (7 backfilled + today), got %d", len(batch))
 	}
 	wantDays := []string{
 		"2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04",
-		"2026-03-05", "2026-03-06", "2026-03-07",
+		"2026-03-05", "2026-03-06", "2026-03-07", "2026-03-10",
 	}
 	for i, w := range wantDays {
 		if batch[i].Day != w {

@@ -10,7 +10,7 @@ paths:
 
 - CLI 在 `panel/internal/app/backup.go`：`pandora backup` 子命令（`dir`、`seal-local`、`verify-local-seal`、`webdav-upload`、`init-signing-key`、`verify-manifest`）。除 `dir` 外都要求 root（`dbbackup.RequireRootRuntime`）。
 - `webdav-upload` 总时限 `webdavUploadTimeout`（45 分钟）；失败只报阶段名，不带远端地址与凭据（`runWebDAVUpload`）。
-- `loadBackupDir` 只读 `backup.dir`（viper / `PANDORA_BACKUP_DIR`），**不走**完整 `config.Load`（`backup.go` 注释）。
+- `pandora backup dir` 经 `config.LoadBackupDir` 只读 `backup.dir`（配置文件 / `PANDORA_BACKUP_DIR`，缺省 `config.DefaultBackupDir`），**不走**完整 `config.Load`（那会要求数据库、Redis 与密钥）。
 - WebDAV 配置缺省路径 `dbbackup.DefaultWebDAVConfigPath`；`LoadWebDAVRuntimeConfig` 读 JSON 后校验签名密钥、检查点、Hook 均为绝对路径且互不相同（`config.go`）。
 
 ## 私密文件：openSecureRegular

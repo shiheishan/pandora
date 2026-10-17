@@ -1,25 +1,25 @@
-import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
+import { formatDateTime, formatMoney, relativeTime, trimPercent } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
 import type { PlacementChoice } from './placement'
-import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
+import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
 
-export { ORDER_STATUS_VIEW, orderWhat, type Tone }
+export { ORDER_STATUS_VIEW, orderWhat }
 
 type Fields = Record<string, string>
 const chars = (s: string) => [...s.trim()].length
-export const REASON_MAX = 500
-export const REFERENCE_MAX = 128
+const REASON_MAX = 500
+const REFERENCE_MAX = 128
 
 // ===========================================================================
 // 订单
 // ===========================================================================
 
-/** 状态分段 → 后端多值 status（R63）；退款不单列（契约），在「全部」里看 */
+/** 状态分段 → 后端多值 status（R63） */
 export const ORDER_FILTERS = [
   ['all', '全部', ''],
-  ['pending', '待支付', 'draft,pending_payment,processing'],
+  ['pending', '待支付', 'pending_payment'],
   ['paid', '已支付', 'paid,fulfilled'],
   ['cancelled', '已取消', 'cancelled,expired'],
 ] as const
@@ -33,27 +33,43 @@ export function filterStatuses(f: OrderFilter): string | undefined {
   return ORDER_FILTERS.find(([k]) => k === f)?.[2] || undefined
 }
 
+const METHOD_LABELS: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', offline: '线下收款' }
+
+/** 支付方式的中文名；不认识的原样显示 */
+export function methodLabel(method: string): string {
+  return METHOD_LABELS[method] ?? method
+}
+
+/** 渠道名 + 方式：有方式且不是线下时写「渠道 · 方式」，否则只写渠道名 */
+export function payChannel(providerName: string, method: string | null | undefined): string {
+  if (!method || method === 'offline') return providerName
+  return `${providerName} · ${methodLabel(method)}`
+}
+
 /**
- * 渠道列：有入账或支付尝试就是渠道名；否则全额余额支付显示「余额」，人工单显示「人工」（抽屉按
+ * 渠道列：有入账或支付尝试就是渠道名（含支付方式）；否则全额余额支付显示「余额」，人工单显示「人工」（抽屉按
  * manual_reason 传；列表的人工单改在订单号旁挂「人工」标识，R114），其余「—」
  */
-export function channelLabel(o: Pick<OrderRow, 'provider_name' | 'balance_applied' | 'total_amount'>, manual = false): string {
-  if (o.provider_name) return o.provider_name
+export function channelLabel(
+  o: Pick<OrderRow, 'provider_name' | 'method' | 'balance_applied' | 'total_amount'>,
+  manual = false,
+): string {
+  if (o.provider_name) return payChannel(o.provider_name, o.method)
   if (o.balance_applied > 0 && o.balance_applied === o.total_amount) return '余额'
   return manual ? '人工' : '—'
 }
 
 /** 来源：人工单按 manual_reason 判断（不是 kind），开单人账号删掉后 email 为 null */
-export function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
-  if (o.manual_reason === null) return '门户下单'
+function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>): string {
+  if (o.manual_reason === null) return '用户端下单'
   return `人工开单 · ${o.created_by_email ?? '已删除的管理员'}`
 }
 
-const PENDING: readonly OrderStatus[] = ['draft', 'pending_payment', 'processing']
+const PENDING: readonly OrderStatus[] = ['pending_payment']
 
-/** 标记已支付：后端只收 pending_payment / processing，且应付大于 0 */
+/** 标记已支付：后端只收 pending_payment，且应付大于 0 */
 export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boolean {
-  return (o.status === 'pending_payment' || o.status === 'processing') && o.payable_amount > 0
+  return o.status === 'pending_payment' && o.payable_amount > 0
 }
 
 /**
@@ -61,7 +77,7 @@ export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boo
  * 列表行的 provider_code 就是最近一次支付尝试的渠道；为空说明从没发起过支付（后端回 409）
  */
 export function canQueryChannel(o: Pick<OrderRow, 'status' | 'provider_code'>): boolean {
-  return (o.status === 'pending_payment' || o.status === 'processing') && !!o.provider_code && !isOffline({ code: o.provider_code })
+  return o.status === 'pending_payment' && !!o.provider_code && !isOffline({ code: o.provider_code })
 }
 
 /** 查单结果的一句话与色调：渠道怎么说、这次有没有补记、补记后订单是什么状态 */
@@ -70,7 +86,11 @@ export function queriedView(r: OrderQueried): { tone: Tone; text: string } {
   if (r.channel_status === 'not_found') return { tone: 'neutral', text: `渠道 ${r.provider_code} 没有这笔订单的付款记录，订单未变（${status}）。` }
   if (r.channel_status === 'unpaid') return { tone: 'neutral', text: `渠道 ${r.provider_code} 显示尚未付款，订单未变（${status}）。` }
   if (r.already_recorded) return { tone: 'info', text: `渠道确认已付款；这笔钱此前已经入账（回调或之前的查单），没有重复记账。订单：${status}。` }
-  if (r.quarantine_kind) return { tone: 'warn', text: `渠道确认已付款，但订单已${status}，款项已补记进挂账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「挂账」里处理。` }
+  if (r.quarantine_kind)
+    return {
+      tone: 'warn',
+      text: `渠道确认已付款，但订单已${status}，款项已补记进待处理到账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「待处理到账」里处理。`,
+    }
   if (r.reconciled) return { tone: 'ok', text: `渠道确认已付款，已按回调同一流程补记入账。订单：${status}。` }
   return { tone: 'warn', text: `渠道确认已付款，但没有补记，订单：${status}。` }
 }
@@ -80,67 +100,114 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
   return PENDING.includes(o.status)
 }
 
-/** 抽屉 facts（设计稿：用户 / 内容 / 金额 / 币种 / 渠道 / 来源），按契约补上应付、余额抵扣、过期时间与取消原因 */
-export function orderFacts(o: OrderDetail): Array<[string, string]> {
-  const money = (n: number) => formatMoney(n, o.currency)
+/** 抽屉 facts（设计稿：用户 / 内容 / 金额 / 渠道 / 来源），按契约补上应付、余额抵扣、过期时间与取消原因 */
+// 系统写的取消原因是代码（后台取消写的是管理员填的原文，原样显示）
+const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
+  account_deleted: '账号已注销',
+  plan_archived: '套餐已归档，实付已转入用户余额',
+}
+
+export function cancelReasonLabel(reason: string): string {
+  return CANCEL_REASON_LABELS[reason] ?? reason
+}
+
+/** 详情主栏「金额」块：内容、金额、优惠（>0 才有）、余额抵扣（恒有）、应付（恒有）、实收（>0 才有） */
+export function orderAmountFacts(o: OrderDetail): Array<[string, string]> {
+  const money = (n: number) => formatMoney(n)
   const facts: Array<[string, string]> = [
-    ['用户', o.user_email],
     ['内容', orderWhat(o)],
     ['金额', money(o.total_amount)],
   ]
   if (o.discount_amount > 0) facts.push(['优惠', `− ${money(o.discount_amount)}`])
-  if (o.balance_applied > 0) facts.push(['余额抵扣', money(o.balance_applied)])
+  facts.push(['余额抵扣', money(o.balance_applied)])
   facts.push(['应付', money(o.payable_amount)])
   if (o.paid_amount > 0) facts.push(['实收', money(o.paid_amount)])
-  if (o.refunded_amount > 0) facts.push(['已退款', money(o.refunded_amount)])
-  facts.push(['币种', o.currency], ['渠道', channelLabel(o, o.manual_reason !== null)], ['来源', sourceLabel(o)])
-  if (o.manual_reason) facts.push(['开单原因', o.manual_reason])
-  if (PENDING.includes(o.status) && o.expires_at) facts.push(['支付截止', formatDateTime(o.expires_at)])
-  if (o.paid_at) facts.push(['支付时间', formatDateTime(o.paid_at)])
-  if (o.cancelled_at) facts.push(['取消时间', formatDateTime(o.cancelled_at)])
-  if (o.expired_at) facts.push(['过期时间', formatDateTime(o.expired_at)])
-  if (o.cancel_reason) facts.push(['取消原因', o.cancel_reason])
   return facts
+}
+
+export interface SideFactView {
+  k: string
+  v: string
+  hint?: string
+  userLink?: boolean
+}
+
+/** 详情右栏：用户、渠道、来源、下单时间、支付截止、开单原因、支付 / 取消 / 过期时间、取消原因 */
+export function orderSideFacts(o: OrderDetail, now: Date): SideFactView[] {
+  const facts: SideFactView[] = [
+    { k: '用户', v: o.user_email, userLink: true },
+    { k: '渠道', v: channelLabel(o, o.manual_reason !== null) },
+    { k: '来源', v: sourceLabel(o) },
+    { k: '下单时间', v: formatDateTime(o.created_at) },
+  ]
+  if (PENDING.includes(o.status) && o.expires_at) {
+    facts.push({ k: '支付截止', v: formatDateTime(o.expires_at), hint: deadlineLeft(o.expires_at, now) })
+  }
+  if (o.manual_reason) facts.push({ k: '开单原因', v: o.manual_reason })
+  if (o.paid_at) facts.push({ k: '支付时间', v: formatDateTime(o.paid_at) })
+  if (o.cancelled_at) facts.push({ k: '取消时间', v: formatDateTime(o.cancelled_at) })
+  if (o.expired_at) facts.push({ k: '过期时间', v: formatDateTime(o.expired_at) })
+  if (o.cancel_reason) facts.push({ k: '取消原因', v: cancelReasonLabel(o.cancel_reason) })
+  return facts
+}
+
+/** 详情页头副行：来源 · 多久前，如「用户端下单 · 4 分钟前」「人工开单 · 10-15」 */
+export function orderMeta(o: Pick<OrderDetail, 'manual_reason' | 'created_at'>, now: Date): string {
+  return `${o.manual_reason === null ? '用户端下单' : '人工开单'} · ${ago(o.created_at, now)}`
+}
+
+/** 支付截止的剩余时间：「还剩 26 分钟」「还剩 1 小时 5 分钟」「还剩 2 小时」；已过为「已过截止时间」 */
+export function deadlineLeft(expiresAt: string, now: Date): string {
+  const ms = new Date(expiresAt).getTime() - now.getTime()
+  if (ms <= 0) return '已过截止时间'
+  const minutes = Math.ceil(ms / 60000)
+  if (minutes < 60) return `还剩 ${minutes} 分钟`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `还剩 ${h} 小时${m ? ` ${m} 分钟` : ''}`
+}
+
+/** 标记已支付第二步确认框的正文 */
+export function markPaidConfirm(o: Pick<OrderDetail, 'order_no' | 'payable_amount' | 'kind'>, reference: string): string {
+  const tail =
+    o.kind === 'topup'
+      ? '余额立即入账。'
+      : o.kind === 'traffic_reset'
+        ? '这一份的本期流量将立即清零。'
+        : '订阅将立即开通。'
+  return `${o.order_no} · ${formatMoney(o.payable_amount)}，凭证 ${reference.trim()}。${tail}同一张凭证不能用于别的订单。`
+}
+
+/** 标记已支付成功的提示 */
+export function markPaidToast(kind: OrderDetail['kind']): string {
+  if (kind === 'topup') return '已标记为已支付，余额已入账'
+  if (kind === 'traffic_reset') return '已标记为已支付，本期流量已清零'
+  return '已标记为已支付，订阅已开通'
 }
 
 // ---------------------------------------------------------------------------
 // 支付记录：设计每行一个状态——以支付尝试为行，有对应入账的显示入账状态；线下入账没有
-// 支付尝试，单独成行并标「人工确认」；退款（设计缺）按同一行式附在后面
+// 支付尝试，单独成行并标「人工确认」
 // ---------------------------------------------------------------------------
-export interface PayLine {
+interface PayLine {
   key: string
   channel: string
   ref: string
   amount: number
-  currency: string
   label: string
   tone: Tone
   at: string
+  surcharge?: number
 }
 
 const INTENT_VIEW: Record<string, { label: string; tone: Tone }> = {
-  created: { label: '等待回调', tone: 'warn' },
   requires_action: { label: '等待回调', tone: 'warn' },
-  processing: { label: '等待回调', tone: 'warn' },
   succeeded: { label: '成功', tone: 'ok' },
-  failed: { label: '失败', tone: 'danger' },
   cancelled: { label: '已关闭', tone: 'neutral' },
   expired: { label: '已关闭', tone: 'neutral' },
 }
 const PAYMENT_VIEW: Record<string, { label: string; tone: Tone }> = {
   succeeded: { label: '成功', tone: 'ok' },
-  refunded: { label: '已退款', tone: 'info' },
-  partially_refunded: { label: '部分退款', tone: 'info' },
-  disputed: { label: '争议中', tone: 'danger' },
-  reversed: { label: '已冲回', tone: 'danger' },
-}
-const REFUND_VIEW: Record<string, { label: string; tone: Tone }> = {
-  pending: { label: '退款处理中', tone: 'warn' },
-  approved: { label: '退款处理中', tone: 'warn' },
-  processing: { label: '退款处理中', tone: 'warn' },
-  succeeded: { label: '已退款', tone: 'info' },
-  failed: { label: '退款失败', tone: 'danger' },
-  rejected: { label: '退款已驳回', tone: 'neutral' },
 }
 
 export function paymentLines(h: PaymentHistory): PayLine[] {
@@ -151,12 +218,15 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
     const view = p ? PAYMENT_VIEW[p.status]! : INTENT_VIEW[i.status]!
     return {
       key: i.id,
-      channel: i.provider_name,
-      ref: p?.provider_payment_id ?? i.provider_ref ?? i.failure_message ?? '—',
+      channel: payChannel(i.provider_name, p?.method ?? i.method),
+      ref: p?.provider_payment_id ?? i.provider_ref ?? '—',
       amount: p?.amount ?? i.amount,
-      currency: i.currency,
       ...view,
       at: p?.paid_at ?? i.created_at,
+      surcharge: (() => {
+        const s = p?.surcharge_amount ?? i.surcharge_amount
+        return s > 0 ? s : undefined
+      })(),
     }
   })
   for (const p of h.payments) {
@@ -164,16 +234,13 @@ export function paymentLines(h: PaymentHistory): PayLine[] {
     const offline = p.provider_code === 'offline' && p.status === 'succeeded'
     lines.push({
       key: p.id,
-      channel: p.provider_name,
+      channel: payChannel(p.provider_name, p.method),
       ref: p.provider_payment_id,
       amount: p.amount,
-      currency: p.currency,
       ...(offline ? { label: '人工确认', tone: 'info' as Tone } : PAYMENT_VIEW[p.status]!),
       at: p.paid_at,
+      surcharge: p.surcharge_amount > 0 ? p.surcharge_amount : undefined,
     })
-  }
-  for (const r of h.refunds) {
-    lines.push({ key: r.id, channel: '退款', ref: r.reason, amount: -r.amount, currency: r.currency, ...REFUND_VIEW[r.status]!, at: r.succeeded_at ?? r.created_at })
   }
   return lines.sort((a, b) => a.at.localeCompare(b.at))
 }
@@ -200,7 +267,7 @@ export function referenceProblem(text: string): string | null {
 // ===========================================================================
 export type Settlement = 'grant' | 'pending' | 'offline'
 export const SETTLEMENTS: ReadonlyArray<{ value: Settlement; label: string; hint: string }> = [
-  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，用户在门户「订单」里付款；30 分钟内不付自动过期' },
+  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，用户在用户端「订单」里付款；30 分钟内不付自动过期' },
   { value: 'offline', label: '线下已收款', hint: '已通过转账等方式收到钱：填凭证号，当场入账并开通，同时计收入与佣金' },
   { value: 'grant', label: '赠送（0 元）', hint: '全额减免、当场开通，不计收入' },
 ]
@@ -216,34 +283,28 @@ export interface ManualForm {
 
 export const emptyManual = (user: ManualForm['user'] = null): ManualForm => ({ user, choice: '', settlement: 'pending', reference: '', reason: '' })
 
-export interface PriceChoice {
+interface PriceChoice {
   value: string
   label: string
   amount: number
-  currency: string
   /** 落点选项的标题要写「换成<套餐名>」 */
   planName: string
 }
 
-/** 在售套餐（已发布、有当前版本）的在售价格；组专属价与试用在名字里注明，后端下单时再校验资格 */
+/** 在售套餐（已发布、有当前版本）的在售价格；按单价升序 */
 export function priceChoices(plans: readonly PlanRow[]): PriceChoice[] {
   return plans
-    .filter((p) => p.status === 'active' && p.current_version_id !== null)
+    .filter((p) => p.status === 'active' && p.version !== null)
     .flatMap((p) =>
       p.prices
         .filter((x) => x.status === 'active')
-        // CNY 在前，同币种按价格升序（后端按创建时间倒序给）
-        .sort((a, b) => Number(b.currency === 'CNY') - Number(a.currency === 'CNY') || a.currency.localeCompare(b.currency) || a.unit_amount - b.unit_amount)
-        .map((x) => {
-          const notes = [x.user_group_id ? '组专属' : '', x.trial_days > 0 ? `试用 ${x.trial_days} 天` : ''].filter(Boolean)
-          return {
-            value: `${p.id}:${x.id}`,
-            label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount, x.currency)}${notes.length ? `（${notes.join('，')}）` : ''}`,
-            amount: x.unit_amount,
-            currency: x.currency,
-            planName: p.name,
-          }
-        }),
+        .sort((a, b) => a.unit_amount - b.unit_amount)
+        .map((x) => ({
+          value: `${p.id}:${x.id}`,
+          label: `${p.name} · ${periodLabel(x.billing_interval, x.interval_count)} ${formatMoney(x.unit_amount)}`,
+          amount: x.unit_amount,
+          planName: p.name,
+        })),
     )
 }
 
@@ -277,10 +338,9 @@ export function manualBody(f: ManualForm, target: PlacementChoice | null) {
 }
 
 /** 待支付单低于最低付款额：应付与门槛（分），用来在提交前写明原因 */
-export interface BelowMinimum {
+interface BelowMinimum {
   due: number
   min: number
-  currency: string
 }
 
 /**
@@ -292,14 +352,13 @@ export function manualBelowMinimum(
   settlement: Settlement,
   option: Pick<Placement, 'due' | 'below_minimum'> | undefined,
   minPayment: number | undefined,
-  currency: string | undefined,
 ): BelowMinimum | null {
-  if (settlement !== 'pending' || !option?.below_minimum || !minPayment || !currency) return null
-  return { due: option.due, min: minPayment, currency }
+  if (settlement !== 'pending' || !option?.below_minimum || !minPayment) return null
+  return { due: option.due, min: minPayment }
 }
 
 export function belowMinimumText(b: BelowMinimum): string {
-  return `这单应付 ${formatMoney(b.due, b.currency)}，低于支付渠道的最低付款额 ${formatMoney(b.min, b.currency)}，用户没法在线付。请改用「赠送」或「线下已收款」`
+  return `这单应付 ${formatMoney(b.due)}，低于支付渠道的最低付款额 ${formatMoney(b.min)}，用户没法在线付。请改用「赠送」或「线下已收款」`
 }
 
 /** preview 的请求体：用户、套餐、价格都选好才发；入口订阅（从订阅行点「给这份开单」）只影响默认值 */
@@ -311,7 +370,7 @@ export function previewParams(f: ManualForm, entrySubscriptionId: string | null)
 }
 
 // ===========================================================================
-// 挂账（保留规则 6）：订单取消后才到账、续费或变更时订阅已结束、或超额扣款的钱，平台欠用户的
+// 待处理到账（保留规则 6）：订单取消后才到账、续费或变更时订阅已结束、或超额扣款的钱，平台欠用户的
 // ===========================================================================
 export const LATE_FILTERS = [
   ['all', '全部', ''],
@@ -323,15 +382,36 @@ export function isLateFilter(v: string | null): v is LateFilter {
   return LATE_FILTERS.some(([k]) => k === v)
 }
 
+/** 地址上的 s → 筛选；不认识或没有时默认只看待处理 */
+export function lateFilterOf(v: string | null): LateFilter {
+  if (v === 'all') return 'all'
+  if (v === 'applied') return 'applied'
+  if (v === 'suspense') return 'suspense'
+  return 'suspense'
+}
+
+/** 筛选 → 地址上的 s：默认的「待处理」不写进地址 */
+export function lateFilterQuery(f: LateFilter): string | undefined {
+  if (f === 'suspense') return undefined
+  return f
+}
+
 export const LATE_STATUS_VIEW: Record<LateStatus, { label: string; tone: Tone }> = {
   suspense: { label: '待处理', tone: 'warn' },
   applied: { label: '已转入余额', tone: 'ok' },
-  refunded: { label: '已原路退回', tone: 'neutral' },
-  refund_pending: { label: '退款处理中', tone: 'info' },
-  manual_review: { label: '人工核对中', tone: 'info' },
 }
 
-const LATE_KIND_LABELS: Record<LateKind, string> = { released_order: '订单取消后到账', excess_capture: '超额扣款', ineligible_subscription: '订阅已结束后到账' }
+export const LATE_KIND_LABELS: Record<LateKind, string> = {
+  released_order: '订单取消后到账',
+  excess_capture: '超额扣款',
+  ineligible_subscription: '订阅已结束后到账',
+  archived_plan: '套餐归档后到账',
+}
+
+export function lateKindLabel(k: LateKind): string {
+  return LATE_KIND_LABELS[k]
+}
+
 export function lateReason(c: Pick<LateCase, 'case_kind' | 'order_no'>): string {
   return `${LATE_KIND_LABELS[c.case_kind]} · ${c.order_no}`
 }
@@ -340,14 +420,6 @@ export function lateReason(c: Pick<LateCase, 'case_kind' | 'order_no'>): string 
 export function ageDays(receivedAt: string, now: Date): number {
   const ms = now.getTime() - Date.parse(receivedAt)
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0
-}
-
-/** 待处理合计按币种分开（R3）：CNY 在前，零额不列；没有待处理的返回空数组 */
-export function pendingTotals(amounts: Readonly<Record<string, number>>): string[] {
-  return Object.entries(amounts)
-    .filter(([, v]) => v > 0)
-    .sort(([a], [b]) => (a === 'CNY' ? -1 : b === 'CNY' ? 1 : a.localeCompare(b)))
-    .map(([currency, v]) => formatMoney(v, currency))
 }
 
 // ===========================================================================
@@ -370,9 +442,28 @@ export function toggleBody(target: ProviderMode): { enabled: boolean; accepting_
   return { enabled: false, accepting_new: false }
 }
 
-export function todayLabel(today: Readonly<Record<string, number>>): string {
-  const parts = pendingTotals(today)
-  return parts.length ? parts.join(' · ') : '—'
+export function todayLabel(today: number): string {
+  return formatMoney(today)
+}
+
+/** 渠道列表上方的统计（不含系统内置的 offline） */
+export function providerStats(rows: readonly Provider[]): Array<{ n: number; label: string; tone: 'neutral' | 'ok' | 'warn' }> {
+  const online = rows.filter((p) => !isOffline(p))
+  const on = online.filter((p) => providerMode(p) === 'on').length
+  const noCreds = online.filter((p) => !p.has_credentials).length
+  const stats: Array<{ n: number; label: string; tone: 'neutral' | 'ok' | 'warn' }> = [
+    { n: online.length, label: '个在线渠道', tone: 'neutral' },
+    { n: on, label: '个收新单中', tone: 'ok' },
+    { n: online.length - on, label: '个已停用或暂停', tone: 'neutral' },
+  ]
+  if (noCreds > 0) stats.push({ n: noCreds, label: '个未配置凭据', tone: 'warn' })
+  return stats
+}
+
+/** 类型标签：offline 是「内置」，其余按 adapterLabel */
+export function providerKind(p: Pick<Provider, 'code' | 'adapter'>): string {
+  if (isOffline(p)) return '内置'
+  return adapterLabel(p.adapter)
 }
 
 export function rateLabel(rate: number | null): string {
@@ -385,33 +476,52 @@ function ago(at: string, now: Date): string {
   return /^\d+ (分钟|小时)$/.test(rel) ? `${rel}前` : rel
 }
 
+/** 渠道名后的标签：收单状态 + 缺的配置；offline 没有标签 */
+export function providerTags(p: Provider): Array<{ label: string; tone: Tone }> {
+  if (isOffline(p)) return []
+  const tags: Array<{ label: string; tone: Tone }> = []
+  const mode = providerMode(p)
+  if (mode === 'on') tags.push({ label: '收新单中', tone: 'ok' })
+  else if (mode === 'paused') tags.push({ label: '已停止新单', tone: 'warn' })
+  else tags.push({ label: '已完全停用', tone: 'danger' })
+  if (!p.has_credentials) tags.push({ label: '未配置凭据', tone: 'warn' })
+  if (p.adapter === 'btcpay' && !p.has_webhook_secret) tags.push({ label: '未配置 Webhook 密钥', tone: 'warn' })
+  return tags
+}
+
 export function providerNote(p: Provider, now: Date): { text: string; tone: Tone } {
   if (isOffline(p)) return { text: '系统内置：人工开单「线下已收款」与「标记已支付」的入账都记在这里，结账页不显示', tone: 'neutral' }
   const mode = providerMode(p)
   const parts: string[] = []
-  if (mode === 'off') parts.push('已完全停用，回调也不处理')
-  if (mode === 'paused') parts.push('已停止新单，进行中的支付仍会回调')
-  if (!p.has_credentials) parts.push('未配置凭据')
-  if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount, 'CNY')}`)
+  if (mode === 'off') parts.push('回调也不处理')
+  if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount)}`)
+  const fee = feeLabel(p)
+  if (fee) parts.push(fee)
   parts.push(p.last_callback_at ? `最近回调 ${ago(p.last_callback_at, now)}` : '尚无回调')
-  const tone: Tone = mode === 'off' ? 'danger' : !p.has_credentials || mode === 'paused' ? 'warn' : 'neutral'
+  const tone: Tone = mode === 'off' ? 'danger' : 'neutral'
   return { text: parts.join(' · '), tone }
 }
 
 // ===========================================================================
-// 支付渠道的新建与编辑（w2pay）：只有易支付能在后台建 / 改；code 与类型建后不可改；
-// 商户号与密钥只写不读，编辑时留空 = 不改。规则照 billing/provider_admin.go 的
-// normalizeProviderSettings，后端仍是最终裁判（字段错误原样标回表单）。
+// 支付渠道的新建与编辑：易支付、BTCPay、CoinPayments 可在后台建 / 改；code 与类型建后不可改；
+// 凭据只写不读，编辑时留空 = 不改。规则照 payment/service provider_admin.go 的
+// normalizeSettings，后端仍是最终裁判（字段错误原样标回表单）。
 // ===========================================================================
+export const PROVIDER_ADAPTERS = [
+  { value: 'epay', label: '易支付' },
+  { value: 'btcpay', label: 'BTCPay Server' },
+  { value: 'coinpayments', label: 'CoinPayments' },
+] as const
+export type ProviderAdapter = (typeof PROVIDER_ADAPTERS)[number]['value']
+
+export function adapterLabel(a: string): string {
+  return PROVIDER_ADAPTERS.find((x) => x.value === a)?.label ?? a
+}
+
 export const EPAY_METHODS = [
   { value: 'alipay', label: '支付宝' },
   { value: 'wxpay', label: '微信支付' },
 ] as const
-
-/** 与门户 paymentMethodLabels 同一张表；不认识的方式原样显示 */
-export function methodLabel(method: string): string {
-  return EPAY_METHODS.find((m) => m.value === method)?.label ?? method
-}
 
 /** 门户实际会列出的方式：config.methods 非空用它，否则 default_method（与 PaymentMethods 的 SQL 同口径） */
 export function effectiveMethods(p: Pick<Provider, 'methods' | 'default_method'>): string[] {
@@ -419,9 +529,11 @@ export function effectiveMethods(p: Pick<Provider, 'methods' | 'default_method'>
   return p.default_method ? [p.default_method] : []
 }
 
-export const isEditableProvider = (p: Pick<Provider, 'adapter' | 'code'>) => p.adapter === 'epay' && !isOffline(p)
+export const isEditableProvider = (p: Pick<Provider, 'adapter' | 'code'>) =>
+  PROVIDER_ADAPTERS.some((a) => a.value === p.adapter) && !isOffline(p)
 
 export interface ProviderForm {
+  adapter: ProviderAdapter
   code: string
   display_name: string
   base_url: string
@@ -432,14 +544,19 @@ export interface ProviderForm {
   allow_private_host: boolean
   /** 最低付款额，元（文本框原样）；提交时换成分 */
   min_amount: string
+  /** 固定手续费，元 */
+  fee_fixed: string
+  /** 比例手续费，百分数文本 */
+  fee_percent: string
   merchant_id: string
   key: string
+  webhook_secret: string
 }
 
 /** 渠道最低付款额的范围（分）：与后端 provider_admin.go 的白名单校验一致，epay 默认 100（¥1.00） */
-export const MIN_AMOUNT_MIN = 1
-export const MIN_AMOUNT_MAX = 100_000
-export const MIN_AMOUNT_DEFAULT = 100
+const MIN_AMOUNT_MIN = 1
+const MIN_AMOUNT_MAX = 100_000
+const MIN_AMOUNT_DEFAULT = 100
 
 /** 元的文本换成分：最多两位小数，范围 0.01 到 1000；否则 null */
 export function parseMinAmount(input: string): number | null {
@@ -453,37 +570,123 @@ export function parseMinAmount(input: string): number | null {
 /** 分换成输入框里的元：100 → 1.00 */
 export const minAmountText = (cents: number) => (cents / 100).toFixed(2)
 
-export const emptyProviderForm = (): ProviderForm => ({
-  code: '',
-  display_name: '易支付',
-  base_url: '',
-  submit_path: '/submit.php',
-  api_path: '/api.php',
-  methods: ['alipay', 'wxpay'],
-  default_method: 'alipay',
-  allow_private_host: false,
-  min_amount: minAmountText(MIN_AMOUNT_DEFAULT),
-  merchant_id: '',
-  key: '',
-})
+/** 固定手续费（元）→ 分；空串当 0 */
+export function parseFeeFixed(input: string): number | null {
+  const text = input.trim().replace(/^¥/, '')
+  if (text === '') return 0
+  if (!/^\d{1,4}(\.\d{1,2})?$/.test(text)) return null
+  const [whole = '0', frac = ''] = text.split('.')
+  const cents = Number(whole) * 100 + Number(frac.padEnd(2, '0'))
+  return cents >= 0 && cents <= 100_000 ? cents : null
+}
+
+/** 比例手续费（%）→ 规范化字符串；空串当 '0' */
+export function parseFeePercent(input: string): string | null {
+  const text = input.trim().replace(/%$/, '')
+  if (text === '') return '0'
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(text)) return null
+  const n = Number(text)
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null
+  return trimPercent(text.includes('.') ? text : String(n))
+}
+
+export function feeLabel(p: Pick<Provider, 'fee_fixed' | 'fee_percent'>): string {
+  const fixed = p.fee_fixed
+  const pct = trimPercent(p.fee_percent)
+  const pctNum = Number(pct)
+  if (fixed === 0 && (pct === '0' || pctNum === 0)) return ''
+  const parts: string[] = []
+  if (pctNum > 0) parts.push(`${pct}%`)
+  if (fixed > 0) parts.push(formatMoney(fixed))
+  return parts.length ? `向用户加收 ${parts.join(' + ')}` : ''
+}
+
+export function credentialLabels(adapter: ProviderAdapter): { merchant: string; key: string } {
+  if (adapter === 'btcpay') return { merchant: 'Store ID', key: 'API Key' }
+  if (adapter === 'coinpayments') return { merchant: 'Client ID', key: 'Client Secret' }
+  return { merchant: '商户号（pid）', key: '商户密钥' }
+}
+
+export const emptyProviderForm = (adapter: ProviderAdapter = 'epay'): ProviderForm => {
+  const base = {
+    adapter,
+    code: '',
+    allow_private_host: false,
+    min_amount: minAmountText(MIN_AMOUNT_DEFAULT),
+    fee_fixed: '0',
+    fee_percent: '0',
+    merchant_id: '',
+    key: '',
+    webhook_secret: '',
+  }
+  if (adapter === 'btcpay') {
+    return {
+      ...base,
+      display_name: 'BTCPay',
+      base_url: '',
+      submit_path: '',
+      api_path: '',
+      methods: [],
+      default_method: '',
+    }
+  }
+  if (adapter === 'coinpayments') {
+    return {
+      ...base,
+      display_name: 'CoinPayments',
+      base_url: 'https://a-api.coinpayments.net',
+      submit_path: '',
+      api_path: '',
+      methods: [],
+      default_method: '',
+    }
+  }
+  return {
+    ...base,
+    display_name: '易支付',
+    base_url: '',
+    submit_path: '/submit.php',
+    api_path: '/api.php',
+    methods: ['alipay', 'wxpay'],
+    default_method: 'alipay',
+  }
+}
+
+/** 新建时切换渠道类型：保留编码、最低额、手续费与 allow_private_host */
+export function switchAdapter(f: ProviderForm, adapter: ProviderAdapter): ProviderForm {
+  const next = emptyProviderForm(adapter)
+  return {
+    ...next,
+    code: f.code,
+    min_amount: f.min_amount,
+    fee_fixed: f.fee_fixed,
+    fee_percent: f.fee_percent,
+    allow_private_host: f.allow_private_host,
+  }
+}
 
 /** 编辑回填：凭据一律空（只写不读）；旧渠道没有 methods 时用 default_method 起步 */
 export function providerFormFrom(p: Provider): ProviderForm {
-  const methods = effectiveMethods(p).filter((m) => EPAY_METHODS.some((x) => x.value === m))
-  const picked = methods.length ? methods : ['alipay']
+  const adapter: ProviderAdapter = PROVIDER_ADAPTERS.some((a) => a.value === p.adapter) ? (p.adapter as ProviderAdapter) : 'epay'
+  const methods = adapter === 'epay' ? effectiveMethods(p).filter((m) => EPAY_METHODS.some((x) => x.value === m)) : []
+  const picked = methods.length ? methods : adapter === 'epay' ? ['alipay'] : []
   return {
+    adapter,
     code: p.code,
     display_name: p.display_name,
     base_url: p.base_url,
-    submit_path: p.submit_path || '/submit.php',
-    api_path: p.api_path || '/api.php',
+    submit_path: adapter === 'epay' ? p.submit_path || '/submit.php' : '',
+    api_path: adapter === 'epay' ? p.api_path || '/api.php' : '',
     methods: picked,
-    default_method: picked.includes(p.default_method) ? p.default_method : picked[0]!,
+    default_method: adapter === 'epay' ? (picked.includes(p.default_method) ? p.default_method : picked[0]!) : '',
     allow_private_host: p.allow_private_host,
     // 旧渠道没配过最低额时后端按默认值算，表单也从默认值起步
     min_amount: minAmountText(p.min_amount > 0 ? p.min_amount : MIN_AMOUNT_DEFAULT),
+    fee_fixed: (p.fee_fixed / 100).toFixed(2),
+    fee_percent: trimPercent(p.fee_percent),
     merchant_id: '',
     key: '',
+    webhook_secret: '',
   }
 }
 
@@ -507,7 +710,7 @@ function parseURL(raw: string): URL | null {
 const PROVIDER_CODE = /^[a-z][a-z0-9_-]{1,31}$/
 const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
 
-export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCredentials = false): Fields {
+export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCredentials = false, hasWebhookSecret = false): Fields {
   const out: Fields = {}
   if (mode === 'create') {
     if (!PROVIDER_CODE.test(f.code.trim())) out.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
@@ -515,41 +718,70 @@ export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCr
   }
   const name = chars(f.display_name)
   if (name < 1 || name > 40) out.display_name = '名称需为 1–40 个字'
+  const feeFixed = parseFeeFixed(f.fee_fixed)
+  if (feeFixed === null) out.fee_fixed = '写成元，如 0.30，范围 0 到 1000'
+  const feePct = parseFeePercent(f.fee_percent)
+  if (feePct === null) out.fee_percent = '写成百分数，如 2.5，范围 0 到 100，最多两位小数'
   const base = f.base_url.trim()
-  const url = parseURL(base)
-  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) out.base_url = '请填写完整的站点地址，如 https://pay.example.com'
-  else if (url.protocol !== 'https:' && !f.allow_private_host) out.base_url = '站点地址必须使用 https'
-  for (const key of ['submit_path', 'api_path'] as const) {
-    const v = f[key].trim()
-    if (v && (!PROVIDER_PATH.test(v) || v.startsWith('//'))) out[key] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+  const url = base ? parseURL(base) : null
+  // CoinPayments 的地址可留空（后端用官方地址），其余必填；填了就按同一规则校验
+  if (base || f.adapter !== 'coinpayments') {
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username)
+      out.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+    else if (url.protocol !== 'https:' && !f.allow_private_host) out.base_url = '站点地址必须使用 https'
   }
-  if (f.methods.length === 0) out.methods = '至少选一种支付方式'
-  else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
+  if (f.adapter === 'epay') {
+    for (const key of ['submit_path', 'api_path'] as const) {
+      const v = f[key].trim()
+      if (v && (!PROVIDER_PATH.test(v) || v.startsWith('//'))) out[key] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+    }
+    if (f.methods.length === 0) out.methods = '至少选一种支付方式'
+    else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
+  }
   // 留空 = 不传：编辑时保留原值、新建按默认 ¥1.00（后端口径）；填了就要合法，不会把空值当 0 发出去
   if (f.min_amount.trim() !== '' && parseMinAmount(f.min_amount) === null) out.min_amount = '写成元，如 1 或 0.50，范围 0.01 到 1000'
   const needCreds = mode === 'create' || !hasCredentials
   if (needCreds && !f.merchant_id.trim()) out.merchant_id = mode === 'create' ? '必填' : '该渠道还没有商户号，需填写'
   if (needCreds && !f.key.trim()) out.key = mode === 'create' ? '必填' : '该渠道还没有密钥，需填写'
+  if (f.adapter === 'btcpay') {
+    const needHook = mode === 'create' || !hasWebhookSecret
+    if (needHook && !f.webhook_secret.trim())
+      out.webhook_secret = mode === 'create' ? '必填' : '该渠道还没有 Webhook 密钥，需填写'
+  }
   return out
 }
 
 /** PUT 的请求体没有 code / adapter（后端不收，建后不可改）；凭据留空原样发空串 = 不改 */
 export function providerBody(f: ProviderForm, mode: 'create' | 'edit') {
-  const settings = {
+  const fee_fixed = parseFeeFixed(f.fee_fixed) ?? 0
+  const fee_percent = parseFeePercent(f.fee_percent) ?? '0'
+  const min = parseMinAmount(f.min_amount)
+  const common = {
     display_name: f.display_name.trim(),
     base_url: f.base_url.trim(),
-    submit_path: f.submit_path.trim(),
-    api_path: f.api_path.trim(),
-    methods: [...f.methods],
-    default_method: f.default_method,
     allow_private_host: f.allow_private_host,
     merchant_id: f.merchant_id.trim(),
     key: f.key.trim(),
+    fee_fixed,
+    fee_percent,
+    // 最低付款额只在填了时带：后端把不传（或 0）当作「编辑保留原值、新建用默认」，所以前端从不发 0
+    ...(min === null ? {} : { min_amount: min }),
   }
-  // 最低付款额只在填了时带：后端把不传（或 0）当作「编辑保留原值、新建用默认」，所以前端从不发 0
-  const min = parseMinAmount(f.min_amount)
-  const body = min === null ? settings : { ...settings, min_amount: min }
-  return mode === 'create' ? { code: f.code.trim(), adapter: 'epay', ...body } : body
+  if (f.adapter === 'epay') {
+    const settings = {
+      ...common,
+      submit_path: f.submit_path.trim(),
+      api_path: f.api_path.trim(),
+      methods: [...f.methods],
+      default_method: f.default_method,
+    }
+    return mode === 'create' ? { code: f.code.trim(), adapter: f.adapter, ...settings } : settings
+  }
+  const crypto = {
+    ...common,
+    ...(f.adapter === 'btcpay' ? { webhook_secret: f.webhook_secret.trim() } : {}),
+  }
+  return mode === 'create' ? { code: f.code.trim(), adapter: f.adapter, ...crypto } : crypto
 }
 
 /** 最低付款额输入框下的说明：留空的含义随新建 / 编辑不同 */
@@ -561,16 +793,15 @@ export function minAmountHint(mode: 'create' | 'edit'): string {
 // ===========================================================================
 // 收入调整（报表口径，只追加）
 // ===========================================================================
-export const ADJUST_MAX = 1_000_000_000_000
+const ADJUST_MAX = 1_000_000_000_000
 
 export interface AdjustForm {
-  currency: Currency
   amount: string
   reason: string
   /** YYYY-MM-DD，空 = 租户今天 */
   effectiveOn: string
 }
-export const emptyAdjust = (): AdjustForm => ({ currency: 'CNY', amount: '', reason: '', effectiveOn: '' })
+export const emptyAdjust = (): AdjustForm => ({ amount: '', reason: '', effectiveOn: '' })
 
 /** 本地日期 YYYY-MM-DD：生效日输入框的上限（租户今天由后端最终判定） */
 export function todayLocal(now: Date = new Date()): string {
@@ -591,13 +822,13 @@ export function adjustProblems(f: AdjustForm, today: string): Fields {
 }
 
 export function adjustBody(f: AdjustForm) {
-  return { currency: f.currency, amount: parseYuan(f.amount) ?? 0, reason: f.reason.trim(), ...(f.effectiveOn ? { effective_on: f.effectiveOn } : {}) }
+  return { amount: parseYuan(f.amount) ?? 0, reason: f.reason.trim(), ...(f.effectiveOn ? { effective_on: f.effectiveOn } : {}) }
 }
 
 export function adjustmentView(a: Adjustment) {
   const reversal = a.reversal_of !== undefined
   return {
-    amount: `${a.amount > 0 ? '+' : '−'}${formatMoney(Math.abs(a.amount), a.currency)}`,
+    amount: `${a.amount > 0 ? '+' : '−'}${formatMoney(Math.abs(a.amount))}`,
     tone: (a.amount < 0 ? 'danger' : 'neutral') as Tone,
     meta: `${a.created_by_email ?? '已删除的账号'} · ${formatDateTime(a.created_at)}`,
     /** 冲销单与已冲销的都不能再冲销（后端 409） */
@@ -613,7 +844,7 @@ export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
 /** 开单成功的提示：按落点说清续了、换了还是新开了，换套餐时带上原订阅剩余价值的去向 */
 export function manualCreatedToast(r: ManualCreated, settlement: Settlement, kind: PlacementChoice['kind'] = 'new'): string {
   if (kind === 'change') {
-    const refund = r.balance_refund !== undefined && r.balance_refund > 0 ? `，原套餐剩余价值 ${formatMoney(r.balance_refund, r.currency)} 已退回余额` : ''
+    const refund = r.balance_refund !== undefined && r.balance_refund > 0 ? `，原套餐剩余价值 ${formatMoney(r.balance_refund)} 已退回余额` : ''
     return settlement === 'pending'
       ? `订单 ${r.order_no} 已创建（在原订阅上换套餐），等待用户在 30 分钟内支付`
       : `订单 ${r.order_no} 已在原订阅上换套餐，订阅链接不变${refund}`
@@ -625,9 +856,16 @@ export function manualCreatedToast(r: ManualCreated, settlement: Settlement, kin
         ? `订单 ${r.order_no} 已按线下收款入账，订阅已续期，链接不变`
         : `订单 ${r.order_no} 已赠送续期，订阅链接不变`
   }
+  if (kind === 'stack') {
+    return settlement === 'pending'
+      ? `订单 ${r.order_no} 已创建（叠加到原订阅），等待用户在 30 分钟内支付`
+      : settlement === 'offline'
+        ? `订单 ${r.order_no} 已按线下收款入账，已叠加到原订阅，链接不变`
+        : `订单 ${r.order_no} 已赠送，已叠加到原订阅，链接不变`
+  }
   return settlement === 'pending'
     ? `订单 ${r.order_no} 已创建，等待用户在 30 分钟内支付`
     : settlement === 'offline'
-      ? `订单 ${r.order_no} 已按线下收款入账，已另开一份订阅`
-      : `订单 ${r.order_no} 已赠送开通，已另开一份订阅`
+      ? `订单 ${r.order_no} 已按线下收款入账，已新开一份订阅`
+      : `订单 ${r.order_no} 已赠送开通，已新开一份订阅`
 }

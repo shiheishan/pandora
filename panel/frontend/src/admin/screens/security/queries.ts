@@ -18,7 +18,7 @@ export function useAudit(filter: AuditFilter, offset: number) {
   })
 }
 
-/** tail = 实时尾随：只在第一页、未暂停时每 5 秒重拉（页面在后台时 react-query 自己停） */
+/** tail = 实时监控：只在第一页、未暂停时每 5 秒重拉（页面在后台时 react-query 自己停） */
 export function useAccessLog(filter: AccessFilter, offset: number, tail: boolean) {
   const api = useApi()
   const query = accessQuery(filter, offset)

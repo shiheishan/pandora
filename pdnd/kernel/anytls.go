@@ -35,7 +35,7 @@ type anyTLSAdapter struct {
 	slots     []anyTLSSlot
 	sessions  userSessions
 	online    onlineDevices
-	udpQuota  udpSessionQuota // 每用户在途 UDP 会话数（quic_udp_quota.go），UoT 每个目标占一个
+	udpQuota  udpSessionQuota // 每用户在途 UDP 会话数（udp_session_quota.go），UoT 每个目标占一个
 	service   *anytls.Service
 	listener  net.Listener
 	tlsConfig *hysteria2TLSConfig
@@ -84,6 +84,11 @@ func (a *anyTLSAdapter) Validate(spec InboundSpec) error {
 	if (certPath == "") != (keyPath == "") {
 		return fmt.Errorf("anytls cert_path and key_path must be provided together")
 	}
+	if certPath != "" {
+		if _, err := inboundECHKeys(spec.Config.Raw); err != nil {
+			return fmt.Errorf("anytls %w", err)
+		}
+	}
 	if value, exists := spec.Config.Raw["tls"]; exists {
 		enabled, ok := value.(bool)
 		if !ok {
@@ -120,7 +125,12 @@ func (a *anyTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			cancel()
 			return fmt.Errorf("anytls TLS certificate: %w", err)
 		}
-		tlsConfig = &hysteria2TLSConfig{std: withInboundWebALPN(&tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})}
+		std := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+		if err := applyInboundECH(std, spec.Config.Raw); err != nil {
+			cancel()
+			return fmt.Errorf("anytls TLS ECH: %w", err)
+		}
+		tlsConfig = &hysteria2TLSConfig{std: withInboundWebALPN(std)}
 	}
 	paddingScheme := padding.DefaultPaddingScheme
 	if raw, exists := spec.Config.Raw["padding_scheme"]; exists {

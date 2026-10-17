@@ -4,6 +4,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/pagination"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -49,8 +50,13 @@ func (h *Handler) createProvider(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	settings, err := req.settings()
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	res, err := h.svc.CreateProvider(c.Request.Context(), service.CreateProviderInput{
-		Code: req.Code, Adapter: req.Adapter, ProviderSettings: req.settings(),
+		Code: req.Code, Adapter: req.Adapter, ProviderSettings: settings,
 	})
 	if err != nil {
 		httpx.Fail(c, err)
@@ -66,7 +72,12 @@ func (h *Handler) updateProvider(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	res, err := h.svc.UpdateProvider(c.Request.Context(), c.Param("code"), req.settings())
+	settings, err := req.settings()
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	res, err := h.svc.UpdateProvider(c.Request.Context(), c.Param("code"), settings)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -95,13 +106,13 @@ func (h *Handler) listLatePayments(c *gin.Context) {
 		}
 		cases = append(cases, lc)
 	}
-	pending, err := centsByCurrency(list.Pending)
+	pending, err := money.ToCents(list.Pending)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
 	httpx.OK(c, listLatePaymentsResponse{
-		Cases: cases, Total: list.Total, PendingAmounts: pending,
+		Cases: cases, Total: list.Total, PendingAmount: pending,
 	})
 }
 
@@ -123,4 +134,41 @@ func (h *Handler) applyLatePayment(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, applyLatePaymentResponse{LedgerTxnID: txnID.String()})
+}
+
+// getPaymentSettings 读取支付回调地址前缀设置。
+func (h *Handler) getPaymentSettings(c *gin.Context) {
+	st, err := h.svc.PaymentSettings(c.Request.Context())
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, paymentSettingsResponse{
+		NotifyBaseURL: st.NotifyBaseURL,
+		EffectiveBase: st.EffectiveBase,
+		PublicBaseURL: st.PublicBaseURL,
+	})
+}
+
+// putPaymentSettings 更新支付回调地址前缀。
+func (h *Handler) putPaymentSettings(c *gin.Context) {
+	var req paymentSettingsRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := h.svc.SetPaymentSettings(c.Request.Context(), req.NotifyBaseURL); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	st, err := h.svc.PaymentSettings(c.Request.Context())
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, paymentSettingsResponse{
+		NotifyBaseURL: st.NotifyBaseURL,
+		EffectiveBase: st.EffectiveBase,
+		PublicBaseURL: st.PublicBaseURL,
+	})
 }

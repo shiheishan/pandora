@@ -9,7 +9,7 @@ import (
 // 本文件由块负责人定稿：后台用户画像、访问明细、同源 IP 聚类与复核用到的类型（实现在 ops.go）。
 // identity 调这些方法拼后台页面；audit 只给按用户、按 IP 哈希的聚合读与复核写，不依赖任何业务模块。
 
-// 聚类与复核参数（照旧）。
+// 聚类与复核参数。
 const (
 	// ClusterWindow 是同源 IP 聚类的时间窗：近 90 天
 	ClusterWindow = 90 * 24 * time.Hour

@@ -1,21 +1,20 @@
 package service
 
+// gate_test.go 覆盖下单快照与门户目录的门禁纯规则：可见性、购买用途判定、价格有效性。
+
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-var gateNow = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-
-func activePlan() Plan {
+func activeSubscriptionPlan() Plan {
 	ver := uuid.New()
 	return Plan{
+		Kind:             KindSubscription,
 		Status:           PlanActive,
 		Visibility:       VisibilityPublic,
 		CurrentVersionID: &ver,
@@ -25,243 +24,215 @@ func activePlan() Plan {
 	}
 }
 
-func activePrice() Price {
+func activeOneTimePlan() Plan {
+	ver := uuid.New()
+	return Plan{
+		Kind:             KindOneTime,
+		Status:           PlanActive,
+		Visibility:       VisibilityPublic,
+		CurrentVersionID: &ver,
+		AllowNewPurchase: true,
+		AllowRenewal:     false,
+		AllowUpgrade:     true,
+	}
+}
+
+func activePrice(kind string) Price {
 	return Price{
+		ID:         uuid.New(),
+		PlanKind:   kind,
 		Status:     PriceActive,
-		Currency:   money.CNY,
-		UnitAmount: decimal.New(1, 0),
+		UnitAmount: decimal.New(10, 0),
 	}
 }
 
 func TestVisibleTo(t *testing.T) {
 	gIn := uuid.MustParse("018e0000-0000-7000-8000-000000000001")
 	gOut := uuid.MustParse("018e0000-0000-7000-8000-000000000002")
-	future := gateNow.Add(time.Hour)
 
 	cases := []struct {
 		name       string
 		visibility string
 		groups     []uuid.UUID
 		viewer     viewer
-		mut        func(*Plan)
+		status     string
 		want       bool
 	}{
 		// public
-		{"public 匿名", VisibilityPublic, nil, viewer{}, nil, true},
-		{"public 登录无组", VisibilityPublic, nil, viewer{LoggedIn: true}, nil, true},
-		{"public 组内", VisibilityPublic, nil, viewer{LoggedIn: true, GroupID: &gIn}, nil, true},
-		{"public 组外", VisibilityPublic, nil, viewer{LoggedIn: true, GroupID: &gOut}, nil, true},
+		{"public 匿名", VisibilityPublic, nil, viewer{}, PlanActive, true},
+		{"public 登录", VisibilityPublic, nil, viewer{LoggedIn: true}, PlanActive, true},
 		// authenticated
-		{"auth 匿名", VisibilityAuthenticated, nil, viewer{}, nil, false},
-		{"auth 登录无组", VisibilityAuthenticated, nil, viewer{LoggedIn: true}, nil, true},
-		{"auth 组内", VisibilityAuthenticated, nil, viewer{LoggedIn: true, GroupID: &gIn}, nil, true},
-		{"auth 组外", VisibilityAuthenticated, nil, viewer{LoggedIn: true, GroupID: &gOut}, nil, true},
+		{"authenticated 匿名", VisibilityAuthenticated, nil, viewer{}, PlanActive, false},
+		{"authenticated 登录", VisibilityAuthenticated, nil, viewer{LoggedIn: true}, PlanActive, true},
 		// group
-		{"group 匿名", VisibilityGroup, []uuid.UUID{gIn}, viewer{}, nil, false},
-		{"group 登录无组", VisibilityGroup, []uuid.UUID{gIn}, viewer{LoggedIn: true}, nil, false},
-		{"group 组内", VisibilityGroup, []uuid.UUID{gIn}, viewer{LoggedIn: true, GroupID: &gIn}, nil, true},
-		{"group 组外", VisibilityGroup, []uuid.UUID{gIn}, viewer{LoggedIn: true, GroupID: &gOut}, nil, false},
-		// invite_only / hidden（目录里与 hidden 一样不可见）
-		{"invite 匿名", VisibilityInviteOnly, nil, viewer{}, nil, false},
-		{"invite 登录", VisibilityInviteOnly, nil, viewer{LoggedIn: true}, nil, false},
-		{"hidden 登录", VisibilityHidden, nil, viewer{LoggedIn: true}, nil, false},
-		// draft
-		{"draft", VisibilityPublic, nil, viewer{}, func(p *Plan) { p.Status = PlanDraft }, false},
-		// 窗口
-		{"VisibleFrom 未来", VisibilityPublic, nil, viewer{}, func(p *Plan) { p.VisibleFrom = &future }, false},
-		{"VisibleUntil 等于 now", VisibilityPublic, nil, viewer{}, func(p *Plan) { p.VisibleUntil = &gateNow }, false},
+		{"group 匿名", VisibilityGroup, []uuid.UUID{gIn}, viewer{}, PlanActive, false},
+		{"group 登录无组", VisibilityGroup, []uuid.UUID{gIn}, viewer{LoggedIn: true}, PlanActive, false},
+		{"group 组内", VisibilityGroup, []uuid.UUID{gIn}, viewer{LoggedIn: true, GroupID: &gIn}, PlanActive, true},
+		{"group 组外", VisibilityGroup, []uuid.UUID{gIn}, viewer{LoggedIn: true, GroupID: &gOut}, PlanActive, false},
+		// hidden 与未知值
+		{"hidden 登录也看不见", VisibilityHidden, nil, viewer{LoggedIn: true}, PlanActive, false},
+		{"未知可见性", "bogus", nil, viewer{LoggedIn: true}, PlanActive, false},
+		// 非 active 状态
+		{"draft 不可见", VisibilityPublic, nil, viewer{LoggedIn: true}, PlanDraft, false},
+		{"archived 不可见", VisibilityPublic, nil, viewer{LoggedIn: true}, PlanArchived, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := activePlan()
+			p := activeSubscriptionPlan()
 			p.Visibility = tc.visibility
 			p.VisibleGroupIDs = tc.groups
-			if tc.mut != nil {
-				tc.mut(&p)
-			}
-			got := visibleTo(p, tc.viewer, gateNow)
-			if got != tc.want {
-				t.Fatalf("got %v want %v", got, tc.want)
+			p.Status = tc.status
+			if got := visibleTo(p, tc.viewer); got != tc.want {
+				t.Fatalf("visibleTo = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
 func TestPlanRefusal(t *testing.T) {
-	t.Run("UseNew draft", func(t *testing.T) {
-		p := activePlan()
-		p.Status = PlanDraft
-		if !errors.Is(planRefusal(p, UseNew, viewer{}, false, gateNow), ErrNotFound) {
-			t.Fatal("want ErrNotFound")
+	gIn := uuid.MustParse("018e0000-0000-7000-8000-000000000001")
+	gOut := uuid.MustParse("018e0000-0000-7000-8000-000000000002")
+
+	t.Run("续费一次性套餐回 ErrChangeNotAllowed", func(t *testing.T) {
+		p := activeOneTimePlan()
+		if err := planRefusal(p, UseRenewal, viewer{}, false); !errors.Is(err, ErrChangeNotAllowed) {
+			t.Fatalf("got %v, want ErrChangeNotAllowed", err)
 		}
 	})
-	t.Run("UseNew hidden", func(t *testing.T) {
-		p := activePlan()
+	t.Run("续费已归档报 ErrRenewalNotAllowed", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		p.Status = PlanArchived
+		if err := planRefusal(p, UseRenewal, viewer{}, false); !errors.Is(err, ErrRenewalNotAllowed) {
+			t.Fatalf("got %v, want ErrRenewalNotAllowed", err)
+		}
+	})
+	t.Run("续费关续费报 ErrRenewalNotAllowed", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		p.AllowRenewal = false
+		if err := planRefusal(p, UseRenewal, viewer{}, false); !errors.Is(err, ErrRenewalNotAllowed) {
+			t.Fatalf("got %v, want ErrRenewalNotAllowed", err)
+		}
+	})
+	t.Run("续费不看可见性（hidden 匿名也可续）", func(t *testing.T) {
+		p := activeSubscriptionPlan()
 		p.Visibility = VisibilityHidden
-		if !errors.Is(planRefusal(p, UseNew, viewer{}, false, gateNow), ErrNotFound) {
-			t.Fatal("want ErrNotFound")
-		}
-		if err := planRefusal(p, UseNew, viewer{}, true, gateNow); err != nil {
-			t.Fatalf("manual: %v", err)
+		if err := planRefusal(p, UseRenewal, viewer{}, false); err != nil {
+			t.Fatalf("续费应成功，got %v", err)
 		}
 	})
-	t.Run("UseNew 关新购", func(t *testing.T) {
-		p := activePlan()
-		p.AllowNewPurchase = false
-		if !errors.Is(planRefusal(p, UseNew, viewer{}, false, gateNow), ErrNewPurchaseClosed) {
-			t.Fatal("want ErrNewPurchaseClosed")
+	t.Run("新购不在售回 ErrNotFound", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		p.Status = PlanDraft
+		if err := planRefusal(p, UseNew, viewer{}, false); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("got %v, want ErrNotFound", err)
 		}
 	})
-	t.Run("UseNew 无发布版本", func(t *testing.T) {
-		p := activePlan()
-		p.CurrentVersionID = nil
-		if !errors.Is(planRefusal(p, UseNew, viewer{}, false, gateNow), ErrNoPublishedVersion) {
-			t.Fatal("want ErrNoPublishedVersion")
-		}
-	})
-	t.Run("UseChange 关变更", func(t *testing.T) {
-		p := activePlan()
-		p.AllowUpgrade = false
-		if !errors.Is(planRefusal(p, UseChange, viewer{LoggedIn: true}, false, gateNow), ErrChangeNotAllowed) {
-			t.Fatal("want ErrChangeNotAllowed")
-		}
-	})
-	t.Run("UseChange group 组外", func(t *testing.T) {
-		gIn := uuid.MustParse("018e0000-0000-7000-8000-000000000001")
-		gOut := uuid.MustParse("018e0000-0000-7000-8000-000000000002")
-		p := activePlan()
+	t.Run("新购不可见回 ErrNotFound", func(t *testing.T) {
+		p := activeSubscriptionPlan()
 		p.Visibility = VisibilityGroup
 		p.VisibleGroupIDs = []uuid.UUID{gIn}
-		if !errors.Is(planRefusal(p, UseChange, viewer{LoggedIn: true, GroupID: &gOut}, false, gateNow), ErrNotFound) {
-			t.Fatal("want ErrNotFound")
+		if err := planRefusal(p, UseNew, viewer{LoggedIn: true, GroupID: &gOut}, false); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("got %v, want ErrNotFound", err)
 		}
 	})
-	t.Run("UseRenewal archived hidden 允许续费", func(t *testing.T) {
-		p := activePlan()
-		p.Status = PlanArchived
+	t.Run("Manual 跳过可见性", func(t *testing.T) {
+		p := activeSubscriptionPlan()
 		p.Visibility = VisibilityHidden
-		p.AllowRenewal = true
-		if err := planRefusal(p, UseRenewal, viewer{}, false, gateNow); err != nil {
-			t.Fatalf("want nil: %v", err)
+		if err := planRefusal(p, UseNew, viewer{}, true); err != nil {
+			t.Fatalf("Manual 应跳过可见性，got %v", err)
 		}
 	})
-	t.Run("UseRenewal 不允许", func(t *testing.T) {
-		p := activePlan()
-		p.AllowRenewal = false
-		if !errors.Is(planRefusal(p, UseRenewal, viewer{}, false, gateNow), ErrRenewalNotAllowed) {
-			t.Fatal("want ErrRenewalNotAllowed")
+	t.Run("新购关新购回 ErrNewPurchaseClosed", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		p.AllowNewPurchase = false
+		if err := planRefusal(p, UseNew, viewer{}, false); !errors.Is(err, ErrNewPurchaseClosed) {
+			t.Fatalf("got %v, want ErrNewPurchaseClosed", err)
 		}
 	})
-	t.Run("UseRenewal 无发布版本", func(t *testing.T) {
-		p := activePlan()
+	t.Run("Stack 用订阅套餐回 ErrStackNotAllowed", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		if err := planRefusal(p, UseStack, viewer{}, false); !errors.Is(err, ErrStackNotAllowed) {
+			t.Fatalf("got %v, want ErrStackNotAllowed", err)
+		}
+	})
+	t.Run("Stack 用一次性套餐通过", func(t *testing.T) {
+		p := activeOneTimePlan()
+		if err := planRefusal(p, UseStack, viewer{}, false); err != nil {
+			t.Fatalf("got %v, want nil", err)
+		}
+	})
+	t.Run("Change 关升级回 ErrChangeNotAllowed", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		p.AllowUpgrade = false
+		if err := planRefusal(p, UseChange, viewer{}, false); !errors.Is(err, ErrChangeNotAllowed) {
+			t.Fatalf("got %v, want ErrChangeNotAllowed", err)
+		}
+	})
+	t.Run("没有当前版本回 ErrNoPublishedVersion", func(t *testing.T) {
+		p := activeSubscriptionPlan()
 		p.CurrentVersionID = nil
-		if !errors.Is(planRefusal(p, UseRenewal, viewer{}, false, gateNow), ErrNoPublishedVersion) {
-			t.Fatal("want ErrNoPublishedVersion")
+		if err := planRefusal(p, UseNew, viewer{}, false); !errors.Is(err, ErrNoPublishedVersion) {
+			t.Fatalf("got %v, want ErrNoPublishedVersion", err)
+		}
+		if err := planRefusal(p, UseRenewal, viewer{}, false); !errors.Is(err, ErrNoPublishedVersion) {
+			t.Fatalf("got %v, want ErrNoPublishedVersion", err)
 		}
 	})
-	t.Run("未知用途", func(t *testing.T) {
-		p := activePlan()
-		err := planRefusal(p, Use("bogus"), viewer{}, false, gateNow)
-		if err == nil {
-			t.Fatal("want error")
-		}
-		if errs.As(err).Code != errs.Internal {
-			t.Fatalf("code=%s", errs.As(err).Code)
+	t.Run("未知用途回 internal 错误", func(t *testing.T) {
+		p := activeSubscriptionPlan()
+		err := planRefusal(p, Use("bogus"), viewer{}, false)
+		if err == nil || errs.As(err).Code != errs.Internal {
+			t.Fatalf("got %v, want code=internal", err)
 		}
 	})
 }
 
 func TestPriceRefusal(t *testing.T) {
-	gid := uuid.MustParse("018e0000-0000-7000-8000-000000000001")
-	other := uuid.MustParse("018e0000-0000-7000-8000-000000000002")
-	past := gateNow.Add(-time.Hour)
-
-	t.Run("组价组外", func(t *testing.T) {
-		p := activePrice()
-		p.UserGroupID = &gid
-		if !errors.Is(priceRefusal(p, UseNew, viewer{LoggedIn: true, GroupID: &other}, false, gateNow), ErrNotFound) {
-			t.Fatal("want ErrNotFound")
+	t.Run("在售价格对各种用途都可用", func(t *testing.T) {
+		p := activePrice(KindSubscription)
+		for _, use := range []Use{UseNew, UseRenewal, UseChange, UseStack} {
+			if err := priceRefusal(p, use); err != nil {
+				t.Fatalf("use=%s got %v", use, err)
+			}
 		}
 	})
-	t.Run("组价 manual", func(t *testing.T) {
-		p := activePrice()
-		p.UserGroupID = &gid
-		if err := priceRefusal(p, UseNew, viewer{LoggedIn: true, GroupID: &other}, true, gateNow); err != nil {
-			t.Fatalf("manual: %v", err)
-		}
-	})
-	t.Run("归档", func(t *testing.T) {
-		p := activePrice()
+	t.Run("归档价格续费报 ErrRenewPriceGone", func(t *testing.T) {
+		p := activePrice(KindSubscription)
 		p.Status = PriceArchived
-		if !errors.Is(priceRefusal(p, UseNew, viewer{}, false, gateNow), ErrPriceArchived) {
-			t.Fatal("want ErrPriceArchived")
+		if err := priceRefusal(p, UseRenewal); !errors.Is(err, ErrRenewPriceGone) {
+			t.Fatalf("got %v, want ErrRenewPriceGone", err)
 		}
 	})
-	t.Run("过期", func(t *testing.T) {
-		p := activePrice()
-		p.ValidUntil = &past
-		if !errors.Is(priceRefusal(p, UseNew, viewer{}, false, gateNow), ErrPriceOutOfWindow) {
-			t.Fatal("want ErrPriceOutOfWindow")
-		}
-	})
-	t.Run("续费三种映射 RenewPriceGone", func(t *testing.T) {
-		arch := activePrice()
-		arch.Status = PriceArchived
-		if !errors.Is(priceRefusal(arch, UseRenewal, viewer{}, false, gateNow), ErrRenewPriceGone) {
-			t.Fatal("archived renewal")
-		}
-		exp := activePrice()
-		exp.ValidUntil = &past
-		if !errors.Is(priceRefusal(exp, UseRenewal, viewer{}, false, gateNow), ErrRenewPriceGone) {
-			t.Fatal("window renewal")
-		}
-		grp := activePrice()
-		grp.UserGroupID = &gid
-		if !errors.Is(priceRefusal(grp, UseRenewal, viewer{LoggedIn: true, GroupID: &other}, false, gateNow), ErrRenewPriceGone) {
-			t.Fatal("group renewal")
-		}
-	})
-	t.Run("组外且归档组优先", func(t *testing.T) {
-		p := activePrice()
-		p.UserGroupID = &gid
+	t.Run("归档价格新购报 ErrPriceArchived", func(t *testing.T) {
+		p := activePrice(KindSubscription)
 		p.Status = PriceArchived
-		if !errors.Is(priceRefusal(p, UseNew, viewer{LoggedIn: true, GroupID: &other}, false, gateNow), ErrNotFound) {
-			t.Fatal("want ErrNotFound")
+		if err := priceRefusal(p, UseNew); !errors.Is(err, ErrPriceArchived) {
+			t.Fatalf("got %v, want ErrPriceArchived", err)
 		}
 	})
 }
 
 func TestUsablePrices(t *testing.T) {
-	gid := uuid.MustParse("018e0000-0000-7000-8000-000000000002")
-	other := uuid.MustParse("018e0000-0000-7000-8000-000000000003")
-	past := gateNow.Add(-time.Hour)
+	p1 := activePrice(KindSubscription)
+	p2 := activePrice(KindSubscription)
+	p2.Status = PriceArchived
 
-	pGroup := activePrice()
-	pGroup.UserGroupID = &gid
-	pGroup.UnitAmount = decimal.New(1, 0)
-	pPublic := activePrice()
-	pPublic.UnitAmount = decimal.New(2, 0)
-	pExpired := activePrice()
-	pExpired.UnitAmount = decimal.New(3, 0)
-	pExpired.ValidUntil = &past
-	prices := []Price{pGroup, pPublic, pExpired}
-
-	out := usablePrices(prices, UseNew, viewer{LoggedIn: true, GroupID: &other}, false, gateNow)
-	if out == nil {
-		t.Fatal("不应 nil")
-	}
-	if len(out) != 1 || !out[0].UnitAmount.Equal(decimal.New(2, 0)) {
-		t.Fatalf("got %v", out)
-	}
-	out2 := usablePrices(prices, UseNew, viewer{LoggedIn: true, GroupID: &gid}, false, gateNow)
-	if len(out2) != 2 {
-		t.Fatalf("want 2, got %d", len(out2))
-	}
-	if !out2[0].UnitAmount.Equal(decimal.New(1, 0)) || !out2[1].UnitAmount.Equal(decimal.New(2, 0)) {
-		t.Fatalf("order: %+v", out2)
-	}
-	empty := usablePrices(nil, UseNew, viewer{}, false, gateNow)
-	if empty == nil || len(empty) != 0 {
-		t.Fatalf("empty=%v", empty)
-	}
+	t.Run("只保留在售价格", func(t *testing.T) {
+		out := usablePrices([]Price{p1, p2}, UseNew)
+		if len(out) != 1 || out[0].ID != p1.ID {
+			t.Fatalf("out=%v", out)
+		}
+	})
+	t.Run("空输入返回非 nil 空切片", func(t *testing.T) {
+		out := usablePrices(nil, UseNew)
+		if out == nil || len(out) != 0 {
+			t.Fatalf("out=%v", out)
+		}
+	})
+	t.Run("全归档返回空切片", func(t *testing.T) {
+		out := usablePrices([]Price{p2}, UseNew)
+		if out == nil || len(out) != 0 {
+			t.Fatalf("out=%v", out)
+		}
+	})
 }

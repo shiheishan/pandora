@@ -3,9 +3,9 @@ import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 
 // ---------------------------------------------------------------------------
-// POST v1/me/topups：{ amount 分 } → 200 { order_id, order_no, amount, currency }，之后走支付弹窗
+// POST v1/me/topups：{ amount 分 } → 200 { order_id, order_no, amount }，之后走支付弹窗
 // ---------------------------------------------------------------------------
-const topupSchema = z.object({ order_id: z.string(), order_no: z.string(), amount: z.number().int(), currency: z.string() })
+const topupSchema = z.object({ order_id: z.string(), order_no: z.string(), amount: z.number().int() })
 
 export function useTopup() {
   const api = useApi()
@@ -14,7 +14,7 @@ export function useTopup() {
   })
 }
 
-export { giftCardSchema, placementOptionSchema, placementSchema, PLACEMENT_KINDS, type GiftCard, type Placement, type PlacementKind, type PlacementOption } from './schemas'
+export { giftCardSchema, type GiftCard, type PlacementOption } from './schemas'
 import { giftCardSchema, type PlacementKind } from './schemas'
 
 export function useGiftPreview() {
@@ -41,7 +41,7 @@ export const redeemResultSchema = z.object({
   summary: z.array(z.string()),
 })
 
-export interface RedeemBody {
+interface RedeemBody {
   code: string
   choice?: { kind: PlacementKind; subscription_id?: string }
 }
@@ -53,7 +53,7 @@ export function useRedeemGift() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: ({ body, key }: { body: RedeemBody; key: string }) => api.post('v1/gift-cards/redeem', redeemResultSchema, { body, idempotencyKey: key }),
-    // 礼品卡改余额、订阅、流量包，都没有推送：主动失效整个门户前缀
+    // 礼品卡改余额、套餐与流量，都没有推送：主动失效整个门户前缀
     onSuccess: () => void client.invalidateQueries({ queryKey: ['portal'] }),
   })
 }

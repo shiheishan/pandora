@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,5 +165,45 @@ func TestMountCoexistsWithSubscriptionWildcard(t *testing.T) {
 		if tc.body != "" && rec.Body.String() != tc.body {
 			t.Fatalf("%s %s: body %q, want %q", tc.method, tc.target, rec.Body.String(), tc.body)
 		}
+	}
+}
+
+// 额外来源：不给或给空时 CSP 与 indexCSP 逐字一致；给了只改 script-src、加 frame-src，其余不变，ETag 随之变。
+func TestIndexCSPExtraSources(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}
+
+	plain := serve(Handler(fsys), http.MethodGet, "/", nil)
+	if got := plain.Header().Get("Content-Security-Policy"); got != indexCSP {
+		t.Fatalf("no option: CSP = %q", got)
+	}
+	empty := serve(Handler(fsys, WithExtraSources(func(context.Context) ExtraSources { return ExtraSources{} })), http.MethodGet, "/", nil)
+	if got := empty.Header().Get("Content-Security-Policy"); got != indexCSP {
+		t.Fatalf("empty extra: CSP = %q", got)
+	}
+	if empty.Header().Get("ETag") != plain.Header().Get("ETag") {
+		t.Fatalf("empty extra changed ETag: %q vs %q", empty.Header().Get("ETag"), plain.Header().Get("ETag"))
+	}
+
+	x := ExtraSources{Script: []string{"https://a.example.test", "https://b.example.test"}, Frame: []string{"https://a.example.test"}}
+	h := Handler(fsys, WithExtraSources(func(context.Context) ExtraSources { return x }))
+	rec := serve(h, http.MethodGet, "/", nil)
+	want := "default-src 'none'; script-src 'self' https://a.example.test https://b.example.test; " +
+		"frame-src https://a.example.test; " + indexCSPRest
+	if got := rec.Header().Get("Content-Security-Policy"); got != want {
+		t.Fatalf("extra CSP:\n got %q\nwant %q", got, want)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == plain.Header().Get("ETag") || !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) {
+		t.Fatalf("extra ETag = %q, plain = %q", etag, plain.Header().Get("ETag"))
+	}
+	if rec := serve(h, http.MethodGet, "/", http.Header{"If-None-Match": {etag}}); rec.Code != http.StatusNotModified {
+		t.Fatalf("revalidation with extra ETag = %d, want 304", rec.Code)
+	}
+	// 只放行脚本、不放行 iframe 时不生成 frame-src
+	onlyScript := serve(Handler(fsys, WithExtraSources(func(context.Context) ExtraSources {
+		return ExtraSources{Script: []string{"https://a.example.test"}}
+	})), http.MethodGet, "/", nil)
+	if got := onlyScript.Header().Get("Content-Security-Policy"); strings.Contains(got, "frame-src") {
+		t.Fatalf("script-only extra must not add frame-src: %q", got)
 	}
 }

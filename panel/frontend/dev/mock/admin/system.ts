@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 
 // ---------------------------------------------------------------------------
@@ -41,9 +41,9 @@ const mail = {
   smtp_host: 'smtp.exmail.qq.com',
   smtp_port: 465,
   encryption: 'ssl',
-  smtp_username: 'noreply@pandora.run',
+  smtp_username: 'noreply@example.test',
   password: 'secret',
-  from_address: 'noreply@pandora.run',
+  from_address: 'noreply@example.test',
   from_name: '',
   email_verification: false,
   registration_mode: 'invite_only',
@@ -84,6 +84,75 @@ async function saveMail(ctx: MockContext): Promise<MockResult> {
 // ---------------------------------------------------------------------------
 const telegram = { enabled: true, bot_username: 'pandora_notify_bot', token: '7012345678:AAH-mock', admin_chat_id: -1002231180042 as number | null }
 
+const telegramExtras = {
+  sub_command_enabled: false,
+  start_message: '',
+  admin_paid_notify: false,
+  admin_ticket_notify: false,
+  join_review_enabled: false,
+  user_group_chat_id: null as number | null,
+  discuss_link: '',
+}
+
+const BIND_TTL_MS = 10 * 60_000
+const BIND_AFTER_MS = 5_000
+const adminTelegram = { username: null as string | null, pending: null as { code: string; issued: number; expires: number } | null }
+
+function newBindCode(): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+  return Array.from({ length: 8 }, () => alphabet[randomInt(alphabet.length)]).join('')
+}
+
+function settleAdminTelegram() {
+  const p = adminTelegram.pending
+  if (!p) return
+  const now = Date.now()
+  if (now >= p.expires) adminTelegram.pending = null
+  else if (now - p.issued >= BIND_AFTER_MS && telegram.enabled) {
+    adminTelegram.username = 'ops_admin_tg'
+    adminTelegram.pending = null
+  }
+}
+
+const extrasJson = () => ({ ...telegramExtras })
+
+async function saveTelegramExtras(ctx: MockContext): Promise<MockResult> {
+  const d = await decode(ctx, {
+    sub_command_enabled: 'boolean',
+    start_message: 'string',
+    admin_paid_notify: 'boolean',
+    admin_ticket_notify: 'boolean',
+    join_review_enabled: 'boolean',
+    user_group_chat_id: 'any',
+    discuss_link: 'string',
+  })
+  if (!d.ok) return d.result
+  const b = d.body
+  const fields: Record<string, string> = {}
+  const start = str(b.start_message)
+  if ([...start].length > 1000) fields.start_message = '欢迎文案最多 1000 个字'
+  const link = str(b.discuss_link).trim()
+  if (link && (!link.startsWith('https://') || [...link].length > 200)) fields.discuss_link = '讨论群链接要以 https:// 开头，如 https://t.me/xxx'
+  let userChat: number | null | undefined
+  if ('user_group_chat_id' in b) {
+    if (b.user_group_chat_id === null) userChat = null
+    else if (typeof b.user_group_chat_id === 'number' && Number.isInteger(b.user_group_chat_id) && b.user_group_chat_id < 0) userChat = b.user_group_chat_id
+    else fields.user_group_chat_id = '用户群 chat id 必须是负数（群组的 chat id 以 - 开头）'
+  }
+  const join = typeof b.join_review_enabled === 'boolean' ? b.join_review_enabled : telegramExtras.join_review_enabled
+  const mergedChat = userChat !== undefined ? userChat : telegramExtras.user_group_chat_id
+  if (join && mergedChat === null) fields.user_group_chat_id = '开启入群审核前要填用户群 chat id'
+  if (Object.keys(fields).length) return invalid(fields)
+  if (typeof b.sub_command_enabled === 'boolean') telegramExtras.sub_command_enabled = b.sub_command_enabled
+  if (b.start_message !== undefined) telegramExtras.start_message = start
+  if (typeof b.admin_paid_notify === 'boolean') telegramExtras.admin_paid_notify = b.admin_paid_notify
+  if (typeof b.admin_ticket_notify === 'boolean') telegramExtras.admin_ticket_notify = b.admin_ticket_notify
+  if (typeof b.join_review_enabled === 'boolean') telegramExtras.join_review_enabled = b.join_review_enabled
+  if (userChat !== undefined) telegramExtras.user_group_chat_id = userChat
+  if (b.discuss_link !== undefined) telegramExtras.discuss_link = link
+  return { status: 200, body: extrasJson() }
+}
+
 async function saveTelegram(ctx: MockContext): Promise<MockResult> {
   const d = await decode(ctx, { enabled: 'boolean', bot_username: 'string', bot_token: 'string', admin_chat_id: 'any' })
   if (!d.ok) return d.result
@@ -93,8 +162,8 @@ async function saveTelegram(ctx: MockContext): Promise<MockResult> {
   let chat: number | null | undefined
   if ('admin_chat_id' in b) {
     if (b.admin_chat_id === null) chat = null
-    else if (typeof b.admin_chat_id === 'number' && Number.isInteger(b.admin_chat_id) && b.admin_chat_id !== 0) chat = b.admin_chat_id
-    else return invalid({ admin_chat_id: '管理员群组 chat id 必须是非 0 整数' })
+    else if (typeof b.admin_chat_id === 'number' && Number.isInteger(b.admin_chat_id) && b.admin_chat_id < 0) chat = b.admin_chat_id
+    else return invalid({ admin_chat_id: '管理员群组 chat id 必须是负数（群组的 chat id 以 - 开头）' })
   }
   telegram.enabled = b.enabled === true
   telegram.bot_username = username
@@ -120,7 +189,7 @@ const DEFAULTS: Record<string, { subject: string; body: string }> = {
   'subscription.expiring|inapp': { subject: '套餐即将到期', body: '你的「{{plan}}」将在 {{days}} 天后（{{expires_at}}）到期。到期后节点会停止服务，记得及时续费。' },
   'subscription.expiring|email': { subject: '【{{site}}】你的套餐 {{days}} 天后到期', body: '你好，\n\n你的「{{plan}}」将在 {{days}} 天后到期（{{expires_at}}）。\n到期后节点将停止服务，请及时续费以免影响使用。\n\n{{site}}' },
   'quota.warning|inapp': { subject: '流量即将用尽', body: '你的「{{plan}}」已使用 {{percent}}% 流量（剩余 {{remaining}}）。用尽后将无法连接节点。' },
-  'quota.warning|email': { subject: '【{{site}}】流量已使用 {{percent}}%', body: '你好，\n\n你的「{{plan}}」已使用 {{percent}}% 流量，剩余 {{remaining}}。\n流量用尽后将无法连接节点，可在面板购买流量包或升级套餐。\n\n{{site}}' },
+  'quota.warning|email': { subject: '【{{site}}】流量已使用 {{percent}}%', body: '你好，\n\n你的「{{plan}}」已使用 {{percent}}% 流量，剩余 {{remaining}}。\n流量用尽后将无法连接节点，可在面板重置流量或更换套餐。\n\n{{site}}' },
   'order.paid|inapp': { subject: '支付成功', body: '订单 {{order_no}} 已支付成功，「{{plan}}」已开通，有效期至 {{expires_at}}。' },
   'ticket.replied|inapp': { subject: '工单有新回复', body: '你的工单「{{subject}}」有新回复，点击查看。' },
   'auth.email_verify|email': { subject: '【{{site}}】注册验证码 {{code}}', body: '你好，\n\n你正在注册 {{site}}，验证码是：\n\n{{code}}\n\n验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。\n\n{{site}}' },
@@ -131,8 +200,11 @@ const DESCRIPTION: Record<string, string> = {
   'order.paid': '订单支付成功后发给下单用户',
   'ticket.replied': '工单被管理员回复后通知提单人',
   'auth.email_verify': '注册第 1 步发给注册邮箱的验证码（开启邮箱验证时；邮箱已注册则不发）',
+  'admin.order_paid': '订单支付成功后发一条到管理员群组（后台「Telegram · 机器人与群组」的收款提醒开着时；随支付成功通知的扫描写入）',
+  'admin.ticket_opened': '用户新建工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单',
+  'admin.ticket_replied': '用户回复工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单',
 }
-const SAMPLE: Record<string, string> = { site: '潘多拉面板', plan: '旗舰套餐', days: '3', expires_at: '2026-08-31 23:59', percent: '85', remaining: '3.2 GB', order_no: 'AO20260804-XXXXXX', subject: '无法连接节点' }
+const SAMPLE: Record<string, string> = { site: '潘多拉面板', plan: '旗舰套餐', days: '3', expires_at: '2026-08-31 23:59', percent: '85', remaining: '3.2 GB', order_no: 'AO20260804-XXXXXX', subject: '无法连接节点', amount: '29.90 CNY', email: 'us***@example.com', ticket_no: 'TK20260804-ABCDEFGH', body: '节点连不上了，麻烦看一下。', traffic: '12.5 GB', balance: '88.00 CNY' }
 const tpl = (code: string, channel: string, category: string, vars: string[], override?: { subject: string; body: string }): Tpl => {
   const d = override ?? DEFAULTS[`${code}|${channel}`]!
   return { code, channel, category, version: override ? 3 : 1, subject: d.subject, body: d.body, vars, updated_at: new Date(Date.now() - 86_400_000 * 20).toISOString() }
@@ -150,6 +222,18 @@ const templates: Tpl[] = [
   tpl('subscription.expiring', 'telegram', 'service', ['plan', 'days', 'expires_at'], { subject: '套餐即将到期', body: '你的「{{plan}}」将在 {{days}} 天后（{{expires_at}}）到期，记得续费。' }),
   tpl('ticket.replied', 'inapp', 'service', ['subject']),
   tpl('ticket.replied', 'telegram', 'service', ['subject'], { subject: '工单有新回复', body: '你的工单「{{subject}}」有新回复。' }),
+  tpl('admin.order_paid', 'telegram', 'transactional', ['order_no', 'amount', 'plan', 'email'], {
+    subject: '收款通知',
+    body: '订单号：{{order_no}}\n金额：{{amount}}\n套餐：{{plan}}\n用户：{{email}}',
+  }),
+  tpl('admin.ticket_opened', 'telegram', 'transactional', ['ticket_no', 'subject', 'body', 'email', 'plan', 'traffic', 'expires_at', 'balance'], {
+    subject: '新工单 {{ticket_no}}',
+    body: '用户：{{email}}\n套餐：{{plan}}\n剩余流量：{{traffic}}\n到期：{{expires_at}}\n余额：{{balance}}\n\n主题：{{subject}}\n{{body}}\n\n直接回复这条消息即可回复工单。',
+  }),
+  tpl('admin.ticket_replied', 'telegram', 'transactional', ['ticket_no', 'subject', 'body', 'email', 'plan', 'traffic', 'expires_at', 'balance'], {
+    subject: '工单 {{ticket_no}} 有新回复',
+    body: '用户：{{email}}\n套餐：{{plan}}\n剩余流量：{{traffic}}\n到期：{{expires_at}}\n余额：{{balance}}\n\n主题：{{subject}}\n{{body}}\n\n直接回复这条消息即可回复工单。',
+  }),
 ]
 
 const VAR = /\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/g
@@ -179,6 +263,7 @@ const isResult = (v: object): v is MockResult => 'status' in v
 // ---------------------------------------------------------------------------
 const EVENTS = [
   { name: 'user.registered', desc: '用户完成注册' },
+  { name: 'user.deleted', desc: '用户账号已注销' },
   { name: 'order.created', desc: '订单创建' },
   { name: 'order.paid', desc: '订单支付成功' },
   { name: 'order.cancelled', desc: '订单取消' },
@@ -216,7 +301,7 @@ const sent = (event: string, min: number, ms: number, attempts = 1): MockDeliver
 const lost = (event: string, min: number, code: number, attempts: number): MockDelivery => ({ event, status: 'failed', attempts, response_code: code, error_message: code ? `对方返回 HTTP ${code}` : 'dial tcp: i/o timeout', created_at: stamp(-min, true), sent_at: '', duration_ms: code ? 10000 : null })
 const hooks: MockHook[] = [
   { id: randomUUID(), code: 'hook-crm001', name: 'crm.example.com', description: 'CRM 同步新用户', enabled: true, events: ['user.registered'], endpoint_url: 'https://crm.example.com/api/pandora', secret: 'whsec_crm', timeout_ms: 10000, max_attempts: 5, deliveries: [lost('user.registered', 14, 503, 3), sent('user.registered', 40, 240, 3), lost('user.registered', 90, 0, 5), sent('user.registered', 200, 180)] },
-  { id: randomUUID(), code: 'hook-ops001', name: 'ops.pandora.run', description: '', enabled: true, events: ['order.paid', 'order.cancelled'], endpoint_url: 'https://ops.pandora.run/hooks/orders', secret: 'whsec_ops', timeout_ms: 5000, max_attempts: 5, deliveries: [sent('order.paid', 4, 84), sent('order.paid', 32, 91), sent('order.cancelled', 400, 77), { event: 'order.paid', status: 'queued', attempts: 0, response_code: 0, error_message: '', created_at: stamp(0, true), sent_at: '', duration_ms: null }] },
+  { id: randomUUID(), code: 'hook-ops001', name: 'ops.example.test', description: '', enabled: true, events: ['order.paid', 'order.cancelled'], endpoint_url: 'https://ops.example.test/hooks/orders', secret: 'whsec_ops', timeout_ms: 5000, max_attempts: 5, deliveries: [sent('order.paid', 4, 84), sent('order.paid', 32, 91), sent('order.cancelled', 400, 77), { event: 'order.paid', status: 'queued', attempts: 0, response_code: 0, error_message: '', created_at: stamp(0, true), sent_at: '', duration_ms: null }] },
   { id: randomUUID(), code: 'hook-slack01', name: 'hooks.slack.com', description: '工单提醒', enabled: false, events: ['ticket.created'], endpoint_url: 'https://hooks.slack.com/services/T0/B0/mock', secret: '', timeout_ms: 5000, max_attempts: 3, deliveries: [] },
 ]
 const recent = (d: MockDelivery) => Date.now() - new Date(d.created_at.replace(' ', 'T')).getTime() < 7 * 86_400_000
@@ -310,6 +395,41 @@ export const system: MockModule = {
 
     'GET /v1/settings/telegram': (ctx) => {
       ctx.send(200, { enabled: telegram.enabled, bot_username: telegram.bot_username, has_token: telegram.token !== '', admin_chat_id: telegram.admin_chat_id })
+    },
+    'GET /v1/settings/telegram/extras': (ctx) => {
+      ctx.send(200, extrasJson())
+    },
+    'POST /v1/settings/telegram/extras': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      reply(ctx, await saveTelegramExtras(ctx))
+    },
+    'GET /v1/me/telegram': (ctx) => {
+      settleAdminTelegram()
+      const bound = adminTelegram.username !== null
+      const discuss = telegramExtras.discuss_link.trim()
+      ctx.send(200, {
+        bound,
+        ...(bound && adminTelegram.username ? { username: adminTelegram.username } : {}),
+        ...(telegram.enabled ? { bot_username: telegram.bot_username } : {}),
+        enabled: telegram.enabled,
+        discuss_link: discuss || null,
+      })
+    },
+    'POST /v1/me/telegram/bind-code': (ctx) => {
+      if (!ctx.requireReauth()) return
+      settleAdminTelegram()
+      if (!telegram.enabled) return reply(ctx, failed('站点未启用 Telegram 通知'))
+      if (adminTelegram.username !== null) return reply(ctx, err(409, 'conflict', '已经绑定过 Telegram 了'))
+      const now = Date.now()
+      adminTelegram.pending = { code: newBindCode(), issued: now, expires: now + BIND_TTL_MS }
+      ctx.send(200, { code: adminTelegram.pending.code, bot_username: telegram.bot_username, expires_at: new Date(adminTelegram.pending.expires).toISOString() })
+    },
+    'DELETE /v1/me/telegram': (ctx) => {
+      settleAdminTelegram()
+      if (adminTelegram.username === null) return reply(ctx, err(404, 'not_found', '你还没有绑定 Telegram'))
+      adminTelegram.username = null
+      adminTelegram.pending = null
+      ctx.send(200, { unbound: true })
     },
     'POST /v1/settings/telegram/test': async (ctx) => {
       const d = await decode(ctx, { chat_id: 'number' })

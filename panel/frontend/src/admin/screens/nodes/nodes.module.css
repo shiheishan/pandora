@@ -191,12 +191,6 @@
   gap: 6px;
 }
 
-/* 抽屉协议页顶部的存量配置提示（如证书路径不在约定目录） */
-.configWarning {
-  margin-bottom: 10px;
-  font-size: var(--fs-caption);
-}
-
 /* 运行状态标签：「生效失败：端口 443/TCP 被节点「东京-01」占用」可能很长，列里截断，全文在 title */
 .runTag {
   max-width: 220px;
@@ -242,196 +236,8 @@
   font-size: var(--fs-caption);
 }
 
-/* 抽屉 */
-.drawerTitle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.drawerSub {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.deliveryNote {
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--border);
-}
-
-.kpi {
-  padding: 12px 14px;
-  background: var(--surface);
-}
-
-.kpiLabel {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.kpiValue {
-  margin-top: 2px;
-  font-size: 18px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.groupLabel {
-  margin-bottom: 8px;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.bars {
-  display: grid;
-  grid-template-columns: repeat(24, minmax(0, 1fr));
-  gap: 3px;
-  align-items: end;
-  height: 96px;
-}
-
-.bar {
-  display: flex;
-  align-items: flex-end;
-  height: 100%;
-}
-
-.barFill,
-.barEmpty {
-  display: block;
-  width: 100%;
-  border-radius: 2px 2px 0 0;
-  background: var(--text);
-}
-
-.barEmpty {
-  background: var(--surface-3);
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 8px 12px;
-  margin: 0;
-}
-
-.facts dt {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.facts dd {
-  margin: 0;
-}
-
-.inlineTag {
-  margin-left: 6px;
-}
-
 .breakAll {
   word-break: break-all;
-}
-
-.ruleList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ruleList li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-}
-
-.ruleOff {
-  opacity: 0.5;
-}
-
-.action {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  padding: var(--space-12) 0;
-  border-top: 1px solid var(--border);
-}
-
-.actionText {
-  flex: 1;
-  min-width: 0;
-}
-
-.actionTitle {
-  font-weight: var(--fw-medium);
-}
-
-.inlineControls {
-  display: inline-flex;
-  gap: 6px;
-}
-
-.warnButton {
-  border-color: var(--warn-line);
-  color: var(--warn);
-}
-
-.dangerButton {
-  border-color: var(--danger-line);
-  color: var(--danger);
-}
-
-.blockers {
-  margin: 0;
-  padding-left: 18px;
-}
-
-.eyebrowWarn {
-  color: var(--warn);
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-}
-
-.secretBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.secretHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.code {
-  display: block;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--surface-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  word-break: break-all;
-  user-select: all;
 }
 
 /* 表单 */
@@ -439,12 +245,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-20);
-}
-
-.formSection {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
 }
 
 .sectionHead {
@@ -470,48 +270,6 @@
 
 .span2 {
   grid-column: span 2;
-}
-
-/* 编辑时选填的敏感字段：输入框 + 「清空 / 撤回清空」（R106） */
-.secretField {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-8);
-  min-width: 0;
-}
-
-.secretField > button {
-  margin-top: 22px;
-}
-
-.checkField {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 22px;
-}
-
-.required {
-  color: var(--danger);
-}
-
-.sensitive {
-  margin-left: 6px;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: var(--warn-soft);
-  color: var(--warn);
-  font-size: 11px;
-}
-
-.notice {
-  padding: 8px 12px;
-  border: 1px solid var(--warn-line);
-  border-radius: var(--radius-md);
-  background: var(--warn-soft);
-  color: var(--text);
-  font-size: var(--fs-caption);
 }
 
 .error {
@@ -543,15 +301,28 @@
 .ruleRow {
   display: grid;
   grid-template-areas:
-    'no kind value tools'
-    '. out note on'
-    '. err err err';
-  grid-template-columns: 20px 150px minmax(0, 1fr) auto;
-  gap: 8px;
+    'no kind value out note tools'
+    '. err err err err err';
+  grid-template-columns: 20px 120px minmax(0, 1fr) 160px minmax(0, 120px) auto;
+  gap: 4px 8px;
   align-items: center;
   padding: 8px 10px;
   border-radius: var(--radius-md);
   background: var(--surface-2);
+}
+
+.ruleHead {
+  padding: 0 10px 6px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.ruleHead .rTools {
+  justify-self: end;
+  text-align: right;
 }
 
 .rNo {
@@ -566,28 +337,64 @@
   grid-area: value;
 }
 
-.rTools {
-  grid-area: tools;
-}
-
 .rOut {
   grid-area: out;
 }
 
 .rNote {
   grid-area: note;
+  min-width: 0;
+  font-size: 12.5px;
 }
 
-.rOn {
-  grid-area: on;
+.rTools {
+  grid-area: tools;
 }
 
 .rErr {
   grid-area: err;
 }
 
+/* 旧匹配类型（端口、网络等）：只读显示，原样保存 */
+.rLegacy {
+  grid-row: 1;
+  grid-column: kind-start / value-end;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.sectionHeadEnd {
+  margin-left: auto;
+}
+
 .ruleTools {
   display: inline-flex;
+}
+
+/* 手机：一条规则叠成三行（序号 + 匹配类型 + 工具 / 匹配值 / 出站），表头不显示 */
+@media (max-width: 639px) {
+  .ruleRow {
+    grid-template-areas:
+      'no kind tools'
+      '. value value'
+      '. out out'
+      '. err err';
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+  }
+
+  .ruleHead {
+    display: none;
+  }
+
+  .rNote {
+    display: none;
+  }
+
+  .rLegacy {
+    grid-column: kind-start / kind-end;
+  }
 }
 
 .outboundRow {
@@ -604,3 +411,75 @@
 .outboundRow .span2 {
   grid-column: 1 / 3;
 }
+
+/* 列表行：标签与中转信息行 */
+.nodeMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.relayCount {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+.trafficLine {
+  display: block;
+}
+
+.trafficFaint {
+  font-size: var(--fs-caption);
+}
+
+.trafficWarn {
+  color: var(--warn);
+}
+
+/* 批量修改弹窗 */
+.batchForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-8) 0;
+}
+
+.batchItem {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-16);
+  align-items: start;
+  padding-bottom: var(--space-12);
+  border-bottom: 1px solid var(--border);
+}
+
+.batchItem:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.batchCheck {
+  display: flex;
+  align-items: center;
+  min-height: var(--h-control);
+}
+
+.batchField {
+  min-width: 0;
+}
+
+.optionalLabel {
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+
+.fieldHint {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+

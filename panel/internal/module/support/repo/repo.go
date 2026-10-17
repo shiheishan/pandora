@@ -3,13 +3,9 @@ package repo
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/pkg/db"
@@ -32,52 +28,19 @@ var (
 	ErrAppendOnly = errors.New("support: 只追加或禁删的表被改写")
 )
 
-// mapErr 把 GORM 翻译后的约束错误与触发器的 23001 转成模块哨兵，并包住原错误。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, gorm.ErrDuplicatedKey):
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	case errors.Is(err, gorm.ErrForeignKeyViolated):
-		return fmt.Errorf("%w: %v", ErrForeignKey, err)
-	case errors.Is(err, gorm.ErrCheckConstraintViolated):
-		return fmt.Errorf("%w: %v", ErrCheck, err)
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23001":
-			return fmt.Errorf("%w: %v", ErrAppendOnly, err)
-		case "23505":
-			return fmt.Errorf("%w: %v", ErrDuplicate, err)
-		case "23503":
-			return fmt.Errorf("%w: %v", ErrForeignKey, err)
-		case "23514":
-			return fmt.Errorf("%w: %v", ErrCheck, err)
-		}
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+	db.CodeCheck:      ErrCheck,
+	db.CodeRestrict:   ErrAppendOnly,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 // now 返回写库用的当前时刻（UTC、截到微秒）。
 func now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
-
-// likePattern 把用户输入转成 ILIKE 的包含模式：先转义 \ % _，再两头加 %。
-func likePattern(q string) string {
-	var b strings.Builder
-	b.WriteByte('%')
-	for _, r := range q {
-		switch r {
-		case '\\', '%', '_':
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	b.WriteByte('%')
-	return b.String()
-}
 
 // TicketRow 是列表读出的一行：工单本身加消息统计。
 type TicketRow struct {
@@ -86,7 +49,7 @@ type TicketRow struct {
 	MessageCount int `gorm:"column:message_count"`
 	// LastReplyAt 是最后一条（同上口径）消息的时间，没有消息时为建单时间
 	LastReplyAt time.Time `gorm:"column:last_reply_at"`
-	// LastAuthorKind 是最后一条非内部备注消息的作者类型，没有时为空串（只后台队列填）
+	// LastAuthorKind 是最后一条非内部备注、非系统消息的作者类型，没有时为空串（只后台队列填）
 	LastAuthorKind string `gorm:"column:last_author_kind"`
 }
 

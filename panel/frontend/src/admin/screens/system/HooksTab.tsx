@@ -1,89 +1,33 @@
+import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, QueryView, Switch, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, QueryView, Switch, useToast } from '../../../ui'
+import { PageActions, Row, RowList, StatusDot } from '../../kit'
 import { useSaveHook } from './hookActions'
-import { EventPicker, HookModal, SecretModal } from './HookDialogs'
-import { deliveryRow, durationLabel, eventsLabel, hookBody, hookFormFrom, hookTone, hostOf, newHookCode, successRate, validateHook } from './logic'
+import { CreateHookModal, HookModal, SecretModal } from './HookDialogs'
+import { deliveryRow, eventsLabel, hookBody, hookFormFrom, hookHealth, hookTone } from './logic'
 import { useDeliveries, useFailure, useHooks, useInvalidateSystem } from './queries'
-import { hookDeleted, hookTested, type Hook, type HookEvent } from './schemas'
-import css from './system.module.css'
+import { hookDeleted, type Hook, type HookEvent } from './schemas'
+import css from './hooks.module.css'
+import shared from './system.module.css'
+
+const TONE_CLASS: Record<string, string | undefined> = { ok: css.toneOk, warn: css.toneWarn, muted: css.toneMuted }
 
 export function HooksTab() {
   const hooks = useHooks()
-  const [secret, setSecret] = useState<{ secret: string; hint: string } | null>(null)
-
-  return (
-    <QueryView query={hooks} rows={4} empty={null}>
-      {({ hooks: list, events }) => (
-        <div className={css.stack}>
-          <CreateBar events={events} existing={list.map((h) => h.code)} onSecret={setSecret} />
-          {list.length === 0 && <Empty title="还没有 Webhook 钩子" description="填上端点地址、选好事件，新建一个钩子；事件发生时面板会带签名 POST 过去。" />}
-          {list.map((h) => (
-            <HookCard key={h.code} hook={h} events={events} onSecret={setSecret} />
-          ))}
-          <SecretModal secret={secret} onClose={() => setSecret(null)} />
-        </div>
-      )}
-    </QueryView>
-  )
-}
-
-function CreateBar({ events, existing, onSecret }: { events: HookEvent[]; existing: string[]; onSecret: (s: { secret: string; hint: string }) => void }) {
-  const toast = useToast()
-  const [url, setUrl] = useState('')
-  const [picked, setPicked] = useState<string[]>(['order.paid', 'order.cancelled'].filter((e) => events.some((x) => x.name === e)))
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const save = useSaveHook((r) => {
-    toast('钩子已创建')
-    setUrl('')
-    if (r.secret) onSecret({ secret: r.secret, hint: r.secret_hint ?? '签名密钥只显示这一次，请立刻填进插件那边的配置' })
-  }, setErrors)
-
-  const submit = () => {
-    const code = newHookCode(existing)
-    const form = { name: hostOf(url) || code, description: '', endpoint: url, events: picked, timeoutMs: '5000', maxAttempts: '5', enabled: true, secret: '' }
-    const errs = validateHook(form)
-    setErrors(errs)
-    if (Object.keys(errs).length === 0) save.mutate(hookBody(code, form))
-  }
-
-  return (
-    <section className={css.createBar} aria-label="新建钩子">
-      <Input label="端点 URL" fieldClassName={css.createUrl} mono value={url} placeholder="https://" error={errors.endpoint_url} disabled={save.isPending} onChange={(e) => setUrl(e.target.value)} />
-      <div className={css.createEvents}>
-        <div className={css.label}>订阅事件</div>
-        <EventPicker events={events} value={picked} onChange={setPicked} />
-        {errors.events && (
-          <div className={css.error} role="alert">
-            {errors.events}
-          </div>
-        )}
-      </div>
-      <Button variant="primary" busy={save.isPending} onClick={submit}>
-        新建钩子
-      </Button>
-    </section>
-  )
-}
-
-function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent[]; onSecret: (s: { secret: string; hint: string }) => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateSystem()
-  const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [removing, setRemoving] = useState(false)
-  const toggle = useSaveHook((_, body) => toast(body.enabled ? '钩子已启用' : '钩子已停用'))
+  const [creating, setCreating] = useState(false)
+  const [secret, setSecret] = useState<{ secret: string; hint: string } | null>(null)
+  // 编辑与删除确认框放在列表外：RowList 里只放 listitem（行与展开的投递记录）
+  const [editing, setEditing] = useState<Hook | null>(null)
+  const [removing, setRemoving] = useState<Hook | null>(null)
 
-  const test = useMutation({
-    mutationFn: () => api.post(`v1/plugin-hooks/${encodeURIComponent(h.code)}/test`, hookTested, {}),
-    onSuccess: (r) => toast(`测试事件已投递 · ${r.response_code} · ${durationLabel(r.duration_ms)}`),
-    onError: (e) => fail(e),
-  })
   const remove = useMutation({
-    mutationFn: () => api.delete(`v1/plugin-hooks/${encodeURIComponent(h.code)}`, hookDeleted),
+    mutationFn: (code: string) => api.delete(`v1/plugin-hooks/${encodeURIComponent(code)}`, hookDeleted),
     onSuccess: () => {
       toast('钩子已删除')
       void invalidate('hooks')
@@ -91,93 +35,153 @@ function HookCard({ hook: h, events, onSecret }: { hook: Hook; events: HookEvent
     onError: (e) => fail(e),
   })
 
+  return (
+    <>
+      <PageActions>
+        <Button variant="primary" icon={Add01Icon} onClick={() => setCreating(true)}>
+          新建钩子
+        </Button>
+      </PageActions>
+      <QueryView query={hooks} rows={4} empty={null}>
+        {({ hooks: list, events }) => (
+          <div className={shared.stack}>
+            <div className={css.tsum}>
+              {list.length} 个钩子 · 启用 {list.filter((h) => h.enabled).length}
+            </div>
+            {list.length === 0 ? (
+              <Empty bare title="还没有钩子" description="点右上角「新建钩子」填上端点 URL、选好事件就能创建。" />
+            ) : (
+              <Card flush>
+                <RowList label="Webhook 钩子">
+                  {list.map((h) => (
+                    <HookRowItem key={h.code} hook={h} events={events} removing={remove.isPending} onEdit={() => setEditing(h)} onRemove={() => setRemoving(h)} />
+                  ))}
+                </RowList>
+              </Card>
+            )}
+            {editing && (
+              <HookModal
+                hook={editing}
+                events={events}
+                onClose={() => setEditing(null)}
+                onSaved={(r) => {
+                  setEditing(null)
+                  if (r.secret) setSecret({ secret: r.secret, hint: r.secret_hint ?? '' })
+                }}
+              />
+            )}
+            <CreateHookModal open={creating} events={events} existing={list.map((h) => h.code)} onClose={() => setCreating(false)} onCreated={setSecret} />
+            <SecretModal secret={secret} onClose={() => setSecret(null)} />
+          </div>
+        )}
+      </QueryView>
+      <ConfirmModal
+        open={removing !== null}
+        title="删除这个钩子？"
+        body="之后的事件不会再投递到这个端点，投递记录一起删除。"
+        confirmLabel="删除钩子"
+        tone="danger"
+        onConfirm={() => {
+          if (removing) remove.mutate(removing.code)
+          setRemoving(null)
+        }}
+        onCancel={() => setRemoving(null)}
+      />
+    </>
+  )
+}
+
+/** 一个钩子：Row 本身是 listitem；展开时紧跟一个 listitem 的投递记录块 */
+function HookRowItem({ hook: h, events, removing, onEdit, onRemove }: { hook: Hook; events: HookEvent[]; removing: boolean; onEdit: () => void; onRemove: () => void }) {
+  const toast = useToast()
+  const [open, setOpen] = useState(false)
+  const toggle = useSaveHook((_, body) => toast(body.enabled ? '钩子已启用' : '钩子已停用'))
+
   const flip = (on: boolean) => {
     if (on && h.events.length === 0) return toast('启用前至少要订阅一个事件，先在「编辑」里选事件', 'danger')
     toggle.mutate(hookBody(h.code, { ...hookFormFrom(h), enabled: on }))
   }
 
   const tone = hookTone(h)
+  const statusTone = tone === 'ok' ? 'ok' : tone === 'warn' ? 'warn' : 'off'
+  const healthText = hookHealth(h)
+  const healthToneClass = tone === 'ok' ? css.healthOk : tone === 'warn' ? css.healthWarn : css.healthMuted
+
   return (
-    <section className={css.hook} aria-label={`钩子 ${h.name}`}>
-      <div className={css.hookHead}>
-        <span className={`${css.dot} ${css[tone]}`} aria-label={tone === 'muted' ? '已停用' : tone === 'warn' ? '近 7 天有失败' : '正常'} />
-        <div className={css.hookMain}>
-          <div className={css.hookUrl} title={h.endpoint_url}>
-            {h.endpoint_url}
-          </div>
-          <div className={css.faint}>
-            {h.name} · {eventsLabel(h.events, events.length)} · 成功率 {successRate(h)}
-            {h.queued_count > 0 && ` · 排队 ${h.queued_count}`}
-            {h.last_sent_at && ` · 最近送达 ${h.last_sent_at.slice(5)}`}
-          </div>
-        </div>
-        <Switch aria-label={`启用钩子 ${h.name}`} checked={h.enabled} disabled={toggle.isPending} onChange={(e) => flip(e.target.checked)} />
-        <Button size="xs" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          {open ? '收起记录' : '投递记录'}
-        </Button>
-        <Button size="xs" busy={test.isPending} onClick={() => test.mutate()}>
-          测试投递
-        </Button>
-        <Button size="xs" onClick={() => setEditing(true)}>
-          编辑
-        </Button>
-        <Button size="xs" variant="ghost" className={css.dangerText} disabled={remove.isPending} onClick={() => setRemoving(true)}>
-          删除
-        </Button>
-      </div>
-      {open && <Deliveries code={h.code} />}
-      {editing && (
-        <HookModal
-          hook={h}
-          events={events}
-          onClose={() => setEditing(false)}
-          onSaved={(r) => {
-            setEditing(false)
-            if (r.secret) onSecret({ secret: r.secret, hint: r.secret_hint ?? '' })
-          }}
-        />
-      )}
-      <ConfirmModal
-        open={removing}
-        title="删除这个钩子？"
-        body={
-          <>
-            <span className={css.mono}>{h.endpoint_url}</span>
-            <br />
-            删除后不再向这个地址投递事件，排队中的投递也不会再发出，不能恢复。
-          </>
+    <>
+      <Row
+        align="start"
+        lead={
+          <StatusDot tone={statusTone}>
+            <span className={css.srOnly}>{healthText}</span>
+          </StatusDot>
         }
-        confirmLabel="删除钩子"
-        tone="danger"
-        onConfirm={() => {
-          remove.mutate()
-          setRemoving(false)
-        }}
-        onCancel={() => setRemoving(false)}
+        title={
+          <span>
+            {h.name} <span className={`${css.health} ${healthToneClass}`}>{healthText}</span>
+          </span>
+        }
+        meta={
+          <span className={css.url} title={h.endpoint_url}>
+            {h.endpoint_url}
+          </span>
+        }
+        extra={<span className={css.events}>{eventsLabel(h.events, events)}</span>}
+        actions={
+          <span className={css.actions}>
+            <Switch aria-label={`启用钩子 ${h.name}`} checked={h.enabled} disabled={toggle.isPending} onChange={(e) => flip(e.target.checked)} />
+            <button type="button" className={css.linkBtn} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+              {open ? '收起记录' : '投递记录'}
+            </button>
+            <button type="button" className={`${css.linkBtn} ${css.hideM}`} onClick={onEdit}>
+              编辑
+            </button>
+            <button type="button" className={`${css.linkDanger} ${css.hideM}`} disabled={removing} onClick={onRemove}>
+              删除
+            </button>
+          </span>
+        }
       />
-    </section>
+      {open && (
+        <div role="listitem" aria-label={`${h.name} 的投递记录`} className={css.dl}>
+          <Deliveries code={h.code} />
+        </div>
+      )}
+    </>
   )
 }
 
 function Deliveries({ code }: { code: string }) {
   const deliveries = useDeliveries(code)
   return (
-    <div className={css.deliveries}>
-      <QueryView query={deliveries} rows={3} empty={<div className={css.pad}><span className={css.faint}>还没有投递记录。事件发生后这里会列出最近 50 条。</span></div>}>
-        {(rows) =>
-          rows.map((d, i) => {
-            const r = deliveryRow(d)
-            return (
-              <div key={`${d.created_at}-${i}`} className={css.delivery} title={d.error_message || undefined}>
-                <span className={css[r.tone]}>{r.code}</span>
-                <span className={css.ellipsis}>{r.event}</span>
-                <span className={css.right}>{r.duration}</span>
-                <span className={`${css.right} ${css.faint}`}>{r.at}</span>
-              </div>
-            )
-          })
-        }
-      </QueryView>
-    </div>
+    <QueryView query={deliveries} rows={3} empty={<div className={css.delivEmpty}>还没有投递记录。事件发生后这里会列出最近 50 条。</div>}>
+      {(rows) => (
+        <table className={css.delivTable}>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>事件</th>
+              <th className={css.num}>响应</th>
+              <th className={css.num}>耗时</th>
+              <th className={css.num}>次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d, i) => {
+              const r = deliveryRow(d)
+              return (
+                <tr key={`${d.created_at}-${i}`} title={d.error_message || undefined}>
+                  <td className={`${css.at} ${css.dim}`}>{r.at}</td>
+                  <td className={css.eventMono}>{r.event}</td>
+                  <td className={`${css.num} ${css.code} ${TONE_CLASS[r.tone] ?? ''}`}>{r.code}</td>
+                  <td className={`${css.at} ${css.num} ${css.dim}`}>{r.duration}</td>
+                  <td className={`${css.at} ${css.num} ${css.dim}`}>{r.attempts}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </QueryView>
   )
 }

@@ -47,10 +47,12 @@ export function placementTitle(p: Placement, targetPlan: string): string {
   switch (p.kind) {
     case 'renew':
       return `${p.state === 'revivable' ? '恢复并续一期' : '续一期'}：${subjectOf(p)}`
+    case 'stack':
+      return `叠加到${subjectOf(p)}`
     case 'change':
-      return p.expired ? `恢复${subjectOf(p)}并改成${targetPlan}` : `把${subjectOf(p)}换成${targetPlan}`
+      return p.expired ? `恢复${subjectOf(p)}并改成${targetPlan}` : `换掉${subjectOf(p)}，改成${targetPlan}`
     case 'new':
-      return `另开一份${targetPlan}`
+      return `新开一份${targetPlan}`
   }
 }
 
@@ -62,9 +64,17 @@ export function placementResult(p: Placement, settlement: 'grant' | 'pending' | 
       const range = !p.new_period_end ? '' : p.period_end && p.state !== 'revivable' ? `到期 ${day(p.period_end)} → ${day(p.new_period_end)}` : `从现在起算，到期 ${day(p.new_period_end)}`
       return [stateLine(p), range, '订阅链接不变'].filter(Boolean).join('；')
     }
+    case 'stack': {
+      const range = !p.new_period_end
+        ? ''
+        : p.period_end
+          ? `到期 ${day(p.period_end)} → ${day(p.new_period_end)}`
+          : `到期 ${day(p.new_period_end)}`
+      return [stateLine(p), '总流量加上这次的量', range, '订阅链接不变'].filter(Boolean).join('；')
+    }
     case 'change': {
       const credit = p.credit ?? 0
-      const money = formatMoney(credit, p.currency ?? 'CNY')
+      const money = formatMoney(credit)
       const creditText =
         credit <= 0 ? '原套餐没有可抵的剩余价值' : settlement === 'grant' ? `没用完的 ${money} 全额退到用户余额` : `没用完的 ${money} 先抵新价，抵不完的退到用户余额`
       // 只退已付价值：赠送的时长（加时长卡、套餐卡续的期）不保留，有就写出来（与门户兑换卡同一句）
@@ -76,30 +86,43 @@ export function placementResult(p: Placement, settlement: 'grant' | 'pending' | 
   }
 }
 
+export function unavailableLine(p: Pick<Placement, 'unavailable_reason'>): string | null {
+  return p.unavailable_reason ? `开不了：${p.unavailable_reason}` : null
+}
+
 /**
  * 价目旁的说明。换套餐且原套餐有剩余价值时，实际应付 = 新价 − 剩余价值（抵不完退余额），
  * 金额以订单为准，这里不替服务端算
  */
-export function priceNote(amount: number, currency: string, option: Pick<Placement, 'kind' | 'credit'> | undefined): string {
-  const price = formatMoney(amount, currency)
+export function priceNote(amount: number, option: Pick<Placement, 'kind' | 'credit'> | undefined): string {
+  const price = formatMoney(amount)
   if (option?.kind === 'change' && (option.credit ?? 0) > 0) return `新套餐 ${price}，先抵扣原套餐的剩余价值，实际应付以订单为准`
   return `应付 ${price}`
 }
 
-/** 当前选中的键：用户点过且仍在列表里用用户的，否则用服务端默认；没有默认就是空（不预选） */
+const isAvailable = (o: Placement) => !o.unavailable_reason
+
+/** 当前选中的键：用户点过且仍在列表里用用户的，否则用服务端默认；没有默认就是空（不预选）。不可用选项不算数 */
 export function selectedKey(preview: Pick<ManualPreview, 'options' | 'default_key'> | undefined, picked: string): string {
   if (!preview) return ''
-  if (picked && preview.options.some((o) => o.key === picked)) return picked
-  // 只有一个选项时不让选，直接用它
-  if (preview.options.length === 1) return preview.options[0]!.key
-  return preview.options.some((o) => o.key === preview.default_key) ? preview.default_key : ''
+  if (picked) {
+    const hit = preview.options.find((o) => o.key === picked)
+    if (hit && isAvailable(hit)) return picked
+  }
+  // 只有一个选项时不让选，直接用它（须可用）
+  if (preview.options.length === 1) {
+    const only = preview.options[0]!
+    return isAvailable(only) ? only.key : ''
+  }
+  const def = preview.options.find((o) => o.key === preview.default_key)
+  return def && isAvailable(def) ? preview.default_key : ''
 }
 
 /**
  * 提交按钮的状态：能点，或灰着并写明原因（没有默认值时是「先选落点」）。
  * 用户、套餐、价格还没选全时落点无从谈起，按钮照常可点，点了由表单预检指出缺哪一项
  */
-export type SubmitGate = { ok: true } | { ok: false; label: string }
+type SubmitGate = { ok: true } | { ok: false; label: string }
 
 export function submitGate(opts: {
   hasInputs: boolean
@@ -110,10 +133,13 @@ export function submitGate(opts: {
   failedLabel?: string
   /** 选好了也提交不了的原因（如待支付单低于最低付款额），原因与下一步写在表单里，按钮上只写短句 */
   blocked?: string | null
+  /** 只有一个选项且它不可用时传它的 unavailable_reason */
+  unavailable?: string | null
 }): SubmitGate {
   if (!opts.hasInputs) return { ok: true }
   if (opts.loading) return { ok: false, label: '读取落点中…' }
   if (opts.failed) return { ok: false, label: opts.failedLabel ?? '落点读取失败' }
+  if (opts.unavailable) return { ok: false, label: '这单开不了' }
   if (!opts.selected) return { ok: false, label: '先选落点' }
   if (opts.blocked) return { ok: false, label: opts.blocked }
   return { ok: true }
@@ -123,7 +149,7 @@ export function submitGate(opts: {
  * preview 的 422 落到哪：price_id 落到「套餐与周期」；entry_subscription_id（「给这份开单」带进来的那份）
  * 不对时不按入口预选，改由管理员自己选，原因写在落点区。其余失败（含网络）整块提示并给重试
  */
-export interface PreviewFailure {
+interface PreviewFailure {
   /** 落到表单项上的错误，键与开单表单一致 */
   fields: Record<string, string>
   /** 入口订阅被拒：去掉入口重取一次 */

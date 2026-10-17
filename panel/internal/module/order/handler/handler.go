@@ -1,4 +1,4 @@
-// Package handler 是 order 模块的 HTTP 层：门户报价、下单（含换套餐）、支付、取消、查单与我的订单；
+// Package handler 是 order 模块的 HTTP 层：门户报价、下单（含换套餐、叠加）、支付、取消、查单与我的订单；
 // 后台订单列表、详情、取消、标记已支付、查单与人工开单。
 package handler
 
@@ -21,7 +21,9 @@ type Service interface {
 	Quote(ctx context.Context, in service.QuoteInput) (service.QuoteResult, error)
 	CreateNewOrder(ctx context.Context, in service.NewOrderInput) (service.Created, error)
 	CreateRenewalOrder(ctx context.Context, in service.RenewalOrderInput) (service.Created, error)
-	CreatePackOrder(ctx context.Context, in service.PackOrderInput) (service.Created, error)
+	CreateStackOrder(ctx context.Context, in service.StackOrderInput) (service.Created, error)
+	CreateResetOrder(ctx context.Context, in service.ResetOrderInput) (service.Created, error)
+	Landings(ctx context.Context, planID uuid.UUID) (service.Landings, error)
 	CreatePlanChangeOrder(ctx context.Context, in service.PlanChangeOrderInput) (service.Created, error)
 	ManualPreview(ctx context.Context, in service.ManualPreviewInput) (service.ManualPreview, error)
 	CreateManualOrder(ctx context.Context, in service.ManualOrderInput) (service.Created, error)
@@ -41,10 +43,11 @@ type Service interface {
 var _ Service = (*service.Service)(nil)
 var _ route.Module = (*Handler)(nil)
 
-// 幂等作用域（沿用旧代码的名字；流量包、新购与后台人工单共用 order_create）。
+// 幂等作用域（新购与后台人工单共用 order_create）。
 const (
 	ScopeOrderCreate      = "order_create"
 	ScopeRenewalCreate    = "subscription_renewal_create"
+	ScopeStackCreate      = "subscription_stack_create"
 	ScopePlanChangeCreate = "subscription_change_plan_create"
 	ScopeTopupCreate      = "balance_topup_create"
 	ScopeAdminCancel      = "admin_order_cancel"
@@ -54,6 +57,9 @@ const (
 
 // SwitchCheckout 是下单与支付的功能开关；取消、查单、我的订单不受它管。
 const SwitchCheckout = "billing.checkout"
+
+// PayPerMinute 是门户发起支付每个账号每分钟的上限（加密货币渠道每次都要去渠道建发票）。
+const PayPerMinute = 10
 
 // QueryPerMinute 是门户查单每个账号每分钟的上限（每查一次都要打渠道接口）。
 const QueryPerMinute = 6
@@ -79,12 +85,17 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 	checkout := k.Switch(SwitchCheckout)
 	v1.POST("/orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createOrder)
 	v1.POST("/me/subscriptions/:id/renew", k.RequireAuth, checkout, k.Idempotency(ScopeRenewalCreate), h.createRenewal)
-	// 换套餐有自己的幂等域（旧代码同名）；金额走统一报价的 action=change
+	// 换套餐有自己的幂等域；金额走统一报价的 action=change
 	v1.POST("/me/subscriptions/:id/change-plan", k.RequireAuth, checkout, k.Idempotency(ScopePlanChangeCreate), h.createPlanChange)
-	v1.POST("/me/traffic-pack-orders", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createPackOrder)
+	// 一次性套餐叠加：金额走统一报价的 action=stack
+	v1.POST("/me/subscriptions/:id/stack", k.RequireAuth, checkout, k.Idempotency(ScopeStackCreate), h.createStack)
+	// 买流量重置（xb-order #32）：重置哪一份由路径给出，金额走统一报价的 action=reset
+	v1.POST("/me/subscriptions/:id/traffic-reset", k.RequireAuth, checkout, k.Idempotency(ScopeOrderCreate), h.createResetOrder)
 	v1.POST("/me/topups", k.RequireAuth, checkout, k.Idempotency(ScopeTopupCreate), h.createTopup)
 	v1.POST("/me/checkout/quote", k.RequireAuth, checkout, h.quote)
-	// 发起支付不加幂等键：在途意图由 payment 复用，连点两次拿回同一个收银台
+	// 买某个套餐可以落到哪里，用户自己选
+	v1.GET("/me/checkout/landings", k.RequireAuth, checkout, h.landings)
+	// 发起支付不加幂等键：在途意图由 payment 复用，连点两次拿回同一个收银台；按账号每分钟 10 次
 	v1.POST("/orders/:id/pay", k.RequireAuth, checkout, h.pay)
 	v1.POST("/orders/:id/cancel", k.RequireAuth, h.cancel)
 	// 查单不挂 checkout 开关（开关只停新支付）；按账号每分钟 6 次
@@ -102,7 +113,7 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/orders/manual/preview", k.RequireAuth, h.previewManualOrder)
 	v1.GET("/orders/:id", k.RequireAuth, h.adminOrder)
 	v1.GET("/orders/:id/payments", k.RequireAuth, h.adminOrderPayments)
-	// 取消与查单不要重认证（旧代码同口径：取消只退资源，查单造不出钱）
+	// 取消与查单不要重认证（取消只退资源，查单造不出钱）
 	v1.POST("/orders/:id/cancel", k.RequireAuth, k.Idempotency(ScopeAdminCancel), h.adminCancel)
 	v1.POST("/orders/:id/mark-paid", k.RequireAuth, k.RecentReauth, k.Idempotency(ScopeAdminMarkPaid), h.markPaid)
 	v1.POST("/orders/:id/query", k.RequireAuth, k.Idempotency(ScopeAdminQuery), h.adminQuery)

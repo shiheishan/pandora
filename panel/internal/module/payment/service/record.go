@@ -21,6 +21,9 @@ import (
 
 var orderStatusPattern = regexp.MustCompile(`^[a-z_]{1,32}$`)
 
+// ErrProviderRefMismatch 是渠道报来的发票号与意图建单时存下的不一致（同店别的发票、孤儿发票、几套系统共用账户撞单号），整笔拒收。
+var ErrProviderRefMismatch = errs.Newf(errs.Conflict, "渠道单号与支付意图不一致")
+
 // settleSavepoint 是调 Settler 前开的保存点名。
 const settleSavepoint = "payment_settle"
 
@@ -40,7 +43,6 @@ type recordInput struct {
 	OutTradeNo        string // 按它找意图；线下收款为空
 	Offline           *offlineTarget
 	Amount, Fee       decimal.Decimal
-	Currency          money.Currency
 	Method            string
 	Raw               map[string]string
 	SignatureVerified bool
@@ -59,7 +61,55 @@ func (s *Service) recordPayment(ctx context.Context, in recordInput, hook record
 		out, recErr = s.recordPaymentTx(ctx, in, hook)
 		return recErr
 	})
+	if errors.Is(err, ErrProviderRefMismatch) {
+		// 拒收的那笔事务连事件行一起回滚了：另开一笔只留证据（原事件不占去重键，渠道重投时照样再核对一次；证据按原事件号去重）
+		if evErr := s.recordRefMismatchEvidence(ctx, in); evErr != nil {
+			plog.From(ctx).Warn("记录渠道单号不符的证据失败",
+				zap.String("provider", in.Provider.Code),
+				zap.Error(evErr),
+			)
+		}
+	}
 	return out, err
+}
+
+// 证据事件号 = 前缀 + 原事件号（截到 180 字节，整体不超过 provider_event_id 的 200 上限）。
+const (
+	refMismatchEventPrefix = "ref_mismatch:"
+	refMismatchEventIDMax  = 180
+)
+
+// recordRefMismatchEvidence 落一条已忽略的事件，只存核对用的几个字段；同一原事件只落一条。
+func (s *Service) recordRefMismatchEvidence(ctx context.Context, in recordInput) error {
+	pr := strings.TrimSpace(in.PaymentRef)
+	raw := map[string]string{
+		"reject":       "provider_ref_mismatch",
+		"event_id":     clip(strings.TrimSpace(in.EventID), 200),
+		"out_trade_no": clip(strings.TrimSpace(in.OutTradeNo), 64),
+		"channel_ref":  clip(pr, 200),
+	}
+	ev := &model.Event{
+		ID:         uuid.Must(uuid.NewV7()),
+		ProviderID: in.Provider.ID,
+		// 键由原事件号确定：同一事件重投只留一条证据（InsertEvent 撞键不插），原事件行已随入账事务回滚、不占去重键，每次照样重新核对
+		ProviderEventID:   refMismatchEventPrefix + clip(strings.TrimSpace(in.EventID), refMismatchEventIDMax),
+		EventType:         in.EventType,
+		SignatureVerified: true,
+		ProcessingStatus:  eventPending,
+		RawPayload:        raw,
+	}
+	if pr != "" && len(pr) <= 200 {
+		ev.ProviderPaymentID = &pr
+	}
+	return s.tx.Do(ctx, func(ctx context.Context) error {
+		inserted, err := s.repo.InsertEvent(ctx, ev)
+		if err != nil || !inserted {
+			return err
+		}
+		msg := "渠道单号与支付意图不一致"
+		_, err = s.repo.FinishEvent(ctx, ev.ID, eventIgnored, &msg)
+		return err
+	})
 }
 
 func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook recordHook) (RecordResult, error) {
@@ -168,9 +218,30 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		orderID = intent.OrderID
 		userID = intent.UserID
 		orderNo = intent.OrderNo
-		if !in.Amount.Equal(intent.Amount) || string(in.Currency) != intent.Currency {
+		if !in.Amount.Equal(intent.Amount) {
 			return RecordResult{}, ErrAmountMismatch
 		}
+		if intent.ProviderRef != nil && *intent.ProviderRef != pr {
+			fields := []zap.Field{
+				zap.String("provider", in.Provider.Code),
+				zap.String("out_trade_no", strings.TrimSpace(in.OutTradeNo)),
+				zap.String("intent_ref", *intent.ProviderRef),
+				zap.String("channel_ref", pr),
+			}
+			if in.Provider.Adapter == AdapterCoinPayments {
+				// 临时口径：CoinPayments 建单响应的 invoices[].id 与回调、回查里的 invoice.id 是否同一个标识，
+				// 官方文档没写明（都写作系统分配的发票 id），待沙箱核实；核实前只记日志、照常入账，免得全部付款卡住
+				log.Error("CoinPayments 渠道单号与支付意图存的发票号不一致（待沙箱核实，暂不拒收）", fields...)
+			} else {
+				log.Error("渠道单号与支付意图不一致，未入账", fields...)
+				return RecordResult{}, ErrProviderRefMismatch
+			}
+		}
+	}
+
+	surcharge := decimal.Zero
+	if haveIntent {
+		surcharge = intent.SurchargeAmount
 	}
 
 	if pr == "" {
@@ -189,8 +260,9 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		if existing.OrderID != orderID {
 			return RecordResult{}, ErrPaymentReused
 		}
-		if !existing.Amount.Equal(in.Amount) || existing.Currency != string(in.Currency) ||
-			(!in.FeeUnknown && !existing.FeeAmount.Equal(in.Fee)) {
+		if !existing.Amount.Equal(in.Amount) ||
+			(!in.FeeUnknown && !existing.FeeAmount.Equal(in.Fee)) ||
+			!existing.SurchargeAmount.Equal(surcharge) {
 			return RecordResult{}, errs.Newf(errs.Conflict, "重放的渠道收款与已记录的金额不一致")
 		}
 		msg := "这笔收款此前已入账"
@@ -221,9 +293,9 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 		PaymentIntentID:   intentID,
 		ProviderID:        in.Provider.ID,
 		ProviderPaymentID: pr,
-		Currency:          string(in.Currency),
 		Amount:            in.Amount,
 		FeeAmount:         in.Fee,
+		SurchargeAmount:   surcharge,
 		Status:            "succeeded",
 		Method:            methodPtr,
 	}
@@ -242,9 +314,9 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 	settleErr := s.settler.SettlePayment(ctx, SettleInput{
 		OrderID:      orderID,
 		PaymentID:    paymentID,
-		Amount:       in.Amount,
+		Amount:       in.Amount.Sub(surcharge),
 		Fee:          in.Fee,
-		Currency:     in.Currency,
+		Surcharge:    surcharge,
 		ProviderCode: in.Provider.Code,
 		Method:       method,
 	})
@@ -258,9 +330,11 @@ func (s *Service) recordPaymentTx(ctx context.Context, in recordInput, hook reco
 	var npe *NotPayableError
 	switch {
 	case settleErr == nil:
-		result, err = s.afterSettleSuccess(ctx, evID, in, haveIntent, intent, orderID, paymentID, method)
+		result, err = s.afterSettleSuccess(ctx, evID, in, haveIntent, intent, orderID, paymentID, method, surcharge)
+	case errors.As(settleErr, &npe) && npe.Kind == CaseArchivedPlan:
+		result, err = s.afterSettleArchived(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
 	case errors.As(settleErr, &npe):
-		result, err = s.afterSettleQuarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID)
+		result, err = s.afterSettleQuarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
 	default:
 		return RecordResult{}, settleErr
 	}
@@ -302,14 +376,11 @@ func validateRecordAmounts(in recordInput) error {
 	if in.Fee.IsNegative() || money.Check(in.Fee) != nil || in.Fee.GreaterThan(in.Amount) {
 		return errs.Newf(errs.BadRequest, "支付金额或手续费不正确")
 	}
-	if !in.Currency.Valid() {
-		return errs.Newf(errs.BadRequest, "支付金额或手续费不正确")
-	}
 	return nil
 }
 
 func (s *Service) afterSettleSuccess(ctx context.Context, evID uuid.UUID, in recordInput,
-	haveIntent bool, intent model.Intent, orderID, paymentID uuid.UUID, method string) (RecordResult, error) {
+	haveIntent bool, intent model.Intent, orderID, paymentID uuid.UUID, method string, surcharge decimal.Decimal) (RecordResult, error) {
 
 	var except *uuid.UUID
 	if haveIntent {
@@ -343,7 +414,7 @@ func (s *Service) afterSettleSuccess(ctx context.Context, evID uuid.UUID, in rec
 			"out_trade_no": strings.TrimSpace(in.OutTradeNo),
 			"amount":       in.Amount.StringFixed(2),
 			"fee":          in.Fee.StringFixed(2),
-			"currency":     string(in.Currency),
+			"surcharge":    surcharge.StringFixed(2),
 			"method":       method,
 		},
 	}); err != nil {
@@ -354,26 +425,34 @@ func (s *Service) afterSettleSuccess(ctx context.Context, evID uuid.UUID, in rec
 }
 
 func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in recordInput, npe *NotPayableError,
-	haveIntent bool, intent model.Intent, orderID, userID uuid.UUID, orderNo string, paymentID uuid.UUID) (RecordResult, error) {
+	haveIntent bool, intent model.Intent, orderID, userID uuid.UUID, orderNo string, paymentID uuid.UUID, surcharge decimal.Decimal) (RecordResult, error) {
 
 	if in.Offline != nil {
 		return RecordResult{}, errs.Newf(errs.Conflict, "该订单当前状态不可支付")
 	}
+	res, _, err := s.quarantine(ctx, evID, in, npe, haveIntent, intent, orderID, userID, orderNo, paymentID, surcharge)
+	return res, err
+}
+
+// quarantine 记挂账：late_payment_suspense 分录、挂账案（suspense）、意图标成功、事件处理完、审计 payment.quarantined。返回新建的挂账案。
+// 挂账金额是 实收 − surcharge：surcharge 照记手续费收入、不退，archived_plan 也一样（用户 2026-10-16 定「手续费不退」）。
+func (s *Service) quarantine(ctx context.Context, evID uuid.UUID, in recordInput, npe *NotPayableError,
+	haveIntent bool, intent model.Intent, orderID, userID uuid.UUID, orderNo string, paymentID uuid.UUID, surcharge decimal.Decimal) (RecordResult, model.LateCase, error) {
+
 	if !npe.Kind.Valid() || !orderStatusPattern.MatchString(npe.OrderStatus) {
-		return RecordResult{}, errors.New("payment: 挂账参数不合法")
+		return RecordResult{}, model.LateCase{}, errors.New("payment: 挂账参数不合法")
 	}
 
-	legs := buildSuspenseLegs(in)
+	legs := buildSuspenseLegs(in, surcharge)
 	txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 		Kind:       ledgersvc.KindLatePaymentSuspense,
-		Currency:   in.Currency,
 		SourceType: ledgersvc.SourcePayment,
 		SourceID:   paymentID,
 		Memo:       "迟到支付挂账：" + string(npe.Kind),
 		Legs:       legs,
 	})
 	if err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	lateID := uuid.Must(uuid.NewV7())
@@ -386,23 +465,22 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		PaymentID:      paymentID,
 		PaymentEventID: &evID,
 		CaseKind:       string(npe.Kind),
-		Currency:       string(in.Currency),
-		Amount:         in.Amount,
+		Amount:         in.Amount.Sub(surcharge),
 		Status:         string(LateSuspense),
 		SuspenseTxnID:  txnID,
 	}
 	if err := s.repo.InsertLateCase(ctx, late); err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	if haveIntent && intent.Status == string(IntentRequiresAction) {
 		if err := s.markIntentSucceeded(ctx, intent); err != nil {
-			return RecordResult{}, err
+			return RecordResult{}, model.LateCase{}, err
 		}
 	}
 
 	if _, err := s.repo.FinishEvent(ctx, evID, eventProcessed, nil); err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	pid := paymentID
@@ -419,11 +497,11 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 			"provider_payment_id": strings.TrimSpace(in.PaymentRef),
 			"amount":              in.Amount.StringFixed(2),
 			"fee":                 in.Fee.StringFixed(2),
-			"currency":            string(in.Currency),
+			"surcharge":           surcharge.StringFixed(2),
 			"suspense_txn":        txnID.String(),
 		},
 	}); err != nil {
-		return RecordResult{}, err
+		return RecordResult{}, model.LateCase{}, err
 	}
 
 	return RecordResult{
@@ -431,7 +509,7 @@ func (s *Service) afterSettleQuarantine(ctx context.Context, evID uuid.UUID, in 
 		PaymentID:      paymentID,
 		QuarantineKind: npe.Kind,
 		LedgerTxnID:    txnID,
-	}, nil
+	}, *late, nil
 }
 
 // markIntentSucceeded 把付款对应的意图转成 succeeded。意图是读时的快照、没加锁，这期间可能已被「换个方式付」作废：
@@ -449,13 +527,12 @@ func (s *Service) markIntentSucceeded(ctx context.Context, intent model.Intent) 
 	return nil
 }
 
-// unverifiedEvidenceKeys 是验签失败时留证的字段（易支付与 demo 的关键字段），其余一律丢弃。
+// unverifiedEvidenceKeys 是验签失败时留证的字段（易支付通知的关键字段），其余一律丢弃。
 var unverifiedEvidenceKeys = []string{
 	"out_trade_no", "trade_no", "money", "trade_status", "pid", "type",
-	"event_id", "event_type", "payment_id", "order_no", "amount", "currency",
 }
 
-// unverifiedEvidenceValueMax 是验签失败时每个留证字段的上限（字节）；12 个字段加上解析出的 3 个，总量在 2 KiB 以内。
+// unverifiedEvidenceValueMax 是验签失败时每个留证字段的上限（字节）；6 个字段加上解析出的 3 个，总量在 2 KiB 以内。
 const unverifiedEvidenceValueMax = 64
 
 // unverifiedEvidence 只留白名单字段、每个截到 64 字节：回调是匿名接口，伪造报文不能把任意大小的内容写进禁删的表。
@@ -485,7 +562,9 @@ func clip(s string, n int) string {
 	return s
 }
 
-func buildSuspenseLegs(in recordInput) []ledgersvc.Leg {
+// buildSuspenseLegs 构造迟到支付挂账的分录。
+// 迟到的钱里只有订单应付进挂账（以后转余额只转这部分），向用户加收的手续费照收、记手续费收入。
+func buildSuspenseLegs(in recordInput, surcharge decimal.Decimal) []ledgersvc.Leg {
 	net := in.Amount.Sub(in.Fee)
 	var legs []ledgersvc.Leg
 	if net.IsPositive() {
@@ -505,8 +584,15 @@ func buildSuspenseLegs(in recordInput) []ledgersvc.Leg {
 	legs = append(legs, ledgersvc.Leg{
 		Account:   ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain),
 		Direction: ledgersvc.Credit,
-		Amount:    in.Amount,
+		Amount:    in.Amount.Sub(surcharge),
 	})
+	if surcharge.IsPositive() {
+		legs = append(legs, ledgersvc.Leg{
+			Account:   ledgersvc.PlatformAccount(ledgersvc.PlatformRevenue, ledgersvc.RefSurcharge),
+			Direction: ledgersvc.Credit,
+			Amount:    surcharge,
+		})
+	}
 	return legs
 }
 

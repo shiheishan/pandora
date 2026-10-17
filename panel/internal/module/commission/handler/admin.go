@@ -22,14 +22,14 @@ func (h *Handler) overview(c *gin.Context) {
 	httpx.OK(c, resp)
 }
 
-// listWithdrawals 返回最近 200 笔提现（可按状态筛），收款信息已解封，管理员据此打款。
+// listWithdrawals 返回最近 200 笔提现（status 可逗号分隔多个状态，校验在 service），收款信息已解封，管理员据此打款。
 func (h *Handler) listWithdrawals(c *gin.Context) {
 	var q listWithdrawalsQuery
 	if err := httpx.BindQuery(c, &q); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	rows, err := h.svc.AdminWithdrawals(c.Request.Context(), q.Status)
+	rows, err := h.svc.AdminWithdrawals(c.Request.Context(), q.statuses())
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -79,7 +79,7 @@ func (h *Handler) reviewWithdrawal(c *gin.Context) {
 	httpx.OK(c, reviewResponse{Status: status})
 }
 
-// markWithdrawalPaid 记录一笔已批准的提现已实际打款（唯一动账本的一步）。
+// markWithdrawalPaid 记录一笔已批准的提现已实际打款（唯一动账本的一步）。USDT 方式的流水号是链上交易哈希，实付数量可选、仅记录。
 func (h *Handler) markWithdrawalPaid(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
@@ -90,14 +90,19 @@ func (h *Handler) markWithdrawalPaid(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	if err := h.svc.MarkWithdrawalPaid(c.Request.Context(), id, req.PayoutReference); err != nil {
+	paid, err := parsePaidUSDT(req.PaidUSDTAmount)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	if err := h.svc.MarkWithdrawalPaid(c.Request.Context(), id, req.PayoutReference, paid); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
 	httpx.OK(c, markPaidResponse{Status: "paid"})
 }
 
-// setConfig 改分销参数（比例、冻结天数、最低提现额、计佣范围），给出的字段才改。
+// setConfig 改分销参数（比例、冻结天数、最低提现额、计佣范围、多级分销、提现开关与方式），给出的字段才改。
 func (h *Handler) setConfig(c *gin.Context) {
 	var req configRequest
 	if err := httpx.BindJSON(c, &req); err != nil {

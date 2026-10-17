@@ -1,0 +1,257 @@
+/* 详情页里的编辑弹窗（760）：内容区自己滚动 */
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.subMono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* 概览：四格指标 */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--text);
+  border-bottom: 1px solid var(--border);
+  background: var(--border);
+}
+
+.kpi {
+  padding: 12px 14px;
+  background: var(--surface);
+}
+
+.kpiLabel {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.kpiValue {
+  margin-top: 2px;
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 带宽曲线 */
+
+.chartBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: var(--space-20);
+}
+
+.chartHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chartTitle {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.chartCur {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chartCurLine {
+  width: 14px;
+  height: 2px;
+  background: var(--info);
+}
+
+.chartCurLabel {
+  color: var(--text-3);
+}
+
+.chartCurVal {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: 150px auto;
+  column-gap: 8px;
+  row-gap: 6px;
+}
+
+.yAxis {
+  position: relative;
+}
+
+.yTick {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plot {
+  position: relative;
+  cursor: crosshair;
+}
+
+.hGrid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.plotSvg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.hoverV {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+  pointer-events: none;
+}
+
+.hoverDot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--text);
+  background: var(--surface);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.hitRow {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+}
+
+.hitCell {
+  min-height: 100%;
+}
+
+.xLabels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 分区与键值 */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+
+.infoVal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.breakAll {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 639px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 整页详情（NodeDetailPage） */
+
+/* 标题前的地区码（样稿 .rc） */
+.pageCc {
+  display: inline-block;
+  width: 22px;
+  margin-right: 8px;
+  vertical-align: 3px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  text-align: center;
+}
+
+.okText {
+  color: var(--ok);
+}
+
+.warnText {
+  color: var(--warn);
+}
+
+/* 曲线标题里的小字（峰值等） */
+.chartSub {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* 四格指标套框（样稿 .nmet）；覆盖 .kpis 的上/下边线 */
+.kpisBoxed {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* 曲线块套框（样稿 .bw），与指标块间距 12px */
+.chartBoxed {
+  margin-top: 12px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}

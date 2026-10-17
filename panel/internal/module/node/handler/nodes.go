@@ -1,6 +1,6 @@
 package handler
 
-// 本文件归 p5-inventory：节点的后台接口。
+// 节点的后台接口。
 
 import (
 	"strings"
@@ -41,6 +41,7 @@ func (h *Handler) listNodes(c *gin.Context) {
 		IncludeRetired: c.Query("include_retired") == "1",
 		State:          c.Query("state"),
 		Search:         c.Query("q"),
+		Tag:            c.Query("tag"),
 		Limit:          limit,
 		Offset:         offset,
 	}
@@ -89,18 +90,21 @@ func (h *Handler) createNode(c *gin.Context) {
 		return
 	}
 	n, err := h.svc.CreateNode(c.Request.Context(), service.NodeInput{
-		Name:           req.Name,
-		ServerID:       serverID,
-		PoolID:         poolID,
-		NodeType:       req.NodeType,
-		ServerHost:     req.ServerHost,
-		ServerPort:     req.ServerPort,
-		Kernel:         req.Kernel,
-		TrafficRate:    nodeRate(req.TrafficRate),
-		DisplayName:    req.DisplayName,
-		CountryCode:    req.CountryCode,
-		ProtocolConfig: req.ProtocolConfig,
-		SortOrder:      req.SortOrder,
+		Name:                req.Name,
+		ServerID:            serverID,
+		PoolID:              poolID,
+		NodeType:            req.NodeType,
+		ServerHost:          req.ServerHost,
+		ServerPort:          req.ServerPort,
+		TrafficRate:         nodeRate(req.TrafficRate),
+		DisplayName:         req.DisplayName,
+		CountryCode:         req.CountryCode,
+		ProtocolConfig:      req.ProtocolConfig,
+		SortOrder:           req.SortOrder,
+		Tags:                req.Tags,
+		TrafficLimitBytes:   req.TrafficLimitBytes,
+		TrafficResetDay:     req.TrafficResetDay,
+		TrafficRateSchedule: rateRangesToService(req.TrafficRateSchedule),
 	})
 	if err != nil {
 		httpx.Fail(c, err)
@@ -126,10 +130,22 @@ func (h *Handler) patchNode(c *gin.Context) {
 		NodeType:    req.NodeType,
 		ServerHost:  req.ServerHost,
 		ServerPort:  req.ServerPort,
-		Kernel:      req.Kernel,
 		TrafficRate: nodeRate(req.TrafficRate),
 		DisplayName: req.DisplayName,
 		CountryCode: service.OptionalString{Set: req.CountryCode.Set, Value: req.CountryCode.Value},
+	}
+	if req.Tags != nil {
+		in.Tags = req.Tags
+	}
+	if req.TrafficLimitBytes.Set {
+		in.TrafficLimitBytes = service.OptionalInt64{Set: true, Value: req.TrafficLimitBytes.Value}
+	}
+	if req.TrafficResetDay.Set {
+		in.TrafficResetDay = service.OptionalInt{Set: true, Value: req.TrafficResetDay.Value}
+	}
+	if req.TrafficRateSchedule != nil {
+		sched := rateRangesToService(*req.TrafficRateSchedule)
+		in.TrafficRateSchedule = &sched
 	}
 	if req.PoolID.Set {
 		in.PoolID.Set = true
@@ -324,7 +340,7 @@ func (h *Handler) deleteNode(c *gin.Context) {
 	httpx.OK(c, nodeDeletedResponse{Deleted: true})
 }
 
-// publishNodeConfig 是「强制重新下发」：旧的分层配置已删，只接受 scope=node 与空对象 payload。
+// publishNodeConfig 是「强制重新下发」：只接受 scope=node 与空对象 payload。
 func (h *Handler) publishNodeConfig(c *gin.Context) {
 	var req nodePublishRequest
 	if err := httpx.BindJSON(c, &req); err != nil {

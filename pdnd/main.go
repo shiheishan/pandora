@@ -1,7 +1,6 @@
-// pandora-native 是 AegisPanel 的自研节点端（module 沿用旧名 aegispanel/nodeagent）。
+// pandora-native 是 Pandora 的自研节点端（module 沿用旧名 aegispanel/nodeagent）。
 //
-//   - Pandora NativeCore 负责协议、传输、路由和统计；默认构建只跑 NativeCore，兼容层只在
-//     -tags compat 的迁移构建里出现
+//   - Pandora NativeCore 负责协议、传输、路由和统计，是唯一的数据面
 //   - 流量按用户在连接层统计，TCP 与 UDP 都计入
 //   - 一台服务器一个进程、一个身份、一条到面板的 gRPC 会话（mTLS），名下多个节点（入站），
 //     节点列表与配置都由面板下发
@@ -34,11 +33,6 @@ import (
 type config struct {
 	// LogLevel: debug / info / warn / error
 	LogLevel string `json:"log_level"`
-	// NativeOnly rejects configurations outside the verified Pandora matrix.
-	// A pointer preserves the distinction between an omitted field (the safe
-	// NativeCore-only default) and an explicit false migration override in a
-	// separately built compat binary.
-	NativeOnly *bool `json:"native_only"`
 	// CacheDir 是状态目录：落盘缓存（各节点最后一份装上的配置与名单）放在
 	// <cache_dir>/nodes/ 下。缺省 /var/lib/pandora-native，与 systemd 单元的 StateDirectory 一致。
 	CacheDir string `json:"cache_dir"`
@@ -220,7 +214,7 @@ func main() {
 	if showCapabilities {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(nativekernel.NativeCapabilityReportFor(runtimeNativeOnly)); err != nil {
+		if err := enc.Encode(nativekernel.BuildNativeCapabilityReport()); err != nil {
 			fmt.Fprintln(os.Stderr, "打印能力矩阵失败:", err)
 			os.Exit(1)
 		}
@@ -228,7 +222,7 @@ func main() {
 	}
 
 	if showSelfCheck {
-		report := nativekernel.NativeSelfCheckFor(runtimeNativeOnly)
+		report := nativekernel.NativeSelfCheck()
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(report); err != nil {
@@ -267,10 +261,8 @@ func run(cfg *config, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	kernel, err := newRuntime(log, cfg.nativeOnly())
-	if err != nil {
-		return fmt.Errorf("创建内核失败: %w", err)
-	}
+	// 进程日志交给 NativeCore：逐连接的失败（限频、脱敏）与节点其余日志落在同一条流里。
+	kernel := nativekernel.NewNativeCoreWithLogger(nil, log)
 	if err := kernel.Start(ctx); err != nil {
 		return fmt.Errorf("启动内核失败: %w", err)
 	}
@@ -388,13 +380,6 @@ func (c *config) stateDir() string {
 		return node.DefaultCacheDir
 	}
 	return c.CacheDir
-}
-
-func (c *config) nativeOnly() bool {
-	if c == nil || c.NativeOnly == nil {
-		return true
-	}
-	return *c.NativeOnly
 }
 
 func (c *config) identityDir() string {

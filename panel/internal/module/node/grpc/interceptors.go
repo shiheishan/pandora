@@ -147,6 +147,7 @@ func (i *interceptors) authorize(ctx context.Context) (context.Context, error) {
 
 	ctx = WithServerID(ctx, id)
 	ctx = WithCertSerial(ctx, leaf.SerialNumber)
+	// 节点日志的 server_id 只在这里挂一次；control.go 与会话层不再加
 	ctx = plog.With(ctx, plog.From(ctx).With(zap.String("server_id", id.String())))
 	return ctx, nil
 }

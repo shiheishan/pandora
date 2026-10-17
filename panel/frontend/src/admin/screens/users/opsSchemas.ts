@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
-// 批量生成任务与加流量包的响应 schema：只依赖 zod，页面与假后端测试共用
+// 批量生成任务与加流量的响应 schema：只依赖 zod，页面与假后端测试共用
 
 const int = z.number().int()
 const count = int.nonnegative()
 const time = z.string()
 
-// 批量生成是后台任务（adminops.UserGenerationJob，无 omitempty）：POST 回 202 与任务，
+// 批量生成是后台任务（identity/service GenerationJob，无 omitempty）：POST 回 202 与任务，
 // 进度轮询 GET v1/users/bulk/generate/jobs/{id}，结果（含初始口令）从 …/result 下载 CSV
 export const generationJobSchema = z.object({
   id: z.string(),
@@ -29,13 +29,15 @@ export const generationJobSchema = z.object({
 export type GenerationJob = z.output<typeof generationJobSchema>
 export const generationJobsSchema = z.object({ jobs: z.array(generationJobSchema) })
 
-// POST v1/subscriptions/{id}/traffic-pack：billing.AdminTrafficGrantOutput（无 omitempty）。
-// 流量包挂在这一份订阅上；remaining_bytes_total 的字段名没改，口径改成「这份订阅的流量包余量」
+// POST v1/subscriptions/{id}/traffic-pack（路径沿用旧名）：后台加流量，送的量订阅套餐当期有效、一次性加到总量上。
+// bonus_bytes 是加完后这一份本期送的量合计
 export const trafficGrantedSchema = z.object({
   subscription_id: z.string(),
   user_id: z.string(),
   user_email: z.string(),
-  grant_id: z.string(),
   granted_bytes: int.positive(),
-  remaining_bytes_total: int,
+  bonus_bytes: int.nonnegative(),
 })
+
+// 按筛选批量封禁（POST v1/users/bulk/ban）：封了几人、跳过的按原因计数
+export const bulkBanSchema = z.object({ banned: count, skipped: z.record(z.string(), count) })

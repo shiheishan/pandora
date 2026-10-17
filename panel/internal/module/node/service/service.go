@@ -36,29 +36,32 @@ type Service struct {
 	rdb   *redis.Client
 	now   func() time.Time
 
-	// p5-pools 注入（pools 主题文件里定义接口与 Use* 方法）
+	// 目录与用户组的读写面（pools_ports.go 的 UseCatalog、UseUserGroups、UseVersionsInUse）
 	catalog Catalog
 	groups  UserGroups
 	inUse   VersionsInUse
 
-	// 第二波：会话管理（channel.go；p5-session 的 *Sessions 经 UseSessions 注入）
+	// 会话管理（*Sessions 经 channel.go 的 UseSessions 注入）
 	sessions SessionControl
 
-	// 第二波 p5-enroll 注入（identity.go 的 UseEnrollment）：节点 CA 与安装命令的对外地址
+	// 节点 CA 与安装命令的对外地址（identity.go 的 UseEnrollment）
 	enroll enrollState
 
-	// 第二波 p5-traffic 注入（traffic_charger.go 的 UseTrafficCharger）：流量扣量
+	// idem 在签安装令牌的事务里以不可重放完成幂等认领（bootstrap.go 的 UseIdempotency）
+	idem IdemCompleter
+
+	// 流量扣量（traffic_charger.go 的 UseTrafficCharger）
 	charger TrafficCharger
 
 	// keys 给在线设备键做 HMAC（online.go 的 UseKeys）
 	keys DeviceKeyHasher
 
-	// 第二波 p5-delivery 注入（delivery.go）：名单要的订阅、账号、套餐版本读取面
+	// 名单要的订阅、账号、套餐版本读取面（delivery.go 的 UseDelivery）
 	subs     ServingSubscriptions
 	users    ServingUsers
 	versions PlanVersions
 
-	// p5-devices 注入（devices.go 的 UseDevices）：设备限制策略、按 id 读订阅、邮箱、套餐名
+	// 设备限制策略、按 id 读订阅、邮箱、套餐名（devices.go 的 UseDevices）
 	devSettings DeviceSettings
 	devSubs     DeviceSubscriptions
 	devUsers    DeviceUsers
@@ -71,9 +74,55 @@ type Service struct {
 
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher
+
+	// lineCache 是订阅线路的微缓存（delivery_cache.go），构造时建好
+	lineCache *deliveryCache
+
+	// site 读站点时区（xb_ports.go 的 UseSiteSettings）：节点流量周期与时段倍率用
+	site SiteSettings
+	// echSealer 封存 ECH 私钥（xb_ports.go 的 UseECHSealer）
+	echSealer ECHSealer
+
+	// psk 派生 SS2022 服务端身份密钥（ss2022.go 的 UsePSKDeriver）
+	psk PSKDeriver
 }
 
 // New 构造 node service。rdb 用于下发纪元（epoch.go），为 nil 时只跳过通知。
 func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, rdb *redis.Client) *Service {
-	return &Service{repo: r, tx: txm, audit: audit, rdb: rdb, now: time.Now}
+	return &Service{repo: r, tx: txm, audit: audit, rdb: rdb, now: time.Now,
+		lineCache: newDeliveryCache(deliveryCacheSize, deliveryCacheTTL)}
+}
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：sessions 与 enroll（节点通道只在 serve 里装配，见 app/node_channel.go，worker 与 admin 子命令没有）；
+// geo（没放 IP 归属地数据文件时就是 nil，归属地留空）；pdnd（UsePdndDist 是配置值，不是端口）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"Catalog", s.catalog != nil},
+		{"UserGroups", s.groups != nil},
+		{"VersionsInUse", s.inUse != nil},
+		{"IdemCompleter", s.idem != nil},
+		{"TrafficCharger", s.charger != nil},
+		{"DeviceKeyHasher", s.keys != nil},
+		{"ServingSubscriptions", s.subs != nil},
+		{"ServingUsers", s.users != nil},
+		{"PlanVersions", s.versions != nil},
+		{"DeviceSettings", s.devSettings != nil},
+		{"DeviceSubscriptions", s.devSubs != nil},
+		{"DeviceUsers", s.devUsers != nil},
+		{"DevicePlans", s.devPlans != nil},
+		{"Realtime", s.rt != nil},
+		{"SiteSettings", s.site != nil},
+		{"ECHSealer", s.echSealer != nil},
+		{"PSKDeriver", s.psk != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
 }

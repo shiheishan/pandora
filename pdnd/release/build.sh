@@ -46,12 +46,10 @@ require_binary_toolchain() {
   fi
 }
 
-# The default release must remain structurally NativeCore-only. This catches
-# an accidental production import of the compatibility dispatcher even when
-# the runtime configuration would usually reject it.
+# 发布物不许链 sing-box（Go 1.27 下它用 go:linkname 取 x/net 的私有符号，链接失败；CI 同口径查全部测试）。
 DEFAULT_DEPS="$(cd "${ROOT_DIR}" && go list -mod=readonly -deps .)"
-if grep -Eq 'github.com/aegispanel/nodeagent/core/(multi|sing|xray)|github.com/sagernet/sing-box' <<<"${DEFAULT_DEPS}"; then
-  echo "default release unexpectedly depends on compatibility core" >&2
+if grep -q 'github.com/sagernet/sing-box' <<<"${DEFAULT_DEPS}"; then
+  echo "release unexpectedly depends on github.com/sagernet/sing-box" >&2
   exit 1
 fi
 # Exercise the host build's registry self-check before producing either
@@ -100,7 +98,6 @@ done
   printf '{\n'
   printf '  "product": "pandora-native",\n'
   printf '  "runtime": "pandora-native",\n'
-  printf '  "native_only": true,\n'
   printf '  "version": "'; json_escape "${VERSION}"; printf '",\n'
   printf '  "commit": "'; json_escape "${COMMIT}"; printf '",\n'
   printf '  "go": "'; json_escape "${GO_VERSION}"; printf '",\n'

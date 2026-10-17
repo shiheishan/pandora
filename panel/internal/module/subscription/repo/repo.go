@@ -3,10 +3,6 @@ package repo
 
 import (
 	"errors"
-	"fmt"
-
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 )
@@ -51,40 +47,16 @@ var (
 	ErrAppendOnly = errors.New("subscription: 只追加或禁删的表被改写")
 )
 
-// mapErr 把 GORM 翻译后的约束错误与触发器的 23001 转成模块哨兵，并包住原错误。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, gorm.ErrDuplicatedKey):
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	case errors.Is(err, gorm.ErrForeignKeyViolated):
-		return fmt.Errorf("%w: %v", ErrForeignKey, err)
-	case errors.Is(err, gorm.ErrCheckConstraintViolated):
-		return fmt.Errorf("%w: %v", ErrCheck, err)
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23001":
-			return fmt.Errorf("%w: %v", ErrAppendOnly, err)
-		case "23505":
-			return fmt.Errorf("%w: %v", ErrDuplicate, err)
-		case "23503":
-			return fmt.Errorf("%w: %v", ErrForeignKey, err)
-		case "23514":
-			return fmt.Errorf("%w: %v", ErrCheck, err)
-		}
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+	db.CodeCheck:      ErrCheck,
+	db.CodeRestrict:   ErrAppendOnly,
+}}
 
-// isDuplicate 判断是不是唯一约束冲突（GORM 开了 TranslateError，翻译后拿不到约束名，只能按类别判断）。
-func isDuplicate(err error) bool {
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return true
-	}
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
+
+// isDuplicate 判断是不是唯一约束冲突（只按类别判断，不看约束名；与 mapErr 同一套口径）。
+func isDuplicate(err error) bool { return errors.Is(constraintErrs.Map(err), ErrDuplicate) }

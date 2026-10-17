@@ -15,7 +15,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -28,28 +27,30 @@ import (
 // fakeSvc 只实现用例用到的方法；其余走嵌入的 nil 接口，被调到会 panic。
 type fakeSvc struct {
 	Service
-	methods     []service.PaymentMethod
-	webhookCode string
-	webhookIn   provider.Inbound
-	webhookAck  provider.AckOutput
-	webhookErr  error
-	providers   []service.ProviderView
-	createIn    service.CreateProviderInput
-	createRes   service.ProviderWriteResult
-	createErr   error
-	updateErr   error
-	lateStatus  string
-	lateLimit   int
-	lateOffset  int
-	lateList    service.LateList
-	lateListErr error
-	applyCaseID uuid.UUID
-	applyReason string
-	applyRes    uuid.UUID
-	applyErr    error
+	methods       []service.PaymentMethod
+	methodsAmount *decimal.Decimal
+	webhookCode   string
+	webhookIn     provider.Inbound
+	webhookAck    provider.AckOutput
+	webhookErr    error
+	providers     []service.ProviderView
+	createIn      service.CreateProviderInput
+	createRes     service.ProviderWriteResult
+	createErr     error
+	updateErr     error
+	lateStatus    string
+	lateLimit     int
+	lateOffset    int
+	lateList      service.LateList
+	lateListErr   error
+	applyCaseID   uuid.UUID
+	applyReason   string
+	applyRes      uuid.UUID
+	applyErr      error
 }
 
-func (f *fakeSvc) PaymentMethods(context.Context) ([]service.PaymentMethod, error) {
+func (f *fakeSvc) PaymentMethods(_ context.Context, amount *decimal.Decimal) ([]service.PaymentMethod, error) {
+	f.methodsAmount = amount
 	return f.methods, nil
 }
 
@@ -180,10 +181,10 @@ func parseErr(body []byte) errEnvelope {
 	return env
 }
 
-func TestPaymentMethodsLabelsAndCurrencies(t *testing.T) {
+func TestPaymentMethodsLabels(t *testing.T) {
 	f := &fakeSvc{methods: []service.PaymentMethod{
-		{Provider: "epay", DisplayName: "易支付", Method: "alipay", Currencies: nil},
-		{Provider: "demo", DisplayName: "演示渠道", Method: "custom_pay", Currencies: []string{"CNY"}},
+		{Provider: "epay", DisplayName: "易支付", Method: "alipay"},
+		{Provider: "demo", DisplayName: "演示渠道", Method: "custom_pay"},
 	}}
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudiencePublic}
 	w := doJSON(newPublicEngine(f, p), http.MethodGet, "/v1/payment-methods", "")
@@ -192,16 +193,15 @@ func TestPaymentMethodsLabelsAndCurrencies(t *testing.T) {
 	}
 	var got struct {
 		Methods []struct {
-			Provider   string   `json:"provider"`
-			Method     string   `json:"method"`
-			Label      string   `json:"label"`
-			Currencies []string `json:"currencies"`
+			Provider string `json:"provider"`
+			Method   string `json:"method"`
+			Label    string `json:"label"`
 		} `json:"methods"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Methods) != 2 || got.Methods[0].Label != "支付宝" || len(got.Methods[0].Currencies) != 0 {
+	if len(got.Methods) != 2 || got.Methods[0].Label != "支付宝" {
 		t.Fatalf("alipay 行 %+v", got.Methods[0])
 	}
 	if got.Methods[1].Label != "演示渠道" {
@@ -266,7 +266,7 @@ func TestListProvidersShape(t *testing.T) {
 		ID: pid, Code: "ep", Adapter: "epay", DisplayName: "E",
 		Enabled: true, AcceptingNew: false, HasCredentials: true,
 		MinAmount: decimal.RequireFromString("1.00"),
-		Today:     map[money.Currency]decimal.Decimal{money.CNY: decimal.RequireFromString("9.90")},
+		Today:     decimal.RequireFromString("9.90"),
 		Methods:   nil,
 	}}}
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
@@ -275,7 +275,7 @@ func TestListProvidersShape(t *testing.T) {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
 	raw := w.Body.String()
-	if !strings.Contains(raw, `"min_amount":100`) || !strings.Contains(raw, `"CNY":990`) {
+	if !strings.Contains(raw, `"min_amount":100`) || !strings.Contains(raw, `"today":990`) {
 		t.Fatalf("金额 %s", raw)
 	}
 	if !strings.Contains(raw, `"success_rate_24h":null`) || !strings.Contains(raw, `"last_callback_at":null`) {
@@ -331,7 +331,7 @@ func TestListLatePaymentsOmitResolvedAndDefaultLimit(t *testing.T) {
 	f := &fakeSvc{lateList: service.LateList{
 		Cases: []service.LateCase{{
 			ID: cid, Kind: service.CaseReleasedOrder, Status: service.LateSuspense,
-			Amount: decimal.RequireFromString("9.90"), Currency: money.CNY,
+			Amount:  decimal.RequireFromString("9.90"),
 			OrderNo: "O1", OrderStatus: "cancelled", UserID: uid, UserEmail: "u@example.com",
 			ReceivedAt: recv, ResolvedAt: nil, ResolutionReason: nil,
 		}},

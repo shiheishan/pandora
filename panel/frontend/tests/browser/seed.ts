@@ -5,7 +5,7 @@ import { ensureOut, OUT, PUB, smokePoolId, STEPS_FILE, WORLD_FILE } from './env.
 
 // ============================================================================
 //  浏览器测试自己的种子（Playwright globalSetup）：全部经后台真实接口造，不碰 tests/smoke/seed.ts。
-//  照 w8walk 的 31 步路径备料：五个套餐、一个流量包、六种礼品卡模板、一个演示易支付渠道。
+//  照路径清单备料：五个订阅套餐、一个一次性套餐、六种礼品卡模板、一个演示易支付渠道（10-16 起没有流量包）。
 //  建好的 id 与渠道测试密钥写进状态目录的 browser-world.json（0600）；文件已在时整份复用，
 //  本机对同一套栈重跑不会撞套餐编码
 // ============================================================================
@@ -13,14 +13,13 @@ import { ensureOut, OUT, PUB, smokePoolId, STEPS_FILE, WORLD_FILE } from './env.
 export interface PlanRef {
   id: string
   name: string
-  /** 价格 id，顺序同建套餐时的 prices */
+  /** 价格 id，顺序同下面 PLANS 里的价格档（一次性套餐只有一个） */
   prices: string[]
 }
 
 export interface World {
   provider: { code: string; merchant: string; key: string }
-  plans: Record<'basic' | 'std' | 'plus' | 'pro' | 'mini', PlanRef>
-  packId: string
+  plans: Record<'basic' | 'std' | 'plus' | 'pro' | 'mini' | 'once', PlanRef>
   cards: Record<'days7' | 'reset' | 'traffic2g' | 'planStd' | 'planPro' | 'mystery', string>
 }
 
@@ -30,14 +29,25 @@ export function loadWorld(): World {
 
 const GB = 1024 ** 3
 
-// 名字互不为前缀（页面上按名字找卡片与选项）；价格照 w8walk：标准加比标准只贵 ¥0.40，换过去只差几分钱
-const PLANS: Array<[keyof World['plans'], string, string, number, Array<[number, number]>]> = [
-  ['basic', 'w9b-basic', 'W9 基础', 10, [[1, 1000]]],
-  ['std', 'w9b-std', 'W9 标准', 100, [[1, 3000], [3, 8000]]],
-  ['plus', 'w9b-plus', 'W9 加强', 100, [[1, 3040]]],
-  ['pro', 'w9b-pro', 'W9 进阶', 200, [[1, 4200]]],
-  ['mini', 'w9b-mini', 'W9 迷你', 1, [[1, 50]]],
+// 订阅套餐（按时间）：名字互不为前缀（页面上按名字找卡片与选项）；价格档是 [月数, 分]，只能是月 / 季 / 半年（年付写 12 个月不行，这里用不到）。
+// 标准加比标准只贵 ¥0.40，换过去只差几分钱
+const PLANS: Array<[Exclude<keyof World['plans'], 'once'>, string, number, Array<[number, number]>]> = [
+  ['basic', 'W9 基础', 10, [[1, 1000]]],
+  ['std', 'W9 标准', 100, [[1, 3000], [3, 8000]]],
+  ['plus', 'W9 加强', 100, [[1, 3040]]],
+  ['pro', 'W9 进阶', 200, [[1, 4200]]],
+  ['mini', 'W9 迷你', 1, [[1, 50]]],
 ]
+/** 一次性套餐（按流量）：20G、¥5.00、有效 30 天 */
+const ONCE = { name: 'W9 一次性', gb: 20, amount: 500, days: 30 }
+
+/** 建套餐并直接发布（POST /v1/plans，publish 为真）；没发布出去（池里没有可服务节点）就停 */
+async function createPlan(body: Json): Promise<Json> {
+  const r = await admin('/v1/plans', { body: { visibility: 'public', max_devices: 5, publish: true, ...body }, expect: [200, 201] })
+  const plan = (r.plan ?? {}) as Json
+  if (plan.status !== 'active') throw new Error(`套餐 ${String(body.name)} 没发布出去（池里没有可服务节点？）：${JSON.stringify(r).slice(0, 300)}`)
+  return plan
+}
 
 async function build(): Promise<World> {
   const pool = smokePoolId()
@@ -64,33 +74,22 @@ async function build(): Promise<World> {
   })
 
   const plans = {} as World['plans']
-  for (const [key, code, name, gb, prices] of PLANS) {
-    const r = await admin('/v1/plans/complete', {
-      body: {
-        code,
-        name,
-        visibility: 'public',
-        traffic_gb: gb,
-        max_devices: 5,
-        allow_new_purchase: true,
-        allow_renewal: true,
-        allow_upgrade: true,
-        pool_ids: [pool],
-        prices: prices.map(([count, amount]) => ({ billing_interval: 'month', interval_count: count, unit_amount: amount, currency: 'CNY', trial_days: 0 })),
-        publish: true,
-      },
-      expect: [200, 201],
+  for (const [key, name, gb, prices] of PLANS) {
+    const plan = await createPlan({
+      kind: 'subscription',
+      name,
+      traffic_bytes: gb * GB,
+      pool_ids: [pool],
+      prices: prices.map(([count, amount]) => ({ billing_interval: 'month', interval_count: count, unit_amount: amount })),
     })
-    if (r.published === false) throw new Error(`套餐 ${name} 没发布出去（池里没有可服务节点？）：${JSON.stringify(r).slice(0, 300)}`)
-    plans[key] = { id: str(r, 'plan.id'), name, prices: (r.price_ids as string[] | undefined) ?? [] }
-    if (plans[key].prices.length !== prices.length) throw new Error(`套餐 ${name} 的价格档数不对：${JSON.stringify(r).slice(0, 300)}`)
+    // 响应里价格档的顺序不作数：按（周期, 月数）对回 PLANS 的顺序
+    const rows = (plan.prices as Json[] | undefined) ?? []
+    const ids = prices.map(([count]) => rows.find((p) => p.billing_interval === 'month' && p.interval_count === count)?.id)
+    if (ids.some((id) => typeof id !== 'string')) throw new Error(`套餐 ${name} 的价格档对不上：${JSON.stringify(plan).slice(0, 300)}`)
+    plans[key] = { id: str(plan, 'id'), name, prices: ids as string[] }
   }
-
-  const pack = await admin('/v1/traffic-packs', {
-    body: { name: 'W9 12G', traffic_bytes: 12 * GB, currency: 'CNY', unit_amount: 500, recommended: false, sort_order: 90 },
-    expect: [200, 201],
-  })
-  const packId = typeof pack.id === 'string' ? pack.id : str(pack, 'pack.id')
+  const once = await createPlan({ kind: 'one_time', name: ONCE.name, traffic_bytes: ONCE.gb * GB, pool_ids: [pool], unit_amount: ONCE.amount, validity_days: ONCE.days })
+  plans.once = { id: str(once, 'id'), name: ONCE.name, prices: [str(((once.prices as Json[] | undefined) ?? [])[0], 'id')] }
 
   const specs: Record<keyof World['cards'], Json> = {
     days7: { type: 'general', rewards: { expire_days: 7 } },
@@ -116,7 +115,7 @@ async function build(): Promise<World> {
     })
     cards[key] = str(t, 'template.id')
   }
-  return { provider, plans, packId, cards }
+  return { provider, plans, cards }
 }
 
 /** 一张礼品卡的明文卡号：每次现生成一批，只取样例里的第一张（生码响应只回前 4 张明文） */
@@ -128,7 +127,7 @@ export async function giftCode(templateId: string): Promise<string> {
 }
 
 /**
- * 只留本测试的渠道收新单：w8walk 的路径要求站点最低付款额是 ¥1.00（凑最低额、免零头、低于最低额被拦），
+ * 只留本测试的渠道收新单：路径要求站点最低付款额是 ¥1.00（凑最低额、免零头、低于最低额被拦），
  * 而冒烟种子与写路径冒烟建的渠道各有各的最低额（站点最低额取所有收单渠道里最小的那个）。暂停（enabled 留着、
  * accepting_new 关掉）只影响新单，与后台卡片上的开关同一个接口；这一步在 panel-smoke 的最后跑，不影响别的步骤
  */
@@ -167,7 +166,7 @@ export default async function globalSetup(): Promise<void> {
     world = loadWorld()
     console.log(`==> 复用 ${WORLD_FILE}`)
   } else {
-    console.log('==> 造浏览器测试的种子：渠道、套餐、流量包、礼品卡模板')
+    console.log('==> 造浏览器测试的种子：渠道、两类套餐、礼品卡模板')
     world = await build()
     writeFileSync(WORLD_FILE, JSON.stringify(world, null, 2), { mode: 0o600 })
   }

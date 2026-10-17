@@ -1,6 +1,6 @@
 package handler
 
-// 本文件归 p5-inventory：节点后台接口的请求与响应 DTO（JSON 形状对齐前端 screens/nodes/schemas.ts）。
+// 节点后台接口的请求与响应 DTO（JSON 形状对齐前端 screens/nodes/schemas.ts）。
 
 import (
 	"bytes"
@@ -41,32 +41,38 @@ func (o *nodeOptString) UnmarshalJSON(b []byte) error {
 }
 
 type nodeCreateRequest struct {
-	Name           string          `json:"name"`
-	ServerID       string          `json:"server_id"`
-	PoolID         string          `json:"pool_id"`
-	NodeType       string          `json:"node_type"`
-	ServerHost     string          `json:"server_host"`
-	ServerPort     int             `json:"server_port"`
-	Kernel         string          `json:"kernel"`
-	TrafficRate    *float64        `json:"traffic_rate"`
-	DisplayName    string          `json:"display_name"`
-	CountryCode    string          `json:"country_code"`
-	ProtocolConfig json.RawMessage `json:"protocol_config"`
-	SortOrder      int             `json:"sort_order"`
+	Name                string                 `json:"name"`
+	ServerID            string                 `json:"server_id"`
+	PoolID              string                 `json:"pool_id"`
+	NodeType            string                 `json:"node_type"`
+	ServerHost          string                 `json:"server_host"`
+	ServerPort          int                    `json:"server_port"`
+	TrafficRate         *float64               `json:"traffic_rate"`
+	DisplayName         string                 `json:"display_name"`
+	CountryCode         string                 `json:"country_code"`
+	ProtocolConfig      json.RawMessage        `json:"protocol_config"`
+	SortOrder           int                    `json:"sort_order"`
+	Tags                []string               `json:"tags"`
+	TrafficLimitBytes   *int64                 `json:"traffic_limit_bytes"`
+	TrafficResetDay     *int                   `json:"traffic_reset_day"`
+	TrafficRateSchedule []nodeRateRangeRequest `json:"traffic_rate_schedule"`
 }
 
 type nodePatchRequest struct {
-	RowVersion     int64           `json:"row_version"`
-	Name           *string         `json:"name"`
-	PoolID         nodeOptString   `json:"pool_id"`
-	NodeType       *string         `json:"node_type"`
-	ServerHost     *string         `json:"server_host"`
-	ServerPort     *int            `json:"server_port"`
-	Kernel         *string         `json:"kernel"`
-	TrafficRate    *float64        `json:"traffic_rate"`
-	DisplayName    *string         `json:"display_name"`
-	CountryCode    nodeOptString   `json:"country_code"`
-	ProtocolConfig json.RawMessage `json:"protocol_config"`
+	RowVersion          int64                   `json:"row_version"`
+	Name                *string                 `json:"name"`
+	PoolID              nodeOptString           `json:"pool_id"`
+	NodeType            *string                 `json:"node_type"`
+	ServerHost          *string                 `json:"server_host"`
+	ServerPort          *int                    `json:"server_port"`
+	TrafficRate         *float64                `json:"traffic_rate"`
+	DisplayName         *string                 `json:"display_name"`
+	CountryCode         nodeOptString           `json:"country_code"`
+	ProtocolConfig      json.RawMessage         `json:"protocol_config"`
+	Tags                *[]string               `json:"tags"`
+	TrafficLimitBytes   nodeOptInt64            `json:"traffic_limit_bytes"`
+	TrafficResetDay     nodeOptInt              `json:"traffic_reset_day"`
+	TrafficRateSchedule *[]nodeRateRangeRequest `json:"traffic_rate_schedule"`
 }
 
 type nodeCopyRequest struct {
@@ -173,74 +179,70 @@ func nodeJSONObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 // ---------------------------------------------------------------------------
 
 type nodeApplyFailureResponse struct {
-	Phase      string    `json:"phase"`
-	Detail     string    `json:"detail"`
-	At         time.Time `json:"at"`
-	Generation *int64    `json:"generation"`
+	Phase  string    `json:"phase"`
+	Detail string    `json:"detail"`
+	At     time.Time `json:"at"`
 }
 
-// nodeRowResponse 是后台节点列表的一行（nodeRowSchema）。新设计没有的概念给固定值：health_score、
-// applied/desired_config_version、desired/applied_effective_generation 恒为 null（没有代数，配置是否生效看
-// effective_state，按配置文档 SHA-256 比）。
+// nodeRowResponse 是后台节点列表的一行（nodeRowSchema）。没有健康分与配置代数：配置是否生效看
+// effective_state（按配置文档 SHA-256 比）。
 type nodeRowResponse struct {
-	ID                         uuid.UUID                 `json:"id"`
-	NodeNo                     int64                     `json:"node_no"`
-	RowVersion                 int64                     `json:"row_version"`
-	Name                       string                    `json:"name"`
-	Status                     string                    `json:"status"`
-	ServingStatus              string                    `json:"serving_status"`
-	ServerID                   *uuid.UUID                `json:"server_id"`
-	ServerName                 *string                   `json:"server_name"`
-	PoolID                     *uuid.UUID                `json:"pool_id"`
-	PoolName                   *string                   `json:"pool_name"`
-	AgentVersion               *string                   `json:"agent_version"`
-	Hostname                   *string                   `json:"hostname"`
-	PublicIPv4                 *string                   `json:"public_ipv4"`
-	CPUCores                   *int                      `json:"cpu_cores"`
-	MemoryMB                   *int                      `json:"memory_mb"`
-	DiskGB                     *int                      `json:"disk_gb"`
-	HealthScore                *int                      `json:"health_score"`
-	AppliedConfigVersion       *int64                    `json:"applied_config_version"`
-	DesiredConfigVersion       *int64                    `json:"desired_config_version"`
-	LastHeartbeatAt            *time.Time                `json:"last_heartbeat_at"`
-	Stale                      bool                      `json:"stale"`
-	DeliveredToUsers           bool                      `json:"delivered_to_users"`
-	DeliveryNote               string                    `json:"delivery_note"`
-	IdentitySerial             *int64                    `json:"identity_serial"`
-	CreatedAt                  time.Time                 `json:"created_at"`
-	NodeType                   *string                   `json:"node_type"`
-	ServerHost                 *string                   `json:"server_host"`
-	ServerPort                 *int                      `json:"server_port"`
-	DisplayName                *string                   `json:"display_name"`
-	CountryCode                *string                   `json:"country_code"`
-	SortOrder                  int                       `json:"sort_order"`
-	OnlineUsers                int                       `json:"online_users"`
-	OnlineIPs                  int                       `json:"online_ips"`
-	TrafficBytes24h            int64                     `json:"traffic_bytes_24h"`
-	CPUPercent                 *float64                  `json:"cpu_percent"`
-	MemPercent                 *float64                  `json:"mem_percent"`
-	MetricsAt                  *time.Time                `json:"metrics_at"`
-	GrantedPlans               []string                  `json:"granted_plans"`
-	DesiredEffectiveGeneration *int64                    `json:"desired_effective_generation"`
-	AppliedEffectiveGeneration *int64                    `json:"applied_effective_generation"`
-	EffectiveState             string                    `json:"effective_state"`
-	LastApplyFailure           *nodeApplyFailureResponse `json:"last_apply_failure"`
-	RuntimeStatus              *string                   `json:"runtime_status"`
-	RuntimeReason              *string                   `json:"runtime_reason"`
-	RuntimeStateAt             *time.Time                `json:"runtime_state_at"`
-	RuntimeReasonNode          *string                   `json:"runtime_reason_node"`
-	DeliveryDegraded           bool                      `json:"delivery_degraded"`
+	ID                  uuid.UUID                 `json:"id"`
+	NodeNo              int64                     `json:"node_no"`
+	RowVersion          int64                     `json:"row_version"`
+	Name                string                    `json:"name"`
+	ServingStatus       string                    `json:"serving_status"`
+	ServerID            *uuid.UUID                `json:"server_id"`
+	ServerName          *string                   `json:"server_name"`
+	PoolID              *uuid.UUID                `json:"pool_id"`
+	PoolName            *string                   `json:"pool_name"`
+	AgentVersion        *string                   `json:"agent_version"`
+	Hostname            *string                   `json:"hostname"`
+	PublicIPv4          *string                   `json:"public_ipv4"`
+	CPUCores            *int                      `json:"cpu_cores"`
+	MemoryMB            *int                      `json:"memory_mb"`
+	DiskGB              *int                      `json:"disk_gb"`
+	LastHeartbeatAt     *time.Time                `json:"last_heartbeat_at"`
+	Stale               bool                      `json:"stale"`
+	DeliveredToUsers    bool                      `json:"delivered_to_users"`
+	DeliveryNote        string                    `json:"delivery_note"`
+	IdentitySerial      *int64                    `json:"identity_serial"`
+	Movable             bool                      `json:"movable"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	NodeType            *string                   `json:"node_type"`
+	ServerHost          *string                   `json:"server_host"`
+	ServerPort          *int                      `json:"server_port"`
+	DisplayName         *string                   `json:"display_name"`
+	CountryCode         *string                   `json:"country_code"`
+	SortOrder           int                       `json:"sort_order"`
+	OnlineUsers         int                       `json:"online_users"`
+	OnlineIPs           int                       `json:"online_ips"`
+	TrafficBytes24h     int64                     `json:"traffic_bytes_24h"`
+	CPUPercent          *float64                  `json:"cpu_percent"`
+	MemPercent          *float64                  `json:"mem_percent"`
+	MetricsAt           *time.Time                `json:"metrics_at"`
+	GrantedPlans        []string                  `json:"granted_plans"`
+	EffectiveState      string                    `json:"effective_state"`
+	LastApplyFailure    *nodeApplyFailureResponse `json:"last_apply_failure"`
+	RuntimeStatus       *string                   `json:"runtime_status"`
+	RuntimeReason       *string                   `json:"runtime_reason"`
+	RuntimeStateAt      *time.Time                `json:"runtime_state_at"`
+	RuntimeReasonNode   *string                   `json:"runtime_reason_node"`
+	DeliveryDegraded    bool                      `json:"delivery_degraded"`
+	Tags                []string                  `json:"tags"`
+	Traffic             nodeTrafficLimitResponse  `json:"traffic"`
+	TrafficRateSchedule []nodeRateRangeResponse   `json:"traffic_rate_schedule"`
+	RelayCount          int                       `json:"relay_count"`
+	ECHEnabled          bool                      `json:"ech_enabled"`
 }
 
 // nodeDetailResponse 是单取（?id=）时的一行：列表行加编辑字段（nodeDetailSchema）。
 type nodeDetailResponse struct {
 	nodeRowResponse
 	TrafficRate           float64         `json:"traffic_rate"`
-	Kernel                string          `json:"kernel"`
 	ProtocolConfig        json.RawMessage `json:"protocol_config"`
 	ProtocolSchemaVersion int             `json:"protocol_schema_version"`
 	ConfigValidatedAt     *time.Time      `json:"config_validated_at"`
-	TrafficBytes          int64           `json:"traffic_bytes"`
 	Warnings              []string        `json:"warnings,omitempty"`
 }
 
@@ -256,41 +258,55 @@ type nodesDetailResponse struct {
 
 // adminNodeResponse 是节点写接口回的节点（adminNodeSchema）。
 type adminNodeResponse struct {
-	ID                    uuid.UUID       `json:"id"`
-	RowVersion            int64           `json:"row_version"`
-	Name                  string          `json:"name"`
-	ServerID              *uuid.UUID      `json:"server_id"`
-	PoolID                *uuid.UUID      `json:"pool_id"`
-	Status                string          `json:"status"`
-	ServingStatus         string          `json:"serving_status"`
-	NodeType              *string         `json:"node_type"`
-	ServerHost            *string         `json:"server_host"`
-	ServerPort            *int            `json:"server_port"`
-	Kernel                string          `json:"kernel"`
-	TrafficRate           float64         `json:"traffic_rate"`
-	DisplayName           *string         `json:"display_name"`
-	CountryCode           *string         `json:"country_code"`
-	ProtocolConfig        json.RawMessage `json:"protocol_config"`
-	ProtocolSchemaVersion int             `json:"protocol_schema_version"`
-	ConfigValidatedAt     *time.Time      `json:"config_validated_at"`
-	SortOrder             int             `json:"sort_order"`
-	CreatedAt             time.Time       `json:"created_at"`
-	UpdatedAt             time.Time       `json:"updated_at"`
-	Warnings              []string        `json:"warnings,omitempty"`
+	ID                    uuid.UUID                `json:"id"`
+	RowVersion            int64                    `json:"row_version"`
+	Name                  string                   `json:"name"`
+	ServerID              *uuid.UUID               `json:"server_id"`
+	PoolID                *uuid.UUID               `json:"pool_id"`
+	ServingStatus         string                   `json:"serving_status"`
+	NodeType              *string                  `json:"node_type"`
+	ServerHost            *string                  `json:"server_host"`
+	ServerPort            *int                     `json:"server_port"`
+	TrafficRate           float64                  `json:"traffic_rate"`
+	DisplayName           *string                  `json:"display_name"`
+	CountryCode           *string                  `json:"country_code"`
+	ProtocolConfig        json.RawMessage          `json:"protocol_config"`
+	ProtocolSchemaVersion int                      `json:"protocol_schema_version"`
+	ConfigValidatedAt     *time.Time               `json:"config_validated_at"`
+	SortOrder             int                      `json:"sort_order"`
+	CreatedAt             time.Time                `json:"created_at"`
+	UpdatedAt             time.Time                `json:"updated_at"`
+	Warnings              []string                 `json:"warnings,omitempty"`
+	Tags                  []string                 `json:"tags"`
+	Traffic               nodeTrafficLimitResponse `json:"traffic"`
+	TrafficRateSchedule   []nodeRateRangeResponse  `json:"traffic_rate_schedule"`
+}
+
+// nodeProtocolFieldResponse 是协议表单上一个字段的显示元数据。
+type nodeProtocolFieldResponse struct {
+	Path         string              `json:"path"`
+	Label        string              `json:"label"`
+	Advanced     bool                `json:"advanced,omitempty"`
+	ShowIf       map[string][]string `json:"show_if,omitempty"`
+	Default      any                 `json:"default,omitempty"`
+	Placeholder  string              `json:"placeholder,omitempty"`
+	OptionLabels map[string]string   `json:"option_labels,omitempty"`
 }
 
 // nodeProtocolSchemaResponse 是一种协议的 schema（protocolSchemaSchema）。
 type nodeProtocolSchemaResponse struct {
-	NodeType            string              `json:"node_type"`
-	Version             int                 `json:"version"`
-	Status              string              `json:"status"`
-	Required            []string            `json:"required"`
-	AllowedProperties   []string            `json:"allowed_properties"`
-	Methods             []string            `json:"methods,omitempty"`
-	Enums               map[string][]string `json:"enums,omitempty"`
-	PropertyTypes       map[string]string   `json:"property_types,omitempty"`
-	SensitiveProperties []string            `json:"sensitive_properties,omitempty"`
-	Hints               map[string]string   `json:"hints,omitempty"`
+	NodeType            string                      `json:"node_type"`
+	Version             int                         `json:"version"`
+	Status              string                      `json:"status"`
+	Required            []string                    `json:"required"`
+	AllowedProperties   []string                    `json:"allowed_properties"`
+	Methods             []string                    `json:"methods,omitempty"`
+	Enums               map[string][]string         `json:"enums,omitempty"`
+	PropertyTypes       map[string]string           `json:"property_types,omitempty"`
+	SensitiveProperties []string                    `json:"sensitive_properties,omitempty"`
+	Hints               map[string]string           `json:"hints,omitempty"`
+	Note                string                      `json:"note,omitempty"`
+	Fields              []nodeProtocolFieldResponse `json:"fields,omitempty"`
 }
 
 type nodeProtocolSchemasResponse struct {
@@ -329,47 +345,55 @@ type nodeDeletedResponse struct {
 // nodeRowFrom 把 service 的列表行转成响应。
 func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 	out := nodeRowResponse{
-		ID:                r.ID,
-		NodeNo:            r.NodeNo,
-		RowVersion:        r.RowVersion,
-		Name:              r.Name,
-		Status:            r.ServingStatus,
-		ServingStatus:     r.ServingStatus,
-		ServerID:          r.ServerID,
-		ServerName:        r.ServerName,
-		PoolID:            r.PoolID,
-		PoolName:          r.PoolName,
-		AgentVersion:      r.AgentVersion,
-		Hostname:          r.Hostname,
-		PublicIPv4:        r.PublicIPv4,
-		CPUCores:          r.CPUCores,
-		MemoryMB:          r.MemoryMB,
-		DiskGB:            r.DiskGB,
-		LastHeartbeatAt:   r.LastHeartbeatAt,
-		Stale:             r.Stale,
-		DeliveredToUsers:  r.Delivered,
-		DeliveryNote:      r.DeliveryNote,
-		CreatedAt:         r.CreatedAt,
-		NodeType:          r.NodeType,
-		ServerHost:        r.ServerHost,
-		ServerPort:        r.ServerPort,
-		DisplayName:       r.DisplayName,
-		CountryCode:       r.CountryCode,
-		SortOrder:         r.SortOrder,
-		IdentitySerial:    r.IdentitySerial,
-		OnlineUsers:       r.OnlineUsers,
-		OnlineIPs:         r.OnlineIPs,
-		TrafficBytes24h:   r.TrafficBytes24h,
-		CPUPercent:        r.CPUPercent,
-		MemPercent:        r.MemPercent,
-		MetricsAt:         r.MetricsAt,
-		GrantedPlans:      r.GrantedPlans,
-		EffectiveState:    r.EffectiveState,
-		RuntimeStatus:     r.RuntimeStatus,
-		RuntimeReason:     r.RuntimeReason,
-		RuntimeStateAt:    r.RuntimeStateAt,
-		RuntimeReasonNode: r.RuntimeReasonNode,
-		DeliveryDegraded:  r.DeliveryDegraded,
+		ID:                  r.ID,
+		NodeNo:              r.NodeNo,
+		RowVersion:          r.RowVersion,
+		Name:                r.Name,
+		ServingStatus:       r.ServingStatus,
+		ServerID:            r.ServerID,
+		ServerName:          r.ServerName,
+		PoolID:              r.PoolID,
+		PoolName:            r.PoolName,
+		AgentVersion:        r.AgentVersion,
+		Hostname:            r.Hostname,
+		PublicIPv4:          r.PublicIPv4,
+		CPUCores:            r.CPUCores,
+		MemoryMB:            r.MemoryMB,
+		DiskGB:              r.DiskGB,
+		LastHeartbeatAt:     r.LastHeartbeatAt,
+		Stale:               r.Stale,
+		DeliveredToUsers:    r.Delivered,
+		DeliveryNote:        r.DeliveryNote,
+		CreatedAt:           r.CreatedAt,
+		NodeType:            r.NodeType,
+		ServerHost:          r.ServerHost,
+		ServerPort:          r.ServerPort,
+		DisplayName:         r.DisplayName,
+		CountryCode:         r.CountryCode,
+		SortOrder:           r.SortOrder,
+		IdentitySerial:      r.IdentitySerial,
+		Movable:             r.Movable,
+		OnlineUsers:         r.OnlineUsers,
+		OnlineIPs:           r.OnlineIPs,
+		TrafficBytes24h:     r.TrafficBytes24h,
+		CPUPercent:          r.CPUPercent,
+		MemPercent:          r.MemPercent,
+		MetricsAt:           r.MetricsAt,
+		GrantedPlans:        r.GrantedPlans,
+		EffectiveState:      r.EffectiveState,
+		RuntimeStatus:       r.RuntimeStatus,
+		RuntimeReason:       r.RuntimeReason,
+		RuntimeStateAt:      r.RuntimeStateAt,
+		RuntimeReasonNode:   r.RuntimeReasonNode,
+		DeliveryDegraded:    r.DeliveryDegraded,
+		Tags:                r.Tags,
+		Traffic:             nodeTrafficLimitFrom(r.Traffic),
+		TrafficRateSchedule: nodeRateRangesFrom(r.RateSchedule),
+		RelayCount:          r.RelayCount,
+		ECHEnabled:          r.ECHEnabled,
+	}
+	if out.Tags == nil {
+		out.Tags = []string{}
 	}
 	if out.GrantedPlans == nil {
 		out.GrantedPlans = []string{}
@@ -385,7 +409,6 @@ func nodeDetailFrom(r service.NodeRow) nodeDetailResponse {
 	out := nodeDetailResponse{nodeRowResponse: nodeRowFrom(r), ProtocolConfig: json.RawMessage("{}")}
 	if d := r.Detail; d != nil {
 		out.TrafficRate = d.TrafficRate.InexactFloat64()
-		out.Kernel = d.Kernel
 		if len(d.ProtocolConfig) > 0 {
 			out.ProtocolConfig = d.ProtocolConfig
 		}
@@ -406,18 +429,16 @@ func adminNodeFrom(n service.AdminNode) adminNodeResponse {
 	if len(n.Warnings) > 0 {
 		warnings = n.Warnings
 	}
-	return adminNodeResponse{
+	out := adminNodeResponse{
 		ID:                    n.ID,
 		RowVersion:            n.RowVersion,
 		Name:                  n.Name,
 		ServerID:              n.ServerID,
 		PoolID:                n.PoolID,
-		Status:                n.ServingStatus,
 		ServingStatus:         n.ServingStatus,
 		NodeType:              n.NodeType,
 		ServerHost:            n.ServerHost,
 		ServerPort:            n.ServerPort,
-		Kernel:                n.Kernel,
 		TrafficRate:           n.TrafficRate.InexactFloat64(),
 		DisplayName:           n.DisplayName,
 		CountryCode:           n.CountryCode,
@@ -428,7 +449,14 @@ func adminNodeFrom(n service.AdminNode) adminNodeResponse {
 		CreatedAt:             n.CreatedAt,
 		UpdatedAt:             n.UpdatedAt,
 		Warnings:              warnings,
+		Tags:                  n.Tags,
+		Traffic:               nodeTrafficLimitFrom(n.Traffic),
+		TrafficRateSchedule:   nodeRateRangesFrom(n.RateSchedule),
 	}
+	if out.Tags == nil {
+		out.Tags = []string{}
+	}
+	return out
 }
 
 // nodeProtocolSchemaFrom 把协议 schema 转成响应；required、allowed_properties 恒为数组。
@@ -452,5 +480,26 @@ func nodeProtocolSchemaFrom(s protocol.Schema) nodeProtocolSchemaResponse {
 		PropertyTypes:       s.PropertyTypes,
 		SensitiveProperties: s.SensitiveProperties,
 		Hints:               s.Hints,
+		Note:                s.Note,
+		Fields:              nodeProtocolFieldsFrom(s.Fields),
 	}
+}
+
+func nodeProtocolFieldsFrom(fields []protocol.FormField) []nodeProtocolFieldResponse {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make([]nodeProtocolFieldResponse, len(fields))
+	for i, f := range fields {
+		out[i] = nodeProtocolFieldResponse{
+			Path:         f.Path,
+			Label:        f.Label,
+			Advanced:     f.Advanced,
+			ShowIf:       f.ShowIf,
+			Default:      f.Default,
+			Placeholder:  f.Placeholder,
+			OptionLabels: f.OptionLabels,
+		}
+	}
+	return out
 }

@@ -14,7 +14,7 @@ export function useHoldings() {
   const all = subs.data
   const held = useMemo<Subscription[]>(() => (all ? heldSubs(all) : []), [all])
   const naming = useMemo(() => makeNaming(held, links.data), [held, links.data])
-  const site = siteNameOf(all ?? [], appearance.data?.theme?.branding.site_name || 'Pandora')
+  const site = siteNameOf(all ?? [], appearance.data?.site_name?.trim() || 'Pandora')
   const urlOf = (id: string) => links.data?.find((l) => l.subscription_id === id)?.url
   const linkOf = (id: string) => links.data?.find((l) => l.subscription_id === id)
   return { subs, links, held, naming, site, urlOf, linkOf }

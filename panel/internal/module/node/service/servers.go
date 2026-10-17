@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：服务器的后台编排（列表、详情、建、改、改状态、删）与给节点写用的服务器锁。
+// 服务器的后台编排（列表、详情、建、改、改状态、删）与给节点写用的服务器锁。
 
 import (
 	"context"
@@ -376,7 +376,6 @@ func (s *Service) ListServerNodes(ctx context.Context, id uuid.UUID) ([]ServerNo
 			DisplayName:       n.DisplayName,
 			ServerHost:        n.ServerHost,
 			ServerPort:        n.ServerPort,
-			Kernel:            n.Kernel,
 			TrafficRate:       n.TrafficRate,
 			ConfigValidatedAt: n.ConfigValidatedAt,
 			LastHeartbeatAt:   srv.LastHeartbeatAt,

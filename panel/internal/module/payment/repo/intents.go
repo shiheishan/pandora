@@ -42,6 +42,8 @@ type OrderSummaryRow struct {
 	HasIntent    bool
 	ProviderCode *string
 	ProviderName *string
+	// Method 是最近一笔收款的支付方式（payments.method，可空）；没有收款为 nil
+	Method *string
 }
 
 // LockActiveIntent 读订单的在途意图（status='requires_action'）并 FOR NO KEY UPDATE；没有时 found=false。
@@ -68,12 +70,30 @@ func (r *Repo) CountIntents(ctx context.Context, orderID uuid.UUID) (int64, erro
 	return n, err
 }
 
-// InsertIntent 插一行；(provider_id, out_trade_no) 或「每单一个在途」冲突返回 ErrDuplicate。写前 money.Check(it.Amount)。
+// InsertIntent 插一行；(provider_id, out_trade_no) 或「每单一个在途」冲突返回 ErrDuplicate。写前 money.Check(it.Amount)、money.Check(it.SurchargeAmount)。
+// created_at、updated_at 不由应用写，用库默认值 now()：PG 的 now() 是所在事务开始的时刻（BeginIntent 那笔事务，比插入早，差的是等订单锁的时间，
+// 一般毫秒级），不是插入的时刻。「建单中」窗口（IntentCreatedWithin）与巡检排程都按库时钟比，多实例时钟偏差不影响。
 func (r *Repo) InsertIntent(ctx context.Context, it *model.Intent) error {
 	if err := money.Check(it.Amount); err != nil {
 		return err
 	}
-	return mapErr(r.d.Conn(ctx).Create(it).Error)
+	if err := money.Check(it.SurchargeAmount); err != nil {
+		return err
+	}
+	return mapErr(r.d.Conn(ctx).Omit("CreatedAt", "UpdatedAt").Create(it).Error)
+}
+
+// IntentCreatedWithin 报告意图是否在库时钟的最近 window 内创建（created_at > now() - window）。
+func (r *Repo) IntentCreatedWithin(ctx context.Context, id uuid.UUID, window time.Duration) (bool, error) {
+	// 意图不存在时没有行，按不在窗口内算
+	var fresh []bool
+	if err := r.d.Conn(ctx).Raw(
+		`SELECT created_at > now() - make_interval(secs => ?) FROM payment_intents WHERE id = ?`,
+		window.Seconds(), id,
+	).Scan(&fresh).Error; err != nil {
+		return false, mapErr(err)
+	}
+	return len(fresh) == 1 && fresh[0], nil
 }
 
 // IntentByOutTradeNo 按渠道与商户单号读意图（不加锁）。
@@ -94,6 +114,60 @@ func (r *Repo) SetIntentStatus(ctx context.Context, id uuid.UUID, from, to strin
 		"status":     to,
 		"updated_at": gorm.Expr("now()"),
 	})
+	if err := mapErr(res.Error); err != nil {
+		return false, err
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// IntentFill 是渠道建单成功后回写到占位意图的收银台信息。
+type IntentFill struct {
+	HTTPMethod  string
+	RedirectURL string
+	FormFields  map[string]string
+	ProviderRef *string
+}
+
+// FillPlaceholderIntent 把占位意图（requires_action 且 redirect_url 为空）补上收银台信息；返回是否更新到一行（0 行 = 占位已被作废）。
+func (r *Repo) FillPlaceholderIntent(ctx context.Context, id uuid.UUID, f IntentFill) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Intent{}).
+		Where("id = ? AND status = 'requires_action' AND redirect_url = ''", id).
+		Select("http_method", "redirect_url", "form_fields", "provider_ref", "updated_at").
+		Updates(&model.Intent{
+			HTTPMethod:  f.HTTPMethod,
+			RedirectURL: f.RedirectURL,
+			FormFields:  f.FormFields,
+			ProviderRef: f.ProviderRef,
+			UpdatedAt:   time.Now(),
+		})
+	if err := mapErr(res.Error); err != nil {
+		return false, err
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// SetIntentProviderRef 给还没有 provider_ref 的意图记上渠道发票号，不看状态（回写输给并发、占位已作废时也记，迟到付款仍能按发票号核对）；返回是否更新到一行。
+func (r *Repo) SetIntentProviderRef(ctx context.Context, id uuid.UUID, ref string) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Intent{}).
+		Where("id = ? AND provider_ref IS NULL", id).
+		Updates(map[string]any{
+			"provider_ref": ref,
+			"updated_at":   gorm.Expr("now()"),
+		})
+	if err := mapErr(res.Error); err != nil {
+		return false, err
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// CancelPlaceholderIntent 作废还没补上收银台信息的占位意图（渠道建单失败时）；返回是否更新到一行。
+func (r *Repo) CancelPlaceholderIntent(ctx context.Context, id uuid.UUID) (bool, error) {
+	res := r.d.Conn(ctx).Model(&model.Intent{}).
+		Where("id = ? AND status = 'requires_action' AND redirect_url = ''", id).
+		Updates(map[string]any{
+			"status":     "cancelled",
+			"updated_at": gorm.Expr("now()"),
+		})
 	if err := mapErr(res.Error); err != nil {
 		return false, err
 	}
@@ -203,7 +277,8 @@ func (r *Repo) IntentsByOrder(ctx context.Context, orderID uuid.UUID) ([]IntentR
 	return out, nil
 }
 
-// OrderSummaries 一条 SQL 取一批订单的摘要：HasIntent = 有任何意图；渠道取最近一笔收款的渠道，没有收款取最近一次意图的渠道。
+// OrderSummaries 一条 SQL 取一批订单的摘要：HasIntent = 有任何意图；渠道取最近一笔收款的渠道，没有收款取最近一次意图的渠道；
+// Method 只取最近一笔收款的支付方式（收款只有成功一种状态），没有收款为 NULL。
 // 只返回至少有一个意图或一笔收款的订单。
 func (r *Repo) OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) ([]OrderSummaryRow, error) {
 	if len(orderIDs) == 0 {
@@ -219,10 +294,11 @@ func (r *Repo) OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) ([]Orde
 		SELECT o.order_id,
 		       EXISTS (SELECT 1 FROM payment_intents pi WHERE pi.order_id = o.order_id) AS has_intent,
 		       COALESCE(pay_pp.code, intent_pp.code) AS provider_code,
-		       COALESCE(pay_pp.display_name, intent_pp.display_name) AS provider_name
+		       COALESCE(pay_pp.display_name, intent_pp.display_name) AS provider_name,
+		       latest_pay.method AS method
 		FROM ids o
 		LEFT JOIN LATERAL (
-		  SELECT p.provider_id FROM payments p WHERE p.order_id = o.order_id ORDER BY p.paid_at DESC, p.id DESC LIMIT 1
+		  SELECT p.provider_id, p.method FROM payments p WHERE p.order_id = o.order_id ORDER BY p.paid_at DESC, p.id DESC LIMIT 1
 		) latest_pay ON true
 		LEFT JOIN payment_providers pay_pp ON pay_pp.id = latest_pay.provider_id
 		LEFT JOIN LATERAL (

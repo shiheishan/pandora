@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { APPEARANCE_CACHE_KEY, pickThemeTokens, portalBranding, readThemeCache, themeCacheValue, writeThemeCache } from './appearance'
-import { quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
-import { greeting, MENU_PAGES, NAV_PAGES, navLabel, navOwner, resolvePage } from './pages'
+import { mailLoginTokenFromHash, quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
+import { HIDDEN_TITLE_PAGES, PAGES, SIDE_GROUPS, TAB_PAGES, WIDE_PAGES, resolvePage, sideOwner, tabLabel, tabOwner } from './pages'
 import { displayName } from './queries'
 
 describe('pages', () => {
   it('resolves known pages and sends everything else to 我的套餐', () => {
     expect(resolvePage('/orders')).toEqual({ page: 'orders', rest: [], canonical: '/orders' })
     expect(resolvePage('/').canonical).toBe('/subs')
+    expect(resolvePage('/overview').canonical).toBe('/subs')
     expect(resolvePage('/nope').canonical).toBe('/subs')
     expect(resolvePage('/nope/abc')).toEqual({ page: 'subs', rest: [], canonical: '/subs' })
     expect(resolvePage('/constructor').canonical).toBe('/subs')
@@ -22,20 +23,36 @@ describe('pages', () => {
     expect(resolvePage('/orders/%E0%A4%A').canonical).toBe('/orders')
   })
 
-  it('导航只有「我的套餐 / 选购 / 钱包」三项（用户 10-07 拍板），概览、订单等收进菜单；确认页不高亮', () => {
-    expect(NAV_PAGES.map(navLabel)).toEqual(['我的套餐', '选购', '钱包'])
-    expect(MENU_PAGES).toEqual(['overview', 'orders', 'referral', 'tickets', 'help', 'account'])
-    expect(navOwner('checkout')).toBeNull()
-    expect(navOwner('wallet')).toBe('wallet')
-    expect(navLabel('orders')).toBe('订单')
+  it('桌面没有「我的」页，落回我的套餐', () => {
+    expect(resolvePage('/me')).toEqual({ page: 'me', rest: [], canonical: '/me' })
+    expect(resolvePage('/me', { desktop: true })).toEqual({ page: 'subs', rest: [], canonical: '/subs' })
+    expect(resolvePage('/orders', { desktop: true }).page).toBe('orders')
   })
 
-  it('greets by the hour like the design', () => {
-    expect(greeting(new Date('2026-09-24T03:00:00'))).toBe('夜深了')
-    expect(greeting(new Date('2026-09-24T09:00:00'))).toBe('早上好')
-    expect(greeting(new Date('2026-09-24T12:00:00'))).toBe('中午好')
-    expect(greeting(new Date('2026-09-24T15:00:00'))).toBe('下午好')
-    expect(greeting(new Date('2026-09-24T21:00:00'))).toBe('晚上好')
+  it('侧栏三组、底部标签栏四项（样稿 v5）', () => {
+    expect(SIDE_GROUPS.map((g) => g.map((p) => PAGES[p]))).toEqual([
+      ['我的套餐', '选购', '钱包'],
+      ['订单', '邀请返利'],
+      ['消息', '工单支持', '帮助中心', '账号安全'],
+    ])
+    expect(TAB_PAGES.map(tabLabel)).toEqual(['套餐', '选购', '钱包', '我的'])
+  })
+
+  it('高亮：确认页都不亮，手机上「我的」收下其余页面', () => {
+    expect(sideOwner('checkout')).toBeNull()
+    expect(sideOwner('me')).toBeNull()
+    expect(sideOwner('orders')).toBe('orders')
+    expect(tabOwner('checkout')).toBeNull()
+    expect(tabOwner('wallet')).toBe('wallet')
+    expect(tabOwner('orders')).toBe('me')
+    expect(tabOwner('account')).toBe('me')
+  })
+
+  it('列宽与隐藏标题', () => {
+    expect(WIDE_PAGES.has('plans')).toBe(true)
+    expect(WIDE_PAGES.has('checkout')).toBe(true)
+    expect(WIDE_PAGES.has('subs')).toBe(false)
+    expect(HIDDEN_TITLE_PAGES.has('me')).toBe(true)
   })
 })
 
@@ -88,29 +105,41 @@ describe('quick-login tokens', () => {
   })
 })
 
+describe('mail-login tokens', () => {
+  it('reads the token from the hash link', () => {
+    expect(mailLoginTokenFromHash('#/mail-login/abc_DEF-1')).toBe('abc_DEF-1')
+    expect(mailLoginTokenFromHash('#/quick-login/x')).toBeNull()
+    expect(mailLoginTokenFromHash('#/subs')).toBeNull()
+    expect(mailLoginTokenFromHash('')).toBeNull()
+  })
+})
+
 describe('pickThemeTokens', () => {
   it('takes the group for the current theme and drops keys outside the design whitelist', () => {
     const appearance = {
+      site_name: 'Pandora',
       theme: { tokens: { light: { '--brand': '#b9442b', '--evil': 'red', '--bg': ' ' }, dark: { '--brand': '#e46e52' } }, branding: {} },
       slots: {},
     }
     expect(pickThemeTokens(appearance, 'light')).toEqual([['--brand', '#b9442b']])
     expect(pickThemeTokens(appearance, 'dark')).toEqual([['--brand', '#e46e52']])
-    expect(pickThemeTokens({ theme: null, slots: {} }, 'light')).toEqual([])
+    expect(pickThemeTokens({ site_name: 'Pandora', theme: null, slots: {} }, 'light')).toEqual([])
     expect(pickThemeTokens(undefined, 'dark')).toEqual([])
   })
 })
 
 describe('portalBranding', () => {
-  const with_ = (branding: Record<string, string>) => ({ theme: { tokens: {}, branding }, slots: {} })
+  const with_ = (site_name: string, branding: Record<string, string> = {}) => ({ site_name, theme: { tokens: {}, branding }, slots: {} })
   it('keeps the design wordmark for the default site name and follows a switched theme otherwise', () => {
-    expect(portalBranding(with_({ site_name: 'Pandora' }))).toEqual({ siteName: null, tagline: null, logo: null })
+    expect(portalBranding(with_('Pandora'))).toEqual({ siteName: null, tagline: null, logo: null })
     expect(portalBranding(undefined)).toEqual({ siteName: null, tagline: null, logo: null })
-    expect(portalBranding(with_({ site_name: ' 夜海加速 ', tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通', logo: null })
+    expect(portalBranding(with_(' 夜海加速 ', { tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通', logo: null })
     // 默认站点名但带了 Logo：照样画 Logo + 站点名
-    expect(portalBranding(with_({ site_name: 'Pandora', logo: 'data:image/png;base64,AAAA' })).siteName).toBe('Pandora')
+    expect(portalBranding(with_('Pandora', { logo: 'data:image/png;base64,AAAA' })).siteName).toBe('Pandora')
     // 外链 Logo 不认（CSP 只放 data: 图片）
-    expect(portalBranding(with_({ site_name: 'X', logo: 'https://evil.test/a.png' })).logo).toBeNull()
+    expect(portalBranding(with_('X', { logo: 'https://evil.test/a.png' })).logo).toBeNull()
+    // 主题 branding 里残留的 site_name 不起作用
+    expect(portalBranding({ site_name: 'Pandora', theme: { tokens: {}, branding: { site_name: '旧名' } as Record<string, string> }, slots: {} } as never).siteName).toBeNull()
   })
 })
 
@@ -133,6 +162,7 @@ describe('theme cache', () => {
     }
   }
   const custom = {
+    site_name: 'Pandora',
     theme: { tokens: { light: { '--brand': '#b9442b', 'not-a-token': 'red' }, dark: { '--brand': '#e46e52' } }, branding: { logo: 'data:image/png;base64,AAAA' } },
     slots: {},
   }
@@ -149,9 +179,9 @@ describe('theme cache', () => {
   it('clears the cache when the default theme is back in effect', () => {
     const storage = memoryStorage()
     writeThemeCache(custom, storage)
-    writeThemeCache({ theme: null, slots: {} }, storage)
+    writeThemeCache({ site_name: 'Pandora', theme: null, slots: {} }, storage)
     expect(storage.data.has(APPEARANCE_CACHE_KEY)).toBe(false)
-    expect(themeCacheValue({ theme: null, slots: {} })).toBeNull()
+    expect(themeCacheValue({ site_name: 'Pandora', theme: null, slots: {} })).toBeNull()
   })
 
   it('reads nothing from a missing, broken or tampered cache', () => {

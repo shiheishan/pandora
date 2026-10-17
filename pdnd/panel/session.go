@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"slices"
@@ -20,7 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// 会话的缺省节拍（契约：docs/architecture.md 11.3、p5-common「节点通道契约」）。
+// 会话的缺省节拍（契约：docs/architecture.md 11.3）。
 const (
 	backoffBase           = time.Second
 	backoffMax            = 30 * time.Second
@@ -343,7 +344,11 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 		return stream.Send(req)
 	}
 	if err := send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_Hello{Hello: s.hello()}}); err != nil {
-		res.err = fmt.Errorf("发送 Hello: %w", err)
+		err = helloSendError(err, stream)
+		if r, ok := s.reenrollResult(ctx, err); ok {
+			return r
+		}
+		res.err = err
 		return res
 	}
 
@@ -421,6 +426,30 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 			}
 		}
 	}
+}
+
+// helloStream 是 helloSendError 用到的那一小块客户端流（便于用假流测试）。
+type helloStream interface {
+	Recv() (*nodev1.SessionResponse, error)
+	Trailer() metadata.MD
+}
+
+// helloSendError 把发 Hello 的错误换成真实原因：Send 返回 io.EOF 说明服务端已经结束流，
+// 真实状态和 trailer 要再 Recv 一次才拿得到；身份失效（PermissionDenied + 重新接入 trailer）
+// 包成 errReenrollRequired，交给 reenrollResult 当 Tombstone 处理。
+// 前提：面板在收到 Hello 之前不会往流里发消息，所以这一次 Recv 拿到的只能是流结束的状态，不会吞掉业务消息。
+func helloSendError(err error, stream helloStream) error {
+	if !errors.Is(err, io.EOF) {
+		return fmt.Errorf("发送 Hello: %w", err)
+	}
+	_, rerr := stream.Recv()
+	if reenrollRequired(rerr, stream.Trailer()) {
+		return fmt.Errorf("%w: %v", errReenrollRequired, rerr)
+	}
+	if rerr != nil && !errors.Is(rerr, io.EOF) {
+		return fmt.Errorf("发送 Hello: %w", rerr)
+	}
+	return fmt.Errorf("发送 Hello: %w", err)
 }
 
 // reenrollResult：流因身份失效被面板结束（errReenrollRequired）时，与收到 Tombstone 同样处理：

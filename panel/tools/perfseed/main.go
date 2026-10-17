@@ -1,4 +1,4 @@
-// perfseed 是 P8 性能测试造数工具的命令行入口。
+// perfseed 是性能测试造数工具的命令行入口。
 package main
 
 import (

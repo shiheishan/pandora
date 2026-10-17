@@ -1,0 +1,37 @@
+/* 订阅下发页共用样式。附加设置卡（SubscriptionTab.tsx）用 stack / extrasActions / faint；
+   订阅模板表（SubscriptionTemplates.tsx）用 clients / cell2。 */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+}
+
+.extrasActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  width: 100%;
+}
+
+/* 模板表客户端列：名称 + （fallback 行的）「默认」标签 */
+.clients {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+/* 模板表次级文字列（UA 关键词、格式）：--text-2 */
+.cell2 {
+  color: var(--text-2);
+  min-width: 0;
+}

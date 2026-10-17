@@ -131,7 +131,7 @@ describe('qr · round trip', () => {
   })
 
   it('encodes UTF-8 and picks the smallest version that fits', () => {
-    const url = 'https://sub.pandora.dev/s/q8Z0b1Xr6Kp2a3f9'
+    const url = 'https://sub.example.com/s/q8Z0b1Xr6Kp2a3f9'
     const m = encodeQr(url)!
     expect(m.version).toBe(3)
     expect(decode(m)).toBe(url)

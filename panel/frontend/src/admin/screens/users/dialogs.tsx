@@ -5,7 +5,8 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Segmented, Select, TextArea, useToast } from '../../../ui'
 import { endsIntent, useFailure, useIntentKey } from '../../actions'
 import { balanceSchema, passwordResetSchema, rotatedSchema, statusSetSchema, type UserDetail } from './api'
-import { liveSubscriptions, parseYuan, passwordProblem, REASON_MIN, subLabel } from './model'
+import { balanceCents, passwordProblem, REASON_MIN, rotatableSubscriptions, subLabel, type BalanceDirection } from './model'
+import subsCss from './Subs.module.css'
 import css from './Users.module.css'
 
 const reasonShort = (r: string) => [...r.trim()].length < REASON_MIN
@@ -194,11 +195,25 @@ export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail;
 // 换发订阅链接：POST v1/subscriptions/{id}/rotate（reauth，无幂等）
 // 保留规则 2：后台看不到订阅地址；响应只有 user_email / old_revoked（schema 用 strict 守住）
 // ---------------------------------------------------------------------------
-export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void }) {
+export function RotateDialog({
+  user,
+  subscriptionId = null,
+  open,
+  onClose,
+  onDone,
+}: {
+  user: UserDetail
+  /** 给了就只换发这一份（订阅表行「操作」菜单进来），不显示订阅下拉；不传保持原行为 */
+  subscriptionId?: string | null
+  open: boolean
+  onClose: () => void
+  onDone: () => void
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
-  const choices = liveSubscriptions(user.subscriptions)
+  const fixed = subscriptionId ? user.subscriptions.find((s) => s.id === subscriptionId) ?? null : null
+  const choices = fixed ? [fixed] : rotatableSubscriptions(user.subscriptions)
   const [picked, setPicked] = useState<string>('')
   const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -217,7 +232,7 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
     setBusy(true)
     try {
       const r = await api.post(`v1/subscriptions/${encodeURIComponent(subId)}/rotate`, rotatedSchema, { body: { reason: reason.trim() } })
-      toast(`已换发，请让 ${r.user_email} 到门户重新复制订阅地址`)
+      toast(`已换发，请让 ${r.user_email} 到用户端重新复制订阅地址`)
       close()
       onDone()
     } catch (e) {
@@ -229,7 +244,7 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
 
   return (
     <ActionModal open={open} title="更换订阅地址？" busy={busy} confirm="更换" tone="danger" disabled={!subId} onCancel={close} onConfirm={() => void submit()}>
-      <p className={css.dialogText}>换发后旧链接和用户已导入的节点立即失效（节点密码一起换），用户所有设备都要到门户重新复制地址、在客户端重新更新一次订阅。后台看不到新地址。</p>
+      <p className={css.dialogText}>换发后旧链接和用户已导入的节点立即失效（节点密码一起换），用户所有设备都要到用户端重新复制地址、在客户端重新更新一次订阅。后台看不到新地址。</p>
       {choices.length > 1 && (
         <Select label="订阅" options={choices.map((s) => ({ value: s.id, label: subLabel(s) }))} value={subId} onChange={(e) => setPicked(e.target.value)} />
       )}
@@ -251,13 +266,13 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
 
 // ---------------------------------------------------------------------------
 // 人工调账：POST v1/users/{id}/balance（reauth + 幂等 admin_user_balance_adjust）
-// 抽屉头部下方的行内表单（设计稿），提交前再确认一次金额
 // ---------------------------------------------------------------------------
 export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClose: () => void; onDone: () => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
+  const [direction, setDirection] = useState<BalanceDirection>('plus')
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -265,21 +280,21 @@ export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClo
   const [busy, setBusy] = useState(false)
 
   const check = () => {
-    const cents = parseYuan(amount)
+    const cents = balanceCents(direction, amount)
     const local: Record<string, string> = {}
-    if (cents === null) local.amount = '金额写成 +50 或 -20，最多两位小数，不能为 0'
+    if (cents === null) local.amount = '请填写大于 0 的金额，最多两位小数'
     if (reasonShort(reason)) local.reason = `原因至少 ${REASON_MIN} 个字`
     if (Object.keys(local).length) return setErrors(local)
     setConfirming(cents)
   }
   const submit = async () => {
     if (confirming === null) return
-    const body = { amount: confirming, currency: user.currency, reason: reason.trim() }
+    const body = { amount: confirming, reason: reason.trim() }
     setBusy(true)
     try {
       const r = await api.post(`v1/users/${encodeURIComponent(user.id)}/balance`, balanceSchema, { body, idempotencyKey: intent.keyFor([user.id, body]) })
       intent.reset()
-      toast(`余额已调整为 ${formatMoney(r.balance, user.currency)}`)
+      toast(`余额已调整为 ${formatMoney(r.balance)}`)
       setConfirming(null)
       onDone()
       onClose()
@@ -295,10 +310,21 @@ export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClo
   }
 
   return (
-    <div className={css.balanceForm}>
+    <div className={subsCss.balanceForm}>
+      <Segmented
+        size="sm"
+        label="调整方向"
+        options={[
+          { value: 'plus', label: '增加' },
+          { value: 'minus', label: '扣减' },
+        ]}
+        value={direction}
+        onChange={setDirection}
+      />
       <Input
         aria-label="调整金额（元）"
-        placeholder="+50 或 -20"
+        placeholder="金额（元）"
+        inputMode="decimal"
         mono
         value={amount}
         onChange={(e) => {
@@ -318,7 +344,7 @@ export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClo
         }}
         error={errors.reason || undefined}
       />
-      <div className={css.balanceActions}>
+      <div className={subsCss.balanceFormActions}>
         <Button size="sm" onClick={onClose}>
           取消
         </Button>
@@ -336,7 +362,7 @@ export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClo
         onConfirm={() => void submit()}
       >
         <p className={css.dialogText}>
-          {confirming !== null && confirming < 0 ? '扣减' : '增加'} {formatMoney(Math.abs(confirming ?? 0), user.currency)}，当前余额 {formatMoney(user.balance, user.currency)}。
+          {confirming !== null && confirming < 0 ? '扣减' : '增加'} {formatMoney(Math.abs(confirming ?? 0))}，余额 {formatMoney(user.balance)} → {formatMoney(user.balance + (confirming ?? 0))}。
         </p>
         <p className={css.dialogText}>原因：{reason.trim()}</p>
       </ActionModal>

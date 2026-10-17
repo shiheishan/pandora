@@ -69,12 +69,6 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 	if err != nil {
 		return Tasks{}, err
 	}
-	var wCount int64
-	wAmounts := make([]CurrencyAmount, 0, len(withdrawals))
-	for _, w := range withdrawals {
-		wCount += w.Count
-		wAmounts = append(wAmounts, CurrencyAmount{Currency: w.Currency, Amount: w.Amount})
-	}
 
 	offline, err := s.deps.Nodes.OfflineNodes(ctx, now, 3)
 	if err != nil {
@@ -109,8 +103,8 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 			OldestWaitSeconds: tickets.OldestWaitSeconds,
 		},
 		WithdrawalsPending: WithdrawalsPendingTask{
-			Count:   wCount,
-			Amounts: wAmounts,
+			Count:  withdrawals.Count,
+			Amount: withdrawals.Amount,
 		},
 		NodesOffline: NodesOfflineTask{
 			Count:                 offline.Count,

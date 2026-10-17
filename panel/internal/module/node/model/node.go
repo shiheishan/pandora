@@ -23,13 +23,20 @@ type Node struct {
 	ServerHost            *string         `gorm:"column:server_host"`
 	ServerPort            *int            `gorm:"column:server_port"`
 	ListenL4              *string         `gorm:"column:listen_l4"`
-	Kernel                string          `gorm:"column:kernel"`
 	ProtocolConfig        string          `gorm:"column:protocol_config;type:jsonb"`
 	ProtocolSchemaVersion int             `gorm:"column:protocol_schema_version"`
 	ConfigValidatedAt     *time.Time      `gorm:"column:config_validated_at"`
 	TrafficRate           decimal.Decimal `gorm:"column:traffic_rate;type:numeric(6,2)"`
 	SortOrder             int             `gorm:"column:sort_order"`
 	RowVersion            int64           `gorm:"column:row_version;default:1"`
+	// 以下是 Xboard 补齐（迁移 00045）：标签、每周期流量上限与用量、时段倍率。jsonb 用 string 承载 JSON 文本
+	Tags                string     `gorm:"column:tags;type:jsonb"`
+	TrafficLimitBytes   *int64     `gorm:"column:traffic_limit_bytes"`
+	TrafficResetDay     *int       `gorm:"column:traffic_reset_day"`
+	TrafficUsedBytes    int64      `gorm:"column:traffic_used_bytes"`
+	TrafficResetAt      time.Time  `gorm:"column:traffic_reset_at"`
+	TrafficExceededAt   *time.Time `gorm:"column:traffic_exceeded_at"`
+	TrafficRateSchedule string     `gorm:"column:traffic_rate_schedule;type:jsonb"`
 	// 以下由节点通道写：本机运行状态与配置回执
 	RuntimeStatus       *string    `gorm:"column:runtime_status"`
 	RuntimeReason       *string    `gorm:"column:runtime_reason"`

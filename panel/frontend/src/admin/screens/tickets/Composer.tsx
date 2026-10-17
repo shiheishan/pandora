@@ -1,14 +1,17 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
-import { Button, Switch, TextArea, useToast } from '../../../ui'
+import { Button, Switch, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
-import { okSchema, useInvalidateTickets, useMacros, type TicketDetail } from './api'
+import { okSchema, useInvalidateTickets, useMacros, type Macro, type TicketDetail } from './api'
+import css from './Composer.module.css'
 import { MacroManager } from './MacroManager'
 import { MESSAGE_MAX } from './model'
-import css from './Tickets.module.css'
 
 type Mode = 'reply' | 'resolve'
+
+/** 快捷回复条最多露几个 chip，其余进「全部 N」浮层（10-16 设计稿） */
+const MACRO_CHIPS = 4
 
 export function Composer({ ticket }: { ticket: TicketDetail }) {
   const api = useApi()
@@ -18,6 +21,7 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
   const macros = useMacros()
   const replyKey = useIntentKey()
   const resolveKey = useIntentKey()
+  const errorId = useId()
   const [body, setBody] = useState('')
   const [note, setNote] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -29,6 +33,7 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
   const text = body.trim()
   const length = [...text].length
   const tooLong = length > MESSAGE_MAX
+  const displayError = error ?? (tooLong ? `最多 ${MESSAGE_MAX} 字（现在 ${length}）` : null)
 
   const submit = async (mode: Mode) => {
     if (busy) return
@@ -77,30 +82,40 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
     }
   }
 
+  const applyMacro = (m: Macro) => {
+    setBody(m.body)
+    setError(null)
+  }
+
+  const all = macros.data ?? []
+  const chips = all.slice(0, MACRO_CHIPS)
+  const hasMore = all.length > MACRO_CHIPS
+
   return (
-    <div className={css.composer}>
+    <div className={note ? `${css.composer} ${css.note}` : css.composer}>
       <div className={css.macros}>
-        {macros.data?.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            className={css.macro}
-            title={m.body}
-            onClick={() => {
-              setBody(m.body)
-              setError(null)
-            }}
-          >
-            {m.title}
-          </button>
-        ))}
-        {macros.isError && <span className={css.macroHint}>快捷回复读取失败</span>}
+        {macros.isError ? (
+          <span className={css.macroHint}>快捷回复读取失败</span>
+        ) : (
+          <span className={css.macroLabel}>快捷回复</span>
+        )}
+        {!macros.isError &&
+          chips.map((m) => (
+            <button key={m.id} type="button" className={css.macro} title={m.body} onClick={() => applyMacro(m)}>
+              {m.title}
+            </button>
+          ))}
+        {!macros.isError && hasMore && <MacroAllButton macros={all} onUse={applyMacro} />}
+        <span className={css.spacer} aria-hidden="true" />
         <button type="button" className={css.macroManage} onClick={() => setManaging(true)}>
-          {macros.data?.length === 0 ? '添加快捷回复' : '管理'}
+          {all.length === 0 ? '添加快捷回复' : '管理'}
         </button>
       </div>
-      <TextArea
+      <textarea
+        className={css.textarea}
         aria-label={note ? '内部备注' : '回复内容'}
+        aria-invalid={displayError ? true : undefined}
+        aria-describedby={displayError ? errorId : undefined}
         rows={3}
         value={body}
         onChange={(e) => {
@@ -109,22 +124,95 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
         }}
         onKeyDown={onKeyDown}
         placeholder={note ? '写给其他客服看的备注，用户看不到，⌘↵ 添加' : '回复用户，⌘↵ 发送'}
-        className={note ? css.noteInput : undefined}
-        error={error ?? (tooLong ? `最多 ${MESSAGE_MAX} 字（现在 ${length}）` : undefined)}
       />
-      <div className={css.composerBar}>
+      {displayError && (
+        <p id={errorId} role="alert" className={css.error}>
+          {displayError}
+        </p>
+      )}
+      <div className={css.bar}>
         <Switch label="内部备注" checked={note} onChange={(e) => setNote(e.target.checked)} />
-        <div className={css.spacer} />
+        <span className={css.spacer} aria-hidden="true" />
         {!note && (
-          <Button size="md" busy={busy === 'resolve'} disabled={busy !== null} onClick={() => void submit('resolve')}>
+          <Button size="sm" busy={busy === 'resolve'} disabled={busy !== null} onClick={() => void submit('resolve')}>
             回复并解决
           </Button>
         )}
-        <Button size="md" variant="primary" busy={busy === 'reply'} disabled={busy !== null} onClick={() => void submit('reply')}>
+        <Button size="sm" variant="primary" busy={busy === 'reply'} disabled={busy !== null} onClick={() => void submit('reply')}>
           {note ? '添加备注' : '发送回复'}
         </Button>
       </div>
-      <MacroManager open={managing} onClose={() => setManaging(false)} macros={macros.data ?? []} />
+      <MacroManager open={managing} onClose={() => setManaging(false)} macros={all} />
+    </div>
+  )
+}
+
+/** 「全部 N」按钮 + 向上弹出的搜索浮层：Esc 与点外面关闭，Esc 不冒泡关掉外层的弹窗 */
+function MacroAllButton({ macros, onUse }: { macros: readonly Macro[]; onUse: (m: Macro) => void }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const toggle = () => {
+    if (open) return setOpen(false)
+    setQuery('')
+    setOpen(true)
+    // 浮层渲染后再聚焦搜索框
+    setTimeout(() => searchRef.current?.focus(), 0)
+  }
+
+  // Esc 关闭时拦住，别把外层的 MacroManager 弹窗一起关了
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      setOpen(false)
+    }
+  }
+
+  const text = query.trim().toLowerCase()
+  const matched = macros.filter((m) => !text || `${m.title}${m.body}`.toLowerCase().includes(text))
+
+  return (
+    <div className={css.macroAllWrap} onKeyDown={onKeyDown}>
+      <button type="button" className={open ? `${css.macroAll} ${css.macroAllOpen}` : css.macroAll} aria-expanded={open} onClick={toggle}>
+        全部 {macros.length}
+        <svg className={css.macroAllCaret} viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m18 15-6-6-6 6" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          {/* 透明遮罩：点浮层外面就收起（mousedown 在遮罩上，不会进浮层） */}
+          <div className={css.macroAllScrim} onMouseDown={() => setOpen(false)} aria-hidden="true" />
+          <div role="listbox" aria-label="全部快捷回复" className={css.macroAllPanel}>
+            <input
+              ref={searchRef}
+              className={css.macroAllSearch}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索快捷回复"
+              aria-label="搜索快捷回复"
+            />
+            <div className={css.macroAllList}>
+              {matched.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={css.macroAllItem}
+                  onClick={() => {
+                    onUse(m)
+                    setOpen(false)
+                  }}
+                >
+                  <span className={css.macroAllTitle}>{m.title}</span>
+                  <span className={css.macroAllBody}>{m.body}</span>
+                </button>
+              ))}
+              {matched.length === 0 && <div className={css.macroAllEmpty}>没有匹配的快捷回复</div>}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

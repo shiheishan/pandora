@@ -11,7 +11,6 @@ import (
 // in addition to the canonical shadowsocks entry.
 type NativeSelfCheckReport struct {
 	Kernel              string   `json:"kernel"`
-	NativeOnly          bool     `json:"native_only"`
 	Status              string   `json:"status"`
 	CapabilityCount     int      `json:"capability_count"`
 	RegisteredAdapters  []string `json:"registered_adapters"`
@@ -52,13 +51,12 @@ func ValidateNativeCapabilityMatrix(registry *AdapterRegistry) error {
 	return nil
 }
 
-// NativeSelfCheckFor runs the check against the production default registry
+// NativeSelfCheck runs the check against the production default registry
 // and returns a stable JSON-ready result. It does not open a socket.
-func NativeSelfCheckFor(nativeOnly bool) NativeSelfCheckReport {
+func NativeSelfCheck() NativeSelfCheckReport {
 	registry := NewDefaultAdapterRegistry()
 	report := NativeSelfCheckReport{
 		Kernel:             "pandora-native",
-		NativeOnly:         nativeOnly,
 		Status:             "ok",
 		CapabilityCount:    len(NativeCapabilities()),
 		RegisteredAdapters: registry.Types(),

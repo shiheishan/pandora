@@ -1,5 +1,6 @@
 // Package service 是 content 模块的业务层：版本化的知识库与自定义页面（后台发版、归档、列表），
 // 门户按套餐、平台、客户端版本与语言过滤后的可见文章，以及「这篇有帮助吗」的反馈。别的模块只调本包。
+// 门户读单篇文章时按用户替换占位变量、按有无有效订阅处理区块（render.go）。
 //
 // 正文只当纯文本 / Markdown 源存储与下发，两端都不渲染成可信 HTML，所以这里不是 XSS 边界。
 // 每次保存是一个新版本（同一 slug 版本号递增）；发布时把「同一受众」（语言、平台、客户端版本范围、
@@ -15,6 +16,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/content/repo"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -39,6 +41,17 @@ type Subscriptions interface {
 	LivePlanIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 }
 
+// Site 是 content 要的站点设置（占位变量 {{siteName}}）；*settingssvc.Service 直接满足。
+type Site interface {
+	Site(ctx context.Context) (settingssvc.Site, error)
+}
+
+// SubscribeLinks 是占位变量 {{subscribeUrl}} 要的订阅链接（属 subscription），由 app 适配器实现。
+type SubscribeLinks interface {
+	// CurrentLink 返回 ctx 里门户主体最新一份生效订阅的订阅链接；没有生效订阅返回空串。
+	CurrentLink(ctx context.Context) (string, error)
+}
+
 // Users 是 content 要的用户读取面：后台版本历史显示作者名。*identitysvc.Service 直接满足
 // （identity/service/content_reads.go）。
 type Users interface {
@@ -53,7 +66,11 @@ type Service struct {
 	plans Plans
 	subs  Subscriptions
 	users Users
-	now   func() time.Time
+	site  Site
+	links SubscribeLinks
+	// publicBaseURL 是面板对外根地址，只在启动装配时写入。
+	publicBaseURL string
+	now           func() time.Time
 }
 
 // New 构造 content service：plans 传 catalog service，subs 传 subscription service，users 传 identity service。
@@ -61,7 +78,28 @@ func New(r *repo.Repo, txm *tx.Manager, audit *auditsvc.Service, plans Plans, su
 	return &Service{repo: r, tx: txm, audit: audit, plans: plans, subs: subs, users: users, now: time.Now}
 }
 
-// 审计动作名（沿用旧代码）。
+// UseSite 注入站点设置端口；只在启动装配时调用，不并发安全。
+func (s *Service) UseSite(x Site) { s.site = x }
+
+// UseSubscribeLinks 注入订阅链接端口；只在启动装配时调用，不并发安全。
+func (s *Service) UseSubscribeLinks(x SubscribeLinks) { s.links = x }
+
+// UsePublicBaseURL 设置面板对外根地址；只在启动装配时调用，不并发安全。
+func (s *Service) UsePublicBaseURL(u string) { s.publicBaseURL = u }
+
+// MissingPorts 返回尚未注入的必需端口名；publicBaseURL 是配置值，不算端口。
+func (s *Service) MissingPorts() []string {
+	var missing []string
+	if s.site == nil {
+		missing = append(missing, "Site")
+	}
+	if s.links == nil {
+		missing = append(missing, "SubscribeLinks")
+	}
+	return missing
+}
+
+// 审计动作名。
 const (
 	ActionVersionCreated = "content.version_created"
 	ActionArchived       = "content.archived"

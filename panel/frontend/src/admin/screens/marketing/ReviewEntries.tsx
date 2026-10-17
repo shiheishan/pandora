@@ -2,9 +2,11 @@ import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Button, Card, Empty, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Row, RowList } from '../../kit'
 import local from './Commission.module.css'
-import { approveReasonError, formatDateTime, freezeLabel, voidReasonError, type FieldErrors } from './logic'
+import { approveReasonError, freezeLabel, voidReasonError } from './commissionModel'
+import { formatDateTime, type FieldErrors } from './logic'
 import css from './marketing.module.css'
 import { useFailure, useInvalidateMarketing, useReviewEntries } from './queries'
 import { entryReviewResponse, type ReviewEntry } from './schemas'
@@ -18,20 +20,18 @@ export function ReviewEntries() {
   const query = { ...q, data: flat }
 
   return (
-    <section className={css.panel}>
-      <div className={css.panelHead}>
-        <h3 className={css.panelTitle}>待复核佣金</h3>
-        <span className={css.faint}>同源嫌疑或解冻异常的佣金不会自动解冻；通过后照常解冻，作废会冲回计提。两个操作都需要重新验证身份</span>
-      </div>
+    <>
       <QueryView
         query={query}
-        empty={<Empty bare title="没有待复核的佣金" description="同源嫌疑、同源检查失败或解冻时余额不足的佣金会出现在这里。" />}
+        empty={<Empty bare title="没有待复核的佣金" />}
       >
         {(rows) => (
-          <>
-            {rows.map((e) => (
-              <ReviewRow key={e.id} entry={e} onDialog={setDialog} />
-            ))}
+          <Card flush>
+            <RowList label="待复核佣金">
+              {rows.map((e) => (
+                <ReviewEntryRow key={e.id} entry={e} onDialog={setDialog} />
+              ))}
+            </RowList>
             {q.hasNextPage && (
               <div className={local.more}>
                 <Button size="xs" busy={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
@@ -39,38 +39,53 @@ export function ReviewEntries() {
                 </Button>
               </div>
             )}
-          </>
+          </Card>
         )}
       </QueryView>
       <ApproveDialog entry={dialog?.kind === 'approve' ? dialog.entry : null} onClose={() => setDialog(null)} />
       <VoidDialog entry={dialog?.kind === 'void' ? dialog.entry : null} onClose={() => setDialog(null)} />
-    </section>
+    </>
   )
 }
 
-function ReviewRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: Dialog) => void }) {
+function ReviewEntryRow({ entry: e, onDialog }: { entry: ReviewEntry; onDialog: (d: Dialog) => void }) {
+  const isUnderfunded = e.review_source === 'underfunded'
+  const freezeText = freezeLabel(e, new Date())
+
+  const metaContent = (
+    <span className={local.warnText}>{e.review_reason}</span>
+  )
+
+  const extraContent = (
+    <small className={local.subLine}>
+      订单 {e.order_no} · {formatDateTime(e.created_at)} ·{' '}
+      {isUnderfunded ? (
+        <span className={local.dangerText}>{freezeText}</span>
+      ) : (
+        <span>{freezeText}</span>
+      )}
+    </small>
+  )
+
   return (
-    <div className={local.row}>
-      <span className={local.who}>
-        <span className={local.ellipsis}>{e.referrer_email}</span>
-        <span className={`${css.faint} ${local.ellipsis}`}>
-          来自 {e.referee_email} · 订单 {e.order_no} · {formatDateTime(e.created_at)}
-        </span>
-        <span className={`${css.faint} ${local.ellipsis}`}>复核原因：{e.review_reason}</span>
-        <span className={`${css.faint} ${local.ellipsis}`}>{freezeLabel(e, new Date())}</span>
-      </span>
-      <span className={local.amount}>
-        <span className={local.money}>{formatMoney(e.amount, e.currency)}</span>
-      </span>
-      <span className={local.actions}>
-        <Button size="xs" className={local.reject} onClick={() => onDialog({ kind: 'void', entry: e })}>
-          作废
-        </Button>
-        <Button size="xs" variant="primary" onClick={() => onDialog({ kind: 'approve', entry: e })}>
-          通过
-        </Button>
-      </span>
-    </div>
+    <Row
+      title={`${e.referrer_email} ← ${e.referee_email}`}
+      meta={metaContent}
+      extra={extraContent}
+      value={formatMoney(e.amount)}
+      actions={
+        <>
+          {e.review_source !== 'account_deleted' && (
+            <Button size="sm" onClick={() => onDialog({ kind: 'approve', entry: e })}>
+              通过
+            </Button>
+          )}
+          <Button size="sm" variant="danger" onClick={() => onDialog({ kind: 'void', entry: e })}>
+            作废
+          </Button>
+        </>
+      }
+    />
   )
 }
 
@@ -126,7 +141,7 @@ function ApproveDialog({ entry, onClose }: { entry: ReviewEntry | null; onClose:
       {entry && (
         <form id="commission-approve" className={css.stack} onSubmit={submit} noValidate>
           <div className={css.muted}>
-            {entry.referrer_email} 的佣金 {formatMoney(entry.amount, entry.currency)}（订单 {entry.order_no}）。复核原因：{entry.review_reason}
+            {entry.referrer_email} 的佣金 {formatMoney(entry.amount)}（订单 {entry.order_no}）。复核原因：{entry.review_reason}
           </div>
           <div className={css.muted}>
             {freezeLabel(entry, new Date())}
@@ -198,7 +213,7 @@ function VoidDialog({ entry, onClose }: { entry: ReviewEntry | null; onClose: ()
       {entry && (
         <form id="commission-void" className={css.stack} onSubmit={submit} noValidate>
           <div className={css.muted}>
-            {entry.referrer_email} 的佣金 {formatMoney(entry.amount, entry.currency)}（订单 {entry.order_no}）。作废后这笔佣金从推荐人的待结佣金冲回平台收入，不能撤销。
+            {entry.referrer_email} 的佣金 {formatMoney(entry.amount)}（订单 {entry.order_no}）。作废后这笔佣金从推荐人的待结佣金冲回平台收入，不能撤销。
           </div>
           <TextArea
             label="作废原因"

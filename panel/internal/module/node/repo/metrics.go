@@ -1,6 +1,6 @@
 package repo
 
-// 机器指标（p5-traffic）：按服务器记，只追加。
+// 机器指标：按服务器记，只追加。
 
 import (
 	"context"

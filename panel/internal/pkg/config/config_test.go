@@ -349,7 +349,7 @@ func TestPdndDistDir(t *testing.T) {
 	}
 }
 
-// 备份目录：缺省同旧部署的 /var/backups/pandora，PANDORA_BACKUP_DIR 覆盖；非空只收绝对路径（配置文件里写空串表示不探测）。
+// 备份目录：缺省 /var/backups/pandora，PANDORA_BACKUP_DIR 覆盖；非空只收绝对路径（配置文件里写空串表示不探测）。
 func TestBackupDir(t *testing.T) {
 	setMinimalValidEnv(t)
 	cfg, err := Load("")

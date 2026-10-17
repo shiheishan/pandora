@@ -1,6 +1,6 @@
 package handler
 
-// 后台人工开单：预览「这单落到哪一份」与建单（JSON 形状对照旧 api/admin/manual_order.go 与 purchase.Placement）。
+// 后台人工开单：预览「这单落到哪一份」与建单。
 
 import (
 	"strings"
@@ -40,7 +40,7 @@ type manualPreviewRequest struct {
 	EntrySubscriptionID string `json:"entry_subscription_id"`
 }
 
-// placementResponse 是一个落点选项（旧 ManualPlacement：purchase.Placement 加 due、below_minimum）。
+// placementResponse 是一个落点选项（含 due、below_minimum）。
 type placementResponse struct {
 	Key            string     `json:"key"`
 	Kind           string     `json:"kind"`
@@ -54,11 +54,9 @@ type placementResponse struct {
 	PeriodEnd      *time.Time `json:"period_end,omitempty"`
 	NewPeriodEnd   *time.Time `json:"new_period_end,omitempty"`
 	Credit         int64      `json:"credit,omitempty"`
-	Currency       string     `json:"currency,omitempty"`
 	GiftDaysLost   int        `json:"gift_days_lost,omitempty"`
 	TrafficUsed    int64      `json:"traffic_used,omitempty"`
 	TrafficCap     int64      `json:"traffic_cap,omitempty"`
-	PackRemaining  int64      `json:"pack_remaining,omitempty"`
 	Due            int64      `json:"due"`
 	BelowMinimum   bool       `json:"below_minimum"`
 	// UnavailableReason 非空表示这一项开不了，内容与建单会回的错误相同
@@ -93,11 +91,9 @@ func manualPreviewFrom(p service.ManualPreview) (manualPreviewResponse, error) {
 			PeriodEnd:         o.PeriodEnd,
 			NewPeriodEnd:      o.NewPeriodEnd,
 			Credit:            cc.of(o.Credit),
-			Currency:          string(o.Currency),
 			GiftDaysLost:      o.GiftDaysLost,
 			TrafficUsed:       o.TrafficUsed,
 			TrafficCap:        o.TrafficCap,
-			PackRemaining:     o.PackRemaining,
 			Due:               cc.of(o.Due),
 			BelowMinimum:      o.BelowMinimum,
 			UnavailableReason: o.Unavailable,

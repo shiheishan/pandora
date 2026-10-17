@@ -1,0 +1,287 @@
+/* RateScheduleEditor 样式 */
+.scheduleList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.scheduleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeInput {
+  width: 90px;
+  flex-shrink: 0;
+}
+
+.rateInput {
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.sep {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  user-select: none;
+}
+
+.errorText {
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.section:last-child {
+  border-bottom: none;
+}
+
+.sectionTitle {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.sectionDesc {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.limitRow {
+  display: flex;
+  gap: 12px;
+}
+
+.limitField {
+  flex: 1;
+}
+
+.usageRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.usageText {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.loadBar {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.loadFill {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.warm {
+  background: var(--warn);
+}
+
+.hot {
+  background: var(--danger);
+}
+
+.exceededBox {
+  margin-top: 6px;
+}
+
+.exceededHint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  margin-top: 4px;
+}
+
+.modalNotice {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.formFooter {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 16px;
+}
+
+/* NodeAccess 样式 */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cardTitleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.cardDesc {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.relayList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.relayItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  gap: 12px;
+}
+
+.relayMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.relayName {
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-body);
+}
+
+.relayAddr {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.relayExtra {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.relayControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.checkboxAlign {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 8px;
+}
+
+.echPemBox {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.echPemHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pemArea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  resize: vertical;
+}
+
+.modalForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.echInfoRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.echInfoLabel {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.warnTagRow {
+  margin-top: 8px;
+}
+
+.btnRow {
+  margin-top: 8px;
+}
+
+@media (max-width: 639px) {
+  .limitRow {
+    flex-direction: column;
+  }
+
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .relayItem {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .relayControls {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

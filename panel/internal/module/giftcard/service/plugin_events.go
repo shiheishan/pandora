@@ -1,34 +1,16 @@
 package service
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 )
 
-// PluginEvents 是插件钩子的出站事件口，由 plugin 模块实现、装配时注入。
-// Emit 在调用方的事务里（ctx 带事务时）写一条待投递记录，事件与业务变更同生共死；
-// payload 是插件收到的 JSON 正文。dedupeKey 相同的事件只投递一次。
-type PluginEvents interface {
-	Emit(ctx context.Context, event, dedupeKey string, payload any) error
-}
+// UsePluginEvents 注入插件事件口（plugin 模块实现，见 internal/pkg/pluginevents）。
+func (s *Service) UsePluginEvents(p pluginevents.Emitter) { s.events = p }
 
-// UsePluginEvents 注入插件事件口。
-func (s *Service) UsePluginEvents(p PluginEvents) { s.events = p }
-
-// PluginEventsWired 报告事件口是否已注入（装配完成后检查）。
-func (s *Service) PluginEventsWired() bool { return s.events != nil }
-
-// emitPlugin 发一个插件事件；没注入事件口时什么都不做。
-func (s *Service) emitPlugin(ctx context.Context, event, dedupeKey string, payload map[string]any) error {
-	if s.events == nil {
-		return nil
-	}
-	return s.events.Emit(ctx, event, dedupeKey, payload)
-}
-
-// pluginGranted 是 giftcard.redeemed 事件里的 granted：字段名与旧代码的兑换记录一致，没有的项不出现；金额是分。
+// pluginGranted 是 giftcard.redeemed 事件里的 granted：字段名是插件事件口径（产品决定），没有的项不出现；金额是分。
 // 金额换算失败时返回错误，让兑换失败。
 func pluginGranted(g granted) (map[string]any, error) {
 	m := map[string]any{}
@@ -66,7 +48,6 @@ func pluginGranted(g granted) (map[string]any, error) {
 			return nil, fmt.Errorf("套餐退款: %w", err)
 		}
 		m["plan_refund"] = cents
-		m["refund_currency"] = string(g.refundCur)
 	}
 	if g.ledgerTxn != nil {
 		m["ledger_txn_id"] = g.ledgerTxn.String()

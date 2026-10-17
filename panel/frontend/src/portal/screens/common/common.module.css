@@ -12,10 +12,16 @@
 }
 
 /* ===========================================================================
- * 本期用量
+ * 本期用量（UsageCard 的白底大圆角卡，样稿 v5 的卡面）
  * ========================================================================= */
 .usage {
-  gap: var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-radius: 22px;
+  padding: 20px 22px;
+  background: var(--surface);
+  box-shadow: var(--lift);
 }
 
 .usageHead {
@@ -40,6 +46,8 @@
 }
 
 .usageName {
+  margin: 0;
+  font-size: 16px;
   font-weight: var(--fw-semibold);
 }
 
@@ -113,12 +121,11 @@
 }
 
 .bar,
-.barToday,
-.barFuture {
+.barToday {
   flex: 1;
   min-width: 0;
   border-radius: 3px 3px 1px 1px;
-  background: var(--border-hover);
+  background: var(--brand-soft);
 }
 
 .barToday {

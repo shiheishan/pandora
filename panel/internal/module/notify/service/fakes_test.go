@@ -36,10 +36,14 @@ type fakeSettings struct {
 	setRegErr  error
 	calls      []string
 
-	// Telegram 设置（P6）
+	// Telegram 设置
 	tg       settingssvc.Telegram
 	setTg    *settingssvc.TelegramUpdate
 	setTgErr error
+
+	tgx       settingssvc.TelegramExtras
+	setTgx    *settingssvc.TelegramExtras
+	setTgxErr error
 }
 
 func (f *fakeSettings) Mail(context.Context) (settingssvc.Mail, error) { return f.mail, nil }
@@ -75,6 +79,17 @@ func (f *fakeSettings) SetTelegram(_ context.Context, v settingssvc.TelegramUpda
 	f.calls = append(f.calls, "SetTelegram")
 	f.setTg = &v
 	return f.setTgErr
+}
+
+func (f *fakeSettings) TelegramExtras(context.Context) (settingssvc.TelegramExtras, error) {
+	return f.tgx, nil
+}
+
+func (f *fakeSettings) SetTelegramExtras(_ context.Context, v settingssvc.TelegramExtras) error {
+	f.calls = append(f.calls, "SetTelegramExtras")
+	f.setTgx = &v
+	f.tgx = v
+	return f.setTgxErr
 }
 
 // configuredMail 是一份齐全的 SMTP 配置。

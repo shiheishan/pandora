@@ -10,11 +10,14 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Service 是 handler 用到的 payment service 方法；*service.Service 实现它。
 type Service interface {
-	PaymentMethods(ctx context.Context) ([]service.PaymentMethod, error)
+	PaymentMethods(ctx context.Context, amount *decimal.Decimal) ([]service.PaymentMethod, error)
+	PaymentSettings(ctx context.Context) (service.PaymentSettings, error)
+	SetPaymentSettings(ctx context.Context, notifyBaseURL string) error
 	HandleWebhook(ctx context.Context, code string, in provider.Inbound) (provider.AckOutput, error)
 	ListProviders(ctx context.Context) ([]service.ProviderView, error)
 	CreateProvider(ctx context.Context, in service.CreateProviderInput) (service.ProviderWriteResult, error)
@@ -33,7 +36,7 @@ type Handler struct {
 	lim *ratelimit.Limiter
 }
 
-// WebhookPerIPPerMin 是渠道回调每个来源 IP 每分钟的上限。旧代码不限；渠道正常重试远低于这个数，
+// WebhookPerIPPerMin 是渠道回调每个来源 IP 每分钟的上限。渠道正常重试远低于这个数，
 // 只为挡住刷验签失败的请求。非严格模式：Redis 故障时放行，不让限流挡掉真回调。
 const WebhookPerIPPerMin = 120
 
@@ -64,4 +67,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.PUT("/payment-providers/:code", k.RequireAuth, k.RecentReauth, k.Idempotency(UpdateProviderScope), h.updateProvider)
 	v1.GET("/late-payments", k.RequireAuth, h.listLatePayments)
 	v1.POST("/late-payments/:id/apply-to-balance", k.RequireAuth, k.RecentReauth, k.Idempotency(ApplyLateScope), h.applyLatePayment)
+	v1.GET("/payment-settings", k.RequireAuth, h.getPaymentSettings)
+	v1.PUT("/payment-settings", k.RequireAuth, k.RecentReauth, h.putPaymentSettings)
 }

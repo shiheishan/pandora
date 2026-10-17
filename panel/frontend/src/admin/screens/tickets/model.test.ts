@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { queueSchema } from './api'
-import { assigneeOptions, isFilter, messageTime, messageView, queueParams, slaLines, STATUS_OPTIONS, statusView, systemText, waitLabel } from './model'
+import { assigneeOptions, CLOSED_REASON_LABELS, dayLabel, isFilter, messageTime, messageView, queueParams, shortNo, slaLines, STATUS_OPTIONS, statusView, systemText, waitLabel } from './model'
 
 const NOW = new Date('2026-09-24T12:00:00')
 const ago = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000).toISOString()
@@ -46,10 +46,15 @@ describe('状态', () => {
 })
 
 describe('等待时长与 SLA', () => {
-  it('等待 = now − last_reply_at；SLA 超时标红；结束的不算等待', () => {
-    expect(waitLabel({ status: 'open', last_reply_at: ago(18) }, NOW)).toEqual({ text: '等待 18 分钟', late: false })
-    expect(waitLabel({ status: 'pending_agent', last_reply_at: ago(184), sla_breached: true }, NOW)).toEqual({ text: '等待 3 小时 4 分 · SLA 超时', late: true })
-    expect(waitLabel({ status: 'resolved', last_reply_at: ago(5) }, NOW)).toEqual({ text: '已结束', late: false })
+  it('等待 = now − last_reply_at；等用户的给「已回复」；SLA 超时单独标；结束的不算等待', () => {
+    expect(waitLabel({ status: 'open', last_reply_at: ago(18) }, NOW)).toEqual({ text: '等 18 分钟', late: false })
+    expect(waitLabel({ status: 'pending_agent', last_reply_at: ago(184), sla_breached: true }, NOW)).toEqual({ text: '等 3 小时 4 分', late: true })
+    expect(waitLabel({ status: 'pending_user', last_reply_at: ago(30), sla_breached: true }, NOW)).toEqual({ text: '已回复', late: true })
+    expect(waitLabel({ status: 'resolved', last_reply_at: ago(5), sla_breached: true }, NOW)).toEqual({ text: '已结束', late: false })
+  })
+
+  it('短编号取工单号后 6 位', () => {
+    expect(shortNo('TK20261016-0000A4821')).toBe('0A4821')
   })
 
   it('首次响应：已响应 / 剩余 / 超时；解决时限随状态', () => {
@@ -86,6 +91,13 @@ describe('消息', () => {
     expect(systemText('首次响应超时，系统自动升级')).toBe('首次响应超时，系统自动升级')
   })
 
+  it('日期分隔：今天 / 昨天 / 月日，跨年带年份', () => {
+    expect(dayLabel('2026-09-24T00:10:00', NOW)).toBe('今天')
+    expect(dayLabel('2026-09-23T23:59:00', NOW)).toBe('昨天')
+    expect(dayLabel('2026-09-02T08:00:00', NOW)).toBe('09-02')
+    expect(dayLabel('2025-12-31T23:59:00', NOW)).toBe('2025-12-31')
+  })
+
   it('时间：今天只给时分，更早给月日，跨年带年份', () => {
     expect(messageTime('2026-09-24T09:05:00', NOW)).toBe('09:05')
     expect(messageTime('2026-09-22T11:20:00', NOW)).toBe('09-22 11:20')
@@ -119,6 +131,10 @@ describe('schema', () => {
     created_at: ago(10),
     updated_at: ago(10),
     resolved_at: null,
+    user_id: 'u',
+    user_email: 'a@example.test',
+    sla_first_response_due: later(30),
+    sla_resolution_due: later(600),
     message_count: 1,
     last_reply_at: ago(10),
     closed_reason: null,
@@ -129,10 +145,23 @@ describe('schema', () => {
     expect(queueSchema.safeParse({ tickets: [row], total: 1 }).success).toBe(true)
   })
 
+  it('closed_reason 支持 auto_closed 且标签是「自动关闭」', () => {
+    expect(queueSchema.safeParse({ tickets: [{ ...row, status: 'closed', closed_reason: 'auto_closed' }], total: 1 }).success).toBe(true)
+    expect(CLOSED_REASON_LABELS.auto_closed).toBe('自动关闭')
+  })
+
   it('封闭枚举之外的状态、缺 closed_reason 都判为不符约定', () => {
     expect(queueSchema.safeParse({ tickets: [{ ...row, status: 'withdrawn' }], total: 1 }).success).toBe(false)
     const missing: Record<string, unknown> = { ...row }
     delete missing.closed_reason
     expect(queueSchema.safeParse({ tickets: [missing], total: 1 }).success).toBe(false)
+  })
+
+  it('Go 没有 omitempty 的 user_id、user_email、两个 sla_*_due 缺了判为不符约定', () => {
+    for (const key of ['user_id', 'user_email', 'sla_first_response_due', 'sla_resolution_due']) {
+      const missing: Record<string, unknown> = { ...row }
+      delete missing[key]
+      expect(queueSchema.safeParse({ tickets: [missing], total: 1 }).success, key).toBe(false)
+    }
   })
 })

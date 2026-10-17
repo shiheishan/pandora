@@ -162,3 +162,57 @@ func TestUncommittedInvisibleOutsideTx(t *testing.T) {
 		t.Fatal("提交后应可见")
 	}
 }
+
+// InTx 只认 Do 的回调：外面已有的事务（如 testkit.TxCtx）不算，Do 回调里（新开或加入）都算，Do 返回后又不算。
+func TestInTxOnlyInsideDo(t *testing.T) {
+	outer := db.WithTxState(context.Background(), db.NewTxState(nil))
+	if InTx(outer) {
+		t.Fatal("Do 之外不应算在事务里")
+	}
+	m := &Manager{}
+	var inside bool
+	if err := m.Do(outer, func(ctx context.Context) error {
+		inside = InTx(ctx)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !inside {
+		t.Fatal("Do 回调里应算在事务里")
+	}
+	if InTx(outer) {
+		t.Fatal("Do 返回后外层 ctx 不应带标记")
+	}
+}
+
+// 新开事务的分支（生产里 order.Pay 走的就是这条）：回调里 InTx 为真且确实拿到了事务；提交后的钩子与 Do 返回后都不算在事务里。
+func TestInTxNewTxBranch(t *testing.T) {
+	d := openTestDB(t)
+	m := NewManager(d)
+	ctx := context.Background()
+	var inside, hasTxState, hookInTx bool
+	hookRan := false
+	if err := m.Do(ctx, func(ctx context.Context) error {
+		inside = InTx(ctx)
+		hasTxState = db.InTx(ctx)
+		AfterCommit(ctx, "", func(ctx context.Context) {
+			hookRan = true
+			hookInTx = InTx(ctx)
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !inside || !hasTxState {
+		t.Fatalf("新开事务的回调里应算在事务里：InTx=%v 有事务=%v", inside, hasTxState)
+	}
+	if !hookRan {
+		t.Fatal("提交后钩子应已执行")
+	}
+	if hookInTx {
+		t.Fatal("提交后钩子拿到的 ctx 不应算在事务里")
+	}
+	if InTx(ctx) {
+		t.Fatal("Do 返回后外层 ctx 不应带标记")
+	}
+}

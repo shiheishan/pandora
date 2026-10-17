@@ -1,0 +1,133 @@
+/* 订阅：每份一行（kit RowList）装进带框盒子；不设 overflow，免得裁掉「操作」菜单 */
+.subBox {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.planVer {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+/* 流量与设备并排，窄屏换行 */
+.subFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12.5px;
+}
+
+/* 「操作」菜单的触发按钮：照次按钮的小号外观 */
+.menuTrigger {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.menuTrigger:hover {
+  background: var(--surface-2);
+}
+
+.dim {
+  color: var(--text-3);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.toneWarn {
+  color: var(--warn);
+}
+
+.toneDanger {
+  color: var(--danger);
+}
+
+/* 订单表：订单号（样稿 .oid） */
+.oid {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+}
+
+/* 订单与余额 */
+.ordersTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.balanceBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.balanceLabel {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.balanceAmount {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* BalanceForm：方向分段 + 金额 + 原因 + 取消/确认；窄屏换行 */
+.balanceForm {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.balanceFormActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+@media (max-width: 639px) {
+  .balanceFormActions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+.allOrdersLink {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--info);
+  text-decoration: none;
+}
+
+.allOrdersLink:hover {
+  text-decoration: underline;
+}

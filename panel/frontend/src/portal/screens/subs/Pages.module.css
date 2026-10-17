@@ -1,0 +1,197 @@
+/* 我的套餐子页共用（换个套餐 / 再买一份 / 流量不够 / 节点和每天用量）。
+ * 样稿 portal-v5：白底大圆角卡、kit 令牌；断点只有 959 与 639。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.narrow {
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.card {
+  border-radius: 22px;
+  padding: 20px 22px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+}
+
+/* 「你现在是…」那块（样稿 .ck-what 的底） */
+.now {
+  margin: 0;
+  border-radius: 16px;
+  padding: 16px 18px;
+  background:
+    radial-gradient(420px 140px at 0% 0%, var(--brand-soft), transparent 80%),
+    var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.now b {
+  font-weight: 600;
+}
+
+/* 换个套餐的选项列表（一行一个白底卡，样稿 .tiers） */
+.opts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+}
+
+.optText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.optName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.optFacts {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.optResult {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-ink);
+}
+
+.faint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.lead {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.lead b {
+  font-weight: 600;
+}
+
+/* 再买一份的套餐卡网格（照选购页 .plans；手机不隐藏，收成一列） */
+.plans {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+/* 节点与每天用量两块 */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 18px;
+  align-items: start;
+}
+
+/* 节点列表 */
+.nodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.node {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.node:first-child {
+  border-top: 0;
+}
+
+.nodeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+  font-weight: 500;
+}
+
+.nodeProto {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* 节点卡头部：标题 + 右侧说明 */
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.cardHead h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cardHead > span {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+/* 节点加载骨架的间距 */
+.nodeLoad {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 0 2px;
+}
+
+@media (max-width: 959px) {
+  .card {
+    padding: 18px;
+    border-radius: 20px;
+  }
+
+  .opt {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .plans {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -62,24 +62,24 @@ func TestServingSubscriptionsPG(t *testing.T) {
 	u2 := newUser(t, e, ctx)
 	subNoQuota := provision(t, e, ctx, u2, planNQ, verNoQuota, "无配额")
 
-	// 配额用尽、无流量包
+	// 配额用尽、没有送的量
 	u3 := newUser(t, e, ctx)
 	subQuotaOut := provision(t, e, ctx, u3, planQ, verQuota, "配额用尽")
 	setConsumed(t, e, ctx, subQuotaOut.ID, MetricTraffic, PeriodCycle, gib)
 
-	// 配额用尽、流量包有余量
+	// 配额用尽、送的流量有余量
 	u4 := newUser(t, e, ctx)
-	subPackLeft := provision(t, e, ctx, u4, planQ, verQuota, "包有余")
-	setConsumed(t, e, ctx, subPackLeft.ID, MetricTraffic, PeriodCycle, gib)
-	e.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes, consumed_bytes)
-		VALUES (?, ?, 'admin', ?, 100, 10)`, u4, subPackLeft.ID, uuid.New())
+	subBonusLeft := provision(t, e, ctx, u4, planQ, verQuota, "送量有余")
+	setConsumed(t, e, ctx, subBonusLeft.ID, MetricTraffic, PeriodCycle, gib)
+	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		100, subBonusLeft.ID, MetricTraffic, PeriodCycle)
 
-	// 配额用尽、流量包也用完
+	// 配额与送的流量都用尽
 	u5 := newUser(t, e, ctx)
-	subPackOut := provision(t, e, ctx, u5, planQ, verQuota, "包用尽")
-	setConsumed(t, e, ctx, subPackOut.ID, MetricTraffic, PeriodCycle, gib)
-	e.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes, consumed_bytes)
-		VALUES (?, ?, 'admin', ?, 100, 100)`, u5, subPackOut.ID, uuid.New())
+	subBonusOut := provision(t, e, ctx, u5, planQ, verQuota, "送量用尽")
+	setConsumed(t, e, ctx, subBonusOut.ID, MetricTraffic, PeriodCycle, gib+100)
+	e.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		100, subBonusOut.ID, MetricTraffic, PeriodCycle)
 
 	// expired
 	u6 := newUser(t, e, ctx)
@@ -98,11 +98,11 @@ func TestServingSubscriptionsPG(t *testing.T) {
 	e.exec(t, ctx, `UPDATE subscriptions SET device_limit = 0 WHERE id = ?`, subDevZero.ID)
 
 	tracked := []uuid.UUID{
-		subActive.ID, subNoQuota.ID, subQuotaOut.ID, subPackLeft.ID, subPackOut.ID,
+		subActive.ID, subNoQuota.ID, subQuotaOut.ID, subBonusLeft.ID, subBonusOut.ID,
 		subExpired.ID, subPastEnd.ID, subDevZero.ID,
 	}
 	wantIn := map[uuid.UUID]bool{
-		subActive.ID: true, subNoQuota.ID: true, subPackLeft.ID: true, subDevZero.ID: true,
+		subActive.ID: true, subNoQuota.ID: true, subBonusLeft.ID: true, subDevZero.ID: true,
 	}
 
 	list, err := e.svc.ServingSubscriptions(ctx)
@@ -129,8 +129,8 @@ func TestServingSubscriptionsPG(t *testing.T) {
 	uid, proxy, end = subNodeFields(t, e, ctx, subNoQuota.ID)
 	assertServingFields(t, byID[subNoQuota.ID], uid, proxy, u2, verNoQuota, end)
 
-	uid, proxy, end = subNodeFields(t, e, ctx, subPackLeft.ID)
-	assertServingFields(t, byID[subPackLeft.ID], uid, proxy, u4, verQuota, end)
+	uid, proxy, end = subNodeFields(t, e, ctx, subBonusLeft.ID)
+	assertServingFields(t, byID[subBonusLeft.ID], uid, proxy, u4, verQuota, end)
 
 	uid, proxy, end = subNodeFields(t, e, ctx, subDevZero.ID)
 	assertServingFields(t, byID[subDevZero.ID], uid, proxy, u8, verQuota, end)

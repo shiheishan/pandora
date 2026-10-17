@@ -11,7 +11,6 @@ import (
 	promosvc "github.com/aegispanel/aegis/internal/module/promo/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // applyQuoteBalances 给一条报价算「用余额」与「不用余额」两种付法；waive 为真时付不了的零头可以免（只有换套餐）。
@@ -20,33 +19,33 @@ func applyQuoteBalances(q *Quote, balance, minPay decimal.Decimal, waive bool) {
 	q.WithoutBalance = WaiveSmallDue(PlanBalance(q.Total, balance, decimal.Zero, minPay), waive)
 }
 
-// finalizeQuoteResult 补上币种、可用余额与最低付款额，并给每条报价算两种付法；与结果币种不同的报价不计余额。
+// finalizeQuoteResult 补上可用余额与最低付款额，并给每条报价算两种付法。
 func finalizeQuoteResult(ctx context.Context, s *Service, userID uuid.UUID, out QuoteResult, waive bool) (QuoteResult, error) {
-	if len(out.Quotes) > 0 {
-		out.Currency = out.Quotes[0].Currency
-	}
-	if out.Currency == "" {
-		out.Currency = money.CNY
-	}
-	bal, err := s.ledger.Balance(ctx, userID, out.Currency)
+	bal, err := s.ledger.Balance(ctx, userID)
 	if err != nil {
 		return QuoteResult{}, err
 	}
 	out.Balance = bal
-	minPay, err := s.payments.MinPayment(ctx, out.Currency)
+	minPay, err := s.payments.MinPayment(ctx)
 	if err != nil {
 		return QuoteResult{}, err
 	}
 	out.MinPayment = minPay
 	for i := range out.Quotes {
-		q := &out.Quotes[i]
-		avail := bal
-		if q.Currency != out.Currency {
-			avail = decimal.Zero
-		}
-		applyQuoteBalances(q, avail, minPay, waive)
+		applyQuoteBalances(&out.Quotes[i], bal, minPay, waive)
 	}
 	return out, nil
+}
+
+// priceSnap 把目录价格档映射为订阅的价格快照（用于计算期末时间等）。
+func priceSnap(p catalogsvc.Price) subsvc.PriceSnapshot {
+	return subsvc.PriceSnapshot{
+		PriceID:       &p.ID,
+		Amount:        p.UnitAmount,
+		Interval:      p.BillingInterval,
+		IntervalCount: p.IntervalCount,
+		ValidityDays:  p.ValidityDays,
+	}
 }
 
 // quoteNewLines 新购报价：套餐每个可用价格档一条，周期从现在起算。
@@ -68,6 +67,9 @@ func quoteNewLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteIn
 		if _, ok, err := s.subs.RenewableForPlan(ctx, userID, planID, false); err != nil {
 			return nil, err
 		} else if ok {
+			if op.Plan.Kind == catalogsvc.KindOneTime {
+				return nil, ErrSamePlanUseStack
+			}
 			return nil, ErrSamePlanUseRenewal
 		}
 	}
@@ -76,22 +78,22 @@ func quoteNewLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteIn
 	}
 	out := make([]Quote, 0, len(op.Prices))
 	for _, p := range op.Prices {
-		periodEnd := subsvc.AddInterval(now, p.BillingInterval, p.IntervalCount)
+		periodEnd := subsvc.PeriodEndFor(now, priceSnap(p))
 		ps := now
 		pe := periodEnd
 		q := Quote{
 			PlanID:        &planID,
 			PriceID:       &p.ID,
-			Currency:      p.Currency,
 			Interval:      p.BillingInterval,
 			IntervalCount: p.IntervalCount,
+			ValidityDays:  p.ValidityDays,
 			Subtotal:      p.UnitAmount,
 			Credit:        decimal.Zero,
 			Refund:        decimal.Zero,
 			PeriodStart:   &ps,
 			PeriodEnd:     &pe,
 		}
-		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.Currency, p.UnitAmount)
+		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.UnitAmount)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +107,7 @@ func quoteNewLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteIn
 }
 
 // quoteCouponEval 试算优惠码：码不能用时只把中文原因放进 CouponError，不让整个报价失败。
-func quoteCouponEval(ctx context.Context, s *Service, userID uuid.UUID, rawCode string, planID *uuid.UUID, currency money.Currency, subtotal decimal.Decimal) (decimal.Decimal, *string, *string, error) {
+func quoteCouponEval(ctx context.Context, s *Service, userID uuid.UUID, rawCode string, planID *uuid.UUID, subtotal decimal.Decimal) (decimal.Decimal, *string, *string, error) {
 	code := promosvc.NormalizeCode(rawCode)
 	if code == "" {
 		return decimal.Zero, nil, nil, nil
@@ -113,7 +115,6 @@ func quoteCouponEval(ctx context.Context, s *Service, userID uuid.UUID, rawCode 
 	applied, err := s.promo.Evaluate(ctx, code, promosvc.Target{
 		UserID:   userID,
 		PlanID:   planID,
-		Currency: string(currency),
 		Subtotal: subtotal,
 	})
 	if promosvc.IsRejection(err) {
@@ -161,16 +162,16 @@ func quoteRenewLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 	subID := sub.ID
 	out := make([]Quote, 0, len(op.Prices))
 	for _, p := range op.Prices {
-		periodEnd := subsvc.AddInterval(base, p.BillingInterval, p.IntervalCount)
+		periodEnd := subsvc.PeriodEndFor(base, priceSnap(p))
 		ps := base
 		pe := periodEnd
 		q := Quote{
 			SubscriptionID: &subID,
 			PlanID:         &planID,
 			PriceID:        &p.ID,
-			Currency:       p.Currency,
 			Interval:       p.BillingInterval,
 			IntervalCount:  p.IntervalCount,
+			ValidityDays:   p.ValidityDays,
 			Subtotal:       p.UnitAmount,
 			Credit:         decimal.Zero,
 			Refund:         decimal.Zero,
@@ -178,7 +179,7 @@ func quoteRenewLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 			PeriodEnd:      &pe,
 			PreviousEnd:    &prev,
 		}
-		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.Currency, p.UnitAmount)
+		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.UnitAmount)
 		if err != nil {
 			return nil, err
 		}
@@ -191,41 +192,61 @@ func quoteRenewLines(ctx context.Context, s *Service, userID uuid.UUID, in Quote
 	return out, nil
 }
 
-// quotePackLines 流量包报价：一条；给了目标订阅时校验归属与可用。
-func quotePackLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteInput) ([]Quote, error) {
-	if in.PackID == nil || *in.PackID == uuid.Nil {
-		return nil, errs.Invalid(map[string]string{"pack_id": "必填"})
+// quoteStackLines 叠加报价：一次性套餐叠加到原订阅。
+func quoteStackLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteInput, now time.Time) ([]Quote, error) {
+	if in.SubscriptionID == nil || *in.SubscriptionID == uuid.Nil {
+		return nil, errs.Invalid(map[string]string{"subscription_id": "必填"})
 	}
-	pack, err := s.catalog.PackOffer(ctx, *in.PackID, false)
+	sub, err := s.subs.Get(ctx, *in.SubscriptionID, &userID)
 	if err != nil {
 		return nil, err
 	}
-	if in.SubscriptionID != nil && *in.SubscriptionID != uuid.Nil {
-		if err := s.subs.CheckPackTarget(ctx, userID, *in.SubscriptionID); err != nil {
+	if !sub.StateAt(now).AcceptsChange() {
+		return nil, subsvc.ErrRenewalWindowClosed
+	}
+	uid := userID
+	op, err := s.catalog.PlanOffers(ctx, sub.PlanID, catalogsvc.OfferRequest{
+		Use:    catalogsvc.UseStack,
+		UserID: &uid,
+		PlanID: &sub.PlanID,
+		Now:    now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	planID := sub.PlanID
+	subID := sub.ID
+	prev := sub.PeriodEnd
+	out := make([]Quote, 0, len(op.Prices))
+	for _, p := range op.Prices {
+		snap := priceSnap(p)
+		pe := subsvc.StackEnd(sub.PeriodEnd, now, snap)
+		ps := sub.PeriodStart
+		q := Quote{
+			SubscriptionID: &subID,
+			PlanID:         &planID,
+			PriceID:        &p.ID,
+			Interval:       p.BillingInterval,
+			IntervalCount:  p.IntervalCount,
+			ValidityDays:   p.ValidityDays,
+			Subtotal:       p.UnitAmount,
+			Credit:         decimal.Zero,
+			Refund:         decimal.Zero,
+			PeriodStart:    &ps,
+			PeriodEnd:      &pe,
+			PreviousEnd:    &prev,
+		}
+		disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, &planID, p.UnitAmount)
+		if err != nil {
 			return nil, err
 		}
+		q.Discount = disc
+		q.CouponCode = cc
+		q.CouponError = ce
+		q.Total = OrderTotal(q.Subtotal, q.Discount, decimal.Zero)
+		out = append(out, q)
 	}
-	packID := pack.ID
-	q := Quote{
-		PackID:   &packID,
-		Currency: pack.Currency,
-		Subtotal: pack.UnitAmount,
-		Credit:   decimal.Zero,
-		Refund:   decimal.Zero,
-	}
-	if in.SubscriptionID != nil && *in.SubscriptionID != uuid.Nil {
-		sid := *in.SubscriptionID
-		q.SubscriptionID = &sid
-	}
-	disc, cc, ce, err := quoteCouponEval(ctx, s, userID, in.CouponCode, nil, pack.Currency, pack.UnitAmount)
-	if err != nil {
-		return nil, err
-	}
-	q.Discount = disc
-	q.CouponCode = cc
-	q.CouponError = ce
-	q.Total = OrderTotal(q.Subtotal, q.Discount, decimal.Zero)
-	return []Quote{q}, nil
+	return out, nil
 }
 
 // Quote 门户统一报价（不加锁、不写库）。
@@ -246,12 +267,14 @@ func (s *Service) Quote(ctx context.Context, in QuoteInput) (QuoteResult, error)
 		lines, err = quoteNewLines(ctx, s, userID, in, now)
 	case QuoteRenew:
 		lines, err = quoteRenewLines(ctx, s, userID, in, now)
-	case QuotePack:
-		lines, err = quotePackLines(ctx, s, userID, in)
+	case QuoteStack:
+		lines, err = quoteStackLines(ctx, s, userID, in, now)
 	case QuoteChange:
 		lines, err = quoteChangeLines(ctx, s, userID, in, now)
+	case QuoteReset:
+		lines, err = quoteResetLines(ctx, s, userID, in, now)
 	default:
-		return QuoteResult{}, errs.Invalid(map[string]string{"action": "只能是 renew、change、new 或 pack"})
+		return QuoteResult{}, errs.Invalid(map[string]string{"action": "只能是 new、renew、stack、change 或 reset"})
 	}
 	if err != nil {
 		return QuoteResult{}, err

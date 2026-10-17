@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/module/order/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
@@ -142,37 +143,25 @@ func (h *Handler) createPlanChange(c *gin.Context) {
 	writeCreated(c, created)
 }
 
-// createPackOrder 门户流量包下单：必须选加到哪一份。
-func (h *Handler) createPackOrder(c *gin.Context) {
-	var req createPackOrderRequest
+// createStack 门户叠加：叠加到哪一份由路径给出，price_id 为空取套餐当前在售价。
+func (h *Handler) createStack(c *gin.Context) {
+	subID, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req createStackRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	fields := map[string]string{}
-	if strings.TrimSpace(req.PackID) == "" {
-		fields["pack_id"] = "必填"
-	}
-	if strings.TrimSpace(req.SubscriptionID) == "" {
-		fields["subscription_id"] = "请选择加到哪一份"
-	}
-	if len(fields) > 0 {
-		httpx.Fail(c, errs.Invalid(fields))
-		return
-	}
-	packID, err := parseID("pack_id", req.PackID)
+	priceID, err := optID("price_id", req.PriceID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	subID, err := parseID("subscription_id", req.SubscriptionID)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	created, err := h.svc.CreatePackOrder(c.Request.Context(), service.PackOrderInput{
-		PackID:         packID,
+	created, err := h.svc.CreateStackOrder(c.Request.Context(), service.StackOrderInput{
 		SubscriptionID: subID,
+		PriceID:        priceID,
 		Checkout:       req.checkout(),
 		Reply:          createdReply,
 	})
@@ -183,21 +172,36 @@ func (h *Handler) createPackOrder(c *gin.Context) {
 	writeCreated(c, created)
 }
 
-// createTopup 门户充值（200，旧代码口径）。
+// landings 买某个套餐时的落点选项（query plan_id）。
+func (h *Handler) landings(c *gin.Context) {
+	planRaw := strings.TrimSpace(c.Query("plan_id"))
+	if planRaw == "" {
+		httpx.Fail(c, errs.Invalid(map[string]string{"plan_id": "请选择套餐"}))
+		return
+	}
+	planID, err := uuid.Parse(planRaw)
+	if err != nil {
+		httpx.Fail(c, errs.Invalid(map[string]string{"plan_id": "请选择套餐"}))
+		return
+	}
+	res, err := h.svc.Landings(c.Request.Context(), planID)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, landingsFrom(res))
+}
+
+// createTopup 门户充值（200）。
 func (h *Handler) createTopup(c *gin.Context) {
 	var req createTopupRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	if err := rejectNUL(map[string]string{"currency": req.Currency}); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
 	created, err := h.svc.CreateTopup(c.Request.Context(), service.TopupInput{
-		Amount:   money.FromCents(req.Amount),
-		Currency: money.Currency(strings.TrimSpace(req.Currency)),
-		Reply:    topupReply,
+		Amount: money.FromCents(req.Amount),
+		Reply:  topupReply,
 	})
 	if err != nil {
 		httpx.Fail(c, err)
@@ -232,10 +236,6 @@ func (h *Handler) quote(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	if in.PackID, err = optID("pack_id", req.PackID); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
 	res, err := h.svc.Quote(c.Request.Context(), in)
 	if err != nil {
 		httpx.Fail(c, err)
@@ -255,6 +255,18 @@ func (h *Handler) pay(c *gin.Context) {
 	if !ok {
 		return
 	}
+	ctx := c.Request.Context()
+	if h.lim != nil {
+		p, ok := authn.From(ctx)
+		if !ok {
+			httpx.Fail(c, errs.New(errs.Unauthorized))
+			return
+		}
+		if err := h.lim.Allow(ctx, ratelimit.PerMinute("order_pay", PayPerMinute), p.UserID.String()); err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+	}
 	var req payRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
@@ -264,7 +276,7 @@ func (h *Handler) pay(c *gin.Context) {
 		httpx.Fail(c, errs.Invalid(map[string]string{"provider": "必填"}))
 		return
 	}
-	res, err := h.svc.Pay(c.Request.Context(), service.PayInput{
+	res, err := h.svc.Pay(ctx, service.PayInput{
 		OrderID:   id,
 		Provider:  strings.TrimSpace(req.Provider),
 		Method:    strings.TrimSpace(req.Method),

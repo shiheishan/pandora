@@ -24,12 +24,15 @@ describe('mock api · portal', () => {
     expect((await consume()).status).toBe(401)
   })
 
-  it('serves a plan catalog the page schema accepts, with R99 throttle and R100 highlights / recommended', async () => {
-    const res = (await (await fetch(`${base}/v1/plans`)).json()) as { plans: unknown[] }
+  it('serves a plan catalog the page schema accepts: two kinds, throttle, recommended, reset price, no highlights or currency', async () => {
+    const res = (await (await fetch(`${base}/v1/plans`)).json()) as { plans: Array<Record<string, unknown>> }
     const plans = res.plans.map((p) => planSchema.parse(p))
-    expect(plans.filter((p) => p.recommended).map((p) => p.code)).toEqual(['pro'])
-    expect(plans.find((p) => p.code === 'fam')).toMatchObject({ throttle_kbps: 100_000, highlights: ['适合家庭与小团队'] })
-    expect(plans.every((p) => p.highlights.length <= 5)).toBe(true)
+    expect(plans.filter((p) => p.recommended).map((p) => p.name)).toEqual(['专业版'])
+    expect(plans.find((p) => p.name === '家庭版')).toMatchObject({ kind: 'subscription', throttle_kbps: 100_000, reset: { price: 1500, limit: null } })
+    expect(plans.find((p) => p.name === '永久版')).toMatchObject({ kind: 'one_time', prices: [{ billing_interval: 'one_time', interval_count: 1, validity_days: null }] })
+    // 关了新购的经典版照样列出（Go 目录 DTO 没有开关字段）
+    expect(plans.some((p) => p.name === '经典版')).toBe(true)
+    for (const raw of res.plans) for (const gone of ['highlights', 'currency', 'quotas', 'code']) expect(Object.keys(raw)).not.toContain(gone)
   })
 
   it('binds quick-login tokens to the issuing session: regenerating voids the previous one', async () => {

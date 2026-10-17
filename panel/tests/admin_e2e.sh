@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
-# 管理控制台端到端（新栈 pandora，与旧 aegis-admin 脚本 11 段对照）。
+# 管理控制台端到端（11 段）。
 #
 # 覆盖：跨域令牌、非管理员登后台、只读接口形状、未认证 401、高风险停用用户、审计、套餐 authoring、
 #       降级开关、支付渠道启停、错误响应不泄露。
 #
-# 与旧版步骤：仍 11 段；保留 db_scalar / parse_registration_start / require_loopback_url / trap 精确恢复。
-#
-# 删掉的旧断言及原因：
-#   - 多租户守卫与库内租户条件：新栈单租户无 RLS。
-#   - 登录响应里的权限码列表与「管理员绑定某租户」：后台只有管理员/非管理员。
-#   - 会话表吊销行数：会话在 Redis；以门户令牌 GET /v1/me → 401/403 代替。
-#   - 审计里的域名列与 digest 摘要列：细节在 audit_events.data（00003_audit.sql）。
-#   - 预置演示支付渠道：改为脚本自建易支付渠道（adm-<STAMP>）。
+# 不测的东西及原因：
+#   - 租户隔离：单租户，没有租户守卫。
+#   - 权限码：后台权限只分有和没有，登录响应不带权限码列表。
+#   - 会话表行数：会话在 Redis；吊销以门户令牌 GET /v1/me → 401/403 验证。
+# 支付渠道由本脚本自建易支付渠道（adm-<STAMP>）；审计细节在 audit_events.data（00003_audit.sql）。
 #
 # SEC-009「超过 15 分钟无近期重认证」本脚本不造过期令牌（成本高）；口令登录算重认证，
 # 覆盖由 auth_e2e.sh 与 Go 单测承担。本节只验刚登录可停用、缺原因 422、令牌失效。
 #
 # 仍用 SQL 的步骤及原因：
 #   - feature_switches / users.status / audit_events / plan_node_pools：断言库内事实或比 API 更稳；
-#   - 可服务节点夹具末尾 UPDATE servers/nodes：e2e job 无节点端，照 p7e2e-common 造发布用节点。
+#   - 可服务节点夹具末尾 UPDATE servers/nodes：e2e job 无节点端，用 SQL 造发布用节点。
 #
 # 环境：PUB、ADM、PSQL、ADMIN_EMAIL、ADMIN_PASS；ADMIN_E2E_DISPOSABLE=YES_DELETE_FIXTURES。
 set -euo pipefail
@@ -195,6 +192,9 @@ require_loopback_url "$PUB" PUB
 DB_NAME=$(db_scalar identifier 'SELECT current_database()')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 registration_parser_selftest \
   || { echo '[FATAL] registration response parser self-test failed' >&2; exit 1; }
 REGISTRATION_ORIGINAL=$(db_scalar bool "SELECT enabled FROM feature_switches WHERE code='auth.registration'")
@@ -278,17 +278,10 @@ sec "4. 只读接口"
 
 O=$(curl -s "$ADM/v1/overview" -H "$AH")
 UT=$(echo "$O" | jqr "['users']['total']")
-RT2=$(echo "$O" | python3 -c "
-import sys,json
-print(' '.join(f\"{r['currency']}:{r['total']}\" for r in json.load(sys.stdin)['revenue']) or 'none')" 2>/dev/null)
+RT2=$(echo "$O" | jqr "['revenue']['total']")
 DRIFT=$(echo "$O" | jqr "['ledger_drift_accounts']")
-[ -n "$UT" ] && ok "仪表盘：用户 $UT 人，累计收入 [$RT2]（分）" || bad "仪表盘异常" "API 响应已隐藏"
+[ -n "$UT" ] && [[ "$RT2" =~ ^-?[0-9]+$ ]] && ok "仪表盘：用户 $UT 人，累计收入 $RT2 分（单币种，整数分）" || bad "仪表盘异常" "API 响应已隐藏"
 
-NCUR=$(echo "$O" | python3 -c "
-import sys,json;d=json.load(sys.stdin)['revenue']
-cs=[r['currency'] for r in d]
-print('dup' if len(cs)!=len(set(cs)) else len(cs))" 2>/dev/null)
-[ "$NCUR" != "dup" ] && ok "收入按币种分组，无重复币种（$NCUR 种）" || bad "同一币种出现多行" ""
 [ "$DRIFT" = "0" ] && ok "账本无漂移账户（PAY-005）" || bad "账本漂移 $DRIFT 个账户" ""
 
 N=$(curl -s "$ADM/v1/users?limit=5" -H "$AH" | jqr "['total']")
@@ -372,7 +365,6 @@ REV=$("$PSQL" -X -qAtc "SELECT data->>'sessions_revoked' FROM audit_events
 sec "8. 套餐 authoring / publish / archive"
 
 CAT_TAG="$STAMP"
-CAT_CODE="adm-e2e-${CAT_TAG}"
 
 admin_auth_fixture_pool(){
   local cipher server_id node_id
@@ -403,83 +395,82 @@ raise SystemExit(1)
 
 admin_auth_fixture_pool || exit 1
 
+# 新建：订阅套餐一步建成草稿（一档月价，先不绑池，下面用专用端点绑）
+CREATE_BODY="{\"kind\":\"subscription\",\"name\":\"后台 E2E $CAT_TAG\",\"visibility\":\"public\",\"traffic_bytes\":10737418240,\"pool_ids\":[],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":100}]}"
 CREATE=$(curl -s -X POST "$ADM/v1/plans" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-create-$CAT_TAG" \
-  -d "{\"code\":\"$CAT_CODE\",\"name\":\"后台 E2E $CAT_TAG\",\"visibility\":\"public\"}")
+  -d "$CREATE_BODY")
 PID=$(echo "$CREATE" | jqr "['plan']['id']")
 PLAN_RV=$(echo "$CREATE" | jqr "['plan']['row_version']")
-[ -n "$PID" ] && [ "$PLAN_RV" = "1" ] \
-  && ok "草稿套餐已创建" || bad "创建草稿套餐失败" "API 响应已隐藏"
+VID=$(echo "$CREATE" | jqr "['plan']['draft_version_id']")
+PSTATUS=$(echo "$CREATE" | jqr "['plan']['status']")
+[ -n "$PID" ] && [ -n "$VID" ] && [ "$PLAN_RV" = "1" ] && [ "$PSTATUS" = "draft" ] \
+  && ok "草稿套餐已一步建成（含草稿版本与月价）" || bad "创建草稿套餐失败" "API 响应已隐藏"
 
 CREATE_REPLAY=$(curl -s -X POST "$ADM/v1/plans" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-create-$CAT_TAG" \
-  -d "{\"code\":\"$CAT_CODE\",\"name\":\"后台 E2E $CAT_TAG\",\"visibility\":\"public\"}")
+  -d "$CREATE_BODY")
 REPLAY_PID=$(echo "$CREATE_REPLAY" | jqr "['plan']['id']")
 REPLAY_RV=$(echo "$CREATE_REPLAY" | jqr "['plan']['row_version']")
-[ "$REPLAY_PID" = "$PID" ] && [ "$REPLAY_RV" = "$PLAN_RV" ] \
-  && ok "套餐创建幂等重放返回原资源" || bad "套餐创建幂等重放产生漂移" "API 响应已隐藏"
+PLAN_ROWS=$(db_scalar integer "SELECT count(*) FROM plans WHERE name='后台 E2E $CAT_TAG'")
+[ "$REPLAY_PID" = "$PID" ] && [ "$REPLAY_RV" = "$PLAN_RV" ] && [ "$PLAN_ROWS" = "1" ] \
+  && ok "套餐创建幂等重放返回原资源" || bad "套餐创建幂等重放产生漂移" "rows=$PLAN_ROWS"
 
-VERSION=$(curl -s -X POST "$ADM/v1/plans/$PID/versions" -H "$AH" \
-  -H "Idempotency-Key: plan-version-$CAT_TAG")
-VID=$(echo "$VERSION" | jqr "['version']['id']")
-VERSION_RV=$(echo "$VERSION" | jqr "['version']['row_version']")
-[ -n "$VID" ] && [ "$VERSION_RV" = "1" ] \
-  && ok "草稿版本已创建" || bad "创建草稿版本失败" "API 响应已隐藏"
-
-BIND_BODY="{\"version_id\":\"$VID\",\"expected_version_row_version\":$VERSION_RV,\"pool_ids\":[\"$POOL_ID\"]}"
-BIND=$(curl -s -X POST "$ADM/v1/plans/$PID/pools" -H "$AH" \
+BIND_BODY="{\"expected_row_version\":$PLAN_RV,\"pool_ids\":[\"$POOL_ID\"]}"
+BIND=$(curl -s -X PUT "$ADM/v1/plans/$PID/pools" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-pools-$CAT_TAG" \
   -d "$BIND_BODY")
-VERSION_RV=$(echo "$BIND" | jqr "['row_version']")
-[ "$VERSION_RV" = "2" ] && ok "草稿版本已绑定节点分组" \
-  || bad "绑定节点分组失败" "row_version=$VERSION_RV"
+PLAN_RV=$(echo "$BIND" | jqr "['plan']['row_version']")
+BOUND=$(echo "$BIND" | jqr "['plan']['pool_ids']==['$POOL_ID']")
+[ "$PLAN_RV" = "2" ] && [ "$BOUND" = "True" ] && ok "套餐已绑定节点分组（立即生效）" \
+  || bad "绑定节点分组失败" "row_version=$PLAN_RV"
 
-POOL_BINDINGS_AFTER_FIRST=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_version_id='$VID'::uuid")
-POOL_AUDIT_AFTER_FIRST=$(db_scalar integer "SELECT count(*) FROM audit_events WHERE resource_id='$VID'::uuid AND action='plan_version.pools_changed'")
-BIND_REPLAY=$(curl -s -X POST "$ADM/v1/plans/$PID/pools" -H "$AH" \
+POOL_BINDINGS_AFTER_FIRST=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_id='$PID'::uuid")
+POOL_AUDIT_AFTER_FIRST=$(db_scalar integer "SELECT count(*) FROM audit_events WHERE resource_id='$PID'::uuid AND action='plan.pools_update'")
+BIND_REPLAY=$(curl -s -X PUT "$ADM/v1/plans/$PID/pools" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-pools-$CAT_TAG" \
   -d "$BIND_BODY")
-BIND_REPLAY_RV=$(echo "$BIND_REPLAY" | jqr "['row_version']")
-POOL_BINDINGS_AFTER_REPLAY=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_version_id='$VID'::uuid")
-POOL_AUDIT_AFTER_REPLAY=$(db_scalar integer "SELECT count(*) FROM audit_events WHERE resource_id='$VID'::uuid AND action='plan_version.pools_changed'")
+BIND_REPLAY_RV=$(echo "$BIND_REPLAY" | jqr "['plan']['row_version']")
+POOL_BINDINGS_AFTER_REPLAY=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_id='$PID'::uuid")
+POOL_AUDIT_AFTER_REPLAY=$(db_scalar integer "SELECT count(*) FROM audit_events WHERE resource_id='$PID'::uuid AND action='plan.pools_update'")
 [ "$BIND_REPLAY_RV" = "2" ] \
   && [ "$POOL_BINDINGS_AFTER_FIRST" = "1" ] \
   && [ "$POOL_BINDINGS_AFTER_REPLAY" = "$POOL_BINDINGS_AFTER_FIRST" ] \
   && [ "$POOL_AUDIT_AFTER_FIRST" = "1" ] \
   && [ "$POOL_AUDIT_AFTER_REPLAY" = "$POOL_AUDIT_AFTER_FIRST" ] \
-  && ok "节点池专用端点幂等重放未重复绑定或审计" \
-  || bad "节点池专用端点幂等重放产生副作用" \
+  && ok "改线路幂等重放未重复绑定或审计" \
+  || bad "改线路幂等重放产生副作用" \
     "row_version=$BIND_REPLAY_RV bindings=$POOL_BINDINGS_AFTER_FIRST/$POOL_BINDINGS_AFTER_REPLAY audits=$POOL_AUDIT_AFTER_FIRST/$POOL_AUDIT_AFTER_REPLAY"
 
-POOL_BINDINGS_BEFORE=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_version_id='$VID'::uuid")
-C=$(code -X PUT "$ADM/v1/plans/$PID/versions/$VID" -H "$AH" \
-  -H 'Content-Type: application/json' -d '{"pool_ids":[]}')
-POOL_BINDINGS_AFTER=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_version_id='$VID'::uuid")
-[ "$C" = "422" ] && [ "$POOL_BINDINGS_BEFORE" = "1" ] && [ "$POOL_BINDINGS_AFTER" = "$POOL_BINDINGS_BEFORE" ] \
-  && ok "旧版 PUT 拒绝 pool_ids 且保留节点池绑定" \
-  || bad "旧版 PUT 仍可改动节点池绑定" "HTTP $C, before=$POOL_BINDINGS_BEFORE after=$POOL_BINDINGS_AFTER"
-
-C=$(code -X POST "$ADM/v1/plans/$PID/pools" -H "$AH" \
+C=$(code -X PUT "$ADM/v1/plans/$PID/pools" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-pools-stale-$CAT_TAG" \
-  -d "{\"version_id\":\"$VID\",\"expected_version_row_version\":1,\"pool_ids\":[\"$POOL_ID\"]}")
-[ "$C" = "409" ] && ok "节点分组乐观锁冲突返回 409" \
-  || bad "过期版本号未被拒绝" "HTTP $C"
+  -d "{\"expected_row_version\":1,\"pool_ids\":[]}")
+POOL_BINDINGS_AFTER_STALE=$(db_scalar integer "SELECT count(*) FROM plan_node_pools WHERE plan_id='$PID'::uuid")
+[ "$C" = "409" ] && [ "$POOL_BINDINGS_AFTER_STALE" = "1" ] && ok "套餐乐观锁冲突返回 409，绑定未变" \
+  || bad "过期 row_version 未被拒绝" "HTTP $C bindings=$POOL_BINDINGS_AFTER_STALE"
 
-C=$(code -X POST "$ADM/v1/plans/$PID/pools" -H "$AH" \
+C=$(code -X PUT "$ADM/v1/plans/$PID/pools" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-pools-invalid-$CAT_TAG" \
-  -d "{\"version_id\":\"$VID\",\"expected_version_row_version\":0,\"pool_ids\":[]}")
-[ "$C" = "422" ] && ok "节点分组无效版本号返回 422" \
-  || bad "无效版本号未返回 422" "HTTP $C"
+  -d "{\"expected_row_version\":0,\"pool_ids\":[]}")
+[ "$C" = "422" ] && ok "无效 row_version 返回 422" \
+  || bad "无效 row_version 未返回 422" "HTTP $C"
 
-PRICE=$(curl -s -X POST "$ADM/v1/plans/$PID/prices" -H "$AH" \
-  -H 'Content-Type: application/json' -H "Idempotency-Key: plan-price-$CAT_TAG" \
-  -d '{"currency":"CNY","unit_amount":100,"billing_interval":"month","interval_count":1}')
-PRICE_ID=$(echo "$PRICE" | jqr "['price']['id']")
-[ -n "$PRICE_ID" ] && ok "在售价格已创建" || bad "创建价格失败" "API 响应已隐藏"
+# 改价 = 归档旧价、建新价（价格只追加）
+PRICED=$(curl -s -X PUT "$ADM/v1/plans/$PID/prices" -H "$AH" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: plan-prices-$CAT_TAG" \
+  -d "{\"expected_row_version\":$PLAN_RV,\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":120}]}")
+PLAN_RV=$(echo "$PRICED" | jqr "['plan']['row_version']")
+PRICE_ID=$(echo "$PRICED" | python3 -c "
+import sys,json
+ps=[p for p in json.load(sys.stdin)['plan']['prices'] if p['status']=='active']
+print(ps[0]['id'] if len(ps)==1 and ps[0]['unit_amount']==120 else '')" 2>/dev/null)
+PRICE_ROWS="$(db_scalar integer "SELECT count(*) FROM prices WHERE plan_id='$PID'::uuid AND status='active'")/$(db_scalar integer "SELECT count(*) FROM prices WHERE plan_id='$PID'::uuid")"
+[ "$PLAN_RV" = "3" ] && [ -n "$PRICE_ID" ] && [ "$PRICE_ROWS" = "1/2" ] \
+  && ok "改价：旧价归档、新价在售（1 在售 / 共 2 行）" || bad "改价失败" "row_version=$PLAN_RV prices=$PRICE_ROWS"
 
 PUBLISHED_RAW=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans/$PID/versions/$VID/publish" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-publish-$CAT_TAG" \
-  -d "{\"expected_plan_row_version\":$PLAN_RV,\"expected_version_row_version\":$VERSION_RV}")
+  -d "{\"expected_row_version\":$PLAN_RV}")
 PUBLISHED_CODE=${PUBLISHED_RAW##*$'\n'}
 PUBLISHED=${PUBLISHED_RAW%$'\n'*}
 if [ "$PUBLISHED_CODE" != 200 ]; then
@@ -487,23 +478,31 @@ if [ "$PUBLISHED_CODE" != 200 ]; then
   bad "发布套餐失败" "HTTP $PUBLISHED_CODE error=$PUBLISH_ERROR"
   exit 1
 fi
-PLAN_RV=$(echo "$PUBLISHED" | jqr "['plan_row_version']")
-PUBLISHED_VERSION_RV=$(echo "$PUBLISHED" | jqr "['version_row_version']")
-# 发布：套餐 1→2；版本在绑池后是 2，发布再 +1 成 3（catalog PublishVersion：verNext = expected + 1）
-[ "$PLAN_RV" = "2" ] && [ "$PUBLISHED_VERSION_RV" = "3" ] && ok "草稿版本已发布" || bad "发布套餐失败" "plan_rv=$PLAN_RV ver_rv=$PUBLISHED_VERSION_RV"
+PLAN_RV=$(echo "$PUBLISHED" | jqr "['plan']['row_version']")
+PSTATUS=$(echo "$PUBLISHED" | jqr "['plan']['status']")
+PVER=$(echo "$PUBLISHED" | jqr "['plan']['version']")
+# 发布：套餐 3→4，首个版本发布即上架（draft → active）
+[ "$PLAN_RV" = "4" ] && [ "$PSTATUS" = "active" ] && [ "$PVER" = "1" ] && ok "草稿版本已发布，套餐上架" \
+  || bad "发布套餐失败" "plan_rv=$PLAN_RV status=$PSTATUS version=$PVER"
+
+# 已发布版本冻结：改用量写进新的草稿版本 2，当前版本仍是 1
+USAGE=$(curl -s -X PUT "$ADM/v1/plans/$PID/usage" -H "$AH" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: plan-usage-$CAT_TAG" \
+  -d "{\"expected_row_version\":$PLAN_RV,\"traffic_bytes\":21474836480}")
+PLAN_RV=$(echo "$USAGE" | jqr "['plan']['row_version']")
+USAGE_VERS=$(echo "$USAGE" | python3 -c "
+import sys,json;p=json.load(sys.stdin)['plan'];print(p['version'],p['draft_version'],p['traffic_bytes'])" 2>/dev/null)
+V1_TRAFFIC=$(db_scalar integer "SELECT limit_value FROM quota_definitions WHERE plan_version_id='$VID'::uuid AND metric='traffic.bytes'")
+[ "$PLAN_RV" = "5" ] && [ "$USAGE_VERS" = "1 2 10737418240" ] && [ "$V1_TRAFFIC" = "10737418240" ] \
+  && ok "改用量进草稿版本 2，已发布的版本 1 不变" \
+  || bad "改用量没有走草稿版本" "row_version=$PLAN_RV versions=$USAGE_VERS v1_traffic=$V1_TRAFFIC"
 
 POOLS_VIEW=$(curl -s "$ADM/v1/plans/$PID/pools" -H "$AH")
-EDITABLE=$(echo "$POOLS_VIEW" | jqr "['editable']")
-VIEW_STATUS=$(echo "$POOLS_VIEW" | jqr "['version_status']")
-[ "$EDITABLE" = "False" ] && [ "$VIEW_STATUS" = "published" ] \
-  && ok "已发布版本在分组接口中明确只读" \
-  || bad "已发布版本未标记为只读" "API 响应已隐藏"
-
-C=$(code -X POST "$ADM/v1/plans/$PID/pools" -H "$AH" \
-  -H 'Content-Type: application/json' -H "Idempotency-Key: plan-pools-published-$CAT_TAG" \
-  -d "{\"version_id\":\"$VID\",\"expected_version_row_version\":$PUBLISHED_VERSION_RV,\"pool_ids\":[\"$POOL_ID\"]}")
-[ "$C" = "409" ] && ok "已发布版本的分组写入返回 409" \
-  || bad "已发布版本仍可修改分组" "HTTP $C"
+VIEW_BOUND=$(echo "$POOLS_VIEW" | python3 -c "
+import sys,json
+print('yes' if any(p['id']=='$POOL_ID' and p['bound'] for p in json.load(sys.stdin)['pools']) else 'no')" 2>/dev/null)
+[ "$VIEW_BOUND" = "yes" ] && ok "绑池选择器标出已绑定的分组" \
+  || bad "绑池选择器没有标出已绑定的分组" "API 响应已隐藏"
 
 VISIBLE=$(curl -s "$PUB/v1/plans" | python3 -c "
 import sys,json
@@ -513,12 +512,17 @@ print('yes' if any(p['id']=='$PID' for p in json.load(sys.stdin)['plans']) else 
 ARCHIVED=$(curl -s -X POST "$ADM/v1/plans/$PID/archive" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: plan-archive-$CAT_TAG" \
   -d "{\"expected_row_version\":$PLAN_RV}")
-ARCHIVE_RV=$(echo "$ARCHIVED" | jqr "['row_version']")
+ARCHIVE_RV=$(echo "$ARCHIVED" | jqr "['plan']['row_version']")
 ST=$("$PSQL" -X -qAtc "SELECT status FROM plans WHERE id='$PID'" | tr -d '[:space:]')
-[ "$ST" = "archived" ] && [ "$ARCHIVE_RV" = "3" ] \
+[ "$ST" = "archived" ] && [ "$ARCHIVE_RV" = "6" ] \
   && ok "套餐已单向归档" || bad "套餐归档失败" "db_status=$ST row_version=$ARCHIVE_RV"
 
-CATALOG_AUDIT_COUNT=$(db_scalar integer "SELECT count(DISTINCT action) FROM audit_events WHERE ((resource_id='$PID'::uuid AND action IN ('plan.create','plan.archive')) OR (resource_id='$VID'::uuid AND action IN ('plan_version.create','plan_version.pools_changed','plan_version.publish')) OR (resource_id='$PRICE_ID'::uuid AND action='price.create'))")
+C=$(code -X PUT "$ADM/v1/plans/$PID/basic" -H "$AH" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: plan-basic-archived-$CAT_TAG" \
+  -d "{\"expected_row_version\":$ARCHIVE_RV,\"name\":\"后台 E2E $CAT_TAG 改名\"}")
+[ "$C" = "409" ] && ok "已归档套餐不可再编辑（409）" || bad "已归档套餐仍可编辑" "HTTP $C"
+
+CATALOG_AUDIT_COUNT=$(db_scalar integer "SELECT count(DISTINCT action) FROM audit_events WHERE ((resource_id='$PID'::uuid AND action IN ('plan.create','plan.pools_update','plan.prices_update','plan.usage_update','plan.archive')) OR (resource_id='$VID'::uuid AND action='plan_version.publish'))")
 [ "$CATALOG_AUDIT_COUNT" = "6" ] \
   && ok "套餐核心写操作均已形成精确审计事件" \
   || bad "套餐核心审计事件不完整" "distinct actions=$CATALOG_AUDIT_COUNT"
@@ -528,9 +532,11 @@ import sys,json
 print('yes' if not any(p['id']=='$PID' for p in json.load(sys.stdin)['plans']) else 'no')" 2>/dev/null)
 [ "$GONE" = "yes" ] && ok "归档套餐已从用户端目录消失" || bad "归档后用户端仍可见" ""
 
-C=$(code -X POST "$ADM/v1/plans/$PID/status" -H "$AH" -H 'Content-Type: application/json' \
-  -d '{"status":"active"}')
-[ "$C" = "404" ] && ok "陈旧 status 端点仍保持移除" || bad "陈旧 status 端点被重新引入" "HTTP $C"
+# 已删的旧接口保持移除
+for OLD in "POST /plans/$PID/status" "POST /plans/$PID/versions" "POST /plans/complete" "POST /plans/$PID/prices" "POST /plans/$PID/pools"; do
+  C=$(code -X "${OLD%% *}" "$ADM/v1${OLD#* }" -H "$AH" -H 'Content-Type: application/json' -d '{}')
+  [ "$C" = "404" ] && ok "旧接口 ${OLD%% *} ${OLD#* } 仍保持移除" || bad "旧接口被重新引入" "${OLD} HTTP $C"
+done
 
 #-------------------------------------------------------------------------------
 sec "9. NFR-008 降级开关"

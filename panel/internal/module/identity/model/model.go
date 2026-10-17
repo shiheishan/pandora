@@ -7,32 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// 用户状态。
-const (
-	UserActive    = "active"
-	UserSuspended = "suspended"
-	UserBanned    = "banned"
-)
-
-// 验证码用途。
-const (
-	PurposeEmailVerify   = "email_verify"
-	PurposePasswordReset = "password_reset"
-)
-
-// 注册会话状态。
-const (
-	RegistrationPending  = "pending"
-	RegistrationConsumed = "consumed"
-)
-
-// 邀请码状态。
-const (
-	InviteActive    = "active"
-	InviteExhausted = "exhausted"
-	InviteDisabled  = "disabled"
-)
-
 // User 是 users 表的一行。
 type User struct {
 	ID              uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
@@ -43,6 +17,8 @@ type User struct {
 	UserGroupID     *uuid.UUID `gorm:"column:user_group_id;type:uuid"`
 	RiskLevel       string     `gorm:"column:risk_level;default:normal"`
 	LastLoginAt     *time.Time `gorm:"column:last_login_at"`
+	AdminNote       *string    `gorm:"column:admin_note"`
+	DeletedAt       *time.Time `gorm:"column:deleted_at"`
 	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt       time.Time  `gorm:"column:updated_at;autoUpdateTime"`
 }
@@ -50,26 +26,16 @@ type User struct {
 // TableName 固定表名。
 func (User) TableName() string { return "users" }
 
-// UserPassword 是 user_passwords 表的一行；PHC 是 Argon2id 串。
-type UserPassword struct {
-	UserID    uuid.UUID `gorm:"column:user_id;type:uuid;primaryKey"`
-	PHC       string    `gorm:"column:phc"`
-	RotatedAt time.Time `gorm:"column:rotated_at"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
-}
-
-// TableName 固定表名。
-func (UserPassword) TableName() string { return "user_passwords" }
-
 // UserGroup 是 user_groups 表的一行。
 type UserGroup struct {
 	ID          uuid.UUID `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
 	Code        string    `gorm:"column:code"`
 	Name        string    `gorm:"column:name"`
 	Description *string   `gorm:"column:description"`
-	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt   time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	// active 正常 / disabled 停用（不能再加新成员，已有成员不受影响）
+	Status    string    `gorm:"column:status;default:active"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName 固定表名。
@@ -117,11 +83,13 @@ type InviteCode struct {
 	OwnerUserID *uuid.UUID `gorm:"column:owner_user_id;type:uuid"`
 	MaxUses     *int       `gorm:"column:max_uses"`
 	UsedCount   int        `gorm:"column:used_count;default:0"`
-	Channel     *string    `gorm:"column:channel"`
-	Campaign    *string    `gorm:"column:campaign"`
-	ExpiresAt   *time.Time `gorm:"column:expires_at"`
-	Status      string     `gorm:"column:status;default:active"`
-	CreatedAt   time.Time  `gorm:"column:created_at;autoCreateTime"`
+	// 访问量：按 IP 去重计数，不存 IP
+	VisitCount int64      `gorm:"column:visit_count;default:0"`
+	Channel    *string    `gorm:"column:channel"`
+	Campaign   *string    `gorm:"column:campaign"`
+	ExpiresAt  *time.Time `gorm:"column:expires_at"`
+	Status     string     `gorm:"column:status;default:active"`
+	CreatedAt  time.Time  `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName 固定表名。

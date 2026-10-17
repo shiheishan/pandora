@@ -30,7 +30,11 @@ func loadInboundTLSConfig(raw map[string]any) (*tls.Config, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("native TLS certificate: %w", err)
 	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, true, nil
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	if err := applyInboundECH(cfg, raw); err != nil {
+		return nil, false, fmt.Errorf("native TLS ECH: %w", err)
+	}
+	return cfg, true, nil
 }
 
 // ============================================================

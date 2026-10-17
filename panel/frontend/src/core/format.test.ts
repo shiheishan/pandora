@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatCount, formatDateTime, formatMoney, relativeTime } from './format'
+import { formatBytes, formatCount, formatDateTime, formatMoney, relativeTime, trimPercent } from './format'
 
 describe('formatMoney', () => {
   it('formats minor units with grouping, sign and currency symbol', () => {
@@ -7,8 +7,7 @@ describe('formatMoney', () => {
     expect(formatMoney(0)).toBe('¥0.00')
     expect(formatMoney(128000)).toBe('¥1,280.00')
     expect(formatMoney(-5)).toBe('-¥0.05')
-    expect(formatMoney(123456789, 'USD')).toBe('$1,234,567.89')
-    expect(formatMoney(100, 'EUR')).toBe('EUR 1.00')
+    expect(formatMoney(123456789)).toBe('¥1,234,567.89')
   })
 })
 
@@ -61,5 +60,18 @@ describe('formatDateTime', () => {
     expect(formatDateTime(new Date(2026, 8, 24, 8, 5))).toBe('2026-09-24 08:05')
     expect(formatDateTime('2026-09-24T08:05:00')).toBe('2026-09-24 08:05')
     expect(formatDateTime('not a date')).toBe('not a date')
+  })
+})
+
+describe('trimPercent', () => {
+  it('drops trailing zeros without going through floats', () => {
+    expect(trimPercent('2.50')).toBe('2.5')
+    expect(trimPercent('0.00')).toBe('0')
+    expect(trimPercent('10.00')).toBe('10')
+    expect(trimPercent('0.5')).toBe('0.5')
+    expect(trimPercent('012')).toBe('12')
+    expect(trimPercent(' 3 ')).toBe('3')
+    expect(trimPercent('invalid')).toBe('0')
+    expect(trimPercent('')).toBe('0')
   })
 })

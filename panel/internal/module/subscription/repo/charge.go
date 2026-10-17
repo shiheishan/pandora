@@ -1,5 +1,5 @@
 // 节点扣量批量写回：只给 service.ChargeTraffic 用。
-// 锁序：配额行（按 id）→ 流量包（按订阅、created_at、id）→ 按日用量（按订阅 id）。
+// 锁序：配额行（按 id）→ 按日用量（按订阅 id）。
 package repo
 
 import (
@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// TrafficQuotaRow 是扣量时锁住的一条流量配额行。Room 是本行剩余额度（limit_value - consumed），不限量为 nil。
+// TrafficQuotaRow 是扣量时锁住的一条流量配额行。Room 是本行剩余额度（limit_value + bonus_value − consumed，即生成列 remaining），不限量为 nil。
 type TrafficQuotaRow struct {
 	ID             uuid.UUID `gorm:"column:id"`
 	SubscriptionID uuid.UUID `gorm:"column:subscription_id"`
@@ -19,21 +19,8 @@ type TrafficQuotaRow struct {
 	Room           *int64    `gorm:"column:room"`
 }
 
-// OpenTrafficPack 是扣量时锁住的一笔还有剩余的流量包。
-type OpenTrafficPack struct {
-	ID             uuid.UUID `gorm:"column:id"`
-	SubscriptionID uuid.UUID `gorm:"column:subscription_id"`
-	Remaining      int64     `gorm:"column:remaining"`
-}
-
 // QuotaAdd 是批量写回配额 consumed 的一项。
 type QuotaAdd struct {
-	ID     uuid.UUID `json:"id"`
-	Amount int64     `json:"amount"`
-}
-
-// PackTake 是批量写回流量包 consumed_bytes 的一项。
-type PackTake struct {
 	ID     uuid.UUID `json:"id"`
 	Amount int64     `json:"amount"`
 }
@@ -83,20 +70,6 @@ func (r *Repo) LockTrafficQuotas(ctx context.Context, subIDs []uuid.UUID, now ti
 	return out, mapErr(err)
 }
 
-// LockOpenTrafficPacks 锁住本批订阅还有剩余的流量包（traffic_pack_grants_open_sub_idx；先到先扣顺序）。
-func (r *Repo) LockOpenTrafficPacks(ctx context.Context, subIDs []uuid.UUID) ([]OpenTrafficPack, error) {
-	if len(subIDs) == 0 {
-		return nil, nil
-	}
-	var out []OpenTrafficPack
-	err := r.d.Conn(ctx).Raw(`
-		SELECT id, subscription_id, granted_bytes - consumed_bytes AS remaining
-		  FROM traffic_pack_grants
-		 WHERE subscription_id IN ? AND consumed_bytes < granted_bytes
-		 ORDER BY subscription_id, created_at, id FOR UPDATE`, subIDs).Scan(&out).Error
-	return out, mapErr(err)
-}
-
 // AddQuotaConsumed 批量把 consumed 饱和加到配额行上。
 func (r *Repo) AddQuotaConsumed(ctx context.Context, adds []QuotaAdd) error {
 	if len(adds) == 0 {
@@ -118,30 +91,6 @@ func (r *Repo) AddQuotaConsumed(ctx context.Context, adds []QuotaAdd) error {
 	}
 	if res.RowsAffected != int64(len(adds)) {
 		return fmt.Errorf("subscription: 写回配额改到 %d 行，应为 %d 行", res.RowsAffected, len(adds))
-	}
-	return nil
-}
-
-// TakeTrafficPacks 批量把 consumed_bytes 加到流量包上。
-func (r *Repo) TakeTrafficPacks(ctx context.Context, takes []PackTake) error {
-	if len(takes) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(takes)
-	if err != nil {
-		return err
-	}
-	res := r.d.Conn(ctx).Exec(`
-		UPDATE traffic_pack_grants g
-		   SET consumed_bytes = g.consumed_bytes + c.amount,
-		       updated_at = ?
-		  FROM jsonb_to_recordset(?::jsonb) AS c(id uuid, amount bigint)
-		 WHERE g.id = c.id`, now(), string(b))
-	if res.Error != nil {
-		return mapErr(res.Error)
-	}
-	if res.RowsAffected != int64(len(takes)) {
-		return fmt.Errorf("subscription: 写回流量包改到 %d 行，应为 %d 行", res.RowsAffected, len(takes))
 	}
 	return nil
 }

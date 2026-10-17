@@ -33,7 +33,7 @@ func (s *Service) Dispatch(ctx context.Context) (int, error) {
 
 // dispatchLocked 在持有派发锁时执行：先把尝试已用尽、租约已过仍为 queued 的行置为 failed，
 // 再一批批认领（每批 dispatchBatch，至多 dispatchMaxBatches 批），直到队列空、批数用完或 ctx 结束。
-// 同一批里按顺序逐条发（并发上限 1，与旧代码一致）。认领带租约：锁意外失效时别的实例在租约内也看不到这些行。
+// 同一批里按顺序逐条发（并发上限 1）。认领带租约：锁意外失效时别的实例在租约内也看不到这些行。
 func (s *Service) dispatchLocked(ctx context.Context) (int, error) {
 	n, err := s.store.FailExhausted(ctx)
 	if err != nil {

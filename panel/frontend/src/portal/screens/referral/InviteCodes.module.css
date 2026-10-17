@@ -1,0 +1,73 @@
+/* 我的邀请码（样稿 .codes 与 .h-row 的右侧动作） */
+
+.aside {
+  display: inline-flex;
+  align-items: center;
+}
+
+.count {
+  margin-right: 10px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+/* 「再生成一个」文字按钮（样稿 .act-l） */
+.actL {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand);
+  cursor: pointer;
+}
+
+.actL:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.actL:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.codes {
+  cursor: default;
+}
+
+/* 邀请码本体（样稿 .cd-c） */
+.cd {
+  min-width: 92px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0.04em;
+}
+
+/* 不再有效的行：码转灰（样稿 .row.off） */
+.off .cd {
+  color: var(--text-3);
+}
+
+.date {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.cap {
+  margin: 10px 6px 0;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+@media (max-width: 959px) {
+  .cd {
+    min-width: 0;
+    font-size: 15.5px;
+  }
+
+  .date {
+    display: none;
+  }
+}

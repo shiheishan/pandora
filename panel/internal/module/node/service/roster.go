@@ -1,6 +1,6 @@
 package service
 
-// 名单（p5-delivery 实现）。
+// 名单。
 
 import (
 	"context"
@@ -108,7 +108,14 @@ func (s *Service) poolRosters(ctx context.Context, pools []uuid.UUID) (map[uuid.
 	if err != nil {
 		return nil, err
 	}
-	versionPools, err := s.catalog.VersionPools(ctx, versionIDs)
+	// 订阅按版本找到所属套餐，再取套餐绑的池
+	var planIDs []uuid.UUID
+	for _, v := range versions {
+		planIDs = append(planIDs, v.PlanID)
+	}
+	slices.SortFunc(planIDs, compareUUID)
+	planIDs = slices.Compact(planIDs)
+	planPools, err := s.catalog.PlanPools(ctx, planIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +142,7 @@ func (s *Service) poolRosters(ctx context.Context, pools []uuid.UUID) (map[uuid.
 		}
 		speed, devices := rosterLimits(sub.DeviceLimit, v)
 		u := RosterUser{UID: sub.NodeUID, UUID: sub.ProxyUUID, SpeedLimitKbps: speed, DeviceLimit: devices}
-		for _, p := range versionPools[sub.PlanVersionID] {
+		for _, p := range planPools[v.PlanID] {
 			if wanted[p] && poolAdmits(poolGroups[p], group) {
 				users[p] = append(users[p], u)
 			}

@@ -6,6 +6,9 @@
 #   /etc/pandora/cloudflare-realip.conf（后两个参数只给测试用：模板里 include 的路径写死，生产上永远是缺省值）
 #
 # 域名取 config.yaml 顶层 public_base_url 那一行，后台前缀取 deploy.env 的 PANDORA_ADMIN_PATH；
+# deploy.env 可选键 PANDORA_SUB_DOMAINS（逗号分隔的订阅域名，可带空格；不写或留空 = 没有订阅域名）；
+# 证书自备在 /etc/pandora/tls/sub/<域名>/fullchain.pem 与 privkey.pem，缺证书的域名只渲染 80（ACME 校验 + 跳 https）并在 stderr 告警；
+# 环境变量 PANDORA_SUB_TLS_DIR 只给测试换证书目录（必须是绝对路径）。
 # 两个文件都逐键用 awk 读，绝不 source（deploy.env 里有迁移 DSN 与超级用户口令）。输出里不打印后台前缀。
 set -euo pipefail
 umask 077
@@ -36,6 +39,23 @@ deploy_value() {
     }
   ' "$DEPLOY_ENV")
   [[ ${#values[@]} -eq 1 ]] || die "$key must occur exactly once"
+  printf '%s' "${values[0]}"
+}
+
+deploy_optional_value() {
+  local key="$1" values
+  mapfile -t values < <(awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      sub(/\r$/, "")
+      print
+    }
+  ' "$DEPLOY_ENV")
+  if [[ ${#values[@]} -eq 0 ]]; then
+    printf ''
+    return 0
+  fi
+  [[ ${#values[@]} -eq 1 ]] || die "$key must occur at most once"
   printf '%s' "${values[0]}"
 }
 
@@ -94,6 +114,136 @@ if ! public_ipv4 "$domain"; then
   [[ "$domain" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || \
     die "public_base_url must name a DNS domain or a public IPv4 address (not a private, reserved or IPv6 address)"
 fi
+
+# 解析与校验订阅域名 PANDORA_SUB_DOMAINS
+raw_sub_domains="$(deploy_optional_value PANDORA_SUB_DOMAINS)"
+sub_domains=()
+declare -A seen_sub_domains=()
+
+if [[ -n "$raw_sub_domains" ]]; then
+  IFS=',' read -r -a raw_sub_arr <<<"$raw_sub_domains"
+  for item in "${raw_sub_arr[@]}"; do
+    # 去首尾空白
+    item="$(printf '%s' "$item" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ -n "$item" ]] || continue
+    d="${item,,}"
+    [[ ${#d} -le 253 ]] || die "subscription domain is too long"
+    # 不能是 IPv4（只要是四段数字就拒）
+    if [[ "$d" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      die "subscription domain must be a DNS name"
+    fi
+    [[ "$d" != *.localhost && "$d" != localhost ]] || die "subscription domain must not be a localhost name"
+    [[ "$d" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || \
+      die "subscription domain must name a valid DNS domain"
+    [[ "$d" != "$domain" ]] || die "subscription domain equals the panel domain"
+    [[ -z "${seen_sub_domains[$d]:-}" ]] || die "duplicate subscription domain"
+    seen_sub_domains["$d"]=1
+    sub_domains+=("$d")
+  done
+  [[ ${#sub_domains[@]} -le 50 ]] || die "too many subscription domains (max 50)"
+fi
+
+sub_tls_dir="${PANDORA_SUB_TLS_DIR:-/etc/pandora/tls/sub}"
+[[ "$sub_tls_dir" = /* ]] || die "PANDORA_SUB_TLS_DIR must be an absolute path"
+
+sub_server_blocks() {
+  local d="$1" has_cert="$2"
+  cat <<EOF
+# 订阅域名 $d 的 80：只有 ACME HTTP-01 校验目录（运维自己用 certbot/lego 的 webroot 申请证书）与 308 跳 https
+server {
+    listen 0.0.0.0:80;
+    listen [::]:80;
+    server_name $d;
+    server_tokens off;
+    access_log off;
+    error_log /var/log/nginx/pandora-error.log crit;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/pandora-acme;
+        default_type text/plain;
+        try_files \$uri =404;
+    }
+
+    location / {
+        return 308 https://\$host\$request_uri;
+    }
+}
+EOF
+
+  if [[ "$has_cert" -eq 1 ]]; then
+    cat <<EOF
+
+# 订阅域名 $d 的 443：只放行订阅拉取（GET /<12 位十六进制前缀>/<令牌>）与门户探测接口 /v1/sub-probe（GET/HEAD 回 204），
+# 门户、后台、其余 API 一律 404（订阅域名不暴露后台前缀与登录入口）
+server {
+    listen 0.0.0.0:443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name $d;
+    server_tokens off;
+    include /etc/pandora/cloudflare-realip.conf;
+
+    ssl_certificate $sub_tls_dir/$d/fullchain.pem;
+    ssl_certificate_key $sub_tls_dir/$d/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:PandoraTLS:2m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    client_max_body_size 16k;
+    client_body_timeout 15s;
+    client_header_timeout 15s;
+
+    access_log /var/log/nginx/pandora-access.log pandora_safe;
+    error_log /var/log/nginx/pandora-error.log crit;
+
+    limit_conn pandora_conn 64;
+
+    gzip on;
+    gzip_types text/css text/javascript application/javascript application/json text/yaml text/plain image/svg+xml;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_vary on;
+
+    location = /v1/sub-probe {
+        # limit_except GET 会同时放行 HEAD 请求（nginx 缺省语义）；探测页、票据与上报接口只走门户主域名
+        limit_except GET { deny all; }
+        limit_req zone=pandora_api burst=60 nodelay;
+        proxy_pass http://pandora_public;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 10s;
+    }
+
+    location ~ ^/[0-9a-f]{12}/[A-Za-z0-9_-]{16,}(\.[a-z]{2,4})?$ {
+        # limit_except GET 会同时放行 HEAD 请求（nginx 缺省语义）
+        limit_except GET { deny all; }
+        limit_req zone=pandora_api burst=60 nodelay;
+        proxy_pass http://pandora_public;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        proxy_buffering on;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+  fi
+}
 
 for placeholder in __PANDORA_ADMIN_PATH__ __PANDORA_DOMAIN__; do
   grep -q "$placeholder" "$TEMPLATE_FILE" || die "template placeholder $placeholder is missing"
@@ -231,15 +381,51 @@ output_dir="$(dirname -- "$OUTPUT_FILE")"
 tmp_file="$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")"
 trap 'rm -f -- "$tmp_file"' EXIT
 
+sub_blocks=""
+sub_no_cert_count=0
+if [[ ${#sub_domains[@]} -gt 0 ]]; then
+  for d in "${sub_domains[@]}"; do
+    has_cert=0
+    if [[ -s "$sub_tls_dir/$d/fullchain.pem" && -s "$sub_tls_dir/$d/privkey.pem" ]]; then
+      has_cert=1
+    else
+      (( sub_no_cert_count++ )) || true
+      printf 'render-nginx: warning: no certificate for subscription domain %s in %s/%s; only port 80 rendered\n' \
+        "$d" "$sub_tls_dir" "$d" >&2
+    fi
+    block="$(sub_server_blocks "$d" "$has_cert")"
+    if [[ -z "$sub_blocks" ]]; then
+      sub_blocks="$block"
+    else
+      sub_blocks="$(printf '%s\n\n%s' "$sub_blocks" "$block")"
+    fi
+  done
+fi
+
 http2_edit=()
 if [[ "$http2_directive" -eq 0 ]]; then
   http2_edit=(-e '/^[[:space:]]*http2 on;/d' -e 's/^\([[:space:]]*listen [^;]*:443 ssl\);/\1 http2;/')
 fi
-sed -e "s/__PANDORA_ADMIN_PATH__/${admin_path}/g" -e "s/__PANDORA_DOMAIN__/${domain}/g" \
-  ${http2_edit[@]+"${http2_edit[@]}"} "$TEMPLATE_FILE" >"$tmp_file"
+
+if [[ -n "$sub_blocks" ]]; then
+  { cat "$TEMPLATE_FILE"; printf '\n%s\n' "$sub_blocks"; } | sed -e "s/__PANDORA_ADMIN_PATH__/${admin_path}/g" -e "s/__PANDORA_DOMAIN__/${domain}/g" \
+    ${http2_edit[@]+"${http2_edit[@]}"} >"$tmp_file"
+else
+  sed -e "s/__PANDORA_ADMIN_PATH__/${admin_path}/g" -e "s/__PANDORA_DOMAIN__/${domain}/g" \
+    ${http2_edit[@]+"${http2_edit[@]}"} "$TEMPLATE_FILE" >"$tmp_file"
+fi
 chmod 0644 "$tmp_file"
 mv -f -- "$tmp_file" "$OUTPUT_FILE"
 trap - EXIT
 
 if [[ "$http2_directive" -eq 1 ]]; then http2_form='http2 on'; else http2_form='listen ... http2'; fi
-printf 'render-nginx: unified edge config rendered for %s (admin path redacted, HTTP/2 via %s)\n' "$domain" "$http2_form"
+if [[ ${#sub_domains[@]} -gt 0 ]]; then
+  if [[ "$sub_no_cert_count" -gt 0 ]]; then
+    sub_summary=", ${#sub_domains[@]} subscription domain(s), ${sub_no_cert_count} without certificate"
+  else
+    sub_summary=", ${#sub_domains[@]} subscription domain(s)"
+  fi
+else
+  sub_summary=""
+fi
+printf 'render-nginx: unified edge config rendered for %s (admin path redacted, HTTP/2 via %s%s)\n' "$domain" "$http2_form" "$sub_summary"

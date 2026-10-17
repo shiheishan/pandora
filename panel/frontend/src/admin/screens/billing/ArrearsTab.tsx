@@ -3,17 +3,16 @@ import { isApiError } from '../../../core/api'
 import { formatDateTime, formatMoney } from '../../../core/format'
 import { href, navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Modal, Pager, QueryView, Segmented, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
+import { Button, Empty, FilterTabs, Modal, Pager, QueryView, Table, Tag, TextArea, Toolbar, useToast, type TableColumn } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { useInvalidateUsers } from '../users/api'
 import { LATE_PAGE, lateAppliedSchema, useInvalidateBilling, useLatePayments, type LateCase } from './api'
 import css from './Billing.module.css'
-import { ageDays, isLateFilter, LATE_FILTERS, LATE_STATUS_VIEW, lateReason, pendingTotals, reasonProblem, type LateFilter } from './model'
+import { ageDays, lateFilterOf, lateFilterQuery, LATE_FILTERS, LATE_STATUS_VIEW, lateKindLabel, lateReason, reasonProblem, type LateFilter } from './model'
 
 export function ArrearsTab({ now }: { now: Date }) {
   const location = useHashLocation()
-  const s = location.query.get('s')
-  const filter: LateFilter = isLateFilter(s) ? s : 'all'
+  const filter: LateFilter = lateFilterOf(location.query.get('s'))
   const offset = Math.max(0, Number.parseInt(location.query.get('o') ?? '', 10) || 0)
   const status = LATE_FILTERS.find(([k]) => k === filter)![2]
   const late = useLatePayments(status, offset)
@@ -21,9 +20,8 @@ export function ArrearsTab({ now }: { now: Date }) {
   const go = (next: { filter?: LateFilter; offset?: number }) => {
     const f = next.filter ?? filter
     const o = next.offset ?? offset
-    navigate('/billing/arrears', { replace: true, query: { s: f === 'all' ? undefined : f, o: o || undefined } })
+    navigate('/billing/arrears', { replace: true, query: { s: lateFilterQuery(f), o: o || undefined } })
   }
-  const totals = late.data ? pendingTotals(late.data.pending_amounts) : []
 
   const columns: TableColumn<LateCase>[] = [
     {
@@ -32,17 +30,18 @@ export function ArrearsTab({ now }: { now: Date }) {
       header: '用户 · 原因',
       render: (c) => (
         <span className={css.stack}>
-          <a className={`${css.link} ${css.ellipsis}`} href={href(`/users/list/${encodeURIComponent(c.user_id)}`)}>
+          <a className={css.link} href={href(`/users/list/${encodeURIComponent(c.user_id)}`)}>
             {c.user_email}
           </a>
-          <span className={`${css.small} ${css.ellipsis}`}>{lateReason(c)}</span>
+          <span className={css.sub2}>{lateReason(c)}</span>
         </span>
       ),
     },
-    { key: 'amount', header: '金额', width: '110px', align: 'right', mono: true, render: (c) => formatMoney(c.amount, c.currency) },
+    { key: 'amount', header: '金额', width: '110px', align: 'right', mono: true, render: (c) => formatMoney(c.amount) },
     {
       key: 'age',
       header: '账龄',
+      hideOnMobile: true,
       width: '72px',
       align: 'right',
       render: (c) => {
@@ -57,6 +56,7 @@ export function ArrearsTab({ now }: { now: Date }) {
     {
       key: 'status',
       header: '状态',
+      hideOnMobile: true,
       width: '100px',
       render: (c) => {
         const v = LATE_STATUS_VIEW[c.status]
@@ -74,7 +74,7 @@ export function ArrearsTab({ now }: { now: Date }) {
       align: 'right',
       render: (c) =>
         c.status === 'suspense' ? (
-          <Button size="xs" onClick={() => setApplying(c)}>
+          <Button size="sm" onClick={() => setApplying(c)}>
             转入余额
           </Button>
         ) : null,
@@ -83,36 +83,52 @@ export function ArrearsTab({ now }: { now: Date }) {
 
   return (
     <div className={css.page}>
-      <div className={css.banner}>
-        <div className={css.bannerText}>
-          <span className={css.bannerTitle}>挂账</span>
-          <span className={css.small}>订单取消后才到账、续费或变更时订阅已结束、或超额扣款的款项暂记在挂账科目。「转入余额」会把这笔钱记入用户余额（贷记），挂账随之关闭。</span>
-        </div>
-        <div className={css.total}>
-          <span className={css.small}>待处理合计</span>
-          <span className={css.totalValue}>{late.data ? totals.join(' · ') || '无' : '…'}</span>
-        </div>
-      </div>
-      <div className={css.toolbar}>
-        <Segmented size="sm" label="挂账状态" options={LATE_FILTERS.map(([value, label]) => ({ value, label }))} value={filter} onChange={(f) => go({ filter: f, offset: 0 })} />
-      </div>
-      <div className={css.tableBox}>
-        <QueryView
-          query={late}
-          rows={4}
-          isEmpty={(d) => d.cases.length === 0}
-          empty={
-            <Empty
-              bare
-              title={filter === 'suspense' ? '没有待处理的挂账' : filter === 'applied' ? '还没有转入余额的挂账' : '没有挂账'}
-              description="订单取消后才到账、订阅已结束后才到账或多扣了款时，系统会把这笔钱记在这里，等你处理。"
+      <Toolbar
+        end={
+          <span className={css.tsum}>
+            待处理合计 <b className={css.num}>{late.data ? formatMoney(late.data.pending_amount) : '…'}</b>
+          </span>
+        }
+      >
+        <FilterTabs
+          label="到账状态"
+          items={LATE_FILTERS.map(([value, label]) => ({ value, label }))}
+          value={filter}
+          onChange={(f) => go({ filter: f, offset: 0 })}
+        />
+      </Toolbar>
+      <QueryView
+        query={late}
+        rows={4}
+        isEmpty={(d) => d.cases.length === 0}
+        empty={
+          <Empty
+            bare
+            title={filter === 'suspense' ? '没有待处理的到账' : filter === 'applied' ? '还没有转入余额的记录' : '没有待处理到账'}
+            description="系统会把晚到或多扣的钱记在这里，等你处理。"
+          />
+        }
+      >
+        {(d) => {
+          const total = d.total
+          const showCount = total <= LATE_PAGE
+          return (
+            <Table
+              label="待处理到账列表"
+              columns={columns}
+              rows={d.cases}
+              rowKey={(c) => c.id}
+              boxed
+              footer={
+                <>
+                  {showCount && <span>共 {total} 条</span>}
+                  <Pager inline total={total} limit={LATE_PAGE} offset={offset} onChange={(o) => go({ offset: o })} />
+                </>
+              }
             />
-          }
-        >
-          {(d) => <Table label="挂账列表" columns={columns} rows={d.cases} rowKey={(c) => c.id} />}
-        </QueryView>
-      </div>
-      <Pager total={late.data?.total ?? 0} limit={LATE_PAGE} offset={offset} onChange={(o) => go({ offset: o })} />
+          )
+        }}
+      </QueryView>
       {applying && <ApplyDialog key={applying.id} c={applying} onClose={() => setApplying(null)} />}
     </div>
   )
@@ -168,7 +184,7 @@ function ApplyDialog({ c, onClose }: { c: LateCase; onClose: () => void }) {
     >
       <div className={css.dialogBody}>
         <p className={css.dialogText}>
-          {c.user_email} 的余额将<strong>增加</strong> {formatMoney(c.amount, c.currency)}，挂账关闭。（{lateReason(c)}）
+          {c.user_email} 的余额将增加 {formatMoney(c.amount)}，这笔待处理到账关闭。（{lateKindLabel(c.case_kind)}）
         </p>
         <TextArea
           label="处理原因（写入审计）"

@@ -376,6 +376,9 @@ func TestSpreadStartCursorAndJitter(t *testing.T) {
 	if d := plain.nextReport(); d != 10*time.Second {
 		t.Fatalf("未开 Spread 不抖动，得到 %v", d)
 	}
+	if d := plain.nextHeartbeat(); d != plain.heartbeatEvery {
+		t.Fatalf("未开 Spread 心跳不抖动，得到 %v", d)
+	}
 	seen := map[int]bool{}
 	for i := 1; i <= 20; i++ {
 		s := NewSim(SimOptions{Name: "s" + strconv.Itoa(1000+i), ReportInterval: 10 * time.Second, Spread: true})
@@ -386,6 +389,10 @@ func TestSpreadStartCursorAndJitter(t *testing.T) {
 		seen[c] = true
 		if d := s.nextReport(); d < 9*time.Second || d > 11*time.Second {
 			t.Fatalf("抖动应在 ±10%% 内，得到 %v", d)
+		}
+		lo, hi := s.heartbeatEvery*9/10, s.heartbeatEvery*11/10
+		if d := s.nextHeartbeat(); d < lo || d > hi {
+			t.Fatalf("心跳抖动应在 ±10%% 内，得到 %v（节拍 %v）", d, s.heartbeatEvery)
 		}
 	}
 	if len(seen) < 15 {

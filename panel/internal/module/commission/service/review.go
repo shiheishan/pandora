@@ -12,7 +12,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
@@ -42,6 +41,12 @@ func (s *Service) ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, r
 		if !ok {
 			return ErrEntryNotFound
 		}
+		// 受益人已注销不许通过（通过之后会解冻、出钱）；作废照常
+		if approve {
+			if err := s.rejectDeleted(ctx, e.ReferrerUserID); err != nil {
+				return err
+			}
+		}
 		if e.Status != EntryPending || !e.ReviewRequired {
 			return ErrEntryNotReviewable
 		}
@@ -50,7 +55,6 @@ func (s *Service) ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, r
 			"reason":        reason,
 			"review_reason": deref(e.ReviewReason),
 			"amount":        e.CommissionAmount.StringFixed(2),
-			"currency":      e.Currency,
 			"order_no":      e.OrderNo,
 		}
 		if approve {
@@ -73,7 +77,6 @@ func (s *Service) ReviewEntry(ctx context.Context, id uuid.UUID, approve bool, r
 		}
 		txnID, err := s.ledger.Post(ctx, ledgersvc.Posting{
 			Kind:       ledgersvc.KindCommissionVoided,
-			Currency:   money.Currency(e.Currency),
 			SourceType: SourceCommissionEntry,
 			SourceID:   e.ID,
 			Memo:       "佣金复核作废，冲回计提",
@@ -179,7 +182,6 @@ func (s *Service) AdminReviewEntries(ctx context.Context, cursor string, limit i
 			ReferrerEmail: emails[e.ReferrerUserID],
 			RefereeEmail:  emails[e.RefereeUserID],
 			Amount:        e.CommissionAmount,
-			Currency:      e.Currency,
 			ReviewReason:  deref(e.ReviewReason),
 			ReviewSource:  reviewSource(deref(e.ReviewReason)),
 			CreatedAt:     e.CreatedAt,
@@ -198,6 +200,8 @@ func reviewSource(reason string) string {
 		return ReviewSourceSourceCheck
 	case strings.HasPrefix(reason, reviewUnderfundedPrefix):
 		return ReviewSourceUnderfunded
+	case reason == reviewDeletedReason:
+		return ReviewSourceAccountDeleted
 	default:
 		return ReviewSourceOther
 	}

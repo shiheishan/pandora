@@ -1,0 +1,105 @@
+/* 套餐详情整页用到的类 + EditModals 的表单类（stack、grid2、toggles、fieldset、legend、fieldError、mutedSmall） */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.mutedSmall {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 停售（样稿 .link-d：灰字，悬停变红）；类名写两遍压过 Button 的 link 色 */
+.dangerLink.dangerLink {
+  color: var(--text-2);
+}
+
+.dangerLink.dangerLink:not(:disabled):hover {
+  color: var(--danger);
+}
+
+/* 添加价格一行排开（样稿 .addp）：周期下拉定宽，价格输入占满剩余宽度 */
+.addRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+
+.addTier {
+  flex: none;
+  width: 140px;
+}
+
+.addAmount {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 版本行最左：版本号 + 状态标签 */
+.versionLead {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.versionN {
+  min-width: 28px;
+  font: 500 13px var(--font-mono);
+}
+
+/* ---- EditModals 的表单类 ---- */
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-16);
+}
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-12) var(--space-20);
+}
+
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  margin-bottom: var(--space-4);
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.fieldError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+@media (max-width: 639px) {
+  .addRow {
+    flex-wrap: wrap;
+  }
+
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

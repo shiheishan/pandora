@@ -1,0 +1,118 @@
+/* 风控页签：聚类卡片网格（样稿 .clus / .cl） */
+
+.clus {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cl {
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.done {
+  opacity: 0.6;
+}
+
+.clh {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ip {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.geo {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.accCount {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.sp {
+  flex: 1;
+  min-width: 0;
+}
+
+.mem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 120px;
+  gap: 12px;
+  align-items: center;
+  height: 38px;
+  padding: 0 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mem:last-of-type {
+  border-bottom: 0;
+}
+
+/* 成员行之后还有「另有 N 个」或复核结论时，最后一行成员要保留底线 */
+.cl:has(.note2) .mem:last-of-type,
+.cl:has(.more) .mem:last-of-type {
+  border-bottom: 1px solid var(--border);
+}
+
+.link {
+  overflow: hidden;
+  color: var(--info);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stMuted {
+  color: var(--text-3);
+}
+
+.stWarn {
+  color: var(--warn);
+}
+
+.stDim {
+  color: var(--text-2);
+}
+
+.plan {
+  color: var(--text-2);
+}
+
+.more {
+  padding: 0 16px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.note2 {
+  padding: 10px 16px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  border-top: 1px solid var(--border);
+}
+
+.cl:not(:has(.more)) .note2 {
+  border-top: 0;
+}
+
+/* 列表下方挂设备策略 */
+.deviceGap {
+  margin-top: 28px;
+}

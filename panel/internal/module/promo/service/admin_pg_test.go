@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/module/promo/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -69,8 +70,8 @@ func TestCreateAndList(t *testing.T) {
 	if found == nil {
 		t.Fatal("列表未找到新建的券")
 	}
-	if found.Code != code || found.Currency != "CNY" || found.MaxPerUser != 1 {
-		t.Fatalf("列表字段 code=%s currency=%s maxPerUser=%d", found.Code, found.Currency, found.MaxPerUser)
+	if found.Code != code || found.MaxPerUser != 1 {
+		t.Fatalf("列表字段 code=%s maxPerUser=%d", found.Code, found.MaxPerUser)
 	}
 	if found.Face.Kind != KindFixed || !found.Face.AmountOff.Equal(decimal.RequireFromString("2.50")) {
 		t.Fatalf("Face %v", found.Face)
@@ -279,6 +280,88 @@ func TestGenerateCoupons(t *testing.T) {
 	}
 }
 
+// 批量生成 300 张带两个限定套餐的券：张数、去重与 coupon_plans 行数都对；已存在的券码由 ON CONFLICT 跳过。
+func TestGenerateCouponsBatchWithPlansPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	actx := adminCtx(ctx, admin)
+
+	p1 := newPlan(t, e, ctx)
+	p2 := newPlan(t, e, ctx)
+	spec := fixedSpec("1.00")
+	spec.Name = "批量带套餐"
+	spec.PlanIDs = []uuid.UUID{p1, p2}
+
+	codes, err := e.svc.GenerateCoupons(actx, "BP", 300, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 300 {
+		t.Fatalf("生成数量 %d，期望 300", len(codes))
+	}
+	seen := make(map[string]struct{}, 300)
+	for _, c := range codes {
+		if !strings.HasPrefix(c, "BP") {
+			t.Fatalf("码 %q 前缀不对", c)
+		}
+		if _, ok := seen[c]; ok {
+			t.Fatalf("重复码 %s", c)
+		}
+		seen[c] = struct{}{}
+	}
+
+	var dbN int64
+	if err := e.row(ctx, `SELECT count(*) FROM coupons WHERE code IN ?`, codes).Scan(&dbN); err != nil {
+		t.Fatal(err)
+	}
+	if dbN != 300 {
+		t.Fatalf("库里张数 %d，期望 300", dbN)
+	}
+
+	var planRows int64
+	if err := e.row(ctx, `
+		SELECT count(*) FROM coupon_plans cp
+		JOIN coupons c ON c.id = cp.coupon_id
+		WHERE c.code IN ?`, codes).Scan(&planRows); err != nil {
+		t.Fatal(err)
+	}
+	wantPlanRows := int64(300 * len(spec.PlanIDs))
+	if planRows != wantPlanRows {
+		t.Fatalf("coupon_plans 行数 %d，期望 %d", planRows, wantPlanRows)
+	}
+
+	// 撞码：已存在的码跳过，只插入新码
+	dupSpec := fixedSpec("1.00")
+	dupSpec.Name = "撞码测试"
+	_, _, err = e.svc.CreateCoupon(actx, "DUPX0000000", dupSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := couponFromSpec("", dupSpec)
+	tmpl.CreatedBy = &admin
+	inserted, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"DUPX0000000", "NEWX0000001"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inserted) != 1 || inserted[0] != "NEWX0000001" {
+		t.Fatalf("撞码后插入 %v，期望仅 [NEWX0000001]", inserted)
+	}
+}
+
+// 限定套餐在插入 coupon_plans 时不存在时，repo 应返回 ErrPlanGone（事务已作废，勿在同一 ctx 再查库）。
+func TestInsertCouponsPlanGonePG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+
+	tmpl := couponFromSpec("", fixedSpec("1.00"))
+	tmpl.Name = "套餐已删"
+	_, err := e.svc.repo.InsertCouponsIfAbsent(ctx, &tmpl, []string{"PGONE000001"}, []uuid.UUID{uuid.New()})
+	if !errors.Is(err, repo.ErrPlanGone) {
+		t.Fatalf("期望 ErrPlanGone，得 %v", err)
+	}
+}
+
 func TestSetStatus(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
@@ -313,24 +396,23 @@ func TestConstraints(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
 
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, percent_off_bp, currency)
-		VALUES ('X1', 'n', 1, 1, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, currency)
-		VALUES ('X2', 'n', 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, percent_off_bp, currency)
-		VALUES ('X3', 'n', 10001, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('ÄB', 'n', 1, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('A B', 'n', 1, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_discount, currency)
-		VALUES ('X5', 'n', 1, 10, 'CNY')`)
-	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency)
-		VALUES ('low', 'n', 1, 'CNY')`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, percent_off_bp)
+		VALUES ('X1', 'n', 1, 1)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name) VALUES ('X2', 'n')`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, percent_off_bp)
+		VALUES ('X3', 'n', 10001)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off)
+		VALUES ('ÄB', 'n', 1)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off)
+		VALUES ('A B', 'n', 1)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_discount)
+		VALUES ('X5', 'n', 1, 10)`)
+	assertSQLFails(t, e, ctx, `INSERT INTO coupons (code, name, amount_off)
+		VALUES ('low', 'n', 1)`)
 
 	code := randCode("CAP")
-	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency, max_redemptions)
-		VALUES (?, 'n', 1, 'CNY', 1)`, code)
+	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, max_redemptions)
+		VALUES (?, 'n', 1, 1)`, code)
 	assertSQLFails(t, e, ctx, `UPDATE coupons SET reserved_count = 2 WHERE code = ?`, code)
 
 	var cid uuid.UUID
@@ -340,74 +422,18 @@ func TestConstraints(t *testing.T) {
 	uid := newUser(t, e, ctx)
 	ord1 := newOrder(t, e, ctx, uid)
 	ord2 := newOrder(t, e, ctx, uid)
-	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
-		VALUES (?, ?, ?, ?, 1, 'CNY', 'held')`, cid, uid, ord1.ID, ord1.No)
-	// 订单是真的，失败只能来自币种与券不一致
-	assertSQLFails(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, currency, status)
-		VALUES (?, ?, ?, ?, 1, 'USD', 'held')`, cid, uid, ord2.ID, ord2.No)
+	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, status)
+		VALUES (?, ?, ?, ?, 1, 'held')`, cid, uid, ord1.ID, ord1.No)
+	execSQL(t, e, ctx, `INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, order_no, discount_amount, status)
+		VALUES (?, ?, ?, ?, 1, 'held')`, cid, uid, ord2.ID, ord2.No)
 	assertSQLFails(t, e, ctx, `DELETE FROM coupon_redemptions WHERE coupon_id = ?`, cid)
 
 	okCode := "A-B_" + strings.ToUpper(randHex(8))
-	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off, currency) VALUES (?, 'n', 1, 'CNY')`, okCode)
+	execSQL(t, e, ctx, `INSERT INTO coupons (code, name, amount_off) VALUES (?, 'n', 1)`, okCode)
 
 	planID := newPlan(t, e, ctx)
 	execSQL(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
 	assertSQLFails(t, e, ctx, `INSERT INTO coupon_plans (coupon_id, plan_id) VALUES (?, ?)`, cid, planID)
-}
-
-func TestCurrencyDefaultsToSite(t *testing.T) {
-	e := newEnv(t)
-	ctx := e.txCtx()
-	admin := newUser(t, e, ctx)
-	actx := adminCtx(ctx, admin)
-
-	e.site.currency = "USD"
-	spec := percentSpec(1000)
-	spec.Currency = ""
-	id, _, err := e.svc.CreateCoupon(actx, randCode("CUR"), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cur string
-	if err := e.row(ctx, `SELECT currency FROM coupons WHERE id = ?`, id).Scan(&cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur != "USD" {
-		t.Fatalf("默认站点币种: %q", cur)
-	}
-
-	spec2 := percentSpec(1000)
-	id2, _, err := e.svc.CreateCoupon(actx, randCode("CUR2"), spec2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.row(ctx, `SELECT currency FROM coupons WHERE id = ?`, id2).Scan(&cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur != "CNY" {
-		t.Fatalf("显式币种: %q", cur)
-	}
-
-	spec3 := fixedSpec("1.00")
-	spec3.Currency = ""
-	codes, err := e.svc.GenerateCoupons(actx, "CU", 2, spec3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.row(ctx, `SELECT currency FROM coupons WHERE code = ?`, codes[0]).Scan(&cur); err != nil {
-		t.Fatal(err)
-	}
-	if cur != "USD" {
-		t.Fatalf("批量默认币种: %q", cur)
-	}
-
-	e.site.currency = "EUR"
-	spec4 := fixedSpec("1.00")
-	spec4.Currency = ""
-	_, _, err = e.svc.CreateCoupon(actx, randCode("EUR"), spec4)
-	if err == nil || errs.As(err).Fields["currency"] == "" {
-		t.Fatalf("不支持站点币种: %v", err)
-	}
 }
 
 func TestCreateRejectsBadCode(t *testing.T) {

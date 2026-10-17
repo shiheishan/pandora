@@ -6,9 +6,9 @@ import { useApi } from '../../../shell/runtime'
 // ---------------------------------------------------------------------------
 // 枚举：后端封闭列表（00008 的 CHECK、support.Categories），未知值判为不符约定
 // ---------------------------------------------------------------------------
-export const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
-export const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
-export const TICKET_CATEGORIES = ['general', 'billing', 'subscription', 'technical', 'account', 'abuse'] as const
+const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
+const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
+const TICKET_CATEGORIES = ['general', 'billing', 'subscription', 'technical', 'account', 'abuse'] as const
 export type TicketStatus = (typeof TICKET_STATUSES)[number]
 export type TicketPriority = (typeof TICKET_PRIORITIES)[number]
 export type TicketCategory = (typeof TICKET_CATEGORIES)[number]
@@ -18,7 +18,8 @@ const time = z.string()
 
 // ---------------------------------------------------------------------------
 // Ticket：列表与详情共用一个 Go 结构。带 omitempty 的字段（后端 nil / false / '' 时省略）
-// 写 optional；closed_reason、related_order 没有 omitempty，恒在、可为 null。
+// 写 optional；user_id、user_email、两个 sla_*_due 没有 omitempty，恒在；
+// closed_reason、related_order 没有 omitempty，恒在、可为 null。
 // related_order：队列恒为 null，详情按关联订单联表；详情的 message_count / last_reply_at 与队列同口径（R114）。
 // ---------------------------------------------------------------------------
 const ticketSchema = z.object({
@@ -31,12 +32,12 @@ const ticketSchema = z.object({
   created_at: time,
   updated_at: time,
   resolved_at: time.nullable(),
-  user_id: z.string().optional(),
-  user_email: z.string().optional(),
+  user_id: z.string(),
+  user_email: z.string(),
   assigned_to: z.string().optional(),
   assignee_email: z.string().optional(),
-  sla_first_response_due: time.optional(),
-  sla_resolution_due: time.optional(),
+  sla_first_response_due: time,
+  sla_resolution_due: time,
   first_responded_at: time.optional(),
   escalated_at: time.optional(),
   sla_breached: z.boolean().optional(),
@@ -46,7 +47,7 @@ const ticketSchema = z.object({
   user_active_plan: z.string().optional(),
   message_count: count,
   last_reply_at: time,
-  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed']).nullable(),
+  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed', 'auto_closed']).nullable(),
   related_order: z.object({ id: z.string(), order_no: z.string() }).nullable(),
 })
 
@@ -88,8 +89,8 @@ export const macroSavedSchema = z.object({ id: z.string() })
 // ---------------------------------------------------------------------------
 // 查询
 // ---------------------------------------------------------------------------
-export const TK = ['admin', 'tickets'] as const
-export const QUEUE_PAGE = 25
+const TK = ['admin', 'tickets'] as const
+const QUEUE_PAGE = 25
 
 /** 队列筛选（已映射成后端 query，见 model.queueParams） */
 export interface QueueParams {

@@ -28,6 +28,8 @@ type fakeSettings struct {
 	setSwitchEn     bool
 	setSwitchReason string
 	setSiteErr      error
+
+	supportRules service.SupportRules
 }
 
 func (f *fakeSettings) Site(ctx context.Context) (service.Site, error) {
@@ -45,10 +47,8 @@ func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error 
 	if u.Timezone != nil {
 		v.Timezone = *u.Timezone
 	}
-	if u.Currency != nil {
-		v.Currency = *u.Currency
-	}
 	f.setSiteVal = v
+	f.site = v
 	return nil
 }
 
@@ -83,6 +83,23 @@ func (f *fakeSettings) SwitchEnabled(ctx context.Context, code string) (bool, er
 		return true, nil
 	}
 	return v, nil
+}
+
+func (f *fakeSettings) SupportRules(ctx context.Context) (service.SupportRules, error) {
+	return f.supportRules, nil
+}
+
+func (f *fakeSettings) SetSupportRules(ctx context.Context, v service.SupportRules) error {
+	f.supportRules = v
+	return nil
+}
+
+func (f *fakeSettings) SignupWithoutSecret(ctx context.Context) (service.Signup, error) {
+	return service.Signup{EmailSuffixes: []string{}}, nil
+}
+
+func (f *fakeSettings) SetSignup(ctx context.Context, u service.SignupUpdate) error {
+	return nil
 }
 
 func testKit(h *Handler) route.Kit {
@@ -173,7 +190,7 @@ func TestSiteConfig(t *testing.T) {
 
 func TestGetSiteRequiresAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	fake := &fakeSettings{site: service.Site{Name: "N", Timezone: "Asia/Shanghai", Currency: "CNY"}}
+	fake := &fakeSettings{site: service.Site{Name: "N", Timezone: "Asia/Shanghai"}}
 	h := New(fake)
 	e := gin.New()
 	e.Use(httpx.Errors())
@@ -192,15 +209,15 @@ func TestGetSiteRequiresAuth(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil {
 		t.Fatal(err)
 	}
-	if sr.Timezone != "Asia/Shanghai" {
-		t.Fatalf("timezone %q", sr.Timezone)
+	if sr.Timezone != "Asia/Shanghai" || sr.Name != "N" {
+		t.Fatalf("site %+v", sr)
 	}
 }
 
 func TestSetSite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeSettings{
-		site: service.Site{Name: "Keep", Timezone: "UTC", Currency: "USD"},
+		site: service.Site{Name: "Keep", Timezone: "UTC"},
 	}
 	h := New(fake)
 	e := gin.New()
@@ -220,8 +237,24 @@ func TestSetSite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
-	if fake.setSiteVal.Name != "Keep" || fake.setSiteVal.Currency != "USD" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
+	if fake.setSiteVal.Name != "Keep" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
 		t.Fatalf("setSite %+v", fake.setSiteVal)
+	}
+	var sr siteResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil || sr != (siteResponse{Name: "Keep", Timezone: "Asia/Tokyo"}) {
+		t.Fatalf("set site response %s", rec.Body.String())
+	}
+
+	// 只改站点名：时区保持
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"name":"夜海加速"}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if fake.setSiteVal.Name != "夜海加速" || fake.setSiteVal.Timezone != "Asia/Tokyo" {
+		t.Fatalf("setSite name only %+v", fake.setSiteVal)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil || sr != (siteResponse{Name: "夜海加速", Timezone: "Asia/Tokyo"}) {
+		t.Fatalf("set name response %s", rec.Body.String())
 	}
 
 	rec = do(e, http.MethodPost, "/v1/settings/site", `{"timezone":"x","extra":1}`, hdrs)
@@ -374,5 +407,40 @@ func TestAdminWritesGate(t *testing.T) {
 	rec = do(e, http.MethodPost, "/admin-x/v1/settings/site", `{"timezone":"Y"}`, hdrs)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("post site when writes on status %d", rec.Code)
+	}
+}
+
+func TestSupportRules(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeSettings{}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors())
+	h.RegisterAdmin(e.Group("/v1"), testKit(h))
+	hdrs := map[string]string{
+		"X-Test-Auth":   "1",
+		"X-Test-Reauth": "1",
+	}
+
+	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(e, http.MethodGet, "/v1/settings/support", "", map[string]string{"X-Test-Auth": "1"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status %d", rec.Code)
+	}
+	var out supportRulesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 {
+		t.Fatalf("rules %+v", out)
+	}
+
+	rec = do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true}`, hdrs)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(t, rec) != "validation_failed" {
+		t.Fatalf("status %d code %s body %s", rec.Code, errCode(t, rec), rec.Body.String())
 	}
 }

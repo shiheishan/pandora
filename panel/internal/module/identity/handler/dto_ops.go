@@ -159,19 +159,9 @@ type accessLogQuery struct {
 	Outcome  string `form:"outcome" binding:"max=200"`
 	IP       string `form:"ip" binding:"max=200"`
 	User     string `form:"user" binding:"max=200"`
-	Limit    string `form:"limit" binding:"max=10"`
-	Offset   string `form:"offset" binding:"max=10"`
 }
 
-func (q accessLogQuery) toQuery() service.AccessLogQuery {
-	limit := 50
-	if v, err := strconv.Atoi(q.Limit); err == nil && v >= 1 && v <= 200 {
-		limit = v
-	}
-	offset := 0
-	if v, err := strconv.Atoi(q.Offset); err == nil && v > 0 {
-		offset = v
-	}
+func (q accessLogQuery) toQuery(limit, offset int) service.AccessLogQuery {
 	return service.AccessLogQuery{
 		Category: q.Category,
 		Outcome:  q.Outcome,

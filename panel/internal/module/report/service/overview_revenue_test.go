@@ -13,25 +13,22 @@ import (
 	"github.com/aegispanel/aegis/internal/module/report/model"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 func TestRevenueTimeseriesFillsAndPrevious(t *testing.T) {
 	e := newTestEnv()
 	ctx := context.Background()
 	e.ports.revenueDays = []ledgersvc.RevenueDay{
-		{Currency: money.CNY, Day: "2026-03-10", Credit: dec("100"), Debit: dec("10")},
-		{Currency: money.CNY, Day: "2026-03-04", Credit: dec("50")},
-		{Currency: money.USD, Day: "2026-03-10", Credit: dec("7")},
-		{Currency: money.CNY, Day: "2026-03-02", Credit: dec("30")},
+		{Day: "2026-03-10", Credit: dec("100"), Debit: dec("10")},
+		{Day: "2026-03-04", Credit: dec("50")},
+		{Day: "2026-03-02", Credit: dec("30")},
 	}
 	e.store.adjustments = append(e.store.adjustments, model.Adjustment{
-		Currency:    "CNY",
 		Amount:      dec("-5"),
 		EffectiveOn: "2026-03-09",
 	})
 
-	got, err := e.svc.RevenueTimeseries(ctx, "CNY", 7)
+	got, err := e.svc.RevenueTimeseries(ctx, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,24 +81,16 @@ func TestRevenueTimeseriesValidation(t *testing.T) {
 	e := newTestEnv()
 	ctx := context.Background()
 
-	_, err := e.svc.RevenueTimeseries(ctx, "EUR", 7)
-	if err == nil {
-		t.Fatal("expected error for EUR")
-	}
-	var ve *errs.Error
-	if !errors.As(err, &ve) || ve.Code != errs.ValidationFailed {
-		t.Fatalf("EUR: %v", err)
-	}
-
-	_, err = e.svc.RevenueTimeseries(ctx, "CNY", 14)
+	_, err := e.svc.RevenueTimeseries(ctx, 14)
 	if err == nil {
 		t.Fatal("expected error for days 14")
 	}
+	var ve *errs.Error
 	if !errors.As(err, &ve) || ve.Code != errs.ValidationFailed {
 		t.Fatalf("days 14: %v", err)
 	}
 
-	got, err := e.svc.RevenueTimeseries(ctx, "CNY", 0)
+	got, err := e.svc.RevenueTimeseries(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,55 +103,41 @@ func TestOverviewRevenueRows(t *testing.T) {
 	e := newTestEnv()
 	ctx := context.Background()
 	e.ports.revenueDays = []ledgersvc.RevenueDay{
-		{Currency: money.CNY, Day: "2026-03-10", Credit: dec("100"), Debit: dec("10")},
-		{Currency: money.CNY, Day: "2026-03-09", Credit: dec("20")},
-		{Currency: money.CNY, Day: "2026-03-04", Credit: dec("50")},
-		{Currency: money.USD, Day: "2026-03-10", Credit: dec("7")},
+		{Day: "2026-03-10", Credit: dec("100"), Debit: dec("10")},
+		{Day: "2026-03-09", Credit: dec("20")},
+		{Day: "2026-03-04", Credit: dec("50")},
 	}
-	e.ports.revenueTotals = []ledgersvc.RevenueTotal{
-		{Currency: money.CNY, Credit: dec("1000"), Debit: dec("100")},
+	e.ports.revenueTotal = ledgersvc.RevenueTotal{
+		Credit: dec("1000"), Debit: dec("100"),
 	}
 	e.store.adjustments = []model.Adjustment{
-		{Currency: "CNY", Amount: dec("3"), EffectiveOn: "2026-03-10"},
-		{Currency: "CNY", Amount: dec("1000"), EffectiveOn: "2026-01-01"},
+		{Amount: dec("3"), EffectiveOn: "2026-03-10"},
+		{Amount: dec("1000"), EffectiveOn: "2026-01-01"},
 	}
 
 	ov, err := e.svc.Overview(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ov.Revenue) != 2 {
-		t.Fatalf("revenue rows: %d", len(ov.Revenue))
-	}
-	if ov.Revenue[0].Currency != money.CNY || ov.Revenue[1].Currency != money.USD {
-		t.Fatalf("currency order: %v %v", ov.Revenue[0].Currency, ov.Revenue[1].Currency)
-	}
-	cny := ov.Revenue[0]
+	rev := ov.Revenue
 	checks := []struct {
 		name string
 		got  string
 		want string
 	}{
-		{"ActualToday", cny.ActualToday.String(), "90"},
-		{"ActualYesterday", cny.ActualYesterday.String(), "20"},
-		{"Actual7Days", cny.Actual7Days.String(), "160"},
-		{"ActualTotal", cny.ActualTotal.String(), "900"},
-		{"AdjustmentToday", cny.AdjustmentToday.String(), "3"},
-		{"AdjustmentTotal", cny.AdjustmentTotal.String(), "1003"},
-		{"Today", cny.Today.String(), "93"},
-		{"Total", cny.Total.String(), "1903"},
+		{"ActualToday", rev.ActualToday.String(), "90"},
+		{"ActualYesterday", rev.ActualYesterday.String(), "20"},
+		{"Actual7Days", rev.Actual7Days.String(), "160"},
+		{"ActualTotal", rev.ActualTotal.String(), "900"},
+		{"AdjustmentToday", rev.AdjustmentToday.String(), "3"},
+		{"AdjustmentTotal", rev.AdjustmentTotal.String(), "1003"},
+		{"Today", rev.Today.String(), "93"},
+		{"Total", rev.Total.String(), "1903"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
-			t.Fatalf("CNY %s: got %s want %s", c.name, c.got, c.want)
+			t.Fatalf("%s: got %s want %s", c.name, c.got, c.want)
 		}
-	}
-	usd := ov.Revenue[1]
-	if !usd.ActualToday.Equal(dec("7")) || !usd.Today.Equal(dec("7")) {
-		t.Fatalf("USD today: actual=%s display=%s", usd.ActualToday, usd.Today)
-	}
-	if !usd.ActualTotal.Equal(dec("0")) || !usd.Total.Equal(dec("0")) {
-		t.Fatalf("USD totals: actual=%s total=%s", usd.ActualTotal, usd.Total)
 	}
 }
 
@@ -182,7 +157,7 @@ func TestOverviewCountsMapping(t *testing.T) {
 	if ov.Users.Total != 1 || ov.Users.Active != 2 || ov.Users.Today != 3 || ov.Users.Last7Days != 4 {
 		t.Fatalf("users: %+v", ov.Users)
 	}
-	if ov.Subscriptions.Active != 10 || ov.Subscriptions.Trialing != 0 ||
+	if ov.Subscriptions.Active != 10 ||
 		ov.Subscriptions.Expiring7Days != 11 || ov.Subscriptions.Expired != 12 || ov.Subscriptions.New7Days != 13 {
 		t.Fatalf("subs: %+v", ov.Subscriptions)
 	}

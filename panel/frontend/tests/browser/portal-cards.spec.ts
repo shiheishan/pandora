@@ -1,20 +1,21 @@
 import { admin, grant, newUser, subscriptionsOf, sql, str, uuid, type User } from './api.ts'
-import { backToSubs, card, daysBetween, expect, happened, monthsLater, narrowShot, nav, openPortal, step, test, text, submit } from './fixtures.ts'
+import { backToSubs, card, daysBetween, openCard, expect, happened, monthsLater, narrowShot, nav, openPortal, step, test, text, submit } from './fixtures.ts'
 import { giftCode } from './seed.ts'
 import type { Page } from '@playwright/test'
 
 // ============================================================================
-//  门户 C6（礼品卡七种用法）与 C7（流量包跟着那一份，在用的不能挪）
+//  门户 C6（礼品卡七种用法）与 C7（送的流量跟着那一份；10-16 起没有流量包）
 // ============================================================================
 
-/** 从我的套餐底部「有卡？去兑换」进兑换页，输卡号、查询，停在卡面 */
+/** 从我的套餐底部「有卡？去兑换」打开钱包页的兑换弹层，输卡号、点兑换，停在卡面（弹层标题随后会变，卡面按 h3 找） */
 async function lookup(page: Page, code: string): Promise<string> {
   await nav(page, '我的套餐')
   await page.getByRole('link', { name: '有卡？去兑换' }).click()
-  await expect(page.getByRole('heading', { level: 1, name: '兑换卡' })).toBeVisible()
-  await page.getByLabel('卡号').fill(code)
-  await page.getByRole('button', { name: '查询' }).click()
-  const face = page.getByText('这张卡', { exact: true }).locator('xpath=following-sibling::h3[1]')
+  const dialog = page.getByRole('dialog', { name: '兑换卡' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('卡号').fill(code)
+  await dialog.getByRole('button', { name: '兑换', exact: true }).click()
+  const face = page.getByRole('dialog').getByRole('heading', { level: 3 })
   await expect(face).toBeVisible()
   return text(face)
 }
@@ -22,7 +23,7 @@ async function lookup(page: Page, code: string): Promise<string> {
 /** 卡面下「会发生什么」那一句 */
 const sentence = (page: Page) => text(page.getByText('会发生什么', { exact: true }).locator('xpath=..'))
 
-/** 前提：后台「线下已收款」开一份——付了钱的一份，换套餐时才有没用完的钱可退（与 w8walk 先渠道付同效） */
+/** 前提：后台「线下已收款」开一份——付了钱的一份，换套餐时才有没用完的钱可退（与先渠道付同效） */
 async function paidCopy(u: User, plan: { id: string; prices: string[] }): Promise<void> {
   await admin('/v1/orders/manual', {
     body: { user_id: u.id, plan_id: plan.id, price_id: plan.prices[0], reason: 'w9browser 造前提：线下已收款开一份', settlement: 'offline', reference: `W9B-${u.id.slice(0, 8)}`, target: { kind: 'new' } },
@@ -50,7 +51,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
   })
 
   await step(page, 'C6b', async () => {
-    // SQL 夹具：这一份本期已用设成 5G（模拟用过；按节点上报造要先查出节点侧的用户编号，绕一大圈），与 w8walk C6b 同一做法
+    // SQL 夹具：这一份本期已用设成 5G（模拟用过；按节点上报造要先查出节点侧的用户编号，绕一大圈），与 C6b 同一做法
     const sub = str((await subscriptionsOf(u))[0], 'id')
     sql('本期已用 5G', `UPDATE quota_balances SET consumed = 5368709120 WHERE subscription_id = '${uuid(sub)}' AND metric = 'traffic.bytes';`)
     const face = await lookup(page, await giftCode(world.cards.reset))
@@ -60,8 +61,10 @@ test('C6：礼品卡', async ({ browser, world }) => {
     await expect(page.getByRole('heading', { name: '流量已清零重算' })).toBeVisible()
     const lines = await happened(page)
     await backToSubs(page)
-    await expect(card(page, std.name)).toContainText('剩 100G / 共 100G')
-    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片「剩 100G / 共 100G」`
+    // 主卡：大数字是剩余（100 GB），下面一行「本期剩余 · 共 100G」
+    await expect(card(page, std.name)).toContainText('本期剩余 · 共 100G')
+    await expect(card(page, std.name).getByRole('progressbar', { name: '剩余流量' })).toHaveAttribute('aria-valuenow', '100')
+    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片剩余 100%「本期剩余 · 共 100G」`
   })
 
   await step(page, 'C6c', async () => {
@@ -71,8 +74,9 @@ test('C6：礼品卡', async ({ browser, world }) => {
     await expect(page.getByRole('heading', { name: '已加 2G' })).toBeVisible()
     const lines = await happened(page)
     await backToSubs(page)
-    await expect(card(page, std.name)).toContainText('含流量包 2G')
-    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片写含流量包 2G`
+    // 送的流量当期有效：按时间的套餐卡片写「含送的 2G，本期有效」
+    await expect(card(page, std.name)).toContainText('含送的 2G，本期有效')
+    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片写含送的 2G，本期有效`
   })
 
   await step(page, 'C6d', async () => {
@@ -117,8 +121,9 @@ test('C6：礼品卡', async ({ browser, world }) => {
   await step(other, 'C6f', async () => {
     await expect(other.getByText('你还没有套餐')).toBeVisible()
     await other.getByRole('link', { name: '有卡？去兑换' }).click()
-    await other.getByLabel('卡号').fill(mystery)
-    await other.getByRole('button', { name: '查询' }).click()
+    const dialog = other.getByRole('dialog', { name: '兑换卡' })
+    await dialog.getByLabel('卡号').fill(mystery)
+    await dialog.getByRole('button', { name: '兑换', exact: true }).click()
     const go = other.getByRole('button', { name: '兑换，抽一次' })
     const err = other.getByRole('alert').first()
     await expect(go.or(err).first()).toBeVisible()
@@ -139,26 +144,28 @@ test('C6：礼品卡', async ({ browser, world }) => {
   })
 })
 
-test('C7：流量包跟着那一份，在用的不能挪', async ({ browser, world }) => {
+test('C7：送的流量跟着那一份', async ({ browser, world }) => {
   const { basic, std } = world.plans
   const u = await newUser('c7')
   await grant(u, basic)
   await grant(u, std, { kind: 'new' })
   const subs = await subscriptionsOf(u)
   const stdSub = str(subs.find((s) => s.plan_id === std.id), 'id')
-  // 后台按订阅给标准版加 1G：挂在标准版上，两份都在用
-  await admin(`/v1/subscriptions/${stdSub}/traffic-pack`, { body: { bytes: 1024 ** 3, reason: 'w9browser C7 流量包挂在标准版' }, expect: [200, 201] })
+  // 后台按订阅给标准版加 1G（本期有效）：只加在标准版上，两份都在用
+  await admin(`/v1/subscriptions/${stdSub}/traffic-pack`, { body: { bytes: 1024 ** 3, reason: 'w9browser C7 给标准版加流量' }, expect: [200, 201] })
   const page = await openPortal(browser, u)
 
   await step(page, 'C7', async () => {
-    const from = card(page, std.name)
-    const usage = from.getByText(/含流量包 1G/)
+    // 两份：先在切换条上点到标准版
+    const from = await openCard(page, std.name)
+    const usage = from.getByText(/含送的 1G/)
     await expect(usage).toBeVisible()
-    await expect(card(page, basic.name)).not.toContainText('含流量包')
-    // 用户 10-09 删掉了「升级前的旧流量包挪一次」：流量包只在那份彻底停用后才能转走，两份都在用时页面上没有挪的入口
-    await expect(page.getByText(/挪|升级前买的/)).toHaveCount(0)
-    await expect(page.getByRole('button', { name: /^挪到/ })).toHaveCount(0)
+    const usageText = await text(usage)
+    // 多份时只显示选中的那份：点到基础版再看（标准版那张随之隐藏，文字先取好）
+    await expect(await openCard(page, basic.name)).not.toContainText('含送的')
+    // 10-16 删了流量包：页面上不再出现这三个字
+    await expect(page.getByText(/流量包/)).toHaveCount(0)
     await narrowShot(page, 'C7-cards')
-    return `标准版写「${await text(usage)}」，基础版没有流量包；页面上没有挪的按钮和提示`
+    return `标准版写「${usageText}」，基础版没有送的流量；页面上没有「流量包」`
   })
 })

@@ -19,7 +19,7 @@ paths:
 - `idempotent` 与 Go 中间件一致：只重放 2xx，非 2xx 的同键同请求会重新执行。所以 `run` 里先校验，回 4xx 之前不要改任何状态
 - 带 raw 的结果（CSV 等）重放时只回 `Content-Type` 与 `Cache-Control`，与后端一致；只在首次响应里带的头放进 `MockRaw.headers`
 - 请求体照 Go 的 `DisallowUnknownFields` 拒绝多余字段，各模块已有现成的 `unknownField` / `readStrict` 辅助，前端字段拼错时能在这里暴露
-- 后台的 `admin.writes` 只读门挂在整棵 `/v1` 上、先于认证。豁免表 `adminWriteExempt` 与 Go `panel/internal/module/settings/handler/middleware.go` 的 `adminWriteExempt` 相同，Go 改了这里要跟着改
+- 后台的 `admin.writes` 只读门挂在整棵 `/v1` 上、先于认证。豁免表 `ADMIN_WRITE_ALLOWLIST`（`dev/mock-api.ts`）与 Go `panel/internal/module/settings/handler/middleware.go` 的 `adminWriteAllowlist` 逐条相同，守卫是同目录的 `TestAdminWriteAllowlistMatchesMock`
 - 路由按 `ADMIN_MODULES` / `PORTAL_MODULES` 的登记顺序、模块内按键的顺序匹配，先匹配先得（`types.ts` 的 `findRoute`）。字面段路由要排在同形的 `:param` 路由之前，例如 `admin/tickets.ts` 的 `GET /v1/tickets/assignees` 在 `:id` 之前
 - 跨模块的数据只有一份，各有属主：
   - 属主：用户与订阅归 `admin/users.ts`（`userStore`），订单归 `admin/billing-store.ts`，节点池与出站归 `admin/nodes-infra.ts`
@@ -27,8 +27,13 @@ paths:
   - 页面上「同口径」的数字靠这份共享数据成立：仪表盘的超时未支付 = 订单页待支付筛选（`stalePendingCount`），按池在线数 = 节点池列表（`activeNodesInPool`）
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
-- `admin/node-schemas.ts` 是 Go `protocol.Schemas()`（`panel/internal/module/node/protocol/`）的原样导出，没有自动同步也没有守卫
-  - Go 的协议 schema 一变（改了 `panel/internal/module/node/protocol/schema.go` 或字段翻译）就要手动重导。导出脚本 `.claude/skills/subscription-e2e/scripts/export-schemas.sh` 还指着已删的旧包，修好之前只能手工对照 `protocol.Schemas()` 改这个文件，再用 `git diff` 看变化、跑页面单测
+- 种子只造库里真有的状态与字段（迁移里的 CHECK）：订阅 active / expired，订单 5 态（不做退款，没有退款态与 refunded_amount），意图 requires_action / succeeded / cancelled / expired，收款只有 succeeded，节点服务状态没有 draining；Go 已删的键不吐。种子里的域名一律用保留域（`example.test`、`example.com`），IP 用文档段
+- 节点补齐 Xboard 的部分（标签、流量上限与重置、时段倍率、中转、ECH、批量修改）在 `admin/nodes-xb.ts`：状态挂在 `Node.xb` 上，路由由 `xbRoutes(deps)` 生成、经 nodes.ts 展开；它只被 nodes.ts import（不反向 import，避免成环），要用 nodes.ts 的校验与写入（池、倍率、状态边）就经 `deps` 传进来
+  - 中转、ECH、手动重置都不动节点的 `row_version`（Go 里中转与 ECH 是别的表，重置只改用量列）；批量修改先把所有节点校验完再一起写，模拟整批回滚
+  - 种子演示：「香港 02 · IPLC」两条中转与时段倍率，「洛杉矶 01」超限（不下发），末尾「法兰克福 01 · ECH」已开 ECH；「新加坡 02」保持「心跳超时仍下发」的演示，不叠超限
+  - 守卫测试：`tests/mock-admin-nodes-xb.test.ts`
+- `admin/node-schemas.ts` 是 `GET /v1/node-protocol-schemas` 响应（Go `protocol.Schemas()` 经 handler 的 DTO）的原样导出，守卫是 `panel/internal/module/node/handler/schemas_mock_test.go` 的 `TestMockNodeSchemasMatchGo`（逐字节比对）
+  - Go 的协议 schema 或 DTO 一变，在 `panel/` 下跑 `go test ./internal/module/node/handler/ -run TestMockNodeSchemasMatchGo -update` 重导，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
 - 门户场景（`portal/scenario.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
@@ -39,10 +44,12 @@ paths:
   - 测试用的两个接口（都只在假后端里，不进 Go）：
     - `GET /v1/__mock/proto?s=<proto-场景>&to=<门户地址>`：匿名可调，切到该场景（重建状态）后 302 跳到 `/#<to>`，不带 `to` 跳场景的起始页；`to` 只收 `/` 开头的门户地址。登录态在浏览器里，切场景不登出，测试员每个任务开一次这个地址就从头来
     - `POST /v1/__mock/expire-orders`：要登录，把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409：发起支付回 `order_lapsed`，同款再买回 `order_pending` 带 `fields.lapsed`
+  - 发起支付：渠道是 `btcpay` 且这张单还没有它的意图时，第一次 `POST /v1/orders/{id}/pay` 回 409 `payment_in_progress`（模拟真后端 30 秒建单窗口），紧接着再发就建好（`checkout.ts` 的 `creatingByState`，按 PortalState 挂在 WeakMap 上）
   - 新增响应字段时照 Go 有没有 omitempty，决定 `legacy` 场景里它是否缺席
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
   - 按用户挂的模块状态放在 `WeakMap<PortalState, …>` 里，才能随切换场景一起重建
 - 外框顶栏读的余额、订阅、佣金、未读数按契约归各页面，所以住在对应页面的模块文件里（`wallet` / `subs` / `referral` / `messages`）；页面扩充这些接口时外框直接沿用
+- SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE），后台点事件能打开那一条；守卫 `tests/mock-admin-events.test.ts`
 - 状态都在内存里，vite 重启即复原
   - `POST /__mock/expire-reauth` 让所有会话的 rat 立即过期，用来走 reauth 流程
   - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`

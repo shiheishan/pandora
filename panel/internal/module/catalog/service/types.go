@@ -4,12 +4,19 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-// 套餐状态：draft → active（发布）→ archived；draft 也可直接归档。归档不可恢复。
+// 套餐类型：建好后不可改（价格经复合外键钉住）。
+const (
+	// KindSubscription 是订阅套餐：按时间算，月 / 季 / 半年 / 年四档价，每周期一份流量、新周期清零。
+	KindSubscription = "subscription"
+	// KindOneTime 是一次性套餐：按流量算，一个价格 + 一份总流量，不清零；有效天数可选，空为永久；不能续费。
+	KindOneTime = "one_time"
+)
+
+// 套餐状态：draft → active（首个版本发布即上架）→ archived；draft 也可直接归档。归档不可恢复。
 const (
 	PlanDraft    = "draft"
 	PlanActive   = "active"
@@ -28,75 +35,58 @@ const (
 	PriceArchived = "archived"
 )
 
-// 流量包状态：active ↔ archived（下架后可以重新上架）。
-const (
-	PackActive   = "active"
-	PackArchived = "archived"
-)
-
-// 套餐可见性。invite_only 可以保存，但邀请购买没有实现，不许发布。
+// 套餐可见性。
 const (
 	VisibilityPublic        = "public"
 	VisibilityAuthenticated = "authenticated"
 	VisibilityGroup         = "group"
-	VisibilityInviteOnly    = "invite_only"
 	VisibilityHidden        = "hidden"
 )
 
-// 配额周期。
+// 价格周期。订阅套餐只有 (month,1) (month,3) (month,6) (year,1) 四档；一次性套餐只有 (one_time,1)。
+const (
+	IntervalMonth   = "month"
+	IntervalYear    = "year"
+	IntervalOneTime = "one_time"
+)
+
+// 配额周期：订阅套餐的流量配额按周期（cycle），一次性套餐是总量（total）。建版本时按套餐类型落，不让人选。
 const (
 	PeriodTotal = "total"
 	PeriodCycle = "cycle"
-	PeriodDay   = "day"
-	PeriodMonth = "month"
 )
 
-// 流量重置策略。
-const (
-	ResetNever        = "never"
-	ResetNaturalMonth = "natural_month"
-	ResetBillingCycle = "billing_cycle"
-	ResetFixedDay     = "fixed_day"
-)
-
-// 常用指标与换算。
+// 流量配额的指标与单位。
 const (
 	MetricTraffic = "traffic.bytes"
-	MetricDevices = "devices.active"
-	// BytesPerGB 是向导里 1 GB 的字节数（1<<30，与前端同口径）。
-	BytesPerGB int64 = 1 << 30
-	// OveragePolicySuspend 是唯一的超额策略：流量用完且无流量包余额后停止服务。库里不存，读出一律是它。
-	OveragePolicySuspend = "suspend"
+	UnitBytes     = "bytes"
 )
 
 // Plan 是套餐本身（不含版本与价格）。
 type Plan struct {
-	ID               uuid.UUID
-	Code             string
-	Name             string
-	Description      *string
+	ID          uuid.UUID
+	Code        string
+	Name        string
+	Description *string
+	// Kind 是 KindSubscription 或 KindOneTime，建好后不可改。
+	Kind             string
 	Status           string
 	CurrentVersionID *uuid.UUID
 	Visibility       string
 	// VisibleGroupIDs 只在 visibility = group 时非空，按 id 升序；永不为 nil。
-	VisibleGroupIDs      []uuid.UUID
-	VisibleFrom          *time.Time
-	VisibleUntil         *time.Time
-	AllowNewPurchase     bool
-	AllowRenewal         bool
-	AllowUpgrade         bool
-	PurchaseLimitPerUser *int
-	// StockTotal 为 nil 表示不限量。
-	StockTotal    *int
-	StockReserved int
-	StockSold     int
-	// Highlights 是卖点，按给定顺序；永不为 nil。
-	Highlights  []string
-	Recommended bool
-	SortOrder   int
-	RowVersion  int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	VisibleGroupIDs  []uuid.UUID
+	AllowNewPurchase bool
+	// AllowRenewal 对一次性套餐恒为 false（库里 CHECK）。
+	AllowRenewal bool
+	AllowUpgrade bool
+	Recommended  bool
+	// ResetPrice 是每次流量重置的价格（元）；nil = 不卖流量重置。
+	ResetPrice *decimal.Decimal
+	// ResetLimit 是重置次数上限：订阅按每周期、一次性按有效期内；nil = 不限次数。
+	ResetLimit *int
+	RowVersion int64
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Entitlement 是版本上的一项权益；Value 是任意 JSON。
@@ -113,27 +103,17 @@ type Quota struct {
 	Period string
 }
 
-// Version 是套餐版本与它的权益、配额。
+// Version 是套餐版本（用量：流量、设备、限速）与它的权益、配额。
 type Version struct {
-	ID                   uuid.UUID
-	PlanID               uuid.UUID
-	Version              int
-	Status               string
-	FrozenAt             *time.Time
-	QuotaResetStrategy   string
-	QuotaResetDay        *int
-	GracePeriodHours     int
-	GraceKeepsService    bool
-	RenewalExtendsPeriod bool
-	RenewalResetsQuota   bool
-	RenewalKeepsAddons   bool
-	MaxDevices           *int
-	MaxConcurrent        *int
-	DeviceReleaseHours   int
-	ThrottleKbps         *int
-	Notes                *string
-	RowVersion           int64
-	CreatedBy            *uuid.UUID
+	ID           uuid.UUID
+	PlanID       uuid.UUID
+	Version      int
+	Status       string
+	FrozenAt     *time.Time
+	MaxDevices   *int
+	ThrottleKbps *int
+	RowVersion   int64
+	CreatedBy    *uuid.UUID
 	// CreatedByEmail 只在后台详情里填（建版本的管理员）；账号已删或其它读取为 nil。
 	CreatedByEmail *string
 	CreatedAt      time.Time
@@ -141,8 +121,6 @@ type Version struct {
 	Entitlements []Entitlement
 	// Quotas 按 metric、period 升序，永不为 nil。
 	Quotas []Quota
-	// PoolIDs 是版本绑定的节点池（按 id 升序）；只在后台详情（loadDetail）里填，其余读取为 nil。
-	PoolIDs []uuid.UUID
 }
 
 // TrafficLimit 返回 traffic.bytes 配额的上限（有多条时取第一条）；没有这项或不限时为 nil。
@@ -155,188 +133,162 @@ func (v Version) TrafficLimit() *int64 {
 	return nil
 }
 
-// Price 是一档价格。UnitAmount 单位元、2 位小数。
+// Price 是一档价格。
 type Price struct {
-	ID              uuid.UUID
-	PlanID          uuid.UUID
-	Currency        money.Currency
+	ID       uuid.UUID
+	PlanID   uuid.UUID
+	PlanKind string
+	// UnitAmount 单位元、2 位小数。
 	UnitAmount      decimal.Decimal
 	BillingInterval string
 	IntervalCount   int
-	TrialDays       int
-	Status          string
-	UserGroupID     *uuid.UUID
-	ValidFrom       *time.Time
-	ValidUntil      *time.Time
-	RowVersion      int64
-	CreatedAt       time.Time
+	// ValidityDays 只有一次性价有；nil = 永久。只影响之后的购买。
+	ValidityDays *int
+	Status       string
+	RowVersion   int64
+	CreatedAt    time.Time
 }
 
-// PlanDetail 是后台套餐详情：版本按 version 降序，价格按 created_at 降序（含已归档）。
-type PlanDetail struct {
-	Plan
-	Versions []Version
-	Prices   []Price
+// PlanUsage 是套餐列表与详情共用的摘要：当前版本的用量（还没发布过时取草稿版本）、版本号、草稿与线路。
+type PlanUsage struct {
+	// Version 是当前发布版本的版本号；还没发布过为 nil。
+	Version *int
+	// DraftVersionID、DraftVersion 是未发布的草稿版本（每个套餐至多一个）；没有为 nil。
+	DraftVersionID *uuid.UUID
+	DraftVersion   *int
+	// TrafficBytes、MaxDevices、ThrottleKbps 取当前版本，还没发布过取草稿版本；nil = 不限。
+	TrafficBytes *int64
+	MaxDevices   *int
+	ThrottleKbps *int
+	// PoolIDs 是套餐绑定的节点池（按 id 升序），永不为 nil。
+	PoolIDs []uuid.UUID
 }
 
-// PlanSummary 是后台套餐列表的一行：当前版本的摘要与全部价格（按状态、金额升序）。
+// PlanSummary 是后台套餐列表的一行。
 type PlanSummary struct {
 	Plan
-	DraftVersionID *uuid.UUID
-	// Version、MaxDevices、TrafficLimit 取当前版本；还没发布过时都为 nil。
-	Version      *int
-	MaxDevices   *int
-	TrafficLimit *int64
-	Prices       []Price
+	PlanUsage
+	// Prices 是在售价格，按周期从短到长（一次性只有一个），永不为 nil。
+	Prices []Price
 }
 
-// TrafficPack 是一个流量包。UnitAmount 单位元、2 位小数；UpdatedAt 是乐观锁。
-type TrafficPack struct {
-	ID           uuid.UUID
-	Name         string
-	TrafficBytes int64
-	Currency     money.Currency
+// PlanDetail 是后台套餐详情。
+type PlanDetail struct {
+	Plan
+	PlanUsage
+	// Versions 按 version 降序（含 CreatedByEmail），永不为 nil。
+	Versions []Version
+	// Prices 是全部价格（含已归档），按 created_at 降序，永不为 nil。
+	Prices []Price
+}
+
+// PlanFilter 是后台套餐列表的筛选；空串表示不限。Q 按名称或代码模糊匹配（不区分大小写）。
+type PlanFilter struct {
+	Kind   string
+	Status string
+	Q      string
+}
+
+// TierInput 是订阅套餐的一档价：周期必须是四档之一。
+type TierInput struct {
+	BillingInterval string
+	IntervalCount   int
+	UnitAmount      decimal.Decimal
+}
+
+// TierChange 是改价时的一档：UnitAmount 为 nil 表示不卖这一档（有在售价就归档）。
+type TierChange struct {
+	BillingInterval string
+	IntervalCount   int
+	UnitAmount      *decimal.Decimal
+}
+
+// OneTimeInput 是一次性套餐的唯一价格与有效天数（nil = 永久）。
+type OneTimeInput struct {
 	UnitAmount   decimal.Decimal
-	Recommended  bool
-	Status       string
-	SortOrder    int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ValidityDays *int
 }
 
-// PlanInput 是新建或整体改写套餐资料的输入（改写时客户端回填全部字段）。
-type PlanInput struct {
-	Code             string
-	Name             string
-	Description      *string
+// ResetInput 是流量重置的价格与次数上限（nil = 不限次数）。
+type ResetInput struct {
+	Price decimal.Decimal
+	Limit *int
+}
+
+// UsageInput 是套餐用量：nil 表示不限（流量字节、设备数、限速 kbps）。
+type UsageInput struct {
+	TrafficBytes *int64
+	MaxDevices   *int
+	ThrottleKbps *int
+}
+
+// SalesInput 是套餐的销售设置。一次性套餐的 AllowRenewal 必须为 false。
+type SalesInput struct {
 	Visibility       string
 	VisibleGroupIDs  []uuid.UUID
-	VisibleFrom      *time.Time
-	VisibleUntil     *time.Time
 	AllowNewPurchase bool
 	AllowRenewal     bool
 	AllowUpgrade     bool
-	// PurchaseLimitPerUser 为 nil 表示不限购。
-	PurchaseLimitPerUser *int
-	// StockTotal 为 nil 表示不限量。
-	StockTotal  *int
-	SortOrder   int
-	Highlights  []string
-	Recommended bool
+	Recommended      bool
 }
 
-// VersionInput 是草稿版本语义的全量覆盖。
-type VersionInput struct {
-	QuotaResetStrategy   string
-	QuotaResetDay        *int
-	GracePeriodHours     int
-	GraceKeepsService    bool
-	RenewalExtendsPeriod bool
-	RenewalResetsQuota   bool
-	RenewalKeepsAddons   bool
-	MaxDevices           *int
-	MaxConcurrent        *int
-	DeviceReleaseHours   int
-	// OveragePolicy 只收空串或 suspend。
-	OveragePolicy string
-	ThrottleKbps  *int
-	Notes         *string
-	Entitlements  []Entitlement
-	Quotas        []Quota
-}
-
-// PriceInput 是新建一档价格的输入。
-type PriceInput struct {
-	Currency        string
-	UnitAmount      decimal.Decimal
-	BillingInterval string
-	IntervalCount   int
-	TrialDays       int
-	UserGroupID     *uuid.UUID
-	ValidFrom       *time.Time
-	ValidUntil      *time.Time
-}
-
-// PackInput 是新建或改写流量包的输入。
-type PackInput struct {
-	Name         string
-	TrafficBytes int64
-	Currency     string
-	UnitAmount   decimal.Decimal
-	Recommended  bool
-	SortOrder    int
-}
-
-// WizardPrice 是向导里的一档公开价（不绑用户组、不限时间窗）。
-type WizardPrice struct {
-	BillingInterval string
-	IntervalCount   int
-	UnitAmount      decimal.Decimal
-	Currency        string
-	TrialDays       int
-}
-
-// WizardCreate 是「一次建成」向导的输入。Plan 里三个 Allow* 已由调用方把缺省落成 true。
-type WizardCreate struct {
-	Plan PlanInput
-	// TrafficGB 为 nil 或 0 表示不限流量。
-	TrafficGB *int64
-	// MaxDevices 为 nil 或 0 表示不限设备数。
-	MaxDevices *int
-	// ThrottleKbps 为 nil 表示不限速。
-	ThrottleKbps       *int
-	QuotaResetStrategy string
-	QuotaResetDay      *int
-	// PoolIDs 是草稿版本要绑定的节点池（已去重）；空表示不绑（要发布时由 PublishGate 拒绝）。
+// PlanCreate 是新建套餐（先选类型）的输入：套餐、草稿版本 1、价格、线路、流量重置一个事务建成，Publish 为真时直接发布上架。
+// Code 不由人填，按名称自动生成（code.go）。
+type PlanCreate struct {
+	Kind        string
+	Name        string
+	Description *string
+	// Tiers 只给订阅套餐：至少一档，周期不重复。
+	Tiers []TierInput
+	// OneTime 只给一次性套餐，必填。
+	OneTime *OneTimeInput
+	Usage   UsageInput
+	// PoolIDs 已去重；空表示不绑（发布时由 PublishGate 拒绝）。
 	PoolIDs []uuid.UUID
-	Prices  []WizardPrice
+	// Reset 为 nil 表示不卖流量重置。
+	Reset   *ResetInput
+	Sales   SalesInput
 	Publish bool
 }
 
-// WizardCreated 是向导建成的结果。
-type WizardCreated struct {
-	Plan      PlanDetail
-	VersionID uuid.UUID
-	PriceIDs  []uuid.UUID
-	Published bool
+// BasicUpdate 是改名称与说明（code 不改）。
+type BasicUpdate struct {
+	ExpectedRowVersion int64
+	Name               string
+	Description        *string
 }
 
-// OptionalInt 区分「字段缺省」（Set 为假，不动）与「显式 null」（Set 为真、Value 为 nil，改成不限）。
-type OptionalInt struct {
-	Set   bool
-	Value *int
+// SalesUpdate 是改销售设置。
+type SalesUpdate struct {
+	ExpectedRowVersion int64
+	Sales              SalesInput
 }
 
-// WizardUpdate 是「一次改完」向导的输入。指针字段为 nil 表示这次不动。
-type WizardUpdate struct {
-	ExpectedRowVersion   int64
-	Code                 string
-	Name                 string
-	Description          *string
-	Visibility           string
-	VisibleGroupIDs      []uuid.UUID
-	SortOrder            int
-	AllowNewPurchase     *bool
-	AllowRenewal         *bool
-	AllowUpgrade         *bool
-	PurchaseLimitPerUser *int
-	StockTotal           *int
-	Highlights           *[]string
-	Recommended          *bool
-	// TrafficGB 为 nil 表示不动，0 表示改成不限。
-	TrafficGB    *int64
-	MaxDevices   OptionalInt
-	ThrottleKbps OptionalInt
-	// Prices 为 nil 或空表示不动；否则只同步清单里出现的币种的公开价。
-	Prices *[]WizardPrice
-	// PoolIDs 为 nil 表示线路不动；否则（已去重，空数组即清空）与当前版本不同时滚出新版本并发布。
-	PoolIDs *[]uuid.UUID
+// ResetUpdate 是改流量重置；Enabled 为假时 Price、Limit 不看（关掉）。
+type ResetUpdate struct {
+	ExpectedRowVersion int64
+	Enabled            bool
+	Price              decimal.Decimal
+	Limit              *int
 }
 
-// WizardUpdated 是向导改完的结果；Changed 逐条说明改了什么、什么时候生效（界面直接显示）。
-type WizardUpdated struct {
-	Plan    PlanDetail
-	Changed []string
+// PricesUpdate 是改价：订阅套餐给 Tiers（只动列出的档），一次性套餐给 OneTime。改价 = 归档旧价、建新价。
+type PricesUpdate struct {
+	ExpectedRowVersion int64
+	Tiers              []TierChange
+	OneTime            *OneTimeInput
+}
+
+// PoolsUpdate 是整体替换套餐的线路（已去重，空即清空），立即生效。
+type PoolsUpdate struct {
+	ExpectedRowVersion int64
+	PoolIDs            []uuid.UUID
+}
+
+// UsageUpdate 是改用量：写进草稿版本（没有就从当前版本复制一个），不发布。
+type UsageUpdate struct {
+	ExpectedRowVersion int64
+	Usage              UsageInput
 }
 
 // Use 是下单快照的用途，决定按哪套规则判断能不能买。
@@ -344,12 +296,14 @@ type Use string
 
 // 下单快照的用途。
 const (
-	// UseNew 是新购：套餐在售、对这个用户可见、在上架窗口内、接受新购。
+	// UseNew 是新购：套餐在售、对这个用户可见、接受新购。
 	UseNew Use = "new"
-	// UseRenewal 是续费：套餐允许续费；价格的任何问题都报 ErrRenewPriceGone。
+	// UseRenewal 是续费：只许订阅套餐、没归档、允许续费；价格的任何问题都报 ErrRenewPriceGone。
 	UseRenewal Use = "renewal"
-	// UseChange 是换套餐的目标：套餐在售、可见、允许变更。
+	// UseChange 是换套餐的目标（可跨类型）：套餐在售、可见、允许变更。
 	UseChange Use = "change"
+	// UseStack 是一次性套餐再买同一个叠加：套餐在售、可见、接受新购、是一次性套餐。
+	UseStack Use = "stack"
 )
 
 // OfferRequest 是取下单快照的条件。
@@ -357,14 +311,13 @@ type OfferRequest struct {
 	Use Use
 	// UserID 是买的人；为 nil 只用于匿名浏览目录。
 	UserID *uuid.UUID
-	// Manual 为真是后台人工开单：不看可见性、上架窗口与用户组。
+	// Manual 为真是后台人工开单：不看可见性与用户组。
 	Manual bool
-	// PlanID 是期望的套餐；非 nil 时 Offer 校验价格属于它（续费传订阅的套餐，防止拿别的套餐的价格续费）。
+	// PlanID 是期望的套餐；非 nil 时 Offer 校验价格属于它（续费、叠加传订阅的套餐，防止拿别的套餐的价格）。
 	PlanID *uuid.UUID
-	// Lock 为真时套餐行 FOR NO KEY UPDATE、价格行 FOR SHARE，锁到事务结束（建单时用）：
-	// 与后台改目录互斥，同一套餐的建单排队，同一事务随后的 ReserveStock 不会死锁。
+	// Lock 为真时套餐行与价格行 FOR SHARE，锁到事务结束（建单时用）：与后台改目录互斥。
 	Lock bool
-	// Now 为零值时取当前时间。
+	// Now 是调用方的业务时刻；目录本身不再按时间判断（没有上架与价格时间窗），可不填。
 	Now time.Time
 }
 
@@ -375,7 +328,7 @@ type Offer struct {
 	Price   Price
 }
 
-// OfferPlan 是一个可买的套餐：当前发布版本与这次能用的价格（按金额、周期升序）。
+// OfferPlan 是一个可买的套餐：当前发布版本与这次能用的价格（按周期从短到长）。
 type OfferPlan struct {
 	Plan    Plan
 	Version Version

@@ -28,15 +28,19 @@ func (c *drainingCore) record(e string) {
 	c.events = append(c.events, e)
 }
 
-func (c *drainingCore) Type() string                                  { return "draining-test" }
-func (c *drainingCore) Start(context.Context) error                   { return nil }
-func (c *drainingCore) Close() error                                  { c.record("close"); return nil }
-func (c *drainingCore) AddInbound(*core.InboundConfig) error          { return nil }
+func (c *drainingCore) Type() string                                          { return "draining-test" }
+func (c *drainingCore) Start(context.Context) error                           { return nil }
+func (c *drainingCore) Close() error                                          { c.record("close"); return nil }
+func (c *drainingCore) ApplyInbound(*core.InboundConfig, *core.Routing) error { return nil }
+func (c *drainingCore) ApplyInboundWithUsers(*core.InboundConfig, *core.Routing, []core.User) error {
+	return nil
+}
 func (c *drainingCore) DelInbound(string) error                       { return nil }
 func (c *drainingCore) AddUsers(string, []core.User) error            { return nil }
 func (c *drainingCore) UpsertUsers(string, []core.User) error         { return nil }
 func (c *drainingCore) DelUsers(string, []string) error               { return nil }
-func (c *drainingCore) SetRouting(string, *core.Routing) error        { return nil }
+func (c *drainingCore) InboundReady(string) error                     { return nil }
+func (c *drainingCore) SetInboundOwner(string, string, string)        {}
 func (c *drainingCore) OnlineIPs(string) map[int64][]string           { return nil }
 func (c *drainingCore) GetTraffic(string) ([]core.UserTraffic, error) { return nil, nil }
 

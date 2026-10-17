@@ -1,56 +1,51 @@
-export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'certs' | 'content' | 'system' | 'security'
+export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'content' | 'system' | 'security'
 
-export interface ModuleDef {
+interface ModuleDef {
   title: string
   group: string
+  /** 全幅：铺满窗口、无页边距，外框不画页头和页签栏（页面自己画栏头）。只有工单 */
+  fullBleed?: true
+  /** 页面自己画页头（问候语 + 帮助），外框不画标题行；页签栏照画（仪表盘没有页签）。只有仪表盘 */
+  ownHead?: true
   /** [标签值, 标签名]；第一项为默认标签 */
   tabs?: ReadonlyArray<readonly [string, string]>
 }
 
 // ---------------------------------------------------------------------------
-// 后台不分权限：登录了就是管理员，侧栏、⌘K、页头标签列出全部模块与标签。
-// 「欠费单」按保留规则 6 做成「挂账」（契约后台-05）。
+// 后台不分权限：登录了就是管理员，侧栏、⌘K、页签栏列出全部模块与页签。
+// 结构照 10-16 设计稿：用户只剩三个页签，套餐没有页签，营销与安全各加一个 signup。
 // ---------------------------------------------------------------------------
 export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
-  dash: { title: '仪表盘', group: '工作台' },
-  tickets: { title: '工单', group: '工作台' },
+  dash: { title: '仪表盘', group: '工作台', ownHead: true },
+  tickets: { title: '工单', group: '工作台', fullBleed: true },
   users: {
     title: '用户',
-    group: '用户运营',
+    group: '业务',
     tabs: [
       ['list', '用户列表'],
       ['groups', '用户组'],
       ['bulk', '批量运营'],
-      ['devices', '设备策略'],
-      ['resets', '流量重置'],
     ],
   },
-  plans: {
-    title: '套餐',
-    group: '商业',
-    // 流量包是后端有、设计稿缺的标签（修订 R73）
-    tabs: [
-      ['catalog', '套餐'],
-      ['packs', '流量包'],
-    ],
-  },
+  plans: { title: '套餐', group: '业务' },
   billing: {
     title: '订单与收款',
-    group: '商业',
+    group: '业务',
     tabs: [
       ['orders', '订单'],
-      ['arrears', '挂账'],
+      ['arrears', '待处理到账'],
       ['providers', '支付渠道'],
       ['adjust', '收入调整'],
     ],
   },
   marketing: {
     title: '营销',
-    group: '商业',
+    group: '业务',
     tabs: [
       ['coupons', '优惠券'],
       ['gifts', '礼品卡'],
       ['commission', '佣金与提现'],
+      ['signup', '注册试用与邀请'],
     ],
   },
   nodes: {
@@ -61,21 +56,12 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['servers', '服务器'],
       ['pools', '节点池'],
       ['routing', '路由'],
-    ],
-  },
-  // 节点证书（P2：面板集中签发 DNS-01）
-  certs: {
-    title: '证书',
-    group: '网络',
-    tabs: [
-      ['list', '证书列表'],
-      ['dns', 'DNS 凭据'],
-      ['acme', 'ACME 设置'],
+      ['subscription', '订阅下发'],
     ],
   },
   content: {
     title: '内容与外观',
-    group: '运营',
+    group: '设置',
     tabs: [
       ['announce', '公告'],
       ['kb', '知识库'],
@@ -84,7 +70,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
   system: {
     title: '通知与插件',
-    group: '运营',
+    group: '设置',
     tabs: [
       ['notify', '通知渠道'],
       ['templates', '邮件模板'],
@@ -93,42 +79,71 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
   security: {
     title: '安全与运维',
-    group: '系统',
+    group: '设置',
     tabs: [
       ['audit', '审计日志'],
       ['access', '访问日志'],
       ['risk', '风控'],
+      ['signup', '注册防护'],
       ['switches', '降级开关'],
     ],
   },
 }
 
-export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> = [
-  ['工作台', ['dash', 'tickets']],
-  ['用户运营', ['users']],
-  ['商业', ['plans', 'billing', 'marketing']],
-  ['网络', ['nodes', 'certs']],
-  ['运营', ['content', 'system']],
-  ['系统', ['security']],
+/**
+ * 侧栏导航分组：第一组无标题；非 null 的组标题与组内模块的 group 相同（测试核对）。
+ */
+export const NAV_GROUPS: ReadonlyArray<readonly [string | null, readonly ModuleKey[]]> = [
+  [null, ['dash', 'tickets']],
+  ['业务', ['users', 'plans', 'billing', 'marketing']],
+  ['网络', ['nodes']],
+  ['设置', ['content', 'system', 'security']],
 ]
 
-// ⌘K 里的深链：[模块, 标签, 名称]，名称按后端真实能力（换发订阅链接而不是「更换订阅地址」）
-export const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]> = [
+/**
+ * 已登记、但页面还没接上的页签（「模块:页签」）：外框直接画空状态，不交给模块页面分发。
+ * 各模块块接好页面后从这里删掉自己那一项。
+ */
+export const PENDING_TABS: ReadonlySet<string> = new Set()
+
+export const isPendingTab = (module: ModuleKey, tab: string | null): boolean => tab != null && PENDING_TABS.has(`${module}:${tab}`)
+
+/**
+ * 「打开某一条」的详情页登记：键是「模块:页签」，没有页签的模块用模块名。
+ * rest 非空即详情。只登记这几处——别的页签把 rest 当筛选范围用（如路由页的 rest 是路由组），不能写成「任何 rest 非空」。
+ */
+const DETAIL_ROUTES: ReadonlySet<string> = new Set(['users:list', 'billing:orders', 'nodes:nodes', 'nodes:servers', 'plans'])
+
+export function isDetailRoute(module: ModuleKey, tab: string | null, rest: readonly string[]): boolean {
+  return rest.length > 0 && DETAIL_ROUTES.has(tab ? `${module}:${tab}` : module)
+}
+
+/** 全幅模块（见 ModuleDef.fullBleed） */
+export const isFullBleed = (module: ModuleKey): boolean => MODULES[module].fullBleed === true
+
+/** 页面自己画页头的模块（见 ModuleDef.ownHead） */
+export const hasOwnHead = (module: ModuleKey): boolean => MODULES[module].ownHead === true
+
+// ⌘K 里的深链：[模块, 页签, 能在这一页做的事]，名称按后端真实能力（换发订阅链接而不是「更换订阅地址」）
+const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]> = [
   ['users', 'list', '重置密码 / 调整余额 / 换发订阅链接'],
   ['users', 'bulk', '批量生成用户 / 群发邮件 / 导出'],
-  ['nodes', 'nodes', 'REALITY 密钥 / 一键安装令牌 / 吊销身份'],
-  ['plans', null, '套餐向导 / 版本 / 价格'],
+  ['plans', null, '新建套餐 / 价格 / 线路 / 版本'],
   ['billing', 'orders', '人工开单 / 标记已支付'],
-  ['security', 'risk', '共享 IP 聚类'],
-  ['marketing', 'commission', '提现审核 / 打款'],
-  ['users', 'resets', '流量重置统计'],
-  ['system', 'templates', '实发测试信'],
   ['billing', 'adjust', '收入调整登记与冲销'],
+  ['marketing', 'commission', '提现审核 / 打款'],
+  ['marketing', 'signup', '注册试用 / 邀请码上限'],
+  ['nodes', 'nodes', 'REALITY 密钥 / 吊销身份'],
+  ['nodes', 'servers', '安装命令 / 安装令牌'],
+  ['nodes', 'subscription', '订阅模板 / 订阅域名'],
+  ['system', 'templates', '实发测试信'],
+  ['security', 'risk', '共享 IP 聚类 / 设备策略'],
+  ['security', 'signup', '人机验证 / 邮箱后缀'],
 ]
 
 const isModule = (value: string): value is ModuleKey => Object.hasOwn(MODULES, value)
 
-export interface AdminRoute {
+interface AdminRoute {
   module: ModuleKey
   tab: string | null
   /** 模块（与标签）之后剩下的路径段，已 URI 解码，交给页面自己解释（如 #/users/list/<用户 id>） */
@@ -184,20 +199,50 @@ export function resolveRoute(path: string): AdminRoute {
 
 export interface PaletteItem {
   key: string
+  /** 左侧小标签：「模块」或「页面」；后续实体搜索加「用户」「订单」「节点」 */
+  kind: string
   title: string
-  path: string
+  /** 右侧灰字：模块所属分组，或深链能做的事 */
+  sub: string
+  /** 标题用等宽字（邮箱、订单号、节点名这类实体） */
+  mono?: boolean
   module: ModuleKey
   tab: string | null
 }
 
-/** ⌘K 候选：全部模块、标签与深链；空查询取前 12 条。 */
-export function paletteItems(query: string): PaletteItem[] {
-  const all: PaletteItem[] = []
-  for (const [key, def] of Object.entries(MODULES) as [ModuleKey, ModuleDef][]) {
-    if (def.tabs) def.tabs.forEach(([tab, title]) => all.push({ key: `${key}/${tab}`, title, path: `${def.group} / ${def.title}`, module: key, tab }))
-    else all.push({ key, title: def.title, path: def.group, module: key, tab: null })
-  }
-  PALETTE_EXTRAS.forEach(([module, tab, title]) => all.push({ key: `x:${title}`, title, path: MODULES[module].title, module, tab }))
+export interface PaletteGroup {
+  label: string
+  items: PaletteItem[]
+}
+
+const PAGE_LIMIT = 8
+
+/**
+ * ⌘K 候选，按组给出（设计稿：空查询只有「快速跳转」一组，列全部模块；
+ * 有查询时「页面」一组列匹配的模块、「模块 › 页签」与深链）。
+ * 实体搜索（用户 / 订单 / 节点）由调用方追加分组，不在这里。
+ */
+export function paletteGroups(query: string): PaletteGroup[] {
+  const modules: PaletteItem[] = (Object.entries(MODULES) as [ModuleKey, ModuleDef][]).map(([key, def]) => ({
+    key,
+    kind: '模块',
+    title: def.title,
+    sub: def.group,
+    module: key,
+    tab: null,
+  }))
   const q = query.trim().toLowerCase()
-  return q ? all.filter((item) => (item.title + item.path).toLowerCase().includes(q)) : all.slice(0, 12)
+  if (!q) return [{ label: '快速跳转', items: modules }]
+
+  const pages: PaletteItem[] = [...modules]
+  for (const [key, def] of Object.entries(MODULES) as [ModuleKey, ModuleDef][]) {
+    def.tabs?.forEach(([tab, title]) => pages.push({ key: `${key}/${tab}`, kind: '页面', title: `${def.title} › ${title}`, sub: def.group, module: key, tab }))
+  }
+  PALETTE_EXTRAS.forEach(([module, tab, sub]) => {
+    const def = MODULES[module]
+    const tabTitle = tab ? def.tabs?.find(([k]) => k === tab)?.[1] : null
+    pages.push({ key: `x:${sub}`, kind: '页面', title: tabTitle ? `${def.title} › ${tabTitle}` : def.title, sub, module, tab })
+  })
+  const hits = pages.filter((item) => `${item.title} ${item.sub}`.toLowerCase().includes(q)).slice(0, PAGE_LIMIT)
+  return hits.length ? [{ label: '页面', items: hits }] : []
 }

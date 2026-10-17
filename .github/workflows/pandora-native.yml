@@ -38,7 +38,7 @@ jobs:
     name: NativeCore and panel protocol parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check capability/schema/serving parity
         run: python3 pdnd/release/check_native_panel_parity.py
 
@@ -49,8 +49,8 @@ jobs:
       run:
         working-directory: panel
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
@@ -64,17 +64,22 @@ jobs:
       run:
         working-directory: panel/frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: panel/frontend/package-lock.json
-      - uses: actions/setup-go@v5
+          # Pro 图标包（@hugeicons-pro）走私有源：setup-node 写 .npmrc，令牌只在装依赖的步骤经 NODE_AUTH_TOKEN 传入
+          registry-url: https://npm.collectui.pro/
+          scope: '@hugeicons-pro'
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
       - name: Install locked dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: npm ci
       - name: Lint
         run: npm run lint
@@ -88,6 +93,8 @@ jobs:
       # 上一步的独立构建让构建失败直接落在「Build」上，不和同步混在一起
       - name: Sync the real build into web/{admin,portal} for go:embed
         working-directory: panel
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: make frontend-embed
       - name: Real build is embeddable and served at the gateway root
         working-directory: panel
@@ -107,8 +114,8 @@ jobs:
       run:
         working-directory: pdnd
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -134,7 +141,6 @@ jobs:
           report="$(go run . --capabilities)"
           printf '%s\n' "${report}" | tee native-capabilities.json
           grep -q '"kernel": "pandora-native"' <<<"${report}"
-          grep -q '"native_only": true' <<<"${report}"
           grep -q '"reality-h3-experimental"' <<<"${report}"
           grep -q '"external-reality-xhttp-h3-unverified"' <<<"${report}"
       - name: Native adapter self-check
@@ -147,28 +153,33 @@ jobs:
         run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
       - name: Default dependency boundary
         run: |
+          # 发布物与全部测试都不许链 sing-box（它在 Go 1.27 下用 go:linkname 取 x/net 的私有符号，链接失败）。
           # 不写成 `! go list | grep`：bash -e 对取反命令不生效，只有末行能让步骤失败。
           # 先取整份依赖再 grep：管道接 grep -q 时，pipefail 下 go list 失败或被 SIGPIPE
           # 都会让 if 判为未命中而静默放行；单独赋值则 go list 出错直接由 -e 终止。
-          deps="$(go list -mod=readonly -deps .)"
-          if grep -q 'github.com/aegispanel/nodeagent/core/multi' <<<"${deps}"; then
-            echo "github.com/aegispanel/nodeagent/core/multi leaked into the default build" >&2
-            exit 1
-          fi
-          if grep -q 'github.com/aegispanel/nodeagent/core/sing' <<<"${deps}"; then
-            echo "github.com/aegispanel/nodeagent/core/sing leaked into the default build" >&2
-            exit 1
-          fi
-          if grep -q 'github.com/aegispanel/nodeagent/core/xray' <<<"${deps}"; then
-            echo "github.com/aegispanel/nodeagent/core/xray leaked into the default build" >&2
-            exit 1
-          fi
+          deps="$(go list -mod=readonly -deps -test ./...)"
           if grep -q 'github.com/sagernet/sing-box' <<<"${deps}"; then
-            echo "github.com/sagernet/sing-box leaked into the default build" >&2
+            echo "github.com/sagernet/sing-box leaked into pdnd" >&2
             exit 1
           fi
-      - name: Compatibility migration compile
-        run: go test -mod=readonly -tags compat -p 1 ./...
+          # 上面按默认构建标签算，带 interop 等标签的测试看不到；go.mod 里出现就说明有地方又引回来了
+          if grep -q 'github.com/sagernet/sing-box ' go.mod; then
+            echo "github.com/sagernet/sing-box is back in pdnd/go.mod" >&2
+            exit 1
+          fi
+      - name: Node perf gate tools (vet, tests, dependency boundary)
+        # 节点端性能闸门的工具是独立 module（pdnd/tests/perf/gate/tools），pdnd 的 ./... 不包含它；
+        # 它可以用 xray-core、sing-quic 当客户端，但同样不许链 sing-box。Python 部分（compare、report）的单测也在这里跑。
+        working-directory: pdnd/tests/perf/gate/tools
+        run: |
+          go vet -mod=readonly ./...
+          go test -mod=readonly -count=1 ./...
+          deps="$(go list -mod=readonly -deps -test ./...)"
+          if grep -q 'github.com/sagernet/sing-box' <<<"${deps}"; then
+            echo "github.com/sagernet/sing-box leaked into the node perf gate tools" >&2
+            exit 1
+          fi
+          cd .. && python3 -m unittest -v test_compare.py test_report.py test_collect.py
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.
@@ -177,6 +188,29 @@ jobs:
         # Non-race for the same reason: sing-anytls (v0.0.11 and v0.0.13)
         # races between Stream.closeLocally and Stream.Write inside the client.
         run: go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -count=3 ./kernel
+      - name: External Mihomo interoperability
+        # mihomo 是用户最多的客户端：每次都用官方二进制逐协议真连 NativeCore。
+        # 下载包的 SHA-256 取自 GitHub release 公布的 digest；升级时版本与哈希成对改（deps-upgrade skill），
+        # 并与 subscription-e2e.yml 里同名的 MIHOMO_VERSION / MIHOMO_GZ_SHA256 一起改。
+        # 非 race：外部客户端是独立进程，race 只会拖慢。
+        env:
+          MIHOMO_VERSION: v1.19.32
+          MIHOMO_GZ_SHA256: 8451100836c9eda194331c2babfad490b2faf30cebc1a04b0e76fd8ac2d35d10
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/mihomo"
+          mkdir -p "${dir}"
+          curl -fsSL --retry 3 -o "${dir}/mihomo.gz" \
+            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-${MIHOMO_VERSION}.gz"
+          echo "${MIHOMO_GZ_SHA256}  ${dir}/mihomo.gz" | sha256sum -c -
+          gunzip -c "${dir}/mihomo.gz" > "${dir}/mihomo"
+          chmod +x "${dir}/mihomo"
+          export MIHOMO_BIN="${dir}/mihomo"
+          # 测试要求可执行文件本身的哈希：信任锚是上面核过的下载包，这里只是把解压结果交给测试核对
+          export MIHOMO_SHA256="$(sha256sum "${MIHOMO_BIN}" | cut -d' ' -f1)"
+          go test -mod=readonly -tags interop_mihomo -run 'TestExternalMihomo' -count=1 -v ./kernel 2>&1 | tee mihomo-interop.log
+          # 没设上二进制时这些测试会跳过而不是失败：逐协议那组必须真的跑过
+          grep -q -- '--- PASS: TestExternalMihomoProtocolsInterop' mihomo-interop.log
       - name: Upload x64 acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -199,8 +233,8 @@ jobs:
       run:
         working-directory: pdnd
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -251,8 +285,8 @@ jobs:
       GOOS: linux
       GOARCH: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
@@ -267,8 +301,8 @@ jobs:
     name: Release manifest and hashes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum

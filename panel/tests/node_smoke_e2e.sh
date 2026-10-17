@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 节点冒烟端到端（P5）：200 用户、5 台服务器各 1 节点、约 60 秒订阅/门户负载，客户端与服务端零 5xx。
+# 节点冒烟端到端：200 用户、5 台服务器各 1 节点、约 60 秒订阅/门户负载，客户端与服务端零 5xx。
 #
 # 步骤概要：
 #   0  一次性库与环境变量守卫
@@ -187,6 +187,9 @@ sec "0. 守卫"
 DB_NAME=$(db 'SELECT current_database()')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || fatal "database name must contain a standalone test/e2e segment" "$DB_NAME"
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 TMP=$(mktemp -d)
 trap cleanup EXIT
@@ -346,12 +349,12 @@ ready_cnt=$(db "SELECT count(*) FROM servers WHERE id IN ('$(echo "$SERVER_ID_LI
 sec "7. 套餐（池里有可服务节点后才能发布）"
 
 admin_auth
-api POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+api POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: smoke-plan-$RUN" \
-  -d "{\"code\":\"smoke-$RUN\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_gb\":100,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
-[ "$HTTP_CODE" = 201 ] || fatal "plans/complete" "HTTP $HTTP_CODE"
+  -d "{\"kind\":\"subscription\",\"name\":\"Smoke $RUN\",\"visibility\":\"public\",\"traffic_bytes\":107374182400,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000}],\"publish\":true}"
+[ "$HTTP_CODE" = 201 ] || fatal "POST /plans" "HTTP $HTTP_CODE"
 PLAN=$(jget_body plan.id) || fatal "plan id"
-PRICE=$(jget_body price_ids.0) || fatal "price id"
+PRICE=$(jget_body plan.prices.0.id) || fatal "price id"
 ok "套餐 smoke-$RUN"
 
 #-------------------------------------------------------------------------------

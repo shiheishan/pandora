@@ -8,28 +8,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 )
 
-// usersKernel 是能「带名单装入站」的内核（NativeCore 口径）：先建入站、再装名单，记下每次随入站装的名单。
-type usersKernel struct {
-	*fakeKernel
-	preload [][]core.User
-}
-
-func newUsersKernel() *usersKernel { return &usersKernel{fakeKernel: newFakeKernel()} }
-
-func (k *usersKernel) ApplyInboundWithUsers(cfg *core.InboundConfig, routing *core.Routing, users []core.User) error {
-	if err := k.AddInbound(cfg); err != nil {
-		return err
-	}
-	if err := k.SetRouting(cfg.Tag, routing); err != nil {
-		_ = k.DelInbound(cfg.Tag)
-		return err
-	}
-	k.mu.Lock()
-	k.preload = append(k.preload, append([]core.User(nil), users...))
-	k.mu.Unlock()
-	return k.AddUsers(cfg.Tag, users)
-}
-
 // startedNode 起一个 Server、连上、装好 n1（端口 20001）。
 func startedNode(t *testing.T, kernel core.Core) *testServer {
 	t.Helper()
@@ -89,8 +67,8 @@ func TestUsersApplyFailure(t *testing.T) {
 	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:apply_failed", "u1-b:version_mismatch")
 }
 
-// 兼容内核换配置重建入站：手上的名单补回去；补回失败就作废并回 resync。
-func TestRebuildReaddsUsersOnCompatKernel(t *testing.T) {
+// 换配置重建入站：内核里现有的名单随新入站一起装（来源 known），版本不变、不另外回执。
+func TestRebuildCarriesKnownUsers(t *testing.T) {
 	k := newFakeKernel()
 	ts := startedNode(t, k)
 	ts.usersFull("n1", "u1-a", "a", "b")
@@ -99,53 +77,54 @@ func TestRebuildReaddsUsersOnCompatKernel(t *testing.T) {
 	if v := ts.node(t, "n1").userVersion; v != "u1-a" {
 		t.Fatalf("版本 = %s", v)
 	}
+	if last := k.preload[len(k.preload)-1]; len(last) != 2 {
+		t.Fatalf("重建时随入站装的名单 = %v", last)
+	}
+	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok")
+}
+
+// 重建时名单随入站没装上（入站已就绪）：镜像作废、版本清空，回 resync 让面板重发全量。
+func TestRebuildPreloadFailureResyncs(t *testing.T) {
+	k := newFakeKernel()
+	ts := startedNode(t, k)
+	ts.usersFull("n1", "u1-a", "a", "b")
 	k.failAddUsers = 1
-	ts.config(portConfig(t, "n1", "vless", 20003))
+	ts.config(portConfig(t, "n1", "vless", 20002))
 	n := ts.node(t, "n1")
 	if n.userVersion != "" || len(n.known) != 0 {
-		t.Fatal("补回失败没作废镜像")
+		t.Fatalf("预装失败后应作废镜像：version=%q known=%d", n.userVersion, len(n.known))
 	}
 	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync")
 }
 
 // 回滚也失败：节点停、镜像作废并回 resync；之后的全量先存着，入站起来时一起装并回 ok。
 func TestRollbackFailureThenStagedUsers(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		kernel func() (core.Core, *fakeKernel)
-	}{
-		{"兼容内核", func() (core.Core, *fakeKernel) { k := newFakeKernel(); return k, k }},
-		{"带名单装入站", func() (core.Core, *fakeKernel) { k := newUsersKernel(); return k, k.fakeKernel }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			kernel, k := tc.kernel()
-			ts := startedNode(t, kernel)
-			ts.usersFull("n1", "u1-a", "a")
-			k.failAddInbound = 2
-			ts.config(portConfig(t, "n1", "vless", 20002))
-			n := ts.node(t, "n1")
-			if n.started || len(n.known) != 0 || n.runtime().Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN {
-				t.Fatal("回滚失败后应停、镜像作废")
-			}
-			assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync")
+	k := newFakeKernel()
+	ts := startedNode(t, k)
+	ts.usersFull("n1", "u1-a", "a")
+	k.failAddInbound = 2
+	ts.config(portConfig(t, "n1", "vless", 20002))
+	n := ts.node(t, "n1")
+	if n.started || len(n.known) != 0 || n.runtime().Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN {
+		t.Fatal("回滚失败后应停、镜像作废")
+	}
+	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync")
 
-			ts.usersFull("n1", "u1-b", "a", "b")
-			if n.staged == nil || len(ts.link.usersAcksOf("n1")) != 2 {
-				t.Fatal("入站没起来时全量应先存着、不回执")
-			}
-			ts.config(portConfig(t, "n1", "vless", 20003))
-			assertStrings(t, "内核", k.uuids("n1"), "a", "b")
-			assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync", "u1-b:ok")
-			if n.userVersion != "u1-b" || n.staged != nil {
-				t.Fatalf("版本 %s，staged %v", n.userVersion, n.staged)
-			}
-		})
+	ts.usersFull("n1", "u1-b", "a", "b")
+	if n.staged == nil || len(ts.link.usersAcksOf("n1")) != 2 {
+		t.Fatal("入站没起来时全量应先存着、不回执")
+	}
+	ts.config(portConfig(t, "n1", "vless", 20003))
+	assertStrings(t, "内核", k.uuids("n1"), "a", "b")
+	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync", "u1-b:ok")
+	if n.userVersion != "u1-b" || n.staged != nil {
+		t.Fatalf("版本 %s，staged %v", n.userVersion, n.staged)
 	}
 }
 
 // 先有名单、再开 accept：配置之前到的全量随入站一起交给内核，之后不再单独 AddUsers。
 func TestUsersBeforeConfigInstalledWithInbound(t *testing.T) {
-	k := newUsersKernel()
+	k := newFakeKernel()
 	ts := newTestServer(t, k, "")
 	ts.welcome()
 	ts.usersFull("n1", "u1-a", "a", "b")
@@ -163,14 +142,14 @@ func TestUsersBeforeConfigInstalledWithInbound(t *testing.T) {
 // 冷启动：落盘的配置与名单在会话之前装上，Hello 报缓存版本；Welcome 之前报 serving_cached_config。
 func TestColdStartFromCacheWithUsers(t *testing.T) {
 	dir := t.TempDir()
-	first := newTestServer(t, newUsersKernel(), dir)
+	first := newTestServer(t, newFakeKernel(), dir)
 	first.welcome()
 	nc := portConfig(t, "n1", "vless", 20001)
 	first.config(nc)
 	first.usersFull("n1", "u1-a", "a", "b")
 	first.report()
 
-	k := newUsersKernel()
+	k := newFakeKernel()
 	ts := newTestServer(t, k, dir)
 	ts.Start()
 	if len(k.preload) != 1 || len(k.preload[0]) != 2 {

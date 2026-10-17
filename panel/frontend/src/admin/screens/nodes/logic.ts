@@ -8,11 +8,11 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 // ---------------------------------------------------------------------------
 export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired'
 
-export interface NodeState {
+interface NodeState {
   filter: Exclude<NodeFilter, 'all'>
   label: string
   tone: Tone
-  /** 状态旁的小字：排空中 / 草稿 */
+  /** 状态旁的小字：草稿 */
   note: string | null
 }
 
@@ -20,8 +20,6 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
   switch (n.serving_status) {
     case 'active':
       return n.stale ? { filter: 'offline', label: '离线', tone: 'danger', note: null } : { filter: 'online', label: '在线', tone: 'ok', note: null }
-    case 'draining':
-      return { filter: 'online', label: '在线', tone: 'ok', note: '排空中' }
     case 'draft':
       return { filter: 'disabled', label: '已停用', tone: 'neutral', note: '草稿' }
     case 'disabled':
@@ -33,14 +31,15 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
 
 /**
  * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
- * （GET v1/nodes 的 state 与 q，nodefabric.adminNodeFilterSQL 与这里同一映射、同一组字段）。
+ * （GET v1/nodes 的 state 与 q、tag，node/repo 的 nodeListFilterSQL 与这里同一映射、同一组字段）。
  * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
  */
-export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string): NodeRow[] {
+export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string, tag = ''): NodeRow[] {
   const q = query.trim().toLowerCase()
   return rows.filter((n) => {
     const state = nodeState(n).filter
     if (filter === 'all' ? state === 'retired' : state !== filter) return false
+    if (tag && !n.tags.includes(tag)) return false
     if (!q) return true
     const hay = [n.name, n.display_name, n.server_name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
     return hay.includes(q)
@@ -48,8 +47,33 @@ export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query:
 }
 
 /**
+ * 列表所有行的标签去重（区分大小写，与筛选口径一致）后按中文习惯排序
+ */
+export function tagOptions(rows: readonly NodeRow[]): string[] {
+  const set = new Set<string>()
+  for (const r of rows) {
+    for (const t of r.tags) {
+      set.add(t)
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+/**
+ * 构造批量修改节点的请求体：items 带 row_version，reason 去首尾空白
+ */
+export function batchEditBody(rows: readonly NodeRow[], set: Record<string, unknown>, reason: string) {
+  return {
+    items: rows.map((n) => ({ id: n.id, row_version: n.row_version })),
+    set,
+    reason: reason.trim(),
+  }
+}
+
+/**
  * 列表一行显示用到的字段：NodeLine 只拿这些，memo 也只比这些——心跳时刻、版本号等
- * 不在行上显示的字段变了，不重渲染这一行。行上新显示一个字段就加进这里（类型会逼着加）
+ * 不在行上显示的字段变了，不重渲染这一行。行上新显示一个字段就加进这里（类型会逼着加）。
+ * tags 数组和 traffic 对象靠 react-query 的结构共享，没变时引用不变，sameNodeLine 的 Object.is 照样成立
  */
 export const NODE_LINE_FIELDS = [
   'id',
@@ -67,6 +91,10 @@ export const NODE_LINE_FIELDS = [
   'stale',
   'delivered_to_users',
   'delivery_note',
+  'tags',
+  'traffic',
+  'relay_count',
+  'ech_enabled',
 ] as const satisfies ReadonlyArray<keyof NodeRow>
 export type NodeLineData = Pick<NodeRow, (typeof NODE_LINE_FIELDS)[number]>
 
@@ -102,22 +130,39 @@ const PROTOCOL_LABELS: Readonly<Record<string, string>> = {
 }
 export const protocolLabel = (t: string | null) => (t ? (PROTOCOL_LABELS[t] ?? t) : '未设置协议')
 
-// ---------------------------------------------------------------------------
-// 迁移（保留规则 5）：只能迁移从未部署过的草稿节点
-// ---------------------------------------------------------------------------
-export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' | 'identity_serial'>): boolean {
-  return (n.serving_status === 'draft' || n.serving_status === 'disabled') && n.last_heartbeat_at === null && n.identity_serial === null
-}
+/** 协议卡片顺序（新建向导与下拉） */
+export const PROTOCOL_ORDER = Object.keys(PROTOCOL_LABELS)
+
+/** 新建节点「地区」下拉：国家两位代码 · 中文名；选「其他地区」时手动填两位代码 */
+export const REGIONS: ReadonlyArray<readonly [string, string]> = [
+  ['HK', 'HK · 香港'],
+  ['TW', 'TW · 台湾'],
+  ['JP', 'JP · 日本'],
+  ['KR', 'KR · 韩国'],
+  ['SG', 'SG · 新加坡'],
+  ['US', 'US · 美国'],
+  ['GB', 'GB · 英国'],
+  ['DE', 'DE · 德国'],
+  ['FR', 'FR · 法国'],
+  ['NL', 'NL · 荷兰'],
+  ['CA', 'CA · 加拿大'],
+  ['AU', 'AU · 澳大利亚'],
+  ['IN', 'IN · 印度'],
+  ['TR', 'TR · 土耳其'],
+  ['RU', 'RU · 俄罗斯'],
+]
+
+/** 协议卡片右侧小字：单 UDP 传输标 UDP，否则 TCP */
+export const protocolKind = (s: ProtocolSchema) => (s.enums?.network?.length === 1 && s.enums.network[0] === 'udp' ? 'UDP' : 'TCP')
+
 /**
- * R108「上线」：生命周期停在接入尾段（attesting 至 canary，00005 的合法边）的节点，
- * 由后端一步推到 active 并把服务器置 ready；接入流程本身只推到 attesting，此外没有别的路径
+ * 「上线」给还没上过线的草稿节点用：后端一步推到 active，并把所在服务器置为就绪（服务器还没就绪时也能用）；停用后再恢复用「启用」。
  */
-export const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
-export const canActivate = (n: Pick<NodeRow, 'status'>) => (ACTIVATABLE_LIFECYCLES as readonly string[]).includes(n.status)
+export const canActivate = (n: Pick<NodeRow, 'serving_status'>) => n.serving_status === 'draft'
 
 /**
  * R113 上线响应的 warnings → 带下一步的提示（Toast 用普通语气，不是错误）。首次搭建时池还没绑套餐是正常流程：
- * 先上线节点，再去套餐页发布绑了这个池的版本。只认 nodefabric.activationWarnings 的两条原文，其余原样接在后面
+ * 先上线节点，再去套餐页发布绑了这个池的版本。只认 node/service 上线（nodeNoPoolWarning）与未绑套餐的两条提示原文，其余原样接在后面
  */
 export function activationHint(warning: string): string {
   if (warning === '所在节点池没有绑定任何套餐，暂时不服务任何用户') return '已上线。所在节点池还没绑定套餐，暂时不服务用户——下一步到「套餐」页，在套餐版本里选上这个节点池并发布。'
@@ -125,37 +170,13 @@ export function activationHint(warning: string): string {
   return `已上线。${warning}`
 }
 
-export const MOVE_BLOCKED_HINT = '只能迁移从未部署过的草稿节点。已部署节点请用「复制节点」选目标服务器，再退役原节点。'
-
-/** 后端 409 的 fields 逐项计数，只列非 0 的（契约 move 条目） */
-const MOVE_BLOCKERS: Readonly<Record<string, string>> = {
-  control_node: '控制节点',
-  active_identities: '有效身份',
-  runtime_instances: '运行实例',
-  metrics: '探针数据',
-  pending_tasks: '在途任务',
-  provisioning: '部署记录',
-  bootstrap_tokens: '安装令牌',
-  config_applications: '配置下发记录',
-  usage_sources: '用量来源',
-  usage_batches: '用量批次',
-  traffic_reports: '流量上报',
-  active_server_token: '服务端令牌',
-}
-export function moveBlockers(fields: Readonly<Record<string, string>>): string[] {
-  return Object.entries(fields)
-    .filter(([k, v]) => k in MOVE_BLOCKERS && v !== '0' && v !== '')
-    .map(([k, v]) => `${MOVE_BLOCKERS[k]} ${v}`)
-}
-
 // ---------------------------------------------------------------------------
-// 服务状态转换（契约 status:batch 的合法边；retired 只走 retire 接口）
+// 服务状态转换：与后端 node_status.go 的 nodeServingTransitions 一致（retired 只走 retire 接口）
 // ---------------------------------------------------------------------------
 const EDGES: Readonly<Record<ServingStatus, readonly ServingStatus[]>> = {
-  draft: ['active', 'disabled', 'retired'],
-  active: ['draining', 'disabled'],
-  draining: ['active', 'disabled', 'retired'],
-  disabled: ['draft', 'active', 'retired'],
+  draft: ['active', 'retired'],
+  active: ['disabled', 'retired'],
+  disabled: ['active', 'retired'],
   retired: [],
 }
 export const canTransition = (from: ServingStatus, to: ServingStatus) => EDGES[from].includes(to)
@@ -183,7 +204,7 @@ export function orderItems(ordered: readonly Pick<NodeRow, 'id' | 'row_version' 
 // ---------------------------------------------------------------------------
 // 协议表单：字段来自 GET v1/node-protocol-schemas
 // ---------------------------------------------------------------------------
-export type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
+type FieldKind = 'enum' | 'number' | 'boolean' | 'json' | 'list' | 'text'
 export interface ProtocolField {
   /** 点号路径，如 reality_settings.private_key */
   path: string
@@ -193,11 +214,23 @@ export interface ProtocolField {
   sensitive: boolean
   /** 后端 schema 给的字段说明（hints），没有则 undefined */
   hint?: string
+  /** 显示名：来自后端表单元数据 fields[].label，没有 fields 时退回路径 */
+  label: string
+  /** 高级参数：默认折叠在「显示高级参数」后面 */
+  advanced: boolean
+  /** 条件显示：键是另一字段的路径，值是让本字段显示的表单取值；null 为无条件显示 */
+  showIf: Record<string, string[]> | null
+  /** 新建时预填（default 元数据转成表单字符串），没有默认为 '' */
+  defaultValue: string
+  /** 输入框占位文字 */
+  placeholder?: string
+  /** 枚举值 → 显示文字；键 '' 是选填枚举「不选」那一项 */
+  optionLabels: Record<string, string>
 }
 
 export const isStable = (s: ProtocolSchema) => s.status === 'stable'
 
-/** 读接口按名字在任意深度抹掉的键（nodefabric.sensitiveProtocolKey，R107 补了 mask_password）：这些字段永远读不回来，只能写 */
+/** 读接口按名字在任意深度抹掉的键（node/protocol 的 sensitiveProtocolKey，R107 补了 mask_password）：这些字段永远读不回来，只能写 */
 const REDACTED_KEYS = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password', 'mask_password'])
 
 /** 敏感判断按整条路径或叶子名：schema 给的是 private_key，字段路径是 reality_settings.private_key */
@@ -206,8 +239,12 @@ function sensitiveOf(s: ProtocolSchema, path: string): boolean {
   return REDACTED_KEYS.has(leaf.toLowerCase()) || (s.sensitive_properties ?? []).some((p) => p === path || p === leaf)
 }
 
+/** default 元数据（JSON 值）→ 表单字符串（String(v)）；缺席为 '' */
+const defaultToString = (v: unknown): string => (v === undefined || v === null ? '' : String(v))
+
 export function protocolFields(s: ProtocolSchema): ProtocolField[] {
-  const fields = s.allowed_properties.map((path): ProtocolField => {
+  // kind / options / required / sensitive / hint 的算法对两条路一致，都按 path 取
+  const fieldOf = (path: string): Omit<ProtocolField, 'label' | 'advanced' | 'showIf' | 'defaultValue' | 'optionLabels'> => {
     const type = s.property_types?.[path]
     // methods 是 Shadowsocks 加密方式（字段名 cipher）的可选值
     // 枚举按整条路径找，找不到再按叶子名：后端把 network_settings.mode 的可选值登记在 enums.mode 下
@@ -216,12 +253,46 @@ export function protocolFields(s: ProtocolSchema): ProtocolField[] {
     const kind: FieldKind = options.length ? 'enum' : type === 'number' ? 'number' : type === 'boolean' ? 'boolean' : type === 'json' ? 'json' : type === 'list' ? 'list' : 'text'
     const hint = s.hints?.[path]
     return { path, kind, options, required: s.required.includes(path), sensitive: sensitiveOf(s, path), ...(hint ? { hint } : {}) }
-  })
-  // 必填在前，其余保持后端顺序
+  }
+  // 后端给了 fields（10-16 表单元数据）：按它的顺序，label、条件显示、默认值、高级、占位与枚举文案都取自元数据
+  if (s.fields?.length) {
+    return s.fields.map((m) => ({
+      ...fieldOf(m.path),
+      label: m.label,
+      advanced: m.advanced === true,
+      showIf: m.show_if ?? null,
+      defaultValue: defaultToString(m.default),
+      ...(m.placeholder ? { placeholder: m.placeholder } : {}),
+      optionLabels: m.option_labels ?? {},
+    }))
+  }
+  // 没有 fields：退回旧行为——label 就是路径，其余元数据为空，必填在前，其余保持后端顺序
+  const fields = s.allowed_properties.map((path) => ({ ...fieldOf(path), label: path, advanced: false, showIf: null, defaultValue: '', optionLabels: {} }))
   return [...fields.filter((f) => f.required), ...fields.filter((f) => !f.required)]
 }
 
 export type FormValues = Record<string, string>
+
+/** 条件显示：showIf 的每个键都满足（表单字符串比较，没填是 ''）才显示 */
+export function fieldVisible(f: ProtocolField, values: FormValues): boolean {
+  if (!f.showIf) return true
+  return Object.entries(f.showIf).every(([k, allowed]) => allowed.includes(values[k] ?? ''))
+}
+
+export const visibleFields = (fields: readonly ProtocolField[], values: FormValues): ProtocolField[] => fields.filter((f) => fieldVisible(f, values))
+
+/** 新建时的预填值：后端 default 元数据转成表单字符串 */
+export function protocolDefaults(fields: readonly ProtocolField[]): FormValues {
+  const out: FormValues = {}
+  for (const f of fields) if (f.defaultValue !== '') out[f.path] = f.defaultValue
+  return out
+}
+
+/** 枚举下拉的选项：非必填开头加「不选」项（option_labels['']，缺省「默认」）；其余按 option_labels 配文字 */
+export function enumOptions(f: ProtocolField): Array<{ value: string; label: string }> {
+  const opts = f.options.map((o) => ({ value: o, label: f.optionLabels[o] ?? o }))
+  return f.required ? opts : [{ value: '', label: f.optionLabels[''] ?? '默认' }, ...opts]
+}
 
 function pick(obj: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((cur, key) => (cur && typeof cur === 'object' ? (cur as Record<string, unknown>)[key] : undefined), obj)
@@ -234,6 +305,7 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
     const v = pick(config, f.path)
     if (v === undefined || v === null || f.sensitive) out[f.path] = ''
     else if (f.kind === 'list' && Array.isArray(v)) out[f.path] = v.map(String).join(', ')
+    else if (f.kind === 'boolean') out[f.path] = v === true || v === 'true' ? 'true' : v === false || v === 'false' ? 'false' : ''
     else if (f.kind === 'json' || (typeof v === 'object' && v !== null)) out[f.path] = JSON.stringify(v, null, 2)
     else out[f.path] = String(v)
   }
@@ -246,7 +318,7 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
  * keepSecrets 只在编辑同一种协议时为真——换协议后端不补旧密钥，必填照常要填。
  * mask_password 跟着开关 mask 走，关掉掩码时它本来就留空不带，无需特别处理
  */
-export interface SecretOptions {
+interface SecretOptions {
   keepSecrets?: boolean
   cleared?: ReadonlySet<string>
 }
@@ -263,7 +335,7 @@ export function toProtocolConfig(
 ): { config: Record<string, unknown>; errors: Record<string, string> } {
   const config: Record<string, unknown> = {}
   const errors: Record<string, string> = {}
-  for (const f of fields) {
+  for (const f of visibleFields(fields, values)) {
     const raw = (values[f.path] ?? '').trim()
     const cleared = f.sensitive && raw === '' && secrets.cleared?.has(f.path) === true
     if (raw === '' && !cleared) {
@@ -274,8 +346,10 @@ export function toProtocolConfig(
     const numeric = f.kind === 'number' || types?.[f.path] === 'number'
     if (cleared) {
       // 显式 null：后端以请求为准清空（R106）
-    } else if (f.kind === 'boolean') value = raw === 'true'
-    else if (f.kind === 'list') {
+    } else if (f.kind === 'boolean') {
+      if (raw === '') continue
+      value = raw === 'true'
+    } else if (f.kind === 'list') {
       // 逗号或空白分隔；一个值存字符串（与 xboard 同形），多个存数组
       const items = splitList(raw)
       value = items.length === 1 ? items[0] : items
@@ -315,8 +389,8 @@ export function mapProtocolErrors(fields: readonly ProtocolField[], errors: Read
   return { byField, rest }
 }
 
-/** REALITY：只在 vless 且 tls=2 时可用（契约 reality-keypair 条目） */
-export const realityEnabled = (nodeType: string, values: FormValues) => nodeType === 'vless' && values.tls === '2'
+/** REALITY：vless 或 trojan 且 tls=2 时可用（契约 reality-keypair 条目） */
+export const realityEnabled = (nodeType: string, values: FormValues) => (nodeType === 'vless' || nodeType === 'trojan') && values.tls === '2'
 export const REALITY_KEYS = { private_key: 'reality_settings.private_key', public_key: 'reality_settings.public_key', short_id: 'reality_settings.short_id' } as const
 
 /** VLESS 的 Vision 流控：只有 REALITY + tcp 能用（后端 validateVLESSFlow） */
@@ -350,12 +424,6 @@ export function protocolNotices(nodeType: string, v: FormValues): string[] {
   return []
 }
 
-/** tls 三态下拉的文字（xboard 口径：0 不加密、1 TLS、2 REALITY） */
-export function optionLabel(path: string, value: string): string {
-  if (path === 'tls') return value === '0' ? '0 · 不加密' : value === '1' ? '1 · TLS' : value === '2' ? '2 · REALITY' : value
-  return value
-}
-
 // ---------------------------------------------------------------------------
 // 基本信息：新建体与 PATCH 差量
 // ---------------------------------------------------------------------------
@@ -367,32 +435,17 @@ export interface BasicForm {
   nodeType: string
   host: string
   port: string
-  kernel: string
   rate: string
   country: string
-}
-
-/**
- * 内核（nodefabric.validateKernelChoice 接受的值）。节点端只有 NativeCore：sing-box / xray-core
- * 已不再接受新写入，存量值后端下发时按 auto（EffectiveKernel），表单载入时也显示为自动
- */
-export const KERNELS = [
-  ['auto', '自动'],
-  ['pandora-native', 'Pandora Native'],
-] as const
-
-const LEGACY_KERNELS = new Set(['sing-box', 'xray-core'])
-const effectiveKernel = (k: string | null | undefined) => (!k || LEGACY_KERNELS.has(k) ? 'auto' : k)
-
-/** 存量节点还留着已停用的内核值时给一句说明，否则 undefined */
-export function legacyKernelNote(row: Pick<NodeDetail, 'kernel'> | null): string | undefined {
-  return row && LEGACY_KERNELS.has(row.kernel) ? `原值 ${row.kernel} 已不再生效（节点端只有 NativeCore），下次保存协议改动时改为自动` : undefined
 }
 
 /** 资源池必填的说明：下拉的提示与校验文案同一句 */
 export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点不服务任何用户'
 
-export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '', kernel: 'auto', rate: '1', country: '' })
+export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '443', rate: '1', country: '' })
+
+/** 新建向导第 2 步：这些键的校验错误落在「连接信息」 */
+export const BASIC_STEP_KEYS = ['name', 'country_code', 'server_host', 'server_port', 'server_id', 'pool_id', 'capacity_nodes'] as const
 
 export function basicFromRow(n: NodeDetail): BasicForm {
   return {
@@ -403,7 +456,6 @@ export function basicFromRow(n: NodeDetail): BasicForm {
     nodeType: n.node_type ?? '',
     host: n.server_host ?? '',
     port: n.server_port ? String(n.server_port) : '',
-    kernel: effectiveKernel(n.kernel),
     rate: String(n.traffic_rate),
     country: n.country_code ?? '',
   }
@@ -411,17 +463,19 @@ export function basicFromRow(n: NodeDetail): BasicForm {
 
 export function validateBasic(b: BasicForm, creating: boolean): Record<string, string> {
   const e: Record<string, string> = {}
-  if (!b.name.trim() || [...b.name.trim()].length > 120) e.name = '名称必填，不超过 120 字'
+  if (!b.name.trim()) e.name = '必填'
+  else if ([...b.name.trim()].length > 120) e.name = '不超过 120 字'
   if (creating && !b.serverId) e.server_id = '选择承载的服务器'
-  // 没划进节点池的节点不服务任何用户（R104）；后端只拒绝清空在役节点的池，表单一律要求选
-  if (!b.poolId) e.pool_id = NO_POOL_HINT
-  if (!b.nodeType) e.node_type = '选择协议'
-  if (!b.host.trim()) e.server_host = '填 IP 或主机名'
+  // 新建必须选节点池（R104）；编辑时节点池在详情『访问』里单独改，协议表单不再校验它
+  if (creating && !b.poolId) e.pool_id = NO_POOL_HINT
+  if (creating && !b.nodeType) e.node_type = '选择协议'
+  if (!b.host.trim()) e.server_host = '必填'
   const port = Number(b.port)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) e.server_port = '端口 1–65535'
+  if (!Number.isInteger(port) || port < 1 || port > 65535) e.server_port = '1–65535'
   const rate = Number(b.rate)
   if (!(rate > 0)) e.traffic_rate = '倍率必须大于 0'
-  if (b.country && !/^[A-Za-z]{2}$/.test(b.country.trim())) e.country_code = '两位字母国家代码，如 HK'
+  if (creating && !b.country.trim()) e.country_code = '请选择地区'
+  else if (b.country && !/^[A-Za-z]{2}$/.test(b.country.trim())) e.country_code = '两位字母国家代码，如 HK'
   return e
 }
 
@@ -433,7 +487,6 @@ export function createBody(b: BasicForm, config: Record<string, unknown>): Recor
     server_host: b.host.trim(),
     server_port: Number(b.port),
     protocol_config: config,
-    kernel: b.kernel || 'auto',
     traffic_rate: Number(b.rate),
     ...(b.poolId ? { pool_id: b.poolId } : {}),
     ...(b.displayName.trim() ? { display_name: b.displayName.trim() } : {}),
@@ -454,99 +507,122 @@ export function patchBody(row: NodeDetail, b: BasicForm, protocol: { changed: bo
   if (b.nodeType !== before.nodeType) body.node_type = b.nodeType
   if (b.host.trim() !== before.host) body.server_host = b.host.trim()
   if (b.port !== before.port) body.server_port = Number(b.port)
-  if (b.kernel !== before.kernel) body.kernel = b.kernel
   if (Number(b.rate) !== row.traffic_rate) body.traffic_rate = Number(b.rate)
   if (b.country.trim().toUpperCase() !== before.country) body.country_code = b.country.trim() ? b.country.trim().toUpperCase() : null
   if (protocol.changed || b.nodeType !== before.nodeType) body.protocol_config = protocol.config
-  // 存量的 sing-box / xray-core：只要这次会重新校验协议（改了协议、地址、端口），就把内核一起换成表单值，
-  // 否则后端拿库里的旧值校验会 422。只改名字之类不碰协议的保存不带它，库里的值原样留着（读时忽略）
-  const touchesProtocol = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => k in body)
-  if (LEGACY_KERNELS.has(row.kernel) && touchesProtocol) body.kernel = b.kernel
   return body
 }
 
-/** 协议是否改动：非敏感字段与初值不同，或填了任何敏感字段，或要清空某个敏感字段 */
-export function protocolChanged(fields: readonly ProtocolField[], initial: FormValues, current: FormValues, cleared: ReadonlySet<string> = new Set()): boolean {
-  return fields.some((f) => (f.sensitive ? (current[f.path] ?? '') !== '' || cleared.has(f.path) : (current[f.path] ?? '') !== (initial[f.path] ?? '')))
+/** 协议是否改动：两次 toProtocolConfig 结果不同，或可见敏感字段有非空值，或要清空敏感字段 */
+export function protocolChanged(
+  fields: readonly ProtocolField[],
+  initial: FormValues,
+  current: FormValues,
+  cleared: ReadonlySet<string> = new Set(),
+  types?: ProtocolSchema['property_types'],
+): boolean {
+  if (cleared.size > 0) return true
+  if (fields.some((f) => fieldVisible(f, current) && f.sensitive && (current[f.path] ?? '').trim() !== '')) return true
+  const a = JSON.stringify(toProtocolConfig(fields, initial, types).config)
+  const b = JSON.stringify(toProtocolConfig(fields, current, types).config)
+  return a !== b
 }
 
-/** 这次保存会显式清空的敏感字段（留空且点了「清空」的），保存前要确认 */
+/** 这次保存会显式清空的敏感字段（留空且点了「清空」的），保存前要确认；只看当前可见字段 */
 export const clearedSecrets = (fields: readonly ProtocolField[], current: FormValues, cleared: ReadonlySet<string>) =>
-  fields.filter((f) => clearableSecret(f) && cleared.has(f.path) && !(current[f.path] ?? '').trim()).map((f) => f.path)
+  visibleFields(fields, current)
+    .filter((f) => clearableSecret(f) && cleared.has(f.path) && !(current[f.path] ?? '').trim())
+    .map((f) => f.path)
 
 // ---------------------------------------------------------------------------
 // 路由规则行（D-D-1：下拉只放后端支持的匹配类型）
 // ---------------------------------------------------------------------------
 export const MATCH_KINDS = [
-  ['domain', '域名'],
   ['domain_suffix', '域名后缀'],
   ['ip_cidr', 'IP 段'],
-  ['port', '端口'],
-  ['network', '网络（tcp / udp）'],
-  ['source', '来源 IP 段'],
-  ['source_port', '来源端口'],
   ['fallback', '兜底（全部）'],
 ] as const
 export type MatchKind = (typeof MATCH_KINDS)[number][0]
 
-/** matcher 的别名键归一到下拉值（契约列出的全部写法） */
+/** matcher 的别名键归一到下拉值（只认可编辑的三种；其余走只读的旧类型） */
 const ALIASES: Readonly<Record<string, MatchKind>> = {
-  domain: 'domain',
-  domains: 'domain',
   domain_suffix: 'domain_suffix',
   domain_suffixes: 'domain_suffix',
   ip: 'ip_cidr',
   ip_cidr: 'ip_cidr',
   ip_cidrs: 'ip_cidr',
-  port: 'port',
-  ports: 'port',
-  network: 'network',
-  networks: 'network',
-  source: 'source',
-  source_ip_cidr: 'source',
-  source_cidrs: 'source',
-  source_port: 'source_port',
-  source_ports: 'source_port',
+}
+
+/** 不再提供新建的旧匹配类型：库里已有的规则只读显示、原样保存 */
+const LEGACY_LABELS: Readonly<Record<string, string>> = {
+  domain: '域名',
+  domains: '域名',
+  port: '端口',
+  ports: '端口',
+  network: '网络',
+  networks: '网络',
+  source: '来源 IP 段',
+  source_ip_cidr: '来源 IP 段',
+  source_cidrs: '来源 IP 段',
+  source_port: '来源端口',
+  source_ports: '来源端口',
 }
 
 export interface RuleRow {
   kind: MatchKind
   value: string
   outbound: string
+  /** 界面不编辑启用与备注，保存时原样带回 */
   enabled: boolean
   note: string
+  /** 旧匹配类型（或多个匹配键）：matcher 原样保存，界面只读显示 label 与 value */
+  legacy?: { label: string; value: string; matcher: Record<string, unknown> }
 }
+
+const listText = (raw: unknown) => (Array.isArray(raw) ? raw : [raw]).map(String).join(', ')
 
 export function routeToRow(r: Route): RuleRow {
   const entries = Object.entries(r.matcher)
   const base = { outbound: r.outbound_tag, enabled: r.enabled, note: r.note }
   if (entries.length === 0) return { ...base, kind: 'fallback', value: '' }
   const [key, raw] = entries[0]!
-  const values = Array.isArray(raw) ? raw : [raw]
-  return { ...base, kind: ALIASES[key] ?? 'domain', value: values.map(String).join(', ') }
+  const kind = ALIASES[key]
+  if (entries.length === 1 && kind) return { ...base, kind, value: listText(raw) }
+  return {
+    ...base,
+    kind: 'domain_suffix',
+    value: '',
+    legacy: {
+      label: entries.map(([k]) => LEGACY_LABELS[k] ?? MATCH_KINDS.find(([m]) => m === ALIASES[k])?.[1] ?? k).join(' + '),
+      value: entries.map(([, v]) => listText(v)).join('；'),
+      matcher: r.matcher,
+    },
+  }
 }
 
-/** 规则行 → PUT 的 routes；优先级按序号 ×10；错误以序号为键 */
+/** 新加的一条规则：域名后缀走直连 */
+export const newRule = (): RuleRow => ({ kind: 'domain_suffix', value: '', outbound: 'direct', enabled: true, note: '' })
+
+/** 规则行 → PUT 的 routes；优先级按序号 ×10；错误以序号为键。旧类型的 matcher 原样带回 */
 export function rowsToRoutes(rows: readonly RuleRow[]): { routes: Array<Record<string, unknown>>; errors: Record<number, string> } {
   const errors: Record<number, string> = {}
   const routes = rows.map((r, i) => {
     let matcher: Record<string, unknown> = {}
-    if (r.kind !== 'fallback') {
+    if (r.legacy) matcher = r.legacy.matcher
+    else if (r.kind !== 'fallback') {
       const parts = r.value
         .split(/[,，\s]+/)
         .map((s) => s.trim())
         .filter(Boolean)
       if (!parts.length) errors[i] = '填匹配值'
-      const numeric = r.kind === 'port' || r.kind === 'source_port'
-      if (numeric && parts.some((p) => !/^\d+(-\d+)?$/.test(p))) errors[i] = '端口填数字或范围，如 443、8000-9000'
-      matcher = { [r.kind]: numeric ? parts.map((p) => (/^\d+$/.test(p) ? Number(p) : p)) : parts }
+      matcher = { [r.kind]: parts }
     }
     if (!r.outbound) errors[i] ??= '选择出站'
     return { priority: (i + 1) * 10, matcher, outbound_tag: r.outbound, enabled: r.enabled, note: r.note.trim() }
   })
   const lastEnabled = rows.map((r, i) => (r.enabled ? i : -1)).filter((i) => i >= 0)
   rows.forEach((r, i) => {
-    if (r.enabled && r.kind === 'fallback' && i !== lastEnabled[lastEnabled.length - 1]) errors[i] ??= '兜底规则必须是最后一条启用的规则'
+    if (r.enabled && !r.legacy && r.kind === 'fallback' && i !== lastEnabled[lastEnabled.length - 1]) errors[i] ??= '兜底规则必须是最后一条启用的规则'
   })
   return { routes, errors }
 }
@@ -608,9 +684,10 @@ export function renameOutbound(rows: readonly RuleRow[], from: string, to: strin
   return rows.map((r) => (r.outbound === key ? { ...r, outbound: to.trim() } : r))
 }
 
-/** 规则的简短文字（抽屉只读列表） */
+/** 规则的简短文字（只读列表） */
 export function ruleSummary(r: Route): string {
   const row = routeToRow(r)
+  if (row.legacy) return `${row.legacy.label} ${row.legacy.value}`
   return row.kind === 'fallback' ? '兜底（全部）' : `${MATCH_KINDS.find(([k]) => k === row.kind)?.[1]} ${row.value}`
 }
 
@@ -626,7 +703,7 @@ export interface GroupForm {
 
 export const groupFormFrom = (g?: { name: string; description: string; sort_order: number }): GroupForm => ({ name: g?.name ?? '', description: g?.description ?? '', sortOrder: String(g?.sort_order ?? 0) })
 
-/** 与 nodefabric.normalizeRouteGroupFields 同口径：名称去空白后 1–64 字、说明 ≤ 500 字、排序为 ±1000000 内的整数 */
+/** 与 node/service 的 normalizeRouteGroupFields 同口径：名称去空白后 1–64 字、说明 ≤ 500 字、排序为 ±1000000 内的整数 */
 export function groupFormErrors(f: GroupForm): Record<string, string> {
   const errors: Record<string, string> = {}
   const n = [...f.name.trim()].length
@@ -690,4 +767,84 @@ export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new
     sums[i]!.n += 1
   }
   return sums.map((s, i) => ({ hour: new Date(start + i * 3600_000).getHours(), mbps: s.n ? Number((s.total / s.n).toFixed(1)) : null }))
+}
+
+/** 带宽曲线标题里的峰值：最大的非空桶；全空或最大值为 0 时返回 null */
+export function bandwidthPeak(buckets: ReadonlyArray<{ hour: number; mbps: number | null }>): { mbps: number; hour: number } | null {
+  let best: { mbps: number; hour: number } | null = null
+  for (const b of buckets) {
+    if (b.mbps === null || b.mbps <= 0) continue
+    if (!best || b.mbps > best.mbps || (b.mbps === best.mbps && b.hour < best.hour)) best = { mbps: b.mbps, hour: b.hour }
+  }
+  return best
+}
+
+/** 地址查询串 f 的取值 → 状态筛选；认不出的一律 'all' */
+export function parseNodeFilter(raw: string | null): NodeFilter {
+  if (raw === 'online' || raw === 'offline' || raw === 'disabled' || raw === 'retired') return raw
+  return 'all'
+}
+
+/** 列表页脚「共 N 个 · M 个在线」：N 不含已退役，M 是 nodeState 为在线的 */
+export function nodeCounts(rows: readonly Pick<NodeRow, 'serving_status' | 'stale'>[]): { total: number; online: number } {
+  let total = 0
+  let online = 0
+  for (const n of rows) {
+    const state = nodeState(n)
+    if (state.filter === 'retired') continue
+    total += 1
+    if (state.filter === 'online') online += 1
+  }
+  return { total, online }
+}
+
+/** 详情「协议参数」只读摘要的一行 */
+export interface SummaryRow {
+  label: string
+  value: string
+  muted?: boolean
+}
+
+/**
+ * 协议参数只读摘要：按后端协议 schema（中文名、条件显示、选项文案）生成。
+ * 前两行固定：协议、监听端口；schema 缺席或与节点协议不同时只给这两行。
+ * 其余按 protocolFields 顺序、只取当前可见（visibleFields）的字段：
+ * 敏感字段一律「不回显」（muted）；空值的必填 / 非高级字段写「未设置」（muted），空值的高级字段跳过；
+ * 枚举取 optionLabels[值] ?? 值；布尔 'true' → 开启、'false' → 关闭；json 压成一行、超过 60 字截断加「…」；其余原样（list 已是逗号分隔）
+ */
+export function protocolSummary(schema: ProtocolSchema | undefined, node: Pick<NodeDetail, 'node_type' | 'server_port' | 'protocol_config'>): SummaryRow[] {
+  const head: SummaryRow[] = [
+    { label: '协议', value: protocolLabel(node.node_type) },
+    node.server_port ? { label: '监听端口', value: String(node.server_port) } : { label: '监听端口', value: '未设置', muted: true },
+  ]
+  if (!schema || schema.node_type !== node.node_type) return head
+  const fields = protocolFields(schema)
+  const values = toFormValues(fields, node.protocol_config)
+  const visible = visibleFields(fields, values)
+  const rows: SummaryRow[] = [...head]
+  for (const f of visible) {
+    if (f.sensitive) {
+      rows.push({ label: f.label, value: '不回显', muted: true })
+      continue
+    }
+    const raw = (values[f.path] ?? '').trim()
+    if (!raw) {
+      if (f.advanced) continue
+      rows.push({ label: f.label, value: '未设置', muted: true })
+      continue
+    }
+    let value = raw
+    if (f.kind === 'enum') value = f.optionLabels[raw] ?? raw
+    else if (f.kind === 'boolean') value = raw === 'true' ? '开启' : raw === 'false' ? '关闭' : raw
+    else if (f.kind === 'json') {
+      try {
+        value = JSON.stringify(JSON.parse(raw))
+      } catch {
+        value = raw.replace(/\s+/g, ' ')
+      }
+      if (value.length > 60) value = `${value.slice(0, 60)}…`
+    }
+    rows.push({ label: f.label, value })
+  }
+  return rows
 }

@@ -42,7 +42,7 @@ public HTTP     admin HTTP                          |
 | 子命令 | 做什么 |
 |---|---|
 | `pandora serve` | 门户 HTTP、后台 HTTP、节点 gRPC 三个监听；SSE（`GET /v1/events`）；节点会话与名单下发 |
-| `pandora worker` | asynq Server 与 Scheduler：到期、配额滚动、查单、佣金结算、通知派发、证书签发、保留期清理等 |
+| `pandora worker` | asynq Server 与 Scheduler：到期、配额滚动、查单、佣金结算、通知派发、保留期清理等 |
 | `pandora migrate up / down / status` | goose 迁移，用属主角色的连接串（`database.migration_url`） |
 | `pandora admin …` | create、reset-password、grant、revoke、list、has-admin；口令只从标准输入读 |
 | `pandora backup …` | 备份脚本用的本地工具：封条、核验、WebDAV 异地上传与签名清单 |
@@ -64,7 +64,7 @@ panel/internal/
 - repo 是唯一使用 GORM 的地方。每张表只有一个属主模块，别的模块要数据就调属主模块的 service。
 - 这些规则由 golangci-lint 的 depguard 钉住：`panel/.golangci.yml` 由 `go run ./tools/depguardgen` 从模块目录生成，不手改；CI 检查生成结果没有漂移。
 
-模块：identity、auth、settings、audit、idempotency、catalog、order、payment、ledger、promo、commission、giftcard、subscription、node、certs、notify、support、content、appearance、plugin、report、realtime。各模块拥有哪些表见 [docs/architecture.md](docs/architecture.md) 第 4 节。
+模块：identity、auth、settings、audit、idempotency、catalog、order、payment、ledger、promo、commission、giftcard、subscription、node、notify、support、content、appearance、plugin、report、realtime。各模块拥有哪些表见 [docs/architecture.md](docs/architecture.md) 第 4 节。
 
 ### 数据约束
 
@@ -133,7 +133,7 @@ panel/internal/
 
 - 仪表盘：收入、用户、订单、订阅、节点、流量、工单统计；收入调整；趋势；节点 / 用户流量排行。
 - 用户（含批量建用户、风控与 IP 归属地）、套餐、订单、优惠券、礼品卡、支付渠道、待复核佣金与提现。
-- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制、节点入站证书（ACME DNS-01）。
+- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制。节点入站证书由节点机自己的 certbot / acme.sh 签发，面板只填路径（见 docs/node-certificates.md）。
 - 公告、知识库、主题、插件、工单、审计日志、降级开关。
 - 后台权限只分有和没有：是管理员就能做全部后台操作；会话绝对寿命 7 天、空闲 2 小时退出；管理后台路径是安装时生成的高熵串。
 
@@ -210,21 +210,13 @@ python pdnd/release/check_native_panel_parity.py   # 期望输出 NATIVE_PANEL_P
 
 ### 分层
 
-当前兼容层与 NativeCore 并存，自动选择只会把已验证能力交给 NativeCore：
+pdnd 只有一个数据面内核 NativeCore（`pdnd/kernel`、`pdnd/internal`），承载上述 13 个协议，含 mieru(TCP/UDP)、juicity(TCP/UDP)。没有兼容层：xray-core / sing-box 的兼容内核与 `-tags compat` 构建已于 2026-10-14 删除（产品定：不支持第三方节点端），`pdnd/core` 只剩内核抽象与 NativeCore 复用的 mieru 适配。xray-core 等第三方实现只出现在互操作测试里；sing-box 不进 pdnd 的任何二进制（含测试），CI 与 `release/build.sh` 都会检查。
 
-| 层 | 承载 | 协议 |
-|---|---|---|
-| NativeCore | Pandora 自研数据面（`pdnd/kernel`、`pdnd/internal`） | 上述 13 个协议，含 mieru(TCP/UDP)、juicity(TCP/UDP) |
-| 兼容层 | xray-core / sing-box（`pdnd/core`） | 尚未完成 NativeCore 验收的组合与边界 |
-| 独立进程 | 兼容边界 | 仅保留尚未接管的协议或明确不支持的旧配置回落 |
-
-正在重构为单一内核：协议解码、TLS/HTTP/QUIC 传输、路由与流量统计逐步收回 `pdnd/kernel` 与 `pdnd/internal`。兼容层只作为尚未验收协议的过渡；NativeCore 启动时不会初始化兼容内核，只有明确分派到未接管组合时才按需启动 sing-box/xray。
-
-默认发布二进制通过构建标签隔离兼容层，只链接 NativeCore；迁移用的兼容二进制必须显式 `-tags compat` 构建。内核适配层实现了统一的用户热更新契约 `UpsertUsers`。
+内核实现统一的用户热更新契约 `UpsertUsers`。
 
 ### fail closed
 
-正式节点默认按 NativeCore-only 运行：省略根级 `native_only` 即让未经 NativeCore 验收的组合直接失败，不会静默回落到 sing-box/xray。只有迁移阶段使用 `-tags compat` 构建并显式设置 `native_only: false` 才保留兼容回落。NativeCore-only 也会拒绝节点配置中显式指定的 `kernel: "xray-core"` 或 `kernel: "sing-box"`。
+NativeCore 不支持的组合直接失败，没有回落。本地配置文件按严格解码读，写了已删除的 `native_only` 等未知字段会拒绝启动；面板下发的节点配置也不再带 `kernel`。
 
 ### 能力矩阵
 
@@ -234,7 +226,7 @@ python pdnd/release/check_native_panel_parity.py   # 期望输出 NATIVE_PANEL_P
 ./pandora-native --capabilities
 ```
 
-面板应把这份 JSON 作为节点编排前的能力协商结果；未在矩阵中验证的组合必须提示管理员，而不是静默切换到兼容内核。矩阵会发布 `socks4`、`socks4a` 与 `http-forward`。
+面板应把这份 JSON 作为节点编排前的能力协商结果；未在矩阵中验证的组合必须提示管理员。矩阵会发布 `socks4`、`socks4a` 与 `http-forward`。
 
 ### 已覆盖的协议与传输
 
@@ -259,9 +251,67 @@ pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-25
 
 ## 部署
 
-一条命令装完。首装和升级是同一个入口，脚本按 `/etc/pandora/secrets.env` 在不在判断走哪条路。生产机不用 Docker。
+一条命令装完。提供两种装法：裸机部署（第 1–4 节，`install.sh` 脚本托管于 systemd）与 Docker / Compose / 1Panel 部署（第 5 节）；两套方案共用同一个二进制、同一套 `PANDORA_*` 配置键与数据库迁移，根据机器条件选一种装即可。
 
-### 1. 打包
+目标机器：Debian 12–14 / Ubuntu 22.04–26.04（x86_64 或 aarch64）、systemd、root，外加 `curl` 与 `openssl`；安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
+
+### 1. 一条命令装（GitHub Release）
+
+```bash
+curl -fsSL https://github.com/shiheishan/pandora/releases/latest/download/get.sh | sudo bash
+```
+
+`get.sh` 依次：
+
+1. 检查平台（Linux x86_64 / aarch64）、root 权限与依赖（`curl`、`tar`、`gzip`、`sha256sum`）；
+2. 解析版本（`PANDORA_VERSION` 或 GitHub `releases/latest` 跳转，不调 API）；
+3. 下载对应架构的 `.tar.gz` 与 `.sha256` 并核对；
+4. 解到 `/opt/pandora-release/<版本>/`（先临时目录再改名；同版本已存在时用发布的 `.manifest.sha256` 与目录内 `SHA256SUMS` 核对，一致则复用，不一致则停下、不覆盖）；
+5. 运行包内 `deploy/install.sh`，环境变量原样传入（安装器八步见第 3 节）。
+
+首装会问：面板对外地址（`https://域名` 或 `https://公网IPv4`，不带端口与路径；直接回车用本机公网 IPv4；不合规在动手前停下；节点连面板的 gRPC 主机缺省取该地址的主机部分）；第一个管理员的邮箱与口令（口令不回显，直接回车跳过，之后用收尾提示里的命令手工建）。`curl … | sudo bash` 时脚本是从管道读进来的，`get.sh` 会把终端接给 `install.sh` 提问；没有终端（ssh 未带 `-t`、cloud-init、CI）且未设 `PANDORA_ASSUME_YES=1` 或 `PANDORA_PUBLIC_BASE_URL` 时会停下并给出两种写法；设了 `PANDORA_ADMIN_EMAIL` 却用 `curl … | bash` 时也会停下，提示先下载 `get.sh` 再运行（`install.sh` 要从标准输入读口令，管道模式下标准输入是脚本本身）。
+
+无人值守时变量要写在 `sudo` 后面（`sudo` 默认不把调用者的环境变量带过去）：
+
+```bash
+curl -fsSL https://github.com/shiheishan/pandora/releases/latest/download/get.sh \
+  | sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash
+```
+
+无人值守同时建第一个管理员：`install.sh` 从标准输入读一行口令，而 `curl … | bash` 时标准输入就是脚本本身，所以先下载 `get.sh` 再运行：
+
+```bash
+curl -fsSLo get.sh https://github.com/shiheishan/pandora/releases/latest/download/get.sh
+read -rsp '管理员口令：' pw && echo
+printf '%s\n' "$pw" | sudo PANDORA_ADMIN_EMAIL=admin@example.test PANDORA_ASSUME_YES=1 \
+  PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash get.sh
+unset pw
+```
+
+其余开关（`PANDORA_GRPC_PUBLIC_HOST`、`PANDORA_SKIP_NGINX`、`PANDORA_ACME*`、`PANDORA_SYSTEMD_HARDENING`）见 `install.sh` 头注释。
+
+升级：再跑同一条 `curl … | sudo bash`；取到新版本按升级走（停服 → 升级前全量备份 → 换程序 → 迁移 → 起服务）；同一版本再跑也会走一遍幂等的升级流程。
+
+指定版本、fork：`curl … | sudo PANDORA_VERSION=v1.2.3 bash`（用来装预发布或某个新版本；**不能用来回退**：装旧版本会走升级流程把旧程序换上去，而迁移不会自动降级，旧程序会跑在新库结构上。回退按 `panel/deploy/RUNBOOK.md` 先恢复升级前备份或回退迁移，再装旧包）；带连字符的预发布标签（如 `v1.3.0-rc.1`）不会出现在 `latest`，只能这样装；`PANDORA_REPO=<owner>/<repo>` 从 fork 装（缺省 `shiheishan/pandora`）。
+
+`get.sh` 不自动删旧版本目录；`/opt/pandora-release` 下 `v*` 目录超过 3 个时会打印删除命令。
+
+核对来源：`.sha256` 与包同源，只防下载损坏；防篡改用 `gh attestation verify` 核对 GitHub Actions 出的来源证明（两个架构包、`get.sh`、`SHA256SUMS` 均有）；`install.sh` 运行时再按包内 `SHA256SUMS` 逐文件核对，并拒绝不归 root 或别人可写的目录。
+
+```bash
+curl -fsSLO https://github.com/shiheishan/pandora/releases/download/v1.2.3/pandora-panel_v1.2.3_linux_amd64.tar.gz
+gh attestation verify pandora-panel_v1.2.3_linux_amd64.tar.gz --repo shiheishan/pandora \
+  --signer-workflow shiheishan/pandora/.github/workflows/release.yml --source-ref refs/tags/v1.2.3
+sudo mkdir -p /opt/pandora-release/v1.2.3
+sudo tar -xzf pandora-panel_v1.2.3_linux_amd64.tar.gz -C /opt/pandora-release/v1.2.3
+sudo bash /opt/pandora-release/v1.2.3/pandora-panel_v1.2.3_linux_amd64/deploy/install.sh
+```
+
+须先安装 `gh` 并 `gh auth login`。`--signer-workflow` 与 `--source-ref` 限定证明必须由这个仓库的 `release.yml` 在该版本标签上签出，别的分支、别的 workflow 签的不算。核过后直接用这份已核对的包装（上面最后三行，解到 root 独占的目录，安装器才肯装），不要再经 `get.sh` 重新下载：发布后附件仍可能被替换，重新下载的就不是核过的那份。`get.sh`、`SHA256SUMS` 也可同样核对。
+
+发版（维护者）：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建 amd64 / arm64 包、出来源证明、建 Release；标签提交必须已在 `main` 上，否则 workflow 拒绝；带连字符的标签发成预发布；手动触发（`workflow_dispatch`，输入版本号，缺省 `v0.0.0-dryrun`）只演练构建，产物在该次 run 的 artifact 里，不建 Release；手动触发要等 `release.yml` 进了 `main`（GitHub 的限制），之后可用 `gh workflow run release.yml --ref <分支>` 演练任一分支。
+
+### 2. 从源码打包
 
 在有 Go、Node 22.12+/npm、GNU tar、curl 的机器上（不需要是目标机器）：
 
@@ -279,25 +329,20 @@ cd panel && ./deploy/build-release.sh /path/to/dist
 | `deploy/` | 安装与运维脚本、`config.example.yaml`、`secrets.env.example`、nginx 与 PostgreSQL 配置、`configure-app-role.sql`、`RUNBOOK.md`、systemd 单元 |
 | `SHA256SUMS` | 全量校验和；安装器先核对它 |
 
-### 2. 丢过去装
-
-目标机器：Debian 12–14 / Ubuntu 22.04–26.04、systemd、root，外加 `openssl curl`。安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
+丢到目标机，解到与 `get.sh` 相同的布局（`/opt/pandora-release/<版本>/`）再运行安装器：
 
 ```bash
 scp pandora-panel_<版本>_linux_amd64.tar.gz root@目标机:/root/
-ssh -t root@目标机 'mkdir -p /opt/pandora-release && tar -xzf /root/pandora-panel_<版本>_linux_amd64.tar.gz -C /opt/pandora-release \
-  && bash /opt/pandora-release/pandora-panel_<版本>_linux_amd64/deploy/install.sh'
+ssh -t root@目标机 'mkdir -p /opt/pandora-release/<版本> \
+  && tar -xzf /root/pandora-panel_<版本>_linux_amd64.tar.gz -C /opt/pandora-release/<版本> \
+  && bash /opt/pandora-release/<版本>/pandora-panel_<版本>_linux_amd64/deploy/install.sh'
 ```
 
 安装器拒绝从不归 root 或别人可写的目录安装（防止有人塞一份假的进来），所以包要放在 root 独占的目录下；归档里的属主与权限已经按这个要求打好。
 
-首装会先问面板的对外地址（`https://域名` 或 `https://公网IPv4`，不带端口与路径），不合规就在动手前停下；节点连面板的 gRPC 主机缺省取它的主机部分。无人值守：
+无人值守：`sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash <发布目录>/deploy/install.sh`。
 
-```bash
-sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bash <发布目录>/deploy/install.sh
-```
-
-其余开关（`PANDORA_GRPC_PUBLIC_HOST`、`PANDORA_ADMIN_EMAIL`、`PANDORA_SKIP_NGINX`、`PANDORA_ACME*`、`PANDORA_SYSTEMD_HARDENING`）见 `install.sh` 头注释。
+### 3. 安装器做什么
 
 脚本分八步，任一步失败即停，并说清停在哪、怎么恢复：
 
@@ -316,7 +361,7 @@ sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test bas
 2. **升级前自动全量备份**；迁移失败时上一版程序与备份路径都会打印出来。
 3. **不替你造管理员**。
 
-### 3. 装完
+### 4. 装完
 
 装完会打印后台地址（路径是安装时生成的高熵串，泄露等同暴露入口），之后用 `sudo /opt/pandora/deploy/admin-url.sh` 重看。
 
@@ -353,9 +398,24 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 
 排障按症状查 [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)。
 
+### 5. Docker / Compose / 1Panel
+
+适用于已有 Docker / 1Panel 环境、与其他站点共用机器、或希望由外部反代统一处理证书的场景。
+支持两种 TLS 方式：由内置 Nginx 直面公网终结 TLS（方式一，放行 80/443/9443）；或由外部反代（1Panel OpenResty / Caddy 等）终结 TLS，面板仅在宿主回环 9080 承接明文反代（方式二，只放行 9443）。
+
+首装三步命令：
+```bash
+mkdir -p /opt/pandora-docker && cd /opt/pandora-docker && V=v1.2.3   # 替换为 Release 版本号
+curl -fsSLo compose.yaml https://raw.githubusercontent.com/shiheishan/pandora/$V/panel/deploy/docker/compose.yaml
+(umask 077 && docker run --rm -e PANDORA_PUBLIC_BASE_URL=https://panel.example.test ghcr.io/shiheishan/pandora-ops:$V gen-env > .env)
+docker compose up -d
+```
+
+完整配置、证书申请、前置反代覆写 X-Real-IP、1Panel 导入与定时备份说明详见 [panel/deploy/docker/README.md](panel/deploy/docker/README.md)。
+
 ### 回归测试
 
-安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。
+安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。Docker 装法由 `.github/workflows/panel-docker.yml` 从源码构建镜像、真起 compose 验证。
 
 ### 上线前检查
 
@@ -397,7 +457,7 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 
 ### 未关闭的门禁（UNKNOWN）
 
-- **新安装脚本的真机端到端**：`install.sh` 首装与原地升级、nginx、LE IP 证书、systemd、加密备份、节点一键安装与 gRPC 接入已在全新测试机上跑通（P8，10-14）。没覆盖到的：本机缺 GNU tar，`build-release.sh` 的打包归档那一步没跑；没有用真客户端连节点测数据面。
+- **新安装脚本的真机端到端**：`install.sh` 首装与原地升级、nginx、LE IP 证书、systemd、加密备份、节点一键安装与 gRPC 接入已在全新测试机上跑通（P8，10-14），`build-release.sh` 含打包归档的整条构建也已在 Linux 上跑过。没覆盖到的：没有用真客户端连节点测数据面。
 - 门户各视口没有浏览器矩阵；后台只支持 ≥960 宽度。
 - REALITY+XHTTP/H3 的独立公网第三方客户端端点验证；amd64 外部 Xray 测试不能替代。
 - 13 个协议的全部传输组合与独立客户端协议矩阵。
@@ -415,7 +475,7 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 |---|---|
 | 方向 | 后端已换成主流技术栈（见「架构」与 [docs/architecture.md](docs/architecture.md)）；还没有任何生产部署，新栈直接替换，不做数据迁移与兼容期 |
 | 换栈 | P0–P7 完成（2026-10-13）：全部模块在单二进制 `pandora` 上；旧栈代码、旧迁移、旧部署脚本与旧 CI 已删；安装脚本改为单二进制直装；e2e、前端冒烟与 Playwright 购买路径都对新二进制跑。真机安装验证随 P8 |
-| 开发分支 | `feat/panel-redesign`（`main` 停在 2026-09-26 的面板重构合入之后） |
+| 分支 | `main` 是发布分支，发版在 `main` 上打 `v*` 标签（`.github/workflows/release.yml` 构建、出来源证明、建 Release）；日常开发在 `feat/panel-redesign` |
 | CI | 以 `feat/panel-redesign` 上的最新结论为准（见上文门禁清单） |
 | 前端 | `panel/frontend` 不换，接口 JSON 形状保持不变；鉴权改为短期 access 令牌 + refresh cookie |
 | 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
@@ -440,7 +500,7 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 
 整个仓库（panel 与 pdnd）按 GNU General Public License v3.0 发布，全文见根目录 [LICENSE](LICENSE)。
 
-pdnd 本来就必须如此：默认构建链接 GPL-3.0 的 mieru 与 sagernet/sing，compat 构建还链接 sing-box。
+pdnd 本来就必须如此：发布物链接 GPL-3.0 的 mieru 与 sagernet/sing。
 
 fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`（MPL-2.0）与 `pdnd/internal/realityquic/`（MIT），见各目录的 LICENSE，两者都与 GPL-3.0 兼容。
 
@@ -448,7 +508,7 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 ## 相关文档
 
 - [docs/architecture.md](docs/architecture.md)：换栈的设计全文（技术选型、模块与表属主、鉴权与会话、钱、节点通道、任务、配置、分步计划与产品结论）。
-- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（file 模式与面板集中签发）。
+- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（放在节点机上的 file 模式）。
 - [docs/perf-test-plan.md](docs/perf-test-plan.md)：P8 第一轮性能测试范围。
 - [docs/backlog.md](docs/backlog.md)：面板待办清单；前后端接口以代码为准：后端看各模块 `panel/internal/module/*/handler`，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。

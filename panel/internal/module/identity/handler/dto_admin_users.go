@@ -39,6 +39,7 @@ type admCurrentSubResponse struct {
 
 type admQuotaResponse struct {
 	Metric    string `json:"metric"`
+	Period    string `json:"period"`
 	Limit     *int64 `json:"limit"`
 	Consumed  int64  `json:"consumed"`
 	Remaining *int64 `json:"remaining"`
@@ -54,13 +55,10 @@ type admSubscriptionResponse struct {
 	CurrentPeriodStart  *time.Time         `json:"current_period_start"`
 	CurrentPeriodEnd    *time.Time         `json:"current_period_end"`
 	Amount              int64              `json:"amount"`
-	Currency            string             `json:"currency"`
-	AutoRenew           bool               `json:"auto_renew"` // 新栈不做自动续费，恒 false
 	Quotas              []admQuotaResponse `json:"quotas"`
 	DeviceLimitOverride *int               `json:"device_limit_override"`
 	PlanMaxDevices      *int               `json:"plan_max_devices"`
 	OnlineDevices       int                `json:"online_devices"`
-	PackRemainingBytes  int64              `json:"pack_remaining_bytes"`
 }
 
 // admOrderRowResponse 键与 order 模块 adminOrderRowResponse 完全相同。
@@ -70,26 +68,20 @@ type admOrderRowResponse struct {
 	UserEmail      string     `json:"user_email"`
 	Kind           string     `json:"kind"`
 	Status         string     `json:"status"`
-	Currency       string     `json:"currency"`
 	TotalAmount    int64      `json:"total_amount"`
 	PayableAmount  int64      `json:"payable_amount"`
 	PaidAmount     int64      `json:"paid_amount"`
-	RefundedAmount int64      `json:"refunded_amount"`
 	BalanceApplied int64      `json:"balance_applied"`
 	CreatedAt      time.Time  `json:"created_at"`
 	PaidAt         *time.Time `json:"paid_at"`
 	ProviderCode   *string    `json:"provider_code"`
 	ProviderName   *string    `json:"provider_name"`
+	Method         *string    `json:"method"`
 	PlanName       string     `json:"plan_name"`
 	Interval       string     `json:"interval"`
 	IntervalCount  int        `json:"interval_count"`
 	ItemCount      int        `json:"item_count"`
 	Manual         bool       `json:"manual"`
-}
-
-type admPaidTotalResponse struct {
-	Currency string `json:"currency"`
-	Amount   int64  `json:"amount"`
 }
 
 type admTelegramResponse struct {
@@ -143,6 +135,7 @@ func admCurrentSubFrom(s *service.AdminSub) *admCurrentSubResponse {
 func admQuotaFrom(q service.AdminQuota) admQuotaResponse {
 	return admQuotaResponse{
 		Metric:    q.Metric,
+		Period:    q.Period,
 		Limit:     q.Limit,
 		Consumed:  q.Consumed,
 		Remaining: q.Remaining,
@@ -164,13 +157,10 @@ func admSubscriptionFrom(cc *admCents, s service.AdminSub) admSubscriptionRespon
 		CurrentPeriodStart:  &ps,
 		CurrentPeriodEnd:    &pe,
 		Amount:              cc.of(s.Amount),
-		Currency:            s.Currency,
-		AutoRenew:           false,
 		Quotas:              quotas,
 		DeviceLimitOverride: s.DeviceLimitOverride,
 		PlanMaxDevices:      s.PlanMaxDevices,
 		OnlineDevices:       s.OnlineDevices,
-		PackRemainingBytes:  s.PackRemainingBytes,
 	}
 }
 
@@ -181,16 +171,15 @@ func admOrderRowFrom(cc *admCents, o service.AdminOrderRow) admOrderRowResponse 
 		UserEmail:      o.UserEmail,
 		Kind:           o.Kind,
 		Status:         o.Status,
-		Currency:       o.Currency,
 		TotalAmount:    cc.of(o.Total),
 		PayableAmount:  cc.of(o.Payable),
 		PaidAmount:     cc.of(o.Paid),
-		RefundedAmount: 0,
 		BalanceApplied: cc.of(o.BalanceApplied),
 		CreatedAt:      o.CreatedAt,
 		PaidAt:         o.PaidAt,
 		ProviderCode:   o.ProviderCode,
 		ProviderName:   o.ProviderName,
+		Method:         o.Method,
 		PlanName:       o.PlanName,
 		Interval:       o.Interval,
 		IntervalCount:  o.IntervalCount,

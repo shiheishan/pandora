@@ -9,7 +9,6 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -18,14 +17,14 @@ import (
 func TestWebhookReplayRecordsOnce(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-replay-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-replay-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
 	eventID := "evt-replay-1"
 	payRef := "pay-replay-1"
-	in := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 
 	var lastBody []byte
 	for i := 0; i < 10; i++ {
@@ -68,14 +67,14 @@ func TestWebhookReplayRecordsOnce(t *testing.T) {
 func TestWebhookConcurrentDuplicates(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-conc-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-conc-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
 	eventID := "evt-conc-same"
 	payRef := "pay-conc-same"
-	in := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -108,8 +107,8 @@ func TestWebhookConcurrentDuplicates(t *testing.T) {
 	orderID2, orderNo2 := e.mkOrder(t, ctx, user)
 	intent2 := e.createIntent(t, ctx, code, orderID2, orderNo2, user, "9.90")
 	payRef2 := "pay-conc-dual"
-	inA := demoInbound("evt-conc-a", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
-	inB := demoInbound("evt-conc-b", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
+	inA := fakeInbound("evt-conc-a", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
+	inB := fakeInbound("evt-conc-b", "payment.succeeded", payRef2, intent2.OutTradeNo, 990)
 
 	start2 := make(chan struct{})
 	var wg2 sync.WaitGroup
@@ -142,13 +141,13 @@ WHERE p.code = ? AND e.provider_payment_id = ?`, code, payRef2) != 2 {
 func TestWebhookAmountMismatchRejected(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-amt-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-amt-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
 	for _, cents := range []int64{991, 989} {
-		in := demoInbound("evt-amt-"+uuid.New().String()[:8], "payment.succeeded",
+		in := fakeInbound("evt-amt-"+uuid.New().String()[:8], "payment.succeeded",
 			"pay-amt-"+uuid.New().String()[:8], intent.OutTradeNo, cents)
 		ack, err := e.svc.HandleWebhook(ctx, code, in)
 		if err != nil {
@@ -174,8 +173,8 @@ func TestWebhookAmountMismatchRejected(t *testing.T) {
 func TestWebhookBadSignatureKeepsEvidence(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-bad-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-bad-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 
@@ -209,7 +208,7 @@ FROM payment_events WHERE signature_verified = false`).
 		t.Fatalf("provider_event_id=%q", evID)
 	}
 
-	good := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	good := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 	ackGood, err := e.svc.HandleWebhook(ctx, code, good)
 	if err != nil {
 		t.Fatal(err)
@@ -229,8 +228,8 @@ FROM payment_events WHERE signature_verified = false`).
 func TestWebhookNotPayableQuarantines(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-np-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-np-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	e.settler.mu.Lock()
 	e.settler.notPayable[orderID] = NotPayable(CaseReleasedOrder, "cancelled")
@@ -239,7 +238,7 @@ func TestWebhookNotPayableQuarantines(t *testing.T) {
 
 	eventID := "evt-np-1"
 	payRef := "pay-np-1"
-	in := demoInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
+	in := fakeInbound(eventID, "payment.succeeded", payRef, intent.OutTradeNo, 990)
 	ack, err := e.svc.HandleWebhook(ctx, code, in)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +271,7 @@ SELECT case_kind, order_status, status, amount::text FROM late_payment_cases WHE
 		t.Fatal("不应 order_paid：Settler 的写入应在保存点上撤回")
 	}
 	susp := ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain)
-	bal := e.accountBalance(t, ctx, susp, money.CNY)
+	bal := e.accountBalance(t, ctx, susp)
 	if !bal.Equal(dec("9.90")) {
 		t.Fatalf("suspense 贷方余额 %s", bal)
 	}
@@ -298,6 +297,98 @@ SELECT case_kind, order_status, status, amount::text FROM late_payment_cases WHE
 	e.assertNoDrift(t, ctx)
 }
 
+// 渠道报手续费时挂账：渠道净收款与手续费各记一条借方，挂账科目贷方记全额。
+func TestWebhookNotPayableQuarantinesWithFee(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	code := "fake-npfee-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
+	orderID, orderNo := e.mkOrder(t, ctx, user)
+	e.settler.mu.Lock()
+	e.settler.notPayable[orderID] = NotPayable(CaseReleasedOrder, "cancelled")
+	e.settler.mu.Unlock()
+	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
+
+	in := fakeInboundFee("evt-npfee-1", "payment.succeeded", "pay-npfee-1", intent.OutTradeNo, 990, 60)
+	ack, err := e.svc.HandleWebhook(ctx, code, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack.HTTPStatus != http.StatusOK {
+		t.Fatalf("应 200: %s", string(ack.Body))
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindLatePaymentSuspense) != 1 {
+		t.Fatal("应有 late_payment_suspense")
+	}
+	cash := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.ChannelCash, code))
+	fee := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.PlatformFeeExpense, code))
+	susp := e.accountBalance(t, ctx, ledgersvc.PlatformAccount(ledgersvc.LatePaymentSuspense, ledgersvc.RefMain))
+	if !cash.Equal(dec("9.30")) || !fee.Equal(dec("0.60")) || !susp.Equal(dec("9.90")) {
+		t.Fatalf("渠道净收款 %s（应 9.30）、手续费 %s（应 0.60）、挂账 %s（应 9.90）", cash, fee, susp)
+	}
+	var feeAmt string
+	if err := e.row(ctx, `SELECT fee_amount::text FROM payments WHERE provider_payment_id = ?`, "pay-npfee-1").Scan(&feeAmt); err != nil {
+		t.Fatal(err)
+	}
+	if !dec(feeAmt).Equal(dec("0.60")) {
+		t.Fatalf("payments.fee_amount=%s", feeAmt)
+	}
+	e.assertNoDrift(t, ctx)
+}
+
+// 手续费大于金额：验签通过、金额与意图一致，仍整笔拒收，不调 Settler、不留收款与分录。
+func TestWebhookFeeAboveAmountRejected(t *testing.T) {
+	e, ctx := newEnv(t)
+	user := e.mkUser(t, ctx)
+	code := "fake-feehi-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
+	orderID, orderNo := e.mkOrder(t, ctx, user)
+	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
+
+	in := fakeInboundFee("evt-feehi-1", "payment.succeeded", "pay-feehi-1", intent.OutTradeNo, 990, 991)
+	ack, err := e.svc.HandleWebhook(ctx, code, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack.HTTPStatus != http.StatusConflict {
+		t.Fatalf("期望 409，得 %d body=%s", ack.HTTPStatus, string(ack.Body))
+	}
+	if e.settler.calls.Load() != 0 {
+		t.Fatalf("不应调用 Settler，实际 %d 次", e.settler.calls.Load())
+	}
+	if e.count(t, ctx, `SELECT count(*) FROM payments`) != 0 {
+		t.Fatal("不应有 payments")
+	}
+	if e.ledgerTxnCount(t, ctx, ledgersvc.KindOrderPaid) != 0 || e.ledgerTxnCount(t, ctx, ledgersvc.KindLatePaymentSuspense) != 0 {
+		t.Fatal("不应有分录")
+	}
+}
+
+// 金额校验：手续费可以等于金额，大于金额或为负都拒收。
+func TestValidateRecordAmountsFee(t *testing.T) {
+	cases := []struct {
+		amount, fee string
+		ok          bool
+	}{
+		{"9.90", "0", true},
+		{"9.90", "0.60", true},
+		{"9.90", "9.90", true},
+		{"9.90", "9.91", false},
+		{"9.90", "-0.01", false},
+	}
+	for _, c := range cases {
+		err := validateRecordAmounts(recordInput{Amount: dec(c.amount), Fee: dec(c.fee)})
+		if c.ok != (err == nil) {
+			t.Fatalf("金额 %s 手续费 %s：err=%v", c.amount, c.fee, err)
+		}
+		if err != nil {
+			if e := errs.As(err); e.Code != errs.BadRequest || e.Message != "支付金额或手续费不正确" {
+				t.Fatalf("金额 %s 手续费 %s：%+v", c.amount, c.fee, e)
+			}
+		}
+	}
+}
+
 // RecordOffline 入账、幂等与 NotPayable 不开挂账。
 func TestRecordOffline(t *testing.T) {
 	e, ctx := newEnv(t)
@@ -306,7 +397,7 @@ func TestRecordOffline(t *testing.T) {
 
 	res, err := e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY,
+		Amount:    dec("9.90"),
 		Reference: "BANK-001", Reason: "线下转账",
 	})
 	if err != nil {
@@ -328,7 +419,7 @@ func TestRecordOffline(t *testing.T) {
 
 	res2, err := e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY,
+		Amount:    dec("9.90"),
 		Reference: "BANK-001", Reason: "线下转账",
 	})
 	if err != nil {
@@ -344,7 +435,7 @@ func TestRecordOffline(t *testing.T) {
 	e.settler.mu.Unlock()
 	_, err = e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderBad, OrderNo: orderNoBad, UserID: user,
-		Amount: dec("1.00"), Currency: money.CNY,
+		Amount:    dec("1.00"),
 		Reference: "BANK-002", Reason: "线下",
 	})
 	if err == nil {
@@ -362,7 +453,7 @@ func TestRecordOffline(t *testing.T) {
 
 	_, err = e.svc.RecordOffline(ctx, OfflineInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("1.00"), Currency: money.CNY,
+		Amount:    dec("1.00"),
 		Reference: "", Reason: "",
 	})
 	if err == nil {
@@ -377,13 +468,13 @@ func TestRecordOffline(t *testing.T) {
 func TestCreateIntentReuseAndRotate(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-reuse-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-reuse-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 
 	in := CreateIntentInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY, ProviderCode: code,
+		Amount: dec("9.90"), ProviderCode: code,
 		Title: "测试订单", ClientIP: "203.0.113.2",
 	}
 	r1, err := e.svc.CreateIntent(ctx, in)
@@ -428,19 +519,19 @@ func TestCreateIntentReuseAndRotate(t *testing.T) {
 	}
 }
 
-// 渠道停收、停用、币种与订单过期拒收。
+// 渠道停收、停用与订单过期拒收。
 func TestCreateIntentRejects(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	base := CreateIntentInput{
 		OrderID: orderID, OrderNo: orderNo, UserID: user,
-		Amount: dec("9.90"), Currency: money.CNY,
-		Title: "测试", ClientIP: "203.0.113.3",
+		Amount: dec("9.90"),
+		Title:  "测试", ClientIP: "203.0.113.3",
 	}
 
-	paused := "demo-pause-" + uuid.New().String()[:8]
-	pPaused := e.mkDemoProvider(t, ctx, paused)
+	paused := "fake-pause-" + uuid.New().String()[:8]
+	pPaused := e.mkFakeProvider(t, ctx, paused)
 	ok, err := e.svc.repo.UpdateProviderFields(ctx, pPaused.ID, map[string]any{"accepting_new": false})
 	if err != nil || !ok {
 		t.Fatal(err)
@@ -451,8 +542,8 @@ func TestCreateIntentRejects(t *testing.T) {
 		t.Fatalf("暂停收单: %v", err)
 	}
 
-	dis := "demo-dis-" + uuid.New().String()[:8]
-	pDis := e.mkDemoProvider(t, ctx, dis)
+	dis := "fake-dis-" + uuid.New().String()[:8]
+	pDis := e.mkFakeProvider(t, ctx, dis)
 	ok, err = e.svc.repo.UpdateProviderFields(ctx, pDis.ID, map[string]any{"enabled": false})
 	if err != nil || !ok {
 		t.Fatal(err)
@@ -463,18 +554,8 @@ func TestCreateIntentRejects(t *testing.T) {
 		t.Fatalf("停用: %v", err)
 	}
 
-	usdCode := "demo-usd-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, usdCode)
-	base.ProviderCode = usdCode
-	base.Currency = money.USD
-	_, err = e.svc.CreateIntent(ctx, base)
-	if errs.As(err).Code != errs.ValidationFailed {
-		t.Fatalf("USD: %s", errs.As(err).Code)
-	}
-
-	base.Currency = money.CNY
-	lapseCode := "demo-lapse-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, lapseCode)
+	lapseCode := "fake-lapse-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, lapseCode)
 	base.ProviderCode = lapseCode
 	past := time.Now().Add(-time.Minute)
 	base.ExpiresAt = &past

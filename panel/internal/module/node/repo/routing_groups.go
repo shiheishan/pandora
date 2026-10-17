@@ -1,4 +1,4 @@
-// 本文件归 p5-routing：路由组与成员的读写。
+// 路由组与成员的读写。
 package repo
 
 import (

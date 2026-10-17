@@ -341,7 +341,6 @@ func TestCreatePayment(t *testing.T) {
 	resp, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "AO20260725-t1",
 		Amount:     money.FromCents(990),
-		Currency:   money.CNY,
 		Subject:    "标准套餐 月付",
 		Method:     "alipay",
 		NotifyURL:  "https://a.example.com/v1/webhooks/payments/epay",
@@ -381,7 +380,6 @@ func TestCreatePaymentFormats990(t *testing.T) {
 	resp, err := p.CreatePayment(context.Background(), provider.CreateRequest{
 		OutTradeNo: "X",
 		Amount:     money.FromCents(990),
-		Currency:   money.CNY,
 		NotifyURL:  "https://a.example.com/n",
 		ReturnURL:  "https://a.example.com/r",
 	})
@@ -393,23 +391,11 @@ func TestCreatePaymentFormats990(t *testing.T) {
 	}
 }
 
-func TestCreatePaymentRejectsWrongCurrency(t *testing.T) {
-	p := testProvider(t)
-	_, err := p.CreatePayment(context.Background(), provider.CreateRequest{
-		OutTradeNo: "X",
-		Amount:     money.FromCents(100),
-		Currency:   money.USD,
-	})
-	if err == nil {
-		t.Error("非人民币应当被拒绝")
-	}
-}
-
 func TestCreatePaymentRejectsNonPositiveAmount(t *testing.T) {
 	p := testProvider(t)
 	for _, amt := range []decimal.Decimal{decimal.Zero, decimal.RequireFromString("-0.01")} {
 		_, err := p.CreatePayment(context.Background(), provider.CreateRequest{
-			OutTradeNo: "X", Amount: amt, Currency: money.CNY,
+			OutTradeNo: "X", Amount: amt,
 		})
 		if err == nil {
 			t.Errorf("金额 %s 应当被拒绝", amt)
@@ -571,26 +557,6 @@ func TestQueryPaymentTransportErrorOmitsKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "TESTKEY") || !strings.Contains(err.Error(), "pay.example.com") {
 		t.Fatalf("error = %q", err)
-	}
-}
-
-func TestCheckDialAddr(t *testing.T) {
-	blocked := []string{
-		"127.0.0.1:443", "10.1.2.3:443", "172.16.0.1:443", "192.168.1.1:443",
-		"169.254.169.254:80", "100.100.100.200:80", "100.64.0.1:443", "0.0.0.0:443",
-		"0.1.2.3:443", "224.0.0.1:443", "255.255.255.255:443", "198.18.0.1:443",
-		"[::1]:443", "[fc00::1]:443", "[fd00:ec2::254]:80", "[fe80::1]:443", "[::]:443",
-		"[::ffff:127.0.0.1]:443", "[64:ff9b::a00:1]:443", "[ff02::1]:443",
-	}
-	for _, a := range blocked {
-		if err := checkDialAddr(a); err == nil {
-			t.Errorf("%s 应当被拒绝", a)
-		}
-	}
-	for _, a := range []string{"203.0.113.10:443", "[2001:db8::1]:443", "8.8.8.8:443"} {
-		if err := checkDialAddr(a); err != nil {
-			t.Errorf("%s 不应被拒绝: %v", a, err)
-		}
 	}
 }
 

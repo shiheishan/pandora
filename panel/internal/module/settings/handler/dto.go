@@ -31,12 +31,16 @@ func (h *Handler) siteConfig(c *gin.Context) {
 	})
 }
 
+// siteResponse 是后台站点设置：站点名是全站唯一的站点名来源（门户标题、入口页 <title>、邮件、订阅配置名都取它）。
 type siteResponse struct {
+	Name     string `json:"name"`
 	Timezone string `json:"timezone"`
 }
 
+// setSiteRequest 是站点设置的部分更新：缺的字段保持原值。
 type setSiteRequest struct {
-	Timezone string `json:"timezone"`
+	Name     *string `json:"name"`
+	Timezone *string `json:"timezone"`
 }
 
 func (h *Handler) getSite(c *gin.Context) {
@@ -46,7 +50,7 @@ func (h *Handler) getSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteResponse{Timezone: site.Timezone})
+	httpx.OK(c, siteResponse{Name: site.Name, Timezone: site.Timezone})
 }
 
 func (h *Handler) setSite(c *gin.Context) {
@@ -56,11 +60,17 @@ func (h *Handler) setSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	if err := h.svc.SetSite(ctx, service.SiteUpdate{Timezone: &req.Timezone}); err != nil {
+	if err := h.svc.SetSite(ctx, service.SiteUpdate{Name: req.Name, Timezone: req.Timezone}); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteResponse(req))
+	// 回写入后的值（站点名去过首尾空白），后台据此刷新
+	site, err := h.svc.Site(ctx)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, siteResponse{Name: site.Name, Timezone: site.Timezone})
 }
 
 type switchItem struct {

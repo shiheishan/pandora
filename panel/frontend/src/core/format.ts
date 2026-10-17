@@ -1,17 +1,19 @@
 // ---------------------------------------------------------------------------
-// 金额：后端一律给最小单位 int64（分 / 美分），展示 ÷100 保留两位；
-// 币种只有 CNY / USD，其它按代码前缀显示，不猜符号。
+// 金额：后端一律给分（int64），展示 ÷100 保留两位。整个系统只有人民币（10-16），没有币种参数。
 // ---------------------------------------------------------------------------
-const SYMBOL: Record<string, string> = { CNY: '¥', USD: '$' }
-
-export function formatMoney(minor: number, currency = 'CNY'): string {
+export function formatMoney(minor: number): string
+/**
+ * @deprecated 10-16 起只有人民币，第二个参数被忽略，一律显示 ¥。
+ * 只为各模块块改完调用方之前保持能编译；全部改完后删掉这个重载。
+ */
+export function formatMoney(minor: number, currency: string | undefined): string
+export function formatMoney(minor: number): string {
   const sign = minor < 0 ? '-' : ''
   const abs = Math.abs(minor)
   const units = Math.floor(abs / 100)
   const cents = String(abs % 100).padStart(2, '0')
   const grouped = String(units).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  const symbol = SYMBOL[currency] ?? `${currency} `
-  return `${sign}${symbol}${grouped}.${cents}`
+  return `${sign}¥${grouped}.${cents}`
 }
 
 // ---------------------------------------------------------------------------
@@ -72,4 +74,14 @@ export function formatDateTime(at: Date | string): string {
   if (Number.isNaN(d.getTime())) return String(at)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** 后端两位小数的百分比串去掉多余的 0："2.50" → "2.5"，"0.00" → "0"，"10.00" → "10"；不是十进制数时回 "0"。按字符串处理，不经过浮点 */
+export function trimPercent(s: string): string {
+  const t = s.trim()
+  if (!/^\d+(\.\d+)?$/.test(t)) return '0'
+  const [w = '0', f = ''] = t.split('.')
+  const whole = w.replace(/^0+(?=\d)/, '') || '0'
+  const frac = f.replace(/0+$/, '')
+  return frac ? `${whole}.${frac}` : whole
 }

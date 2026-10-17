@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,8 +16,6 @@ import (
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
 	catalogrepo "github.com/aegispanel/aegis/internal/module/catalog/repo"
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
-	certsrepo "github.com/aegispanel/aegis/internal/module/certs/repo"
-	certssvc "github.com/aegispanel/aegis/internal/module/certs/service"
 	commissionrepo "github.com/aegispanel/aegis/internal/module/commission/repo"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	contentrepo "github.com/aegispanel/aegis/internal/module/content/repo"
@@ -60,9 +57,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/redisx"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
-	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -86,7 +81,6 @@ type services struct {
 	content    *contentsvc.Service
 	appearance *appearancesvc.Service
 	support    *supportsvc.Service
-	certs      *certssvc.Service
 	plugin     *pluginsvc.Service
 	report     *reportsvc.Service
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
@@ -168,9 +162,9 @@ func buildServices(r *runtime) (*services, error) {
 		return nil, fmt.Errorf("notify: %w", err)
 	}
 
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, settingsSvc, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(r.db), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(r.db), txm, auditSvc, identitySvc)
-	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc, settingsSvc)
+	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc)
 	paymentSvc := paymentsvc.New(paymentrepo.New(r.db), txm, ledgerSvc, identitySvc, settingsSvc, auditSvc, sealer,
 		paymentsvc.Config{
 			PublicBaseURL: cfg.PublicBaseURL,
@@ -184,6 +178,7 @@ func buildServices(r *runtime) (*services, error) {
 	nodeSvc := nodesvc.New(noderepo.New(r.db), txm, auditSvc, r.redis)
 	// 节点端一键安装：二进制从发布包的 pdnd-dist 目录发，安装脚本里写入面板地址
 	nodeSvc.UsePdndDist(cfg.Pdnd.DistDir, cfg.PublicBaseURL)
+	nodeSvc.UseIdempotency(idemSvc)
 	// IP 归属地（ip2region 离线库）：没放数据文件只记一条 Info、归属地留空；文件在却打不开才 Warn。启动都不受影响
 	var geo *geoip.Resolver
 	if _, statErr := os.Stat(cfg.GeoIP.IPv4DB); errors.Is(statErr, fs.ErrNotExist) || strings.TrimSpace(cfg.GeoIP.IPv4DB) == "" {
@@ -201,8 +196,6 @@ func buildServices(r *runtime) (*services, error) {
 	contentSvc := contentsvc.New(contentrepo.New(r.db), txm, auditSvc, catalogSvc, subSvc, identitySvc)
 	// 外观：插槽更新时间按 settings 的站点时区显示
 	appearanceSvc := appearancesvc.New(appearancerepo.New(r.db), txm, auditSvc, settingsSvc)
-	// 节点证书：ACME 设置在 settings；建单后经 queue 立刻入队签发任务
-	certsSvc := certssvc.New(certsrepo.New(r.db), txm, auditSvc, settingsSvc, sealer, queue, certssvc.Options{Log: r.log})
 
 	// 模块间注入：identity 定义接口，auth、notify 实现；audit 经 identity 显示操作者与资源
 	identitySvc.UseSessionRevoker(authSvc)
@@ -215,19 +208,23 @@ func buildServices(r *runtime) (*services, error) {
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	// 订阅分发（拉取、链接列表、换链接）：前缀与拉取上限在 settings、主人状态在 identity、限流在 Redis；
-	// 可下发线路的来源（UseNodeSource）由 P5 的 node 模块装配，没装配前生效订阅的拉取回 503
+	// 可下发线路的来源（UseNodeSource）由 node 模块装配，没装配时生效订阅的拉取回 503
 	subSvc.UseDelivery(subsvc.Delivery{
 		Settings:      settingsSvc,
 		Owners:        identitySvc,
 		Hasher:        keys,
 		Limiter:       limiter,
 		PublicBaseURL: cfg.PublicBaseURL,
+		// 订阅附加设置（信息节点、协议前缀）也在 settings；订阅域名分组是 subscription 自己的表
+		Extras: settingsSvc,
 		Render: render.Options{Singbox: render.SingboxTemplate{
 			GeositeURLPrefix: cfg.Subscription.Singbox.GeositeURLPrefix,
 			GeoIPURLPrefix:   cfg.Subscription.Singbox.GeoIPURLPrefix,
 			BlockAds:         cfg.Subscription.Singbox.BlockAds,
 		}},
 	})
+	// 订阅域名分数（有效权重 = 基础权重 × 分数）放 Redis，多进程共享；Redis 不可用时按基础权重
+	subSvc.UseDomainScores(r.redis)
 	// 订阅里影响节点名单的事实变了（开通、续期、换套餐…），提交后推进节点名单纪元
 	subSvc.UseRosterNotifier(nodeSvc)
 	// 名单与线路：node 经 subscription 取可服务订阅、经 identity 取账号状态与用户组、经 catalog 取版本限速与绑池；
@@ -247,6 +244,7 @@ func buildServices(r *runtime) (*services, error) {
 	// 节点上报的流量经 subscription 扣量（配额 → 流量包 → 按日用量）
 	nodeSvc.UseTrafficCharger(subSvc)
 	nodeSvc.UseKeys(keys)
+	nodeSvc.UsePSKDeriver(keys)
 	// 节点池与套餐绑池：绑池表归 catalog，池归 node；node 经 catalog 读绑池、经 subscription 读在用版本、经 identity 读用户组名，
 	// catalog 发布前、向导绑池时回调 node（发布门禁、锁池）
 	nodeSvc.UseCatalog(catalogSvc)
@@ -258,6 +256,9 @@ func buildServices(r *runtime) (*services, error) {
 	// 门户「我的套餐」的在线设备数经 node 取
 	nodeSvc.UseDevices(settingsSvc, subSvc, identitySvc, catalogSvc)
 	subSvc.UseOnlineDeviceCounter(nodeSvc)
+	// 节点流量周期与时段倍率按站点时区算；ECH 私钥经封存密钥封存
+	nodeSvc.UseSiteSettings(settingsSvc)
+	nodeSvc.UseECHSealer(sealer)
 	// 渠道到账与线下收款经 order 结算（没注册时入账一律失败）
 	paymentSvc.UseSettler(orderSvc)
 	// 订单结算时按推荐关系计提佣金（同一结算事务）；同源（审计里共用来源 IP）的佣金转人工复核
@@ -268,14 +269,6 @@ func buildServices(r *runtime) (*services, error) {
 	giftcardSvc.UsePlanChangeValuer(orderSvc)
 	giftcardSvc.UsePaidHistory(orderSvc)
 	giftcardSvc.UseReferrals(identitySvc)
-	if missing := giftcardSvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("giftcard 缺少装配: %v", missing)
-	}
-	if missing := commissionSvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("commission 缺少装配: %v", missing)
-	}
 	// 工单：提单人与客服的邮箱、显示名经 identity，可指派客服是 auth 的管理员名单；
 	// 关联订单经 order 校验归属（建单时存下订单号），队列与详情的在用套餐经 subscription 批量读；审计页显示工单号
 	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)
@@ -291,10 +284,6 @@ func buildServices(r *runtime) (*services, error) {
 	// 客服公开回复后，在回复的同一事务里经 notify 给提单人写「工单有新回复」
 	supportSvc.UseReplyNotifier(supportReplyNotifier{n: notifySvc})
 	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
-	if missing := supportSvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("support 缺少装配: %v", missing)
-	}
 
 	// 通知：扫描与公告定向要读用户、套餐、订阅，支付成功通知读最近履约的订单；Telegram webhook 地址由对外地址拼出
 	notifySvc.UseDirectory(identitySvc)
@@ -302,10 +291,20 @@ func buildServices(r *runtime) (*services, error) {
 	notifySvc.UseSubscriptions(subSvc)
 	notifySvc.UseOrders(orderSvc)
 	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
-	if missing := notifySvc.MissingPorts(); len(missing) > 0 {
-		_ = queue.Close()
-		return nil, fmt.Errorf("notify 缺少装配: %v", missing)
-	}
+	// xb-tg：bot 的 /traffic、/sub 与入群审核经 subscription 取订阅摘要与订阅链接；管理员群组的工单提醒附提单人余额（ledger）；
+	// 在管理员群组里回复工单提醒：auth 核对发消息的人仍是可登录的管理员，再以其身份经 support 回复（后台只读时拒绝）
+	notifySvc.UseSubscriptionSummaries(subSvc)
+	notifySvc.UseSubscribeLinks(notifySubscribeLinks{s: subSvc})
+	notifySvc.UseBalances(notifyBalances{l: ledgerSvc})
+	notifySvc.UseAdmins(authSvc)
+	notifySvc.UseTicketReplier(notifyTicketReplier{support: supportSvc, switches: settingsSvc})
+	// 工单规则（须等客服回复、自动关闭）在 settings；建单与用户回复时经 notify 往管理员群组排提醒
+	supportSvc.UseSettings(settingsSvc)
+	supportSvc.UseAdminNotifier(supportAdminNotifier{n: notifySvc})
+	// 知识库占位变量：站点名与地址经 settings 与对外地址，订阅链接经 subscription
+	contentSvc.UseSite(settingsSvc)
+	contentSvc.UseSubscribeLinks(contentSubscribeLinks{s: subSvc})
+	contentSvc.UsePublicBaseURL(cfg.PublicBaseURL)
 
 	// 插件钩子：六个发事件的模块在业务事务里经 plugin 写待投递记录，提交后入队 plugin:dispatch；
 	// 钩子地址允许 http 与内网只在开发环境（防 SSRF）
@@ -317,18 +316,6 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc.UsePluginEvents(pluginSvc)
 	giftcardSvc.UsePluginEvents(pluginSvc)
 	notifySvc.UsePluginEvents(pluginSvc)
-	for _, m := range []struct {
-		name string
-		svc  interface{ PluginEventsWired() bool }
-	}{
-		{"order", orderSvc}, {"subscription", subSvc}, {"identity", identitySvc},
-		{"support", supportSvc}, {"giftcard", giftcardSvc}, {"notify", notifySvc},
-	} {
-		if !m.svc.PluginEventsWired() {
-			_ = queue.Close()
-			return nil, fmt.Errorf("%s 缺少装配: 插件事件口", m.name)
-		}
-	}
 	// 看板与营收报表：数字一律经各属主模块的聚合读；report 只拥有报表调整与按天行为汇总两张表
 	reportSvc := reportsvc.New(reportrepo.New(r.db), txm, auditSvc, reportsvc.Deps{
 		Settings: settingsSvc, Users: identitySvc, Subscriptions: subSvc, Nodes: nodeSvc, Ledger: ledgerSvc,
@@ -336,9 +323,28 @@ func buildServices(r *runtime) (*services, error) {
 		Activity: auditSvc, Redis: reportRedis{c: r.redis},
 	}, reportsvc.Options{BackupDir: cfg.Backup.Dir})
 	reportSvc.UseCache(r.redis)
-	if missing := reportSvc.MissingPorts(); len(missing) > 0 {
+
+	// 注册与登录（xb-reg）：注册试用、注销停订阅由 subscription 实现，注销取消待付单由 order 实现，
+	// 注销作废佣金与在途提现由 commission 实现，注销解绑 Telegram 由 notify 实现；
+	// 邮件链接免密登录读 settings 的开关与发信配置、经 notify 发信、按邮箱限频，链接拼在对外地址上
+	identitySvc.UseTrialGranter(subSvc)
+	identitySvc.UseAccountCloser(subSvc)
+	identitySvc.UseOrderCanceller(orderSvc)
+	identitySvc.UseCommissionVoider(commissionVoidAdapter{s: commissionSvc})
+	ledgerSvc.UseAccountStates(identitySvc)
+	identitySvc.UseTelegramUnbinder(notifySvc)
+	// 邮件链接登录第 1 步的人机验证由 identity 校验（与注册、找回同一套）
+	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter, cfg.PublicBaseURL)
+
+	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
+	if err := checkPorts([]portCheck{
+		{"settings", settingsSvc}, {"audit", auditSvc}, {"identity", identitySvc}, {"catalog", catalogSvc},
+		{"promo", promoSvc}, {"subscription", subSvc}, {"payment", paymentSvc}, {"order", orderSvc},
+		{"commission", commissionSvc}, {"giftcard", giftcardSvc}, {"node", nodeSvc}, {"support", supportSvc}, {"ledger", ledgerSvc},
+		{"notify", notifySvc}, {"report", reportSvc}, {"content", contentSvc},
+	}); err != nil {
 		_ = queue.Close()
-		return nil, fmt.Errorf("report 缺少装配: %v", missing)
+		return nil, err
 	}
 
 	return &services{
@@ -360,7 +366,6 @@ func buildServices(r *runtime) (*services, error) {
 		content:    contentSvc,
 		appearance: appearanceSvc,
 		support:    supportSvc,
-		certs:      certsSvc,
 		plugin:     pluginSvc,
 		report:     reportSvc,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
@@ -390,56 +395,22 @@ func newIssuer(domain jwtx.Domain, current, previous config.Secret, ttl time.Dur
 	return jwtx.NewIssuer(domain, []byte(current.Reveal()), prev, ttl)
 }
 
-// supportOrders 让 support 经 order 校验门户用户关联的订单：MyOrder 按 ctx 里的门户主体限定本人，
-// 不存在或不是本人的回 errs.NotFound。
-type supportOrders struct{ o *ordersvc.Service }
-
-// OwnedOrderNo 返回门户主体名下这张订单的订单号。
-func (a supportOrders) OwnedOrderNo(ctx context.Context, orderID uuid.UUID) (string, error) {
-	d, err := a.o.MyOrder(ctx, orderID)
-	if err != nil {
-		return "", err
-	}
-	return d.Order.OrderNo, nil
+// portCheck 是装配自检的一项：带 Use* 注入的 service 实现 MissingPorts，返回还没注入的必需端口名。
+type portCheck struct {
+	name string
+	svc  interface{ MissingPorts() []string }
 }
 
-// supportPlans 让 support 经 subscription 批量取提单人当前生效订阅的套餐名（与订阅的「当前订阅」同一口径）。
-type supportPlans struct{ s *subsvc.Service }
-
-// ActivePlanNames 返回当前订阅生效的用户的套餐名；没有生效订阅的用户不在结果里。
-func (a supportPlans) ActivePlanNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
-	sums, err := a.s.SummariesByUsers(ctx, userIDs)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[uuid.UUID]string, len(sums))
-	for id, us := range sums {
-		if us.Current != nil && us.Current.State == subsvc.StateLive {
-			out[id] = us.Current.PlanName
+// checkPorts 汇总各 service 缺的必需端口；有缺的返回一条列出全部缺口的错误。
+func checkPorts(checks []portCheck) error {
+	var problems []string
+	for _, c := range checks {
+		if missing := c.svc.MissingPorts(); len(missing) > 0 {
+			problems = append(problems, fmt.Sprintf("%s %v", c.name, missing))
 		}
 	}
-	return out, nil
+	if len(problems) > 0 {
+		return fmt.Errorf("缺少装配: %s", strings.Join(problems, "; "))
+	}
+	return nil
 }
-
-// supportReplyNotifier 让 support 经 notify 给提单人写「工单有新回复」；去重键按回复 id，同一条回复只通知一次。
-type supportReplyNotifier struct{ n *notifysvc.Service }
-
-// TicketReplied 在调用方事务里写通知。
-func (a supportReplyNotifier) TicketReplied(ctx context.Context, n supportsvc.ReplyNotice) error {
-	return a.n.NotifyUser(ctx, n.UserID, notifysvc.TemplateTicketReplied,
-		map[string]string{"subject": n.Subject}, "ticket-replied:"+n.MessageID.String())
-}
-
-var (
-	_ supportsvc.Orders        = supportOrders{}
-	_ supportsvc.PlanNames     = supportPlans{}
-	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
-)
-
-// reportRedis 让 report 的系统状态页探测 Redis 是否可达。
-type reportRedis struct{ c *redis.Client }
-
-// Ping 做一次 PING 往返。
-func (a reportRedis) Ping(ctx context.Context) error { return redisx.Ping(ctx, a.c) }
-
-var _ reportsvc.Pinger = reportRedis{}

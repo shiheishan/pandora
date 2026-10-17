@@ -1,23 +1,11 @@
 #!/usr/bin/env bash
-# 到期与续费的端到端（新栈 pandora + nodesim 节点夹具）：
+# 到期与续费的端到端（nodesim 节点夹具）：
 #
 #   开通 → 到期（worker 的 subscription:expire 每分钟扫描）→ 订阅链接只剩提示节点、门户仍列出且不许换链 →
 #   续费（同套餐人工单落在原订阅）→ 真实节点回来、链接不变；门户同套餐新购 409。
-#   后台开别的套餐 → 原订阅换套餐（链接不变）；重置链接换 proxy_uuid（旧 404），10 分钟内再重置 429。
-#
-# 与旧版（w5expiry / aegis-admin）步骤对照：
-#   旧 0 一次性库守卫     → 新 0：去掉租户与 EXPIRY_E2E_DATABASE，保留 DISPOSABLE + 库名 test/e2e 段
-#   旧 1 SQL 插服务器/池/节点/套餐 → 新 1：后台 API 建池/服务器/节点 + bootstrap-token + nodesim 心跳 + activate
-#   旧 2 开通与拉取         → 新 2：同流程 + 等出站含 display_name + 断言用户在 nodesim 名单（proxy_uuid）
-#   旧 3 到期               → 新 3：SQL 只改 subscriptions/quota_balances 周期（删凭据 expires_at）；
-#                             等扫描改 expired + 名单 absent + 过期 sing-box 形态
-#   旧 4 续费               → 新 4：同 + 名单 present
-#   旧 5 换套餐             → 新 5：套餐走 /plans/complete，同 + roster_has
-#   旧 6 重置链接           → 新 6：按份限频 + 名单换 uuid
-#   （新 7）收尾：模拟器 errors=0，优雅停 nodesim
-#
-# 新规则下删掉的旧断言：租户存在检查；subscription_credentials.expires_at 的 SQL 修改；
-# 用 SQL 直接建夹具（改为接口）；「aegis-admin expiry scan」文案改为 worker 扫描。
+#   后台开别的套餐 → 原订阅换套餐（链接不变）；重置链接换 proxy_uuid（旧链接 404），10 分钟内再重置 429。
+#   每一步都核对 nodesim 收到的名单（proxy_uuid 在或不在）；收尾断言模拟器 errors=0，优雅停 nodesim。
+#   夹具（池、服务器、节点、套餐）都经后台 API 建，节点由 nodesim 接入后 activate。
 #
 # 仍用 SQL 的步骤及原因：
 #   - 第 3 节把订阅/配额周期挪到过去：真等一个月不现实；且 SQL 改周期本身不会触发名单下发，
@@ -308,6 +296,9 @@ sec "0. 一次性库守卫"
 [ -n "$NODESIM" ] && [ -x "$NODESIM" ] || die "NODESIM must point to an executable nodesim binary"
 DB_NAME=$(db "SELECT current_database()")
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] || die "database name is not recognizably disposable" "$DB_NAME"
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 TMP=$(mktemp -d)
 trap cleanup EXIT
@@ -394,12 +385,12 @@ expect_http 200 POST "$ADM/v1/nodes/$NODE_ID/activate" -H "$AH" -H 'Content-Type
 wait_nodesim_node_config s1 "nodesim s1 has node with non-empty config_sha256"
 
 admin_auth
-expect_http 201 POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 201 POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: exp-plan-$STAMP" \
-  -d "{\"code\":\"exp-plan-$STAMP\",\"name\":\"Expiry Plan $STAMP\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Expiry Plan $STAMP\",\"visibility\":\"public\",\"traffic_bytes\":1073741824,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000}],\"publish\":true}"
 PLAN=$(json_get "$HTTP_BODY" plan.id)
-PRICE=$(json_get "$HTTP_BODY" price_ids.0)
-is_uuid "$PLAN" && is_uuid "$PRICE" || die "plan/complete returned invalid ids"
+PRICE=$(json_get "$HTTP_BODY" plan.prices.0.id)
+is_uuid "$PLAN" && is_uuid "$PRICE" || die "POST /plans returned invalid ids"
 ok "plan 1 published with pool binding"
 
 #-------------------------------------------------------------------------------
@@ -480,11 +471,11 @@ wait_roster present "$PROXY_UUID" "续费后用户回到节点名单，proxy_uui
 #-------------------------------------------------------------------------------
 sec "5. 后台开不同套餐：原订阅换套餐，链接不变"
 admin_auth
-expect_http 201 POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 201 POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: exp-plan2-$STAMP" \
-  -d "{\"code\":\"exp-plan2-$STAMP\",\"name\":\"Expiry Pro Plan $STAMP\",\"visibility\":\"public\",\"traffic_gb\":2,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":3000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Expiry Pro Plan $STAMP\",\"visibility\":\"public\",\"traffic_bytes\":2147483648,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":3000}],\"publish\":true}"
 PLAN2=$(json_get "$HTTP_BODY" plan.id)
-PRICE2=$(json_get "$HTTP_BODY" price_ids.0)
+PRICE2=$(json_get "$HTTP_BODY" plan.prices.0.id)
 is_uuid "$PLAN2" && is_uuid "$PRICE2" || die "second plan invalid"
 
 admin_auth

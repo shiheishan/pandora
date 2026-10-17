@@ -68,21 +68,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: |
             panel/go.sum
             pdnd/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: panel/frontend/package-lock.json
+          # Pro 图标包（@hugeicons-pro）走私有源：setup-node 写 .npmrc，令牌只在装依赖的步骤经 NODE_AUTH_TOKEN 传入
+          registry-url: https://npm.collectui.pro/
+          scope: '@hugeicons-pro'
       # pandora serve 嵌入真前端产物（同 make frontend-embed，发布包也这么做）：门户在 public、后台在 admin 根上，
       # 浏览器测试点的就是它。仓库里只有占位页，所以必须在起栈编译 pandora 之前构建
       - name: Embed the real frontend
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: make -C panel frontend-embed
       - name: Start the stack
         id: stack
@@ -92,6 +97,8 @@ jobs:
         run: node panel/frontend/tests/smoke/seed.ts "$RUNNER_TEMP/smoke"
       - name: Install frontend dependencies
         working-directory: panel/frontend
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: npm ci
       # 冒烟自己的 tsconfig：页面模块会连带 .tsx，node 侧那份没开 jsx
       - name: Typecheck the smoke tables
@@ -105,14 +112,13 @@ jobs:
           SMOKE_STATE: ${{ runner.temp }}/smoke
         run: npx vitest run -c tests/smoke/vitest.config.ts
       # panel/tests/*.sh 的 e2e 在 panel-newstack.yml 跑；
-      # 「200 用户、5 节点、60 秒零 5xx」的判据由 panel-newstack.yml node-e2e job 的 node_smoke_e2e.sh 覆盖
-      # （旧的 tools/loadtest 走旧节点通道）。
+      # 「200 用户、5 节点、60 秒零 5xx」的判据由 panel-newstack.yml node-e2e job 的 node_smoke_e2e.sh 覆盖。
       - name: Playwright version for the browser cache
         id: playwright
         if: always() && steps.stack.outcome == 'success'
         working-directory: panel/frontend
         run: echo "version=$(node -p "require('./node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         if: always() && steps.stack.outcome == 'success'
         with:
           path: ~/.cache/ms-playwright

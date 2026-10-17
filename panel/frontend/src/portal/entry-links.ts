@@ -59,6 +59,11 @@ export function quickLoginTokenFromHash(hash: string): string | null {
   return matchPath('/quick-login/:token', parseHash(hash).path)?.token ?? null
 }
 
+/** 邮件登录链接 <门户根>/#/mail-login/<token>：令牌放 fragment，不进访问日志与 Referer。#/mail-login/<token> → token；其它返回 null。 */
+export function mailLoginTokenFromHash(hash: string): string | null {
+  return matchPath('/mail-login/:token', parseHash(hash).path)?.token ?? null
+}
+
 /** 用户粘贴的可能是整条链接，也可能只是令牌。 */
 export function quickLoginTokenFromInput(input: string): string | null {
   const text = input.trim()

@@ -78,6 +78,7 @@ func newTrafficEnv(t *testing.T) (*trafficEnv, context.Context) {
 	ch := &fakeCharger{subs: map[int64]uuid.UUID{}}
 	svc.UseTrafficCharger(ch)
 	svc.UseKeys(testDeviceKeys{})
+	svc.UseSiteSettings(fakeSite{tz: "UTC"})
 	fixed := time.Now().UTC().Truncate(time.Hour).Add(30 * time.Minute)
 	svc.now = func() time.Time { return fixed }
 	e := &trafficEnv{
@@ -133,15 +134,15 @@ func seedTrafficSub(t *testing.T, ctx context.Context, e *trafficEnv) (uuid.UUID
 	if err := e.row(ctx, `INSERT INTO users (email) VALUES (?) RETURNING id`, poolRandName(t, "tu")+"@example.test").Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`, poolRandName(t, "tp"), "流量测试套餐").Scan(&planID); err != nil {
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`, poolRandName(t, "tp"), "流量测试套餐").Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 1, 3) RETURNING id`, planID).Scan(&versionID); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.row(ctx, `INSERT INTO subscriptions (user_id, plan_id, plan_version_id, current_period_start, current_period_end,
-		snapshot_currency, snapshot_amount, snapshot_interval, snapshot_interval_count)
-		VALUES (?, ?, ?, now(), now() + interval '30 days', 'CNY', 10, 'month', 1) RETURNING id, node_uid`,
+		snapshot_amount, snapshot_interval, snapshot_interval_count)
+		VALUES (?, ?, ?, now(), now() + interval '30 days', 10, 'month', 1) RETURNING id, node_uid`,
 		userID, planID, versionID).Scan(&subID, &uid); err != nil {
 		t.Fatal(err)
 	}

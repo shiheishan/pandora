@@ -1,17 +1,16 @@
-// 本文件归 p5-routing：出站与分流规则的范围读写、锁、悬空引用与计数。
+// 出站与分流规则的范围读写、锁、悬空引用与计数。
 package repo
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/module/node/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 var (
@@ -23,26 +22,14 @@ var (
 	ErrRoutingCheck = errors.New("node: 路由数据不满足库约束")
 )
 
-// routingErr 把写路由相关表时的约束错误译成本包哨兵。
-func routingErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		return err
-	}
-	switch pgErr.Code {
-	case "23505":
-		if pgErr.ConstraintName == "route_groups_name_key" {
-			return ErrRouteGroupNameTaken
-		}
-		return ErrOutboundTagTaken
-	case "23514":
-		return fmt.Errorf("%w: %v", ErrRoutingCheck, err)
-	}
-	return err
+// routingErrs 把写路由相关表时的约束错误译成本包哨兵：路由组重名按约束名报，其余唯一冲突是出站 tag 重复。
+var routingErrs = db.ConstraintErrors{
+	ByCode: map[string]error{db.CodeUnique: ErrOutboundTagTaken, db.CodeCheck: ErrRoutingCheck},
+	ByName: map[string]error{"route_groups_name_key": ErrRouteGroupNameTaken},
 }
+
+// routingErr 把写路由相关表时的约束错误译成本包哨兵。
+func routingErr(err error) error { return routingErrs.Map(err) }
 
 // RoutingScope 是 node_outbounds / node_routes 的一个范围：两个都 nil 是全局，至多一个非 nil。
 type RoutingScope struct{ NodeID, GroupID *uuid.UUID }

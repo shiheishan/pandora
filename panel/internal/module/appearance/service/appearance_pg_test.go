@@ -11,6 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/appearance/repo"
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	settingsvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -20,6 +21,12 @@ import (
 	"github.com/google/uuid"
 )
 
+type apFakeSite struct{ name string }
+
+func (f apFakeSite) Site(context.Context) (settingsvc.Site, error) {
+	return settingsvc.Site{Name: f.name, Timezone: "UTC"}, nil
+}
+
 type apEnv struct {
 	row   func(ctx context.Context, q string, args ...any) *sql.Row
 	txCtx func() context.Context
@@ -27,6 +34,10 @@ type apEnv struct {
 }
 
 func newApEnv(t *testing.T) *apEnv {
+	return newApEnvWithSite(t, nil)
+}
+
+func newApEnvWithSite(t *testing.T, site SiteSettings) *apEnv {
 	t.Helper()
 	d := testkit.DB(t)
 	master := make([]byte, 32)
@@ -42,7 +53,7 @@ func newApEnv(t *testing.T) *apEnv {
 		t.Fatal(err)
 	}
 	txm := tx.NewManager(d)
-	svc := New(repo.New(d), txm, auditSvc, nil)
+	svc := New(repo.New(d), txm, auditSvc, site)
 	return &apEnv{
 		row: func(ctx context.Context, q string, args ...any) *sql.Row {
 			return d.Conn(ctx).Raw(q, args...).Row()
@@ -115,8 +126,11 @@ func TestAppearanceSeedAndPublic(t *testing.T) {
 	if err := json.Unmarshal(pub.Theme.Branding, &branding); err != nil {
 		t.Fatal(err)
 	}
-	if branding["site_name"] != "Pandora" {
-		t.Fatalf("site_name=%q", branding["site_name"])
+	if _, ok := branding["site_name"]; ok {
+		t.Fatalf("site_name 不应在 branding 中: %v", branding)
+	}
+	if pub.SiteName != "Pandora" {
+		t.Fatalf("pub.SiteName=%q, want Pandora", pub.SiteName)
 	}
 }
 
@@ -126,31 +140,31 @@ func TestAppearanceThemeSaveAndConflict(t *testing.T) {
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
 	// 输入本身合法，被拒只因为 paper 是内置主题
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{Code: "paper", Name: "改", Create: false,
-		Branding: json.RawMessage(`{"site_name":"Pandora"}`)})
+	err := e.svc.SaveTheme(actx, SaveThemeInput{Code: "paper", Name: "改", Create: false,
+		Branding: json.RawMessage(`{}`)})
 	if ae := errs.As(err); ae.Code != errs.ValidationFailed || len(ae.Fields) != 0 {
 		t.Fatalf("改内置: %v", err)
 	}
 
-	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+	err = e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "我的", Create: true,
-		Branding: json.RawMessage(`{"site_name":"星河"}`),
+		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+	err = e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "别的", Create: true,
-		Branding: json.RawMessage(`{"site_name":"x"}`),
+		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
 	if apErrCode(err) != errs.Conflict || errs.As(err).Fields["code"] == "" {
 		t.Fatalf("重复 Create: %v", err)
 	}
 
-	_, err = e.svc.SaveTheme(actx, SaveThemeInput{
+	err = e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "覆盖名", Create: false,
-		Branding: json.RawMessage(`{"site_name":"星河"}`),
+		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -171,9 +185,9 @@ func TestAppearanceActivateTheme(t *testing.T) {
 	ctx := e.txCtx()
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "我的", Create: true,
-		Branding: json.RawMessage(`{"site_name":"星河"}`),
+		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,9 +221,9 @@ func TestAppearanceDeleteTheme(t *testing.T) {
 	ctx := e.txCtx()
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
-	_, err := e.svc.SaveTheme(actx, SaveThemeInput{
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "my-theme", Name: "我的", Create: true,
-		Branding: json.RawMessage(`{"site_name":"星河"}`),
+		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -302,5 +316,41 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 	}
 	if _, ok := pub2.Slots["portal.footer"]; ok {
 		t.Fatal("禁用后不应出现在 Public.Slots")
+	}
+}
+
+func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
+	e := newApEnvWithSite(t, apFakeSite{name: "夜海加速"})
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	meta := e.svc.PageMeta(ctx)
+	if meta.SiteName != "夜海加速" || meta.Tagline != "" || meta.Logo != "" {
+		t.Fatalf("内置主题初始 PageMeta 期望 夜海加速//空，得到 %+v", meta)
+	}
+
+	logo := "data:image/png;base64,iVBORw0KGgo="
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "fast-ocean", Name: "夜海", Create: true,
+		Branding: json.RawMessage(`{"tagline":"一路畅通","logo":"` + logo + `"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ActivateTheme(actx, "fast-ocean"); err != nil {
+		t.Fatal(err)
+	}
+
+	metaAfter := e.svc.PageMeta(ctx)
+	if metaAfter.Tagline != "一路畅通" || metaAfter.Logo != logo {
+		t.Fatalf("激活后 PageMeta 期望 一路畅通 与 logo，得到 %+v", metaAfter)
+	}
+
+	pub, err := e.svc.Public(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pub.SiteName != "夜海加速" {
+		t.Fatalf("pub.SiteName=%q, want 夜海加速", pub.SiteName)
 	}
 }

@@ -268,6 +268,7 @@ func TestAdmSetTelegramSettingsAdminChatID(t *testing.T) {
 		{"null", `,"admin_chat_id":null}`, true, nil, http.StatusOK},
 		{"number", `,"admin_chat_id":-42}`, true, admPtrI64(-42), http.StatusOK},
 		{"zero", `,"admin_chat_id":0}`, false, nil, http.StatusUnprocessableEntity},
+		{"positive", `,"admin_chat_id":42}`, false, nil, http.StatusUnprocessableEntity},
 	}
 	for _, tc := range cases {
 		fake := &fakeNotify{}

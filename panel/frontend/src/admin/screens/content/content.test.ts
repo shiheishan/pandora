@@ -3,27 +3,29 @@ import {
   annActions,
   annBody,
   annFieldErrors,
+  annFilterItems,
   annFormFrom,
+  annMeta,
   annTargetLabel,
   annWhen,
+  articleRows,
   audienceChanged,
-  compareVersion,
   droppedMessage,
   emptyAnnForm,
   emptyKbForm,
-  fromDateInput,
   fromLocalInput,
   groupArticles,
-  groupByCategory,
   kbBody,
   kbFormFrom,
   knownCategories,
+  platformsLabel,
   slotDirty,
   timezoneOptions,
   toLocalInput,
   utcOffsetLabel,
   validateAnn,
   validateKb,
+  visibleAnns,
 } from './logic'
 import { announcementsResponse, pageSchema, slotSaved, type Announcement, type Page } from './schemas'
 
@@ -74,8 +76,6 @@ describe('time inputs', () => {
     expect(new Date(fromLocalInput(local)).getTime()).toBe(new Date(iso).getTime() - 5000)
     expect(fromLocalInput('')).toBe('')
     expect(toLocalInput(null)).toBe('')
-    expect(fromDateInput('2026-10-01')).toBe(new Date('2026-10-01T00:00').toISOString())
-    expect(fromDateInput('')).toBe('')
   })
 })
 
@@ -83,10 +83,38 @@ describe('announcements', () => {
   it('labels targets and times like the design', () => {
     expect(annTargetLabel(announcement())).toBe('全部用户')
     expect(annTargetLabel(announcement({ plan_targets: [{ id: U(2), name: '专业版', status: 'active' }], user_group_targets: [{ id: U(3), name: 'VIP' }] }))).toBe('专业版、VIP')
-    expect(annWhen(announcement({ status: 'draft' }))).toBe('草稿')
-    expect(annWhen(announcement())).toMatch(/^\d{2}-\d{2}$/)
-    expect(annWhen(announcement({ status: 'scheduled' }))).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/)
-    expect(annWhen(announcement({ status: 'withdrawn', publish_at: null }))).toMatch(/^\d{2}-\d{2}$/)
+    expect(annWhen(announcement({ status: 'draft' }))).toBe('未发布')
+    expect(annWhen(announcement())).toMatch(/^\d{2}-\d{2} 发布$/)
+    expect(annWhen(announcement({ status: 'scheduled' }))).toMatch(/^\d{2}-\d{2} \d{2}:\d{2} 发布$/)
+    expect(annWhen(announcement({ status: 'withdrawn', publish_at: null }))).toMatch(/^\d{2}-\d{2} 发布$/)
+  })
+
+  it('counts filter tabs and puts pinned announcements first', () => {
+    const rows = [
+      announcement({ id: U(1), status: 'published' }),
+      announcement({ id: U(2), status: 'draft' }),
+      announcement({ id: U(3), status: 'published', pinned: true }),
+      announcement({ id: U(4), status: 'withdrawn' }),
+    ]
+    expect(annFilterItems(rows)).toEqual([
+      { value: 'all', label: '全部', count: 4 },
+      { value: 'published', label: '已发布', count: 2 },
+      { value: 'scheduled', label: '定时', count: 0 },
+      { value: 'draft', label: '草稿', count: 1 },
+      { value: 'withdrawn', label: '已撤回', count: 1 },
+    ])
+    // 置顶在前，其余保持原顺序；别的状态不混进来
+    expect(visibleAnns(rows, 'all').map((a) => a.id)).toEqual([U(3), U(1), U(2), U(4)])
+    expect(visibleAnns(rows, 'published').map((a) => a.id)).toEqual([U(3), U(1)])
+    expect(visibleAnns(rows, 'draft').map((a) => a.id)).toEqual([U(2)])
+    expect(visibleAnns(rows, 'scheduled')).toEqual([])
+  })
+
+  it('writes the modal head meta per status', () => {
+    expect(annMeta(null)).toBe('保存后出现在列表里')
+    expect(annMeta(announcement({ status: 'scheduled' }))).toMatch(/^将于 \d{2}-\d{2} \d{2}:\d{2} 发布$/)
+    expect(annMeta(announcement())).toMatch(/^发布于 \d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(annMeta(announcement({ status: 'draft', publish_at: null }))).toBe('保存后出现在列表里')
   })
 
   it('validates with the Go limits and the expiry rule', () => {
@@ -156,13 +184,19 @@ describe('knowledge base', () => {
     expect(misc!.latest.id).toBe(U(16))
   })
 
-  it('groups by category with uncategorized last and searches the latest title and slug', () => {
+  it('filters and sorts rows for the table', () => {
     const articles = groupArticles(rows)
-    expect(groupByCategory(articles).map((g) => g.cat)).toEqual(['客户端教程', '账单', '未分类'])
-    expect(groupByCategory(articles, 'CLASH 新').map((g) => g.cat)).toEqual(['客户端教程'])
-    expect(groupByCategory(articles, 'refund')[0]!.items[0]!.slug).toBe('refund')
-    expect(groupByCategory(articles, '旧稿')).toEqual([])
+    expect(articleRows(articles).map((a) => a.slug)).toEqual(['clash', 'refund', 'misc'])
+    expect(articleRows(articles, 'CLASH 新').map((a) => a.slug)).toEqual(['clash'])
+    expect(articleRows(articles, 'refund')[0]!.slug).toBe('refund')
+    expect(articleRows(articles, '旧稿')).toEqual([])
     expect(knownCategories(articles)).toEqual(['客户端教程', '账单'])
+  })
+
+  it('labels platforms for the list column', () => {
+    expect(platformsLabel([])).toBe('全部平台')
+    expect(platformsLabel(['ios', 'android', 'web'])).toBe('网页 / Android / iOS')
+    expect(platformsLabel(['custom'])).toBe('custom')
   })
 
   it('validates like normalizePublishInput', () => {
@@ -171,19 +205,19 @@ describe('knowledge base', () => {
     const ok = { ...form, slug: 'clash-verge', title: '标题', body: '正文至少十个字才可以保存' }
     expect(validateKb(ok)).toEqual({})
     expect(validateKb(ok, ['clash-verge']).slug).toBe('这个标识已被其他文章使用')
-    expect(validateKb({ ...ok, minClient: 'v2.0', maxClient: '1.9.9' }).max_client_version).toBe('最高客户端版本不能低于最低版本')
-    expect(validateKb({ ...ok, minClient: 'x' }).min_client_version).toBe('最低客户端版本格式不正确')
     expect(validateKb({ ...ok, locale: 'zh_cn' }).locale).toBe('语言格式不正确')
-    expect(compareVersion('v1.10', '1.9')).toBe(1)
-    expect(compareVersion('1', '1.0.0')).toBe(0)
   })
 
-  it('builds the publish body, carries the audience and omits an empty review date', () => {
-    const source = page({ target_platforms: ['ios', 'android'], min_client_version: '1.2', target_plan_ids: [U(3)], review_due_at: '2026-12-01T00:00:00Z', body: '正文正文正文正文正文' })
+  it('builds the publish body, carries hidden fields from original and omits review when absent', () => {
+    const source = page({ target_platforms: ['ios', 'android'], min_client_version: '1.2', max_client_version: '2.0', summary: '旧摘要', target_plan_ids: [U(3)], review_due_at: '2026-12-01T00:00:00Z', body: '正文正文正文正文正文' })
     const form = kbFormFrom(source)
     const body = kbBody(form, 'published', 3, source)
-    expect(body).toMatchObject({ slug: 'clash', target_platforms: ['android', 'ios'], min_client_version: '1.2', max_client_version: '', target_plan_ids: [U(3)], status: 'published', review_due_at: '2026-12-01T00:00:00Z', expected_latest_version: 3 })
-    expect('review_due_at' in kbBody({ ...form, reviewDue: '' }, 'draft', 3)).toBe(false)
+    expect(body).toMatchObject({ slug: 'clash', summary: '旧摘要', target_platforms: ['android', 'ios'], min_client_version: '1.2', max_client_version: '2.0', target_plan_ids: [U(3)], status: 'published', review_due_at: '2026-12-01T00:00:00Z', expected_latest_version: 3 })
+    const noReview = page({ body: '正文正文正文正文正文' })
+    const fromScratch = kbBody(kbFormFrom(noReview), 'draft', 0, null)
+    expect(fromScratch.summary).toBe('')
+    expect(fromScratch.min_client_version).toBe('')
+    expect('review_due_at' in fromScratch).toBe(false)
     expect(audienceChanged(form, source)).toBe(false)
     expect(audienceChanged({ ...form, platforms: ['ios'] }, source)).toBe(true)
     expect(audienceChanged({ ...form, visibility: 'internal' }, source)).toBe(true)

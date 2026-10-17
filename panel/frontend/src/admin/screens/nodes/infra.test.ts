@@ -18,14 +18,18 @@ import {
   poolGroupsChanged,
   poolGroupsLabel,
   quickToggle,
+  serverDeleteBlock,
   serverDot,
   serverFormFrom,
   serverMeters,
+  serverNodeLines,
+  serverNotes,
+  serverSubtitle,
   validateServerForm,
 } from './infra'
 import { nodeRowSchema, poolsResponse, serverSchema, serversResponse, type NodeRow, type Server } from './schemas'
 
-// Go 的 nodefabric.Server 原样形状：指针字段全是 null
+// Go 的 node/handler serverResponse 原样形状：指针字段全是 null
 const server = (over: Partial<Record<string, unknown>> = {}): Server =>
   serverSchema.parse({
     id: 's1',
@@ -35,7 +39,7 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     row_version: 4,
     region: '香港',
     hostname: null,
-    public_ipv4: '103.151.12.8',
+    public_ipv4: '192.0.2.8',
     public_ipv6: null,
     private_ipv4: null,
     architecture: null,
@@ -48,7 +52,6 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     disk_gb: 80,
     capacity_nodes: 8,
     notes: null,
-    control_node_id: null,
     node_count: 2,
     active_node_count: 2,
     serving_node_count: 1,
@@ -70,7 +73,6 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     node_no: 1,
     row_version: 1,
     name: 'n',
-    status: 'active',
     serving_status: 'active',
     server_id: 's1',
     server_name: null,
@@ -82,14 +84,12 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     cpu_cores: null,
     memory_mb: null,
     disk_gb: null,
-    health_score: null,
-    applied_config_version: null,
-    desired_config_version: null,
     last_heartbeat_at: null,
     stale: true,
     delivered_to_users: false,
     delivery_note: '',
     identity_serial: null,
+    movable: true,
     created_at: '2026-09-01T00:00:00Z',
     node_type: 'vless',
     server_host: null,
@@ -97,7 +97,6 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     traffic_rate: 1,
     display_name: null,
     country_code: null,
-    kernel: 'auto',
     protocol_config: null,
     protocol_schema_version: 1,
     config_validated_at: null,
@@ -108,8 +107,12 @@ const node = (over: Partial<Record<string, unknown>>): NodeRow =>
     cpu_percent: null,
     mem_percent: null,
     metrics_at: null,
-    traffic_bytes: 0,
     granted_plans: null,
+    tags: [],
+    traffic: { limit_bytes: null, reset_day: null, used_bytes: 0, reset_at: '2026-10-01T00:00:00Z', exceeded_at: null },
+    traffic_rate_schedule: [],
+    relay_count: 0,
+    ech_enabled: false,
     ...over,
   })
 
@@ -136,10 +139,15 @@ describe('server status', () => {
     expect(quickToggle('draining')).toMatchObject({ to: 'ready', label: '恢复服务' })
     expect(quickToggle('maintenance')).toMatchObject({ to: 'ready' })
     expect(quickToggle('draft')).toMatchObject({ to: 'ready', label: '投入服务' })
-    expect(quickToggle('unhealthy')).toBeNull()
     expect(quickToggle('retired')).toBeNull()
     for (const from of ['ready', 'draining', 'maintenance', 'draft'] as const) expect(nextServerStatuses(from)).toContain(quickToggle(from)!.to)
-    expect(nextServerStatuses('ready')).not.toContain('maintenance')
+  })
+
+  it('状态边表与后端 serverStatusTransitions 逐边一致', () => {
+    expect(nextServerStatuses('draft')).toEqual(['ready', 'maintenance', 'retired'])
+    expect(nextServerStatuses('ready')).toEqual(['draining', 'maintenance'])
+    expect(nextServerStatuses('draining')).toEqual(['ready', 'maintenance', 'retired'])
+    expect(nextServerStatuses('maintenance')).toEqual(['ready', 'draining', 'retired'])
     expect(nextServerStatuses('retired')).toEqual([])
   })
 
@@ -149,6 +157,33 @@ describe('server status', () => {
     expect(canDeleteServer(server({ status: 'maintenance' }))).toBe(false)
     expect(deleteServerNotice(server({ node_count: 3 }))).toContain('名下 3 个节点会一起下线')
     expect(deleteServerNotice(server({ node_count: 0 }))).toContain('名下没有节点')
+  })
+
+  it('serverDeleteBlock, serverSubtitle, serverNotes and serverNodeLines', () => {
+    expect(serverDeleteBlock(server({ status: 'ready' }))).toBe('只有草稿或已退役的服务器能删除')
+    expect(serverDeleteBlock(server({ status: 'draft' }))).toBeNull()
+    expect(serverSubtitle({ region: '香港', public_ipv4: '192.0.2.8', agent_version: '1.8.2' })).toBe('香港 · 192.0.2.8 · agent 1.8.2')
+    expect(serverSubtitle({ region: null, public_ipv4: null, agent_version: null })).toBe('地区待识别 · 未连接')
+    const now = new Date('2026-09-24T10:05:00Z')
+    const notes = serverNotes(
+      {
+        status: 'ready',
+        status_reason: '磁盘告警',
+        heartbeat_online: false,
+        last_heartbeat_at: '2026-09-24T10:00:00Z',
+        never_seen_node_count: 2,
+      },
+      now,
+    )
+    expect(notes).toEqual(['原因：磁盘告警', '心跳 5 分钟前，可能已断开', '2 个在役节点从未心跳（多半没装 agent）'])
+    expect(serverNotes({ status: 'ready', status_reason: null, heartbeat_online: false, last_heartbeat_at: null, never_seen_node_count: 0 }, now)).toEqual([
+      '还没有收到心跳',
+    ])
+    const lines = serverNodeLines(
+      [node({ id: 'a', server_id: 's1' }), node({ id: 'b', server_id: 's1', serving_status: 'retired' }), node({ id: 'c', server_id: 's2' })],
+      's1',
+    )
+    expect(lines.map((n) => n.id)).toEqual(['a'])
   })
 })
 
@@ -174,7 +209,7 @@ describe('meters and node tags', () => {
 describe('server form', () => {
   it('validates like the Go handler', () => {
     expect(validateServerForm({ ...emptyServerForm(), name: 'edge' })).toEqual({})
-    const errors = validateServerForm({ ...emptyServerForm(), name: ' ', publicIpv4: '1.2.3.256', privateIpv4: '10.0.0.1', publicIpv6: '1.2.3.4', capacity: '0', architecture: 'x'.repeat(33) })
+    const errors = validateServerForm({ ...emptyServerForm(), name: ' ', publicIpv4: '192.0.2.256', privateIpv4: '10.0.0.1', publicIpv6: '192.0.2.4', capacity: '0', architecture: 'x'.repeat(33) })
     expect(errors).toEqual({ name: '名称必须为 1 到 120 个字符', public_ipv4: 'IP 地址格式不正确', public_ipv6: 'IP 地址格式不正确', capacity_nodes: '必须大于 0', architecture: '内容过长，最多允许 32 个字符' })
     expect(validateServerForm({ ...emptyServerForm(), name: 'edge', publicIpv6: '2001:db8::1' })).toEqual({})
   })
@@ -201,15 +236,15 @@ describe('pools', () => {
 
   it('blocks deletion while nodes or plans hang on it', () => {
     expect(poolDeleteBlock(pool)).toBeNull()
-    expect(poolDeleteBlock({ ...pool, nodes: 2 })).toContain('2 个节点')
-    expect(poolDeleteBlock({ ...pool, plans: 1 })).toContain('1 个套餐版本')
+    expect(poolDeleteBlock({ ...pool, nodes: 2 })).toBe('池里还有 2 个节点，先把它们改到别的池')
+    expect(poolDeleteBlock({ ...pool, plans: 1 })).toBe('还有 1 个在售或草稿套餐绑定了它，先在套餐里解绑（已归档的不挡，删池时一起解绑）')
   })
 
   it('labels bound plans and the R104 user-group restriction', () => {
     expect(planNamesLabel(pool)).toBe('—')
     expect(planNamesLabel({ plan_names: ['专业版', '团队版'] })).toBe('专业版、团队版')
     expect(poolGroupsLabel(pool)).toBeNull()
-    expect(poolGroupsLabel({ allowed_user_groups: [{ id: 'g1', name: '内测' }, { id: 'g2', name: 'VIP' }] })).toBe('仅用户组『内测、VIP』')
+    expect(poolGroupsLabel({ allowed_user_groups: [{ id: 'g1', name: '内测' }, { id: 'g2', name: 'VIP' }] })).toBe('仅限 内测、VIP')
   })
 
   it('R104: sends allowed_user_group_ids only when the list changes (it triggers reauth)', () => {

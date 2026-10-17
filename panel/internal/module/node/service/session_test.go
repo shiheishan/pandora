@@ -10,6 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
 func TestOpenSendsWelcomeFirst(t *testing.T) {
@@ -322,6 +327,45 @@ func TestRenew(t *testing.T) {
 	}
 	if s3.Err() != nil {
 		t.Fatalf("会话不应结束，Err=%v", s3.Err())
+	}
+}
+
+// 续期过早、刚续过是面板按规则拒绝，记 Warn 不记 Error；其它续期错误照旧记 Error。
+func TestRenewRejectedLogsWarn(t *testing.T) {
+	b := newFakeBackend()
+	m := NewSessionManager(b, nil, fastOptions())
+	for _, c := range []struct {
+		err  error
+		want zapcore.Level
+	}{
+		{errRenewTooEarly, zapcore.WarnLevel},
+		{errRenewTooFrequent, zapcore.WarnLevel},
+		{fmt.Errorf("db down"), zapcore.ErrorLevel},
+	} {
+		s, err := m.Open(context.Background(), uuid.New(), Hello{})
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		_ = nextNow(t, s, time.Second)
+		b.mu.Lock()
+		b.renewErr = c.err
+		b.mu.Unlock()
+		// 只观察 HandleRenew 这一次调用的日志（Open 起的后台循环用的是另一个 ctx）
+		core, logs := observer.New(zapcore.DebugLevel)
+		ctx := plog.With(context.Background(), zap.New(core))
+		s.HandleRenew(ctx, big.NewInt(7), []byte("csr"))
+		var got []zapcore.Level
+		for _, e := range logs.All() {
+			if e.Level >= zapcore.WarnLevel {
+				got = append(got, e.Level)
+			}
+		}
+		if len(got) != 1 || got[0] != c.want {
+			t.Fatalf("%v：应只记一条 %v，得 %v", c.err, c.want, got)
+		}
+		if len(pending(s)) != 0 || s.Err() != nil {
+			t.Fatalf("%v：不应发消息或结束会话", c.err)
+		}
 	}
 }
 

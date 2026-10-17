@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-var shadowsocksMethods = []string{
-	// The per-user credential is a UUID string. Shadowsocks 2022 requires a
-	// method-specific base64 key, so advertising 2022 methods here would create
-	// subscriptions that cannot authenticate against the current user model.
-	"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305",
-}
+// shadowsocksAEADMethods 是经典 AEAD（SIP004）三种；ShadowTLS 的内层只收这几种。
+var shadowsocksAEADMethods = []string{"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"}
+
+// shadowsocksMethods 是 shadowsocks 节点可选的加密方式：经典 AEAD 加 Shadowsocks 2022（ss2022.go 的 ss2022Methods）。
+// 2022 的服务端身份密钥由面板按节点派生（node/service/ss2022.go），用户密钥从代理 UUID 算（订阅渲染 render/opts.go）。
+var shadowsocksMethods = append(append([]string(nil), shadowsocksAEADMethods...), ss2022Methods...)
 
 var sensitiveProtocolKey = map[string]struct{}{
 	"password": {}, "passwd": {}, "secret": {}, "token": {},
@@ -73,7 +73,8 @@ func stableSchemas() []Schema {
 		// 是 method，翻译在 toKernelConfig 里，见 kernel_config.go。
 		{NodeType: "shadowsocks", Version: 1, Status: "stable",
 			Required: []string{"cipher"}, AllowedProperties: []string{"cipher"},
-			Methods: append([]string(nil), shadowsocksMethods...)},
+			Methods: append([]string(nil), shadowsocksMethods...),
+			Hints:   map[string]string{"cipher": ss2022CipherHint}},
 		// xboard 把带宽收在 bandwidth 对象里、混淆收在 obfs 对象里。
 		// cert_path / key_path 是我们独有的（xboard 用它自己的证书管理），
 		// 没有对应名字就保持原样——硬编一个只会两边都对不上。
@@ -121,7 +122,7 @@ func stableSchemas() []Schema {
 			// wildcard_sni 打开后，服务端拿客户端给的 SNI 当握手目标，而不是
 			// 配置里那个被借用的站点——等于任何通过认证的用户都能让节点去连
 			// 任意主机的 443。默认 off，和 sing-box 一致。
-			Enums:               map[string][]string{"network": {"tcp"}, "method": append([]string(nil), shadowsocksMethods...), "wildcard_sni": {"off", "authed", "all"}},
+			Enums:               map[string][]string{"network": {"tcp"}, "method": append([]string(nil), shadowsocksAEADMethods...), "wildcard_sni": {"off", "authed", "all"}},
 			PropertyTypes:       map[string]string{"version": "number", "server_port": "number", "strict": "boolean"},
 			SensitiveProperties: []string{"password"}},
 		{NodeType: "tuic", Version: 1, Status: "stable",
@@ -187,9 +188,10 @@ func stableSchemas() []Schema {
 				"fallback"),
 			Enums: map[string][]string{
 				"network": append([]string(nil), streamNetworks...),
-				// xboard 的三态。1（普通 TLS）暂时不给选：校验器那边写死了
-				// "证书生命周期完成前仅允许 tls=false"，放出来只会让人填完
-				// 保存失败。等证书那套做完再开。
+				// xboard 的三态。1（普通 TLS）暂时不给选：vless / vmess 的普通 TLS 还没开放
+				// （校验器回 plainTLSNotYetMessage），放出来只会让人填完保存失败。
+				// 面板不签发节点证书，要开得先让这两个协议像 trojan 一样收 file 模式的
+				// cert_path / key_path（docs/node-certificates.md），校验、翻译、渲染一起放开。
 				"tls":                   {"0", "2"},
 				"flow":                  append([]string(nil), vlessFlows...),
 				"utls":                  append([]string(nil), utlsFingerprints...),

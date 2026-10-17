@@ -25,7 +25,7 @@ interface TargetLike {
   removeEventListener(type: string, listener: () => void, options?: EventListenerOptions): void
 }
 
-export interface IdleWatchOptions {
+interface IdleWatchOptions {
   timeoutMs: number
   onIdle: () => void
   now?: () => number

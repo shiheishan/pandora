@@ -8,7 +8,6 @@ import type { Sub, User } from './users.ts'
 const DAY = 86_400_000
 /** 原地续费窗口：过期不满 30 天还能续（billing/expire.go 在满 30 天时关窗） */
 const RENEWAL_WINDOW_DAYS = 30
-const LIVE = new Set<Sub['status']>(['active', 'trialing', 'grace', 'past_due'])
 
 export type State = 'live' | 'revivable' | 'dead'
 export interface Candidate {
@@ -17,7 +16,7 @@ export interface Candidate {
 }
 
 export function stateOf(s: Sub, now: number): State {
-  if (LIVE.has(s.status)) return 'live'
+  if (s.status === 'active') return 'live'
   if (s.status === 'expired' && s.current_period_end !== null) {
     const lapsed = now - Date.parse(s.current_period_end)
     if (lapsed >= 0 && lapsed < RENEWAL_WINDOW_DAYS * DAY) return 'revivable'
@@ -27,7 +26,7 @@ export function stateOf(s: Sub, now: number): State {
 
 export const candidatesOf = (u: User, now: number): Candidate[] => u.subs.map((sub) => ({ sub, state: stateOf(sub, now) }))
 
-export type Kind = 'renew' | 'change' | 'new'
+export type Kind = 'renew' | 'stack' | 'change' | 'new'
 export interface Option {
   key: string
   kind: Kind
@@ -50,11 +49,15 @@ const opt = (kind: Kind, c: Candidate): Option => ({ key: optionKey(kind, c.sub.
  * → 新开一份 → 不同款生效中（换掉）。默认：入口那份；否则第一个同款；否则只剩新开就新开；否则不预选。
  * 只有一份、而且就是同款时只返回这一项
  */
-export function planOptions(planId: string, cands: Candidate[], entrySub: string): { options: Option[]; defaultKey: string } {
+/**
+ * 一次性套餐再买同一个默认叠加（stack），与真后端 purchase.planOptions 同口径；订阅套餐同款仍为 renew。
+ */
+export function planOptions(planId: string, cands: Candidate[], entrySub: string, oneTime = false): { options: Option[]; defaultKey: string } {
+  const sameKind: Kind = oneTime ? 'stack' : 'renew'
   const alive = cands.filter((c) => c.state !== 'dead')
   const same = alive.filter((c) => c.sub.plan_id === planId)
   const other = alive.filter((c) => c.sub.plan_id !== planId)
-  const options: Option[] = [...byEndAsc(only(same, 'live')), ...byEndDesc(only(same, 'revivable'))].map((c) => opt('renew', c))
+  const options: Option[] = [...byEndAsc(only(same, 'live')), ...byEndDesc(only(same, 'revivable'))].map((c) => opt(sameKind, c))
   const renews = options.length
   let defaultKey = ''
   if (alive.length === 1 && renews === 1) {
@@ -100,7 +103,7 @@ export function addInterval(from: number, interval: string, count: number): Date
 
 /** 换套餐时原套餐没用完的部分：本期付费 × min(剩余天数比, 剩余流量比)；已过期的没有 */
 export function prorationCredit(s: Sub, now: number): number {
-  if (!LIVE.has(s.status)) return 0
+  if (s.status !== 'active') return 0
   const start = s.current_period_start ? Date.parse(s.current_period_start) : NaN
   const end = s.current_period_end ? Date.parse(s.current_period_end) : NaN
   const timeRatio = Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.min(1, Math.max(0, (end - now) / (end - start))) : 1
@@ -112,6 +115,7 @@ export function prorationCredit(s: Sub, now: number): number {
  * 后台待支付单用户要付多少（分）：续一期与另开一份是价格，换套餐先抵原套餐没用完的部分（billing.orderTotal）。
  * preview 的 due 与建单共用
  */
+/** stack 与 renew 一样按标价算应付 */
 export function manualDue(kind: Option['kind'], amount: number, credit: number): number {
   return Math.max(amount - (kind === 'change' ? credit : 0), 0)
 }
@@ -122,7 +126,6 @@ export const manualDueBelowMinimum = (due: number, minPay: number) => due > 0 &&
 export interface PriceInfo {
   interval: string
   count: number
-  currency: string
 }
 
 /** purchase.Placement 的 json 形状：选项 + 这一份现在的样子 + 落地之后的到期日与剩余价值（omitempty 的键不出现） */
@@ -130,7 +133,8 @@ export function placementView(o: Option, c: Candidate | undefined, price: PriceI
   const view: Record<string, unknown> = { ...o }
   if (c) {
     const s = c.sub
-    const base = o.kind === 'renew' && c.state === 'live' && s.current_period_end ? Date.parse(s.current_period_end) : now
+    const extendFromEnd = (o.kind === 'renew' || o.kind === 'stack') && c.state === 'live' && s.current_period_end
+    const base = extendFromEnd ? Date.parse(s.current_period_end!) : now
     Object.assign(view, {
       ...(s.label ? { label: s.label } : {}),
       plan_id: s.plan_id,
@@ -138,10 +142,8 @@ export function placementView(o: Option, c: Candidate | undefined, price: PriceI
       state: c.state,
       ...(s.current_period_end ? { period_end: s.current_period_end } : {}),
       new_period_end: addInterval(base, price.interval, price.count).toISOString(),
-      currency: s.currency,
       ...(s.traffic_used > 0 ? { traffic_used: s.traffic_used } : {}),
       ...(s.traffic_limit ? { traffic_cap: s.traffic_limit } : {}),
-      ...(s.pack_bytes > 0 ? { pack_remaining: s.pack_bytes } : {}),
     })
     if (o.kind === 'change') {
       const credit = prorationCredit(s, now)

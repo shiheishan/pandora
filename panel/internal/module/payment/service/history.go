@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
@@ -29,8 +28,8 @@ func (s *Service) OrderHistory(ctx context.Context, orderID uuid.UUID) (OrderHis
 			OutTradeNo:   it.OutTradeNo,
 			ProviderRef:  it.ProviderRef,
 			Method:       it.Method,
-			Currency:     money.Currency(it.Currency),
 			Amount:       it.Amount,
+			Surcharge:    it.SurchargeAmount,
 			Status:       IntentStatus(it.Status),
 			ExpiresAt:    it.ExpiresAt,
 			CreatedAt:    it.CreatedAt,
@@ -44,8 +43,8 @@ func (s *Service) OrderHistory(ctx context.Context, orderID uuid.UUID) (OrderHis
 			ProviderCode:      p.ProviderCode,
 			ProviderName:      p.ProviderName,
 			ProviderPaymentID: p.ProviderPaymentID,
-			Currency:          money.Currency(p.Currency),
 			Amount:            p.Amount,
+			Surcharge:         p.SurchargeAmount,
 			Fee:               p.FeeAmount,
 			Status:            p.Status,
 			Method:            p.Method,
@@ -73,6 +72,7 @@ func (s *Service) OrderSummaries(ctx context.Context, orderIDs []uuid.UUID) (map
 			HasIntent:    r.HasIntent,
 			ProviderCode: r.ProviderCode,
 			ProviderName: r.ProviderName,
+			Method:       r.Method,
 		}
 	}
 	return out, nil

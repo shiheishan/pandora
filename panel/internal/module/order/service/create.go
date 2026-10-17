@@ -29,7 +29,7 @@ func rejectNUL(field, s string) error {
 	return nil
 }
 
-// snapshotJSON 把套餐版本权益与配额编成订单行快照 JSON（形状对照旧 loadPlanSnapshotTx）。
+// snapshotJSON 把套餐版本权益与配额编成订单行快照 JSON。
 func snapshotJSON(v catalogsvc.Version) (ents, quotas string, err error) {
 	type entSnap struct {
 		Code  string          `json:"code"`
@@ -66,7 +66,7 @@ func snapshotJSON(v catalogsvc.Version) (ents, quotas string, err error) {
 	return string(eb), string(qb), nil
 }
 
-// pendingNewOrderConflict 检查同一套餐的待付新购单，文案与 fields 对照旧 ensureNoPendingNewOrder。
+// pendingNewOrderConflict 检查同一套餐的待付新购单。
 func pendingNewOrderConflict(ctx context.Context, s *Service, userID, planID uuid.UUID, planName string, now time.Time) error {
 	pending, ok, err := s.repo.PendingNewOrderForPlan(ctx, userID, planID)
 	if err != nil {
@@ -88,7 +88,7 @@ func pendingNewOrderConflict(ctx context.Context, s *Service, userID, planID uui
 	return e
 }
 
-// validateNewCopyLabel 新购备注名校验（对照旧 checkout_new_copy.go）：起了名不能与本人另一份重名；
+// validateNewCopyLabel 新购备注名校验：起了名不能与本人另一份重名；
 // 另买一份且不起名时，本人同套餐还有没起名、未停用的一份就要求先起名。
 func validateNewCopyLabel(in NewOrderInput, planName string, us subsvc.UserSubscriptions, now time.Time) error {
 	label, err := subsvc.NormalizeLabel(in.Label)
@@ -150,7 +150,7 @@ func newOrderItemFromOffer(offer catalogsvc.Offer, price catalogsvc.Price) (*mod
 	}, nil
 }
 
-// renewalOrderItem 组续费的订单行：版本沿用订阅自己的，价格用这次选的价格档。
+// renewalOrderItem 组续费的订单行：版本用套餐当前版本（老用户下周期切到它），价格用这次选的价格档。
 func renewalOrderItem(sub subsvc.Subscription, ver catalogsvc.Version, price catalogsvc.Price, planName string) (*model.Item, error) {
 	ents, quotas, err := snapshotJSON(ver)
 	if err != nil {
@@ -160,7 +160,7 @@ func renewalOrderItem(sub subsvc.Subscription, ver catalogsvc.Version, price cat
 	interval := price.BillingInterval
 	ic := price.IntervalCount
 	planID := sub.PlanID
-	verID := sub.PlanVersionID
+	verID := ver.ID
 	priceID := price.ID
 	return &model.Item{
 		PriceID:               &priceID,
@@ -198,6 +198,9 @@ func (s *Service) CreateNewOrder(ctx context.Context, in NewOrderInput) (Created
 
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		now := s.clock()
 		label, err := subsvc.NormalizeLabel(in.Label)
 		if err != nil {
@@ -218,6 +221,9 @@ func (s *Service) CreateNewOrder(ctx context.Context, in NewOrderInput) (Created
 			if _, ok, err := s.subs.RenewableForPlan(ctx, userID, in.PlanID, false); err != nil {
 				return err
 			} else if ok {
+				if offer.Plan.Kind == catalogsvc.KindOneTime {
+					return ErrSamePlanUseStack
+				}
 				return ErrSamePlanUseRenewal
 			}
 		}
@@ -231,10 +237,6 @@ func (s *Service) CreateNewOrder(ctx context.Context, in NewOrderInput) (Created
 		if err := pendingNewOrderConflict(ctx, s, userID, in.PlanID, offer.Plan.Name, now); err != nil {
 			return err
 		}
-		limit := offer.Plan.PurchaseLimitPerUser
-		if err := s.checkPurchaseLimit(ctx, in.PlanID, userID, limit); err != nil {
-			return err
-		}
 		item, err := newOrderItemFromOffer(offer, offer.Price)
 		if err != nil {
 			return err
@@ -243,16 +245,13 @@ func (s *Service) CreateNewOrder(ctx context.Context, in NewOrderInput) (Created
 		if label != "" {
 			labelPtr = &label
 		}
-		limited := limit != nil
 		created, _, err = s.place(ctx, draft{
 			Kind:         KindNew,
 			UserID:       userID,
-			Currency:     offer.Price.Currency,
 			Subtotal:     offer.Price.UnitAmount,
 			CouponPlanID: &in.PlanID,
 			Label:        labelPtr,
 			Item:         item,
-			NewPurchase:  &newPurchase{PlanID: in.PlanID, Limited: limited},
 			Checkout:     in.Checkout,
 			Actor:        actor,
 			AuditAction:  ActionOrderCreated,
@@ -294,6 +293,9 @@ func (s *Service) CreateRenewalOrder(ctx context.Context, in RenewalOrderInput) 
 
 	var created Created
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		sub, err := s.subs.Lock(ctx, in.SubscriptionID, &userID)
 		if err != nil {
 			return err
@@ -342,24 +344,20 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 	if !sub.StateAt(now).AcceptsChange() {
 		return Created{}, model.Order{}, subsvc.ErrRenewalWindowClosed
 	}
-	open, err := s.repo.OpenChangeOrderExists(ctx, sub.ID)
-	if err != nil {
+	if err := s.openChangeConflict(ctx, sub.ID, now); err != nil {
 		return Created{}, model.Order{}, err
-	}
-	if open {
-		return Created{}, model.Order{}, ErrOpenChange
 	}
 	priceID := d.PriceID
 	if priceID == nil {
 		priceID = sub.Price.PriceID
 	}
 	if priceID == nil {
-		return Created{}, model.Order{}, errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法自动续费")
+		return Created{}, model.Order{}, errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法续费")
 	}
 	uid := d.UserID
-	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，续费也不动库存与限购，
+	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，
 	// 锁了只会让同套餐的续费与新购在整段建单事务里排队，还多出一条与结算成环的路径，不值得。
-	// 与旧代码的 FOR SHARE 相比，只差在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
+	// 不锁的代价只在后台恰好同时关掉「允许续费」或下架价格的那一瞬间：这张单按改之前的状态建成，可接受。
 	offer, err := s.catalog.Offer(ctx, *priceID, catalogsvc.OfferRequest{
 		Use:    catalogsvc.UseRenewal,
 		UserID: &uid,
@@ -371,15 +369,8 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 	if err != nil {
 		return Created{}, model.Order{}, err
 	}
-	verMap, err := s.catalog.VersionsByIDs(ctx, []uuid.UUID{sub.PlanVersionID})
-	if err != nil {
-		return Created{}, model.Order{}, err
-	}
-	ver, ok := verMap[sub.PlanVersionID]
-	if !ok {
-		return Created{}, model.Order{}, catalogsvc.ErrNoPublishedVersion
-	}
-	item, err := renewalOrderItem(sub, ver, offer.Price, offer.Plan.Name)
+	// 版本用套餐当前版本：订阅套餐老用户下周期切到它，续的这期按它算
+	item, err := renewalOrderItem(sub, offer.Version, offer.Price, offer.Plan.Name)
 	if err != nil {
 		return Created{}, model.Order{}, err
 	}
@@ -387,7 +378,6 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 	return s.place(ctx, draft{
 		Kind:           KindRenewal,
 		UserID:         d.UserID,
-		Currency:       offer.Price.Currency,
 		Subtotal:       offer.Price.UnitAmount,
 		CouponPlanID:   &sub.PlanID,
 		SubscriptionID: &subID,
@@ -403,89 +393,6 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 	})
 }
 
-// CreatePackOrder 门户流量包下单。
-func (s *Service) CreatePackOrder(ctx context.Context, in PackOrderInput) (Created, error) {
-	userID, err := portalUser(ctx)
-	if err != nil {
-		return Created{}, err
-	}
-	p, err := principal(ctx)
-	if err != nil {
-		return Created{}, err
-	}
-	actor := actorFrom(p)
-	if err := rejectNUL("coupon_code", in.CouponCode); err != nil {
-		return Created{}, err
-	}
-
-	var created Created
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		pack, err := s.catalog.PackOffer(ctx, in.PackID, true)
-		if err != nil {
-			return err
-		}
-		// 先锁目标订阅再动券与科目：与流量包单结算「订单 → 订阅 → 券 → 科目」同向（零元单当场履约时也要锁它）
-		if _, err := s.subs.Lock(ctx, in.SubscriptionID, &userID); err != nil {
-			return err
-		}
-		if err := s.subs.CheckPackTarget(ctx, userID, in.SubscriptionID); err != nil {
-			return err
-		}
-		tb := pack.TrafficBytes
-		packSnap := []map[string]any{{
-			"metric": catalogsvc.MetricTraffic,
-			"limit":  tb,
-			"unit":   "bytes",
-			"period": catalogsvc.PeriodTotal,
-		}}
-		qb, err := json.Marshal(packSnap)
-		if err != nil {
-			return err
-		}
-		packID := pack.ID
-		subID := in.SubscriptionID
-		item := &model.Item{
-			TrafficPackID:        &packID,
-			SnapshotName:         pack.Name,
-			SnapshotTrafficBytes: &tb,
-			SnapshotQuotas:       string(qb),
-			SnapshotEntitlements: "[]",
-			Quantity:             1,
-			UnitAmount:           pack.UnitAmount,
-			LineAmount:           pack.UnitAmount,
-		}
-		created, _, err = s.place(ctx, draft{
-			Kind:           KindAddon,
-			UserID:         userID,
-			Currency:       pack.Currency,
-			Subtotal:       pack.UnitAmount,
-			CouponPlanID:   nil,
-			SubscriptionID: &subID,
-			Item:           item,
-			Checkout:       in.Checkout,
-			Actor:          actor,
-			AuditAction:    ActionOrderCreated,
-			AuditData: map[string]any{
-				"pack_id":       pack.ID.String(),
-				"traffic_bytes": tb,
-			},
-		})
-		if err != nil {
-			return err
-		}
-		return s.completeCreate(ctx, created.OrderID, func() (idemsvc.Response, error) {
-			if in.Reply == nil {
-				return idemsvc.Response{}, nil
-			}
-			return in.Reply(created)
-		})
-	})
-	if err != nil {
-		return Created{}, err
-	}
-	return created, nil
-}
-
 // CreateTopup 门户充值。
 func (s *Service) CreateTopup(ctx context.Context, in TopupInput) (TopupCreated, error) {
 	userID, err := portalUser(ctx)
@@ -498,13 +405,6 @@ func (s *Service) CreateTopup(ctx context.Context, in TopupInput) (TopupCreated,
 	}
 	actor := actorFrom(p)
 
-	cur := in.Currency
-	if cur == "" {
-		cur = money.CNY
-	}
-	if !cur.Valid() {
-		return TopupCreated{}, errs.Invalid(map[string]string{"currency": "充值币种只支持 CNY 或 USD"})
-	}
 	cents, err := money.ToCents(in.Amount)
 	if err != nil {
 		return TopupCreated{}, errs.Invalid(map[string]string{"amount": "金额格式不正确"})
@@ -518,10 +418,12 @@ func (s *Service) CreateTopup(ctx context.Context, in TopupInput) (TopupCreated,
 
 	var topup TopupCreated
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.rejectDeleted(ctx, userID); err != nil {
+			return err
+		}
 		created, _, err := s.place(ctx, draft{
 			Kind:        KindTopup,
 			UserID:      userID,
-			Currency:    cur,
 			Subtotal:    in.Amount,
 			Checkout:    Checkout{},
 			Actor:       actor,
@@ -531,10 +433,9 @@ func (s *Service) CreateTopup(ctx context.Context, in TopupInput) (TopupCreated,
 			return err
 		}
 		topup = TopupCreated{
-			OrderID:  created.OrderID,
-			OrderNo:  created.OrderNo,
-			Amount:   in.Amount,
-			Currency: cur,
+			OrderID: created.OrderID,
+			OrderNo: created.OrderNo,
+			Amount:  in.Amount,
 		}
 		return s.completeCreate(ctx, created.OrderID, func() (idemsvc.Response, error) {
 			if in.Reply == nil {

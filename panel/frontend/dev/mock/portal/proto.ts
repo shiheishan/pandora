@@ -9,7 +9,7 @@ import type { ProtoScenario } from './scenario.ts'
 //   proto-s1   一份标准版，流量只剩 8G
 //   proto-s2   小王两份：「我的」标准版流量快用完，「妈妈的 iPad」基础版 5 天后到期，余额 ¥8.50
 //   proto-s3   已有标准版，从选购页开始
-//   proto-s4   标准版还剩 25 天、用了 20G：换大 / 换便宜
+//   proto-s4   标准版一期 30 天还剩 24 天出头（页上显示 25 天）、用了 20G：换大 / 换便宜；剩余价值 ¥24（只按时间算）
 //   proto-s5a  兑换卡：只有一份（卡号 A7K2-STD1-M9QX / B3P8-PRO1-W4RT / C5D3-D030-H8NE / D9R1-RSET-J2LU）
 //   proto-s5b  兑换卡：小王两份
 //   proto-s6   妈妈那份的链接近 24 小时有 7 个地方在用（超过 2 台上限）
@@ -31,6 +31,8 @@ interface ProtoSub {
   label?: string
   online?: number
   sources?: number
+  /** 到期再往后推几分钟：让「按下单那一刻算」的剩余天数在测试与点击之间不掉过整天（S4 的 ¥24 正好） */
+  slackMin?: number
 }
 
 function sub(o: ProtoSub): SubFixture {
@@ -43,7 +45,7 @@ function sub(o: ProtoSub): SubFixture {
     usedGiB: o.used ?? 40,
     elapsedDays: 30 - days,
     resetInDays: Math.max(1, days),
-    expiresInDays: days,
+    expiresInDays: days + (o.slackMin ?? 0) / 1440,
     online: o.online ?? 1,
     sources: o.sources ?? 1,
     label: o.label ?? null,
@@ -64,7 +66,7 @@ const DATA: Readonly<Record<ProtoScenario, () => { balance: number; subs: SubFix
   'proto-s1': () => single({ used: 92 }),
   'proto-s2': () => xiaowang(false),
   'proto-s3': () => single({}),
-  'proto-s4': () => single({ days: 25, used: 20 }),
+  'proto-s4': () => single({ days: 24, used: 20, slackMin: 30 }),
   'proto-s5a': () => single({ used: 60 }),
   'proto-s5b': () => xiaowang(false),
   'proto-s6': () => xiaowang(true),
@@ -96,8 +98,6 @@ export function buildProto(s: ProtoScenario): PortalState {
   const { balance, subs } = DATA[s]()
   return {
     subs,
-    unattachedBytes: 0,
-    transfers: [],
     balance,
     ledger: balance > 0 ? [{ kind: 'balance_topup', delta: balance, memo: '充值', at: new Date(Date.now() - DAY_MS).toISOString() }] : [],
     orders: [],

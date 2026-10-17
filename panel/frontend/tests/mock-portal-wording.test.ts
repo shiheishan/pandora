@@ -47,11 +47,22 @@ function textsOf(path: string, code: string, appButtons: boolean): Array<{ line:
 
 const texts = (path: string) => textsOf(path, readFileSync(path, 'utf8'), relative(ROOT, path) === APP_BUTTON_FILE)
 
+const BANNED_1016 = ['门户', '流量包', '自动续费'] as const
+
 describe('门户叫法', () => {
   it('界面文字里没有「订阅、导入、抵扣、折算、剩余价值、降级、客户端、落点、约付、周期、重置订阅、重置链接」', () => {
     const hits = files(ROOT).flatMap((f) =>
       texts(f)
         .filter((t) => BANNED.some((w) => t.text.includes(w)))
+        .map((t) => `${relative(ROOT, f)}:${t.line} ${t.text}`),
+    )
+    expect(hits).toEqual([])
+  })
+
+  it('10-16：界面文字里没有「门户、流量包、自动续费」', () => {
+    const hits = files(ROOT).flatMap((f) =>
+      texts(f)
+        .filter((t) => BANNED_1016.some((w) => t.text.includes(w)))
         .map((t) => `${relative(ROOT, f)}:${t.line} ${t.text}`),
     )
     expect(hits).toEqual([])

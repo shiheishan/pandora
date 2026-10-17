@@ -1,112 +1,42 @@
 import type { UseQueryResult } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
-import { formatBytes, formatCount, formatMoney } from '../../../core/format'
-import { Skeleton } from '../../../ui'
-import type { NodeTraffic, Overview } from './api'
+import { Card } from '../../../ui'
+import type { Overview } from './api'
 import css from './Dash.module.css'
-import { kpiRevenueDelta, type Target, type Tone } from './model'
-import { CardError, targetHref, toneText } from './parts'
+import { asOfText, kpiTiles } from './model'
+import { ArrowLink, CardError, PanelSkeleton, Section } from './parts'
 
-interface Tile {
-  key: string
-  label: string
-  value: string
-  sub: string
-  subTone?: Tone
-  tip?: string
-  target: Target
-}
-
-function signedMoney(amount: number, currency: string): string {
-  return `${amount > 0 ? '+' : ''}${formatMoney(amount, currency)}`
-}
-
-function overviewTiles(o: Overview): Tile[] {
-  const tiles: Tile[] = o.revenue.map((r) => {
-    const delta = kpiRevenueDelta(r.today, r.yesterday)
-    const tip = [
-      r.adjustment_today !== 0 ? `含调整 ${signedMoney(r.adjustment_today, r.currency)}` : '',
-      `近 7 天 ${formatMoney(r.last_7_days, r.currency)}`,
-      `近 30 天 ${formatMoney(r.last_30_days, r.currency)}`,
-      `今日已付订单 ${formatCount(o.orders.paid_today)} · 待支付 ${formatCount(o.orders.pending)} · 今日失败 ${formatCount(o.orders.failed_today)}`,
-    ]
-      .filter(Boolean)
-      .join('\n')
-    return {
-      key: `rev-${r.currency}`,
-      label: `收入 · ${r.currency}`,
-      value: formatMoney(r.today, r.currency),
-      sub: r.adjustment_today !== 0 ? `${delta.text} · 含调整` : delta.text,
-      subTone: delta.tone,
-      tip,
-      target: { module: 'billing', tab: 'orders' },
-    }
-  })
-  const s = o.subscriptions
-  tiles.push({
-    key: 'subs',
-    label: '有效订阅',
-    value: formatCount(s.active),
-    sub: `本周新增 ${formatCount(s.new_7_days)}`,
-    tip: `试用中 ${formatCount(s.trialing)} · 7 天内到期 ${formatCount(s.expiring_7_days)} · 已过期 ${formatCount(s.expired)}`,
-    target: { module: 'users', tab: 'list' },
-  })
-  return tiles
-}
-
-function trafficTile(traffic: NodeTraffic | undefined, nodes: Overview['nodes'] | undefined): Tile {
-  return {
-    key: 'traffic',
-    label: '流量 · 近 24 小时',
-    value: traffic ? formatBytes(traffic.totals.reported_bytes) : '—',
-    sub: nodes ? `${formatCount(nodes.online)} / ${formatCount(nodes.total)} 节点在线` : '',
-    tip: '节点原始上报的合计，不是计费账本',
-    target: { module: 'nodes', tab: 'nodes' },
-  }
-}
-
-export function Kpis({ overview, traffic }: { overview: UseQueryResult<Overview>; traffic: UseQueryResult<NodeTraffic> }) {
-  const loading = overview.isPending || traffic.isPending
-  const tiles: Tile[] = []
-  if (overview.data) tiles.push(...overviewTiles(overview.data))
-  tiles.push(trafficTile(traffic.data, overview.data?.nodes))
-
-  // 流量查询失败不在这里报：同一条查询的错误与重试由流量排行卡给出，这一格显示 —
-  let content: ReactNode
-  if (loading) {
-    content = <Skeleton height={82} radius="var(--radius-lg)" />
-  } else {
-    content = (
-      <>
-        {overview.isError && <CardError boxed what="经营总览" error={overview.error} onRetry={() => void overview.refetch()} />}
-        <div className={css.kpis}>
-          {tiles.map((t) => (
-            <KpiTile key={t.key} tile={t} />
-          ))}
-        </div>
-      </>
-    )
-  }
+export function Kpis({ overview }: { overview: UseQueryResult<Overview> }) {
+  const { data, isPending, isError, error, refetch, dataUpdatedAt } = overview
 
   return (
-    <section className={css.section} aria-labelledby="dash-kpis">
-      <div className={css.sectionHead}>
-        <h2 id="dash-kpis" className={css.sectionTitle}>
-          经营
-        </h2>
-        <span className={css.hint}>今日 · 币种分开计算，不做汇率折算</span>
-      </div>
-      {content}
-    </section>
-  )
-}
-
-function KpiTile({ tile }: { tile: Tile }) {
-  return (
-    <a className={css.kpi} href={targetHref(tile.target)} title={tile.tip}>
-      <span className={css.kpiLabel}>{tile.label}</span>
-      <span className={css.kpiValue}>{tile.value}</span>
-      <span className={`${css.kpiSub} ${(tile.subTone && toneText(tile.subTone)) ?? ''}`}>{tile.sub || ' '}</span>
-    </a>
+    <Section
+      id="dash-today"
+      title="今天"
+      sub={data ? asOfText(new Date(dataUpdatedAt)) : undefined}
+      extra={<ArrowLink to={{ module: 'billing', tab: 'orders' }}>看订单</ArrowLink>}
+    >
+      <Card flush>
+        {isPending ? (
+          <PanelSkeleton rows={2} height={28} />
+        ) : isError && !data ? (
+          <CardError what="今日概况" error={error} onRetry={() => void refetch()} />
+        ) : data ? (
+          <div className={css.kpis}>
+            {kpiTiles(data).map((tile) => (
+              <div key={tile.key} className={css.kp}>
+                <div className={css.l}>{tile.label}</div>
+                <div className={css.v}>
+                  {tile.value}
+                  {tile.cents != null && <small>{tile.cents}</small>}
+                </div>
+                <div className={css.d}>
+                  {tile.compare.label} <b>{tile.compare.value}</b>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </Card>
+    </Section>
   )
 }

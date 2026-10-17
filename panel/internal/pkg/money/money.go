@@ -1,5 +1,6 @@
-// Package money 是金额的唯一口径：币种、小数位、与整数分和渠道字符串的换算、按比例取整（docs/architecture.md 第 6 节）。
+// Package money 是金额的唯一口径：小数位、与整数分和渠道字符串的换算、按比例取整（docs/architecture.md 第 6 节）。
 //
+// 系统只有人民币（用户 2026-10-16 定），金额就是人民币，不带币种。
 // 金额一律用 shopspring/decimal，库里是 NUMERIC(20,2)、单位元；/v1 的 JSON 仍是整数分。
 // 按比例得出的金额一律向零截断，每个公式只在最后一步截断一次。
 package money
@@ -13,16 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Currency 是币种代码。
-type Currency string
-
-// 支持的币种；库里有同样的 CHECK。
-const (
-	CNY Currency = "CNY"
-	USD Currency = "USD"
-)
-
-// Scale 是金额的小数位数（两种币种都是 2 位，单位元）。
+// Scale 是金额的小数位数（2 位，单位元）。
 const Scale int32 = 2
 
 var (
@@ -32,21 +24,7 @@ var (
 	ErrBadAmount = errors.New("金额格式非法")
 	// ErrNegative 表示金额为负。
 	ErrNegative = errors.New("金额不能为负")
-	// ErrCurrency 表示不支持的币种。
-	ErrCurrency = errors.New("不支持的币种")
 )
-
-// ParseCurrency 校验并规范化币种代码（大小写不敏感）。
-func ParseCurrency(s string) (Currency, error) {
-	c := Currency(strings.ToUpper(strings.TrimSpace(s)))
-	if !c.Valid() {
-		return "", fmt.Errorf("%w: %q", ErrCurrency, s)
-	}
-	return c, nil
-}
-
-// Valid 报告币种是否受支持。
-func (c Currency) Valid() bool { return c == CNY || c == USD }
 
 // Zero 是 0 元。
 var Zero = decimal.Zero
@@ -109,9 +87,6 @@ func ParseProvider(s string) (decimal.Decimal, error) {
 
 // FormatProvider 把金额写成渠道要的固定 2 位小数字符串。
 func FormatProvider(d decimal.Decimal) string { return d.StringFixed(Scale) }
-
-// Truncate 把金额向零截断到分。只在领域计算的最后一步调用。
-func Truncate(d decimal.Decimal) decimal.Decimal { return d.Truncate(Scale) }
 
 // MulRatio 计算 d × num / den，结果向零截断到分（百分比券、佣金、折算都用它）；den 必须大于 0。
 // 用有理数精确计算后只截断一次，不经过中间小数。

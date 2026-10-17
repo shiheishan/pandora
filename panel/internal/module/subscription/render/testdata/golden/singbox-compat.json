@@ -51,6 +51,8 @@
         "自动选择",
         "ss-aes128",
         "ss-chacha",
+        "ss2022-aes128",
+        "ss2022-aes256",
         "hy2-obfs",
         "hy2-plain",
         "tuic",
@@ -111,6 +113,8 @@
       "outbounds": [
         "ss-aes128",
         "ss-chacha",
+        "ss2022-aes128",
+        "ss2022-aes256",
         "hy2-obfs",
         "hy2-plain",
         "tuic",
@@ -169,7 +173,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 8388,
@@ -178,11 +181,26 @@
     },
     {
       "method": "chacha20-ietf-poly1305",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 8389,
       "tag": "ss-chacha",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "EREREREREREREREREREREQ==:X6QuNEiY8IfbAEh6xR2EmA==",
+      "server": "node.example.com",
+      "server_port": 8390,
+      "tag": "ss2022-aes128",
+      "type": "shadowsocks"
+    },
+    {
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=:X6QuNEiY8IfbAEh6xR2EmP4U5BGnPA1oxvBsUcs7DSc=",
+      "server": "node.example.com",
+      "server_port": 8391,
+      "tag": "ss2022-aes256",
       "type": "shadowsocks"
     },
     {
@@ -718,7 +736,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 20004,
@@ -787,7 +804,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21000,
@@ -796,7 +812,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21001,
@@ -805,7 +820,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21002,
@@ -814,7 +828,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21003,
@@ -823,7 +836,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21004,
@@ -832,7 +844,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21005,
@@ -841,7 +852,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21006,
@@ -850,7 +860,6 @@
     },
     {
       "method": "aes-128-gcm",
-      "network": "tcp",
       "password": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
       "server": "node.example.com",
       "server_port": 21007,

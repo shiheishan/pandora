@@ -1,0 +1,45 @@
+.top {
+  display: none;
+}
+
+@media (max-width: 959px) {
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 52px;
+    padding: 0 10px;
+    background: var(--hdr);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: var(--fw-medium);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions :is(button, a) {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.actions:empty {
+  display: none;
+}

@@ -3,11 +3,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 import { shareAppearance } from './mock/admin/content.ts'
 import { ADMIN_MODULES } from './mock/admin/index.ts'
-import { readSharedTheme } from './mock/appearance-share.ts'
+import { readSharedSiteName, readSharedTheme } from './mock/appearance-share.ts'
+import { pickAdminEvent } from './mock/admin/events.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
+import { MOCK_SITE } from './mock/portal/fixtures.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
-import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
+import { allowMailLinkSend, consumeMailLink, issueMailLink, lastMailLink } from './mock/mail-link.ts'
+import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
 // 形状以 panel/internal/module/*/handler 的 Go 处理器为准。这里只放外壳接口与共用设施：
@@ -16,8 +19,8 @@ import { findRoute, type AnonContext, type Json, type MockApp, type MockContext,
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
-  admin: { email: 'admin@pandora.dev', password: 'pandora-dev-pass' },
-  portal: { email: 'user@pandora.dev', password: 'pandora-dev-pass' },
+  admin: { email: 'admin@example.test', password: 'pandora-dev-pass' },
+  portal: { email: 'user@example.test', password: 'pandora-dev-pass' },
 } as const
 
 const REAUTH_WINDOW_MS = 15 * 60 * 1000
@@ -80,12 +83,29 @@ interface Replay {
   fingerprint: string
   state: 'in_flight' | 'succeeded' | 'failed'
   result: MockResult | null
+  /** 2xx 以不可重放完成时不存响应体，同 key 同请求再来回 409 conflict */
+  unreplayable?: boolean
 }
 
-/** middleware.adminWriteExempt：只读模式下仍放行 GET 类、POST v1/switches/*、v1/auth/*、v1/me/password */
+/**
+ * 与 Go settings/handler/middleware.go 的 adminWriteAllowlist 逐条相同（路由模板，去掉 /v1 前缀），
+ * 守卫是 Go 的 TestAdminWriteAllowlistMatchesMock。GET 类一律放行。
+ */
+const ADMIN_WRITE_ALLOWLIST = [
+  'POST /auth/login',
+  'POST /auth/refresh',
+  'POST /auth/logout',
+  'POST /auth/reauth',
+  'POST /me/password',
+  'POST /switches/:code',
+  'POST /mail/templates/preview',
+  'POST /subscription-templates/:format/preview',
+] as const
+
 function adminWriteExempt(method: string, path: string): boolean {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true
-  return (method === 'POST' && path.startsWith('/v1/switches/')) || path.startsWith('/v1/auth/') || path === '/v1/me/password'
+  const route = path.startsWith('/v1/') ? path.slice('/v1'.length) : path
+  return ADMIN_WRITE_ALLOWLIST.some((pattern) => matchPattern(pattern, method, route) !== null)
 }
 
 function send(res: ServerResponse, status: number, body?: unknown) {
@@ -128,6 +148,14 @@ function parseObject(text: string): Json | null {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
+/** 可选 captcha_token：有则必须是字符串且不超过 4096 字符 */
+function captchaFieldError(body: Json): Record<string, string> | null {
+  if (!('captcha_token' in body)) return null
+  const v = body.captcha_token
+  if (typeof v === 'string' && v.length <= 4096) return null
+  return { captcha_token: '人机验证参数无效' }
+}
+
 function initialUsers(app: MockApp): MockUser[] {
   if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟' }]
   return [{ ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟' }]
@@ -155,7 +183,7 @@ export function mockApi(app: MockApp): Plugin {
     setRefreshCookie(res, app, value)
     return value
   }
-  // 后台假后端启动即按内存初值重写共享的生效主题：上次会话激活过的主题不会残留到门户
+  // 后台假后端启动即按内存初值重写共享的生效主题与站点名：上次会话激活过的主题、改过的站点名不会残留到门户
   if (app === 'admin') shareAppearance()
 
   const issue = (userId: string, req: IncomingMessage, rat = Date.now()) => {
@@ -218,17 +246,24 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'GET /v1/site-config') {
       return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
     }
+    // 演示环境不连第三方人机验证；真实环境由后台设置决定 mail_link_login / captcha / email_suffixes
+    if (app === 'portal' && route === 'GET /v1/signup-config') {
+      return send(res, 200, { captcha: null, email_suffixes: [], mail_link_login: true })
+    }
     if (app === 'portal' && route === 'GET /v1/appearance') {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
       const shared = readSharedTheme()
       return send(res, 200, {
-        theme: shared ? shared.theme : { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: {}, dark: {} }, branding: { site_name: 'Pandora' }, custom_css: '' },
+        site_name: readSharedSiteName() ?? MOCK_SITE,
+        theme: shared ? shared.theme : { id: randomUUID(), code: 'paper', name: '默认 · 森林绿', is_builtin: true, is_active: true, tokens: { light: {}, dark: {} }, branding: {} },
         slots: { 'portal.login.notice': '<p>国庆活动：全场 8 折，优惠码 AUTUMN26</p>' },
       })
     }
     if (app === 'portal' && route === 'POST /v1/auth/register/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
       if (str(body.invite_code).toUpperCase() !== 'PANDORA') return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
@@ -260,6 +295,8 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'POST /v1/auth/password-reset/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
       const known = users.has(email)
@@ -300,9 +337,40 @@ export function mockApi(app: MockApp): Plugin {
       bindRefresh(res, userId)
       return send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
     }
+    if (app === 'portal' && route === 'POST /v1/auth/mail-link/start') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      // 与找回第 1 步同口径：开了人机验证时带 captcha_token（演示环境不连第三方，只校验类型）
+      const capErr = captchaFieldError(body)
+      if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
+      const email = str(body.email).trim().toLowerCase()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
+      if (!allowMailLinkSend(email)) return fail(res, 429, 'rate_limited', '请求过于频繁，请稍后再试')
+      const user = users.get(email)
+      if (user) {
+        const token = issueMailLink(user.userId)
+        console.info('[mock] 邮件登录链接：#/mail-login/' + token)
+      }
+      return send(res, 200, { ok: true, message: '如果这个邮箱已注册，登录链接已发出，15 分钟内有效' })
+    }
+    if (app === 'portal' && route === 'POST /v1/auth/mail-link/login') {
+      const body = await base.body()
+      const userId = consumeMailLink(str(body?.token))
+      if (!userId) return fail(res, 401, 'unauthorized', '登录链接无效或已过期，请重新获取')
+      const token = issue(userId, req)
+      bindRefresh(res, userId)
+      return send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
+    }
+    if (app === 'portal' && route === 'POST /v1/invite/visit') {
+      return send(res, 200, { ok: true })
+    }
     if (route === 'POST /__mock/expire-reauth') {
       sessions.forEach((s) => (s.rat = 0))
       return send(res, 204)
+    }
+    // 只有假后端有：让测试与演示拿到刚发的登录链接
+    if (app === 'portal' && route === 'GET /__mock/mail-link') {
+      return send(res, 200, { token: lastMailLink() })
     }
 
     // --- admin.writes 只读门：Go 挂在整棵 /v1 上、先于认证 ----------------------
@@ -401,6 +469,7 @@ export function mockApi(app: MockApp): Plugin {
         if (seen) {
           if (seen.fingerprint !== fingerprint) return fail(res, 409, 'idempotency_key_reuse', '幂等键已用于另一个请求')
           if (seen.state === 'in_flight') return fail(res, 409, 'conflict', '同一请求正在处理')
+          if (seen.state === 'succeeded' && seen.unreplayable) return fail(res, 409, 'conflict', '同一请求正在处理或需要人工核对，请稍后重试')
           if (seen.state === 'succeeded' && seen.result) return seen.result.raw ? sendRaw(res, seen.result.status, seen.result.raw, true) : send(res, seen.result.status, seen.result.body)
           // failed：接管这一格，重新执行
         }
@@ -408,7 +477,14 @@ export function mockApi(app: MockApp): Plugin {
         try {
           const result = await run()
           const ok = result.status >= 200 && result.status < 300
-          replays.set(slot, ok ? { fingerprint, state: 'succeeded', result } : { fingerprint, state: 'failed', result: null })
+          replays.set(
+            slot,
+            ok
+              ? result.unreplayable
+                ? { fingerprint, state: 'succeeded', result: null, unreplayable: true }
+                : { fingerprint, state: 'succeeded', result }
+              : { fingerprint, state: 'failed', result: null },
+          )
           if (result.raw) sendRaw(res, result.status, result.raw)
           else send(res, result.status, result.body)
         } catch (err) {
@@ -420,18 +496,16 @@ export function mockApi(app: MockApp): Plugin {
     return found.handler(ctx)
   }
 
-  // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更，
+  // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更（后台取种子里真有的行，见 mock/admin/events.ts），
   // 后台另在降级开关切换后立即推 switches.changed
   function stream(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
     res.write('retry: 5000\n\n')
-    const topics = app === 'admin' ? ADMIN_TOPICS : PORTAL_TOPICS
     let seq = 0
     const unsubscribe = app === 'admin' ? onSwitchChanged((payload) => res.write(`id: ${++seq}\nevent: switches.changed\ndata: ${JSON.stringify(payload)}\n\n`)) : () => undefined
     const tick = setInterval(() => {
-      const [topic, table] = topics[Math.floor(Math.random() * topics.length)]!
-      const op = ['INSERT', 'UPDATE', 'UPDATE', 'DELETE'][Math.floor(Math.random() * 4)]
-      res.write(`id: ${++seq}\nevent: ${topic}\ndata: ${JSON.stringify({ table, op, id: randomUUID() })}\n\n`)
+      const { topic, payload } = app === 'admin' ? pickAdminEvent() : pickPortalEvent()
+      res.write(`id: ${++seq}\nevent: ${topic}\ndata: ${JSON.stringify(payload)}\n\n`)
     }, 15_000)
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
     req.on('close', () => {
@@ -459,15 +533,13 @@ export function mockApi(app: MockApp): Plugin {
   }
 }
 
-const ADMIN_TOPICS: ReadonlyArray<readonly [string, string]> = [
-  ['orders.changed', 'orders'],
-  ['tickets.changed', 'tickets'],
-  ['nodes.changed', 'nodes'],
-  ['subscriptions.changed', 'subscriptions'],
-  ['plans.changed', 'prices'],
-]
-
 const PORTAL_TOPICS: ReadonlyArray<readonly [string, string]> = [
   ['orders.changed', 'orders'],
   ['announcements.changed', 'announcements'],
 ]
+
+function pickPortalEvent() {
+  const [topic, table] = PORTAL_TOPICS[Math.floor(Math.random() * PORTAL_TOPICS.length)]!
+  const op = ['INSERT', 'UPDATE', 'UPDATE', 'DELETE'][Math.floor(Math.random() * 4)]!
+  return { topic, payload: { table, op, id: randomUUID() } }
+}

@@ -1,209 +1,195 @@
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: var(--space-12);
+/* 顶层间距与工具栏 */
+.toolbarRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
 }
 
-.card {
+.rightMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 样稿 .face 模板面额块 */
+.face {
+  width: 108px;
+  flex: none;
+}
+
+.faceNum {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.faceKind {
+  display: block;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.3;
+}
+
+/* 批次表当前选中行高亮：样稿 tbody tr.cur td { background: var(--active); } */
+.cur td {
+  background: var(--surface-3);
+}
+
+.subLine {
+  display: block;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.warnText {
+  color: var(--warn);
+}
+
+/* 样稿 .link-d 与 .link-b：文字按钮 */
+.linkD {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.linkD:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.linkD:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.linkB {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--info);
+}
+
+.linkB:hover:not(:disabled) {
+  opacity: 0.8;
+}
+
+.linkB:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 表尾左右布局 */
+
+
+/* 弹窗中的小块（GenerateCodes 与 TemplateDrawer 引用） */
+.formSection {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: 0;
-  padding: var(--space-16);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
 }
 
-.faceLine {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-8);
-}
-
-.face {
-  font-size: 20px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.cardName {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-weight: var(--fw-medium);
-}
-
-.swatch {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.cardActions {
-  display: flex;
-  gap: var(--space-8);
-  margin-top: auto;
-}
-
-.cardActions > :first-child {
-  flex: 1;
-}
-
-.newCard {
-  min-height: 150px;
-  border: 1px dashed var(--border-hover);
-  border-radius: var(--radius-card);
-  background: transparent;
+.secTitle {
   color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.radioGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.radioOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
   font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 
-.newCard:hover {
-  border-color: var(--text-3);
-  color: var(--text);
-}
-
-.newCard:focus-visible {
+.radioOption:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-.split {
+.radioBox {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--text);
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+
+.radioBoxOn {
+  background: var(--text);
+}
+
+.formGrid4 {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr);
-  gap: var(--space-16);
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px 14px;
   align-items: start;
 }
 
-.batch {
+.condSwitches {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  width: 100%;
-  padding: var(--space-12) 14px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  flex-wrap: wrap;
+  gap: 16px 24px;
 }
 
-.batch:hover {
-  background: var(--surface-2);
-}
-
-.batchOn,
-.batchOn:hover {
-  background: var(--surface-3);
-}
-
-.batchTop {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-weight: var(--fw-medium);
-}
-
-.pending {
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.codeRow {
+.prizeRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) 60px;
-  gap: 10px;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 var(--space-16);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-caption);
-}
-
-.usageRow {
-  display: grid;
-  grid-template-columns: 170px minmax(0, 1fr) minmax(0, 1fr) 110px;
-  gap: var(--space-12);
-  align-items: center;
-  min-width: 600px;
-  min-height: 42px;
-  padding: 0 var(--space-16);
-  border-bottom: 1px solid var(--border);
-}
-
-.codeRow:last-of-type,
-.usageRow:last-child {
-  border-bottom: 0;
-}
-
-.right {
-  text-align: right;
-}
-
-.ellipsis {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.danger {
-  color: var(--danger);
-}
-
-.eyebrow {
-  color: var(--warn);
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-}
-
-.sample {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: 10px var(--space-12);
-  border-radius: var(--radius-md);
-  background: var(--surface-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-}
-
-/* 模板抽屉 */
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: var(--space-12);
-  border-top: 1px solid var(--border);
-}
-
-.prize {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) 64px repeat(3, minmax(0, 1fr)) auto;
-  gap: var(--space-8);
+  grid-template-columns: minmax(0, 1.8fr) 60px repeat(3, minmax(0, 1fr)) auto;
+  gap: 8px;
   align-items: end;
 }
 
-.remove {
+.removeBtn {
   margin-bottom: 2px;
 }
 
-.color {
-  padding: 2px;
+.sampleGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface-2);
 }
 
-@media (max-width: 960px) {
-  .split {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.sampleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
 }
 
 @media (max-width: 640px) {
-  .prize {
+  .prizeRow {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }

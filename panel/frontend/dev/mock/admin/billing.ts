@@ -22,6 +22,9 @@ import {
   providers,
   providerSecrets,
   providerView,
+  paymentSettings,
+  PUBLIC_BASE_URL,
+  effectiveNotifyBase,
   siteMinPayment,
   subscriptionEnded,
   todayLocal,
@@ -33,16 +36,32 @@ import { candidatesOf, manualDue, manualDueBelowMinimum, planOptions, placementV
 import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
 
-const STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded']
-const LATE = ['', 'suspense', 'applied', 'refunded', 'manual_review', 'refund_pending']
+const STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired']
+const LATE = ['', 'suspense', 'applied']
 const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
 
-// ---- 支付渠道写入：照 billing/provider_admin.go 的 normalizeProviderSettings ----
+// ---- 支付渠道写入：照 billing/provider_admin.go / dto.go ----
 // 用户 2026-10-07 定：易支付只出支付宝和微信
 const EPAY_METHODS = ['alipay', 'wxpay']
-const PROVIDER_SETTINGS = ['display_name', 'base_url', 'submit_path', 'api_path', 'methods', 'default_method', 'allow_private_host', 'min_amount', 'merchant_id', 'key'] as const
+const ONLINE_ADAPTERS = ['epay', 'btcpay', 'coinpayments'] as const
+const COINPAYMENTS_DEFAULT = 'https://a-api.coinpayments.net'
+const PROVIDER_SETTINGS = [
+  'display_name',
+  'base_url',
+  'submit_path',
+  'api_path',
+  'methods',
+  'default_method',
+  'allow_private_host',
+  'min_amount',
+  'fee_fixed',
+  'fee_percent',
+  'merchant_id',
+  'key',
+  'webhook_secret',
+] as const
 const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
 const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
 
@@ -57,49 +76,117 @@ function parseURL(raw: string): URL | null {
 }
 
 interface ProviderSettings {
-  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host'>
-  /** 最低付款额（分）；null = 没传或传 0：新建用默认 100，编辑保留原值（provider_admin.go） */
+  config: Pick<
+    Provider,
+    'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host' | 'fee_fixed' | 'fee_percent'
+  >
   min_amount: number | null
+  fee_fixed: number
+  fee_percent: string
   merchant_id: string
   key: string
+  webhook_secret: string
 }
 
-function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Record<string, string> } | { bad: MockResult } {
-  // min_amount 是 Go 的 int64：不是整数（1.5、"100"）在解码时就 400
+/** fee_percent 是 Go 的 *string：不是字符串在解码时就 400；不是十进制数 422（handler），超范围或超过两位小数 422（service） */
+function normalizeFeePercent(body: Json, f: Record<string, string>): string | null {
+  if (body.fee_percent === undefined || body.fee_percent === null) return null
+  const s = str(body.fee_percent).trim()
+  if (/[eE]/.test(s) || !/^-?\d+(\.\d+)?$/.test(s)) {
+    f.fee_percent = '比例手续费需是数字，如 2.5'
+    return null
+  }
+  const n = Number(s)
+  if (n < 0 || n > 100 || (s.split('.')[1]?.length ?? 0) > 2) {
+    f.fee_percent = '比例手续费需在 0 到 100 之间，最多两位小数'
+    return null
+  }
+  return n.toFixed(2)
+}
+
+function providerSettings(body: Json, adapter: string): { ok: ProviderSettings } | { fields: Record<string, string> } | { bad: MockResult } {
   const rawMin = body.min_amount
   if (rawMin !== undefined && rawMin !== null && (typeof rawMin !== 'number' || !Number.isInteger(rawMin))) return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
+  const rawFeeFixed = body.fee_fixed
+  if (rawFeeFixed !== undefined && rawFeeFixed !== null && (typeof rawFeeFixed !== 'number' || !Number.isInteger(rawFeeFixed))) return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
+  if (body.fee_percent !== undefined && body.fee_percent !== null && typeof body.fee_percent !== 'string') return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
   const f: Record<string, string> = {}
   const display_name = str(body.display_name).trim()
   if (chars(display_name) < 1 || chars(display_name) > 40) f.display_name = '名称需为 1–40 个字'
   const allow = body.allow_private_host === true
-  const base_url = str(body.base_url).trim().replace(/\/+$/, '')
-  const url = parseURL(base_url)
-  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
-  else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
-  else if (!allow && PRIVATE_HOST.test(url.hostname)) f.base_url = `渠道配置校验未通过：主机 "${url.hostname}" 解析到非公网地址`
-  const paths = { submit_path: str(body.submit_path).trim() || '/submit.php', api_path: str(body.api_path).trim() || '/api.php' }
-  for (const k of ['submit_path', 'api_path'] as const) if (!PROVIDER_PATH.test(paths[k]) || paths[k].startsWith('//')) f[k] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
-  const raw = Array.isArray(body.methods) ? body.methods.map((m) => str(m).trim()) : []
-  const methods: string[] = []
-  for (const m of raw) {
-    if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付中选'
-    else if (!methods.includes(m)) methods.push(m)
+  let base_url = str(body.base_url).trim().replace(/\/+$/, '')
+  if (adapter === 'coinpayments' && !base_url) base_url = COINPAYMENTS_DEFAULT.replace(/\/+$/, '')
+  const needBase = adapter === 'epay' || adapter === 'btcpay'
+  const url = base_url ? parseURL(base_url) : null
+  if (needBase) {
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+    else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
+    else if (!allow && PRIVATE_HOST.test(url.hostname)) f.base_url = `渠道配置校验未通过：主机 "${url.hostname}" 解析到非公网地址`
+  } else if (base_url) {
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+    else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
   }
-  if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
-  const default_method = str(body.default_method).trim() || (methods[0] ?? '')
-  if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
-  // 最低付款额（分）：1–100000；不传或 0 = 新建按 epay 默认 100（¥1.00）、编辑保留原值
+  let submit_path = ''
+  let api_path = ''
+  const methods: string[] = []
+  let default_method = ''
+  if (adapter === 'epay') {
+    const paths = { submit_path: str(body.submit_path).trim() || '/submit.php', api_path: str(body.api_path).trim() || '/api.php' }
+    for (const k of ['submit_path', 'api_path'] as const) if (!PROVIDER_PATH.test(paths[k]) || paths[k].startsWith('//')) f[k] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+    submit_path = paths.submit_path
+    api_path = paths.api_path
+    const raw = Array.isArray(body.methods) ? body.methods.map((m) => str(m).trim()) : []
+    for (const m of raw) {
+      if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付中选'
+      else if (!methods.includes(m)) methods.push(m)
+    }
+    if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
+    default_method = str(body.default_method).trim() || (methods[0] ?? '')
+    if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
+  }
   const min_amount = typeof rawMin === 'number' && rawMin !== 0 ? rawMin : null
   if (min_amount !== null && (min_amount < 1 || min_amount > 100_000)) f.min_amount = '最低付款额需在 ¥0.01 到 ¥1000.00 之间'
+  let fee_fixed = 0
+  if (rawFeeFixed !== undefined && rawFeeFixed !== null) {
+    if (rawFeeFixed < 0) f.fee_fixed = '固定手续费不能为负'
+    else if (rawFeeFixed > 100_000) f.fee_fixed = '固定手续费需在 ¥0 到 ¥1000.00 之间，最多两位小数'
+    else fee_fixed = rawFeeFixed
+  }
+  const feePercentNorm = normalizeFeePercent(body, f)
+  const webhook_secret = str(body.webhook_secret).trim()
+  if (webhook_secret && [...webhook_secret].length > 256) f.webhook_secret = 'Webhook 密钥最多 256 个字符'
   if (Object.keys(f).length) return { fields: f }
+  const fee_percent = feePercentNorm ?? '0.00'
   return {
     ok: {
-      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow },
+      config: {
+        display_name,
+        base_url,
+        submit_path,
+        api_path,
+        methods,
+        default_method,
+        allow_private_host: allow,
+        fee_fixed,
+        fee_percent,
+      },
       min_amount,
+      fee_fixed,
+      fee_percent,
       merchant_id: str(body.merchant_id).trim(),
       key: str(body.key).trim(),
+      webhook_secret,
     },
   }
+}
+
+function normalizeNotifyBase(raw: string): { ok: string } | { field: string } {
+  const v = raw.trim().replace(/\/+$/, '')
+  if (v === '') return { ok: '' }
+  const u = parseURL(v)
+  if (!u || u.protocol !== 'https:' || u.search || u.hash || u.username) return { field: '请填写完整的地址，如 https://pay-cb.example.com，不带查询串' }
+  if (v.length > 200) return { field: '请填写完整的地址，如 https://pay-cb.example.com，不带查询串' }
+  return { ok: v }
 }
 
 function unknownField(body: Json, allowed: readonly string[]): MockResult | null {
@@ -136,6 +223,9 @@ function manualSubject(body: Json) {
   if (!plan || plan.status !== 'active' || !price || price.status !== 'active') return { ok: false as const, error: invalid({ price_id: '价格不存在、已下架或不属于该套餐' }) }
   return { ok: true as const, user, plan, price }
 }
+
+/** 一次性套餐：套餐有 kind 时看 kind，没有时看价格档是不是 one_time（套餐目录还在改，两种都认） */
+const isOneTime = (plan: unknown, price?: { billing_interval: string }) => (plan as { kind?: string }).kind === 'one_time' || price?.billing_interval === 'one_time'
 
 export const billing: MockModule = {
   routes: {
@@ -197,13 +287,13 @@ export const billing: MockModule = {
         if (o.status === 'cancelled') return { status: 200, body: { order: { ...out(), already_terminal: true }, already_terminal: true } }
         // R95 / R114：与 billing.releaseOrderReservation 同顺序同文案——终态、已付、其余不可取消，再版本号，最后才看入账
         if (o.status === 'expired') return err(409, 'conflict', '订单已过期')
-        if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(o.status)) return err(409, 'conflict', '订单已支付，不能取消')
-        if (!['draft', 'pending_payment', 'processing'].includes(o.status)) return err(409, 'conflict', `订单当前状态（${o.status}）不能取消`)
+        if (['paid', 'fulfilled'].includes(o.status)) return err(409, 'conflict', '订单已支付，不能取消')
+        if (o.status !== 'pending_payment') return err(409, 'conflict', `订单当前状态（${o.status}）不能取消`)
         if (o.state_version !== expected) return err(409, 'conflict', '订单状态已变化，请刷新后再操作')
         if (o.payments.some((p) => p.status === 'succeeded')) return err(409, 'conflict', '这张订单已有入账，不能取消')
         const at = new Date().toISOString()
         Object.assign(o, { status: 'cancelled', cancelled_at: at, cancel_reason: reason, state_version: o.state_version + 1, updated_at: at })
-        for (const i of o.intents) if (['created', 'requires_action', 'processing'].includes(i.status)) Object.assign(i, { status: 'cancelled', updated_at: at })
+        for (const i of o.intents) if (i.status === 'requires_action') Object.assign(i, { status: 'cancelled', updated_at: at })
         return { status: 200, body: { order: { ...out(), already_terminal: false }, already_terminal: false } }
       })
     },
@@ -232,11 +322,10 @@ export const billing: MockModule = {
       const price = plan.prices.find((x) => x.id === priceId)
       const now = Date.now()
       const cands = candidatesOf(user, now)
-      const { options, defaultKey } = planOptions(plan.id, cands, entry)
-      const info = price ? { interval: price.billing_interval, count: price.interval_count, currency: price.currency } : { interval: 'month', count: 1, currency: 'CNY' }
-      // billing.ManualOrderPreview：站点最低额（价格档的币种，非 CNY 不限）与每个落点按「待用户支付」开时的应付、
-      // 是否低于最低额（与建单 422 同一个判定）。价格档找不到时都给 0 / false
-      const minPay = price && price.currency === 'CNY' ? siteMinPayment() : 0
+      const { options, defaultKey } = planOptions(plan.id, cands, entry, isOneTime(plan, price))
+      const info = price ? { interval: price.billing_interval, count: price.interval_count } : { interval: 'month', count: 1 }
+      // billing.ManualOrderPreview：站点最低额与每个落点按「待用户支付」开时的应付、是否低于最低额（与建单 422 同一个判定）
+      const minPay = price ? siteMinPayment() : 0
       ctx.send(200, {
         options: options.map((o) => {
           const c = cands.find((x) => x.sub.id === o.subscription_id)
@@ -280,7 +369,7 @@ export const billing: MockModule = {
         // 落点：照 preview 同一套规则重算，target 必须是其中一项
         const now = Date.now()
         const cands = candidatesOf(user, now)
-        const { options } = planOptions(plan.id, cands, '')
+        const { options } = planOptions(plan.id, cands, '', isOneTime(plan, price))
         let chosen: Option | undefined
         if (body.target !== undefined) {
           const t = body.target
@@ -308,7 +397,7 @@ export const billing: MockModule = {
         if (settlement === 'offline' && payable <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
         // 待支付单低于站点最低付款额：用户付不了，后台单不用余额、不免零头，回 422 带 fields.settlement
         // （billing.errManualBelowMinimum），后台落到「结算方式」上
-        if (settlement === 'pending' && price.currency === 'CNY' && manualDueBelowMinimum(payable, siteMinPayment())) {
+        if (settlement === 'pending' && manualDueBelowMinimum(payable, siteMinPayment())) {
           const msg = '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款'
           return err(422, 'validation_failed', msg, { settlement: msg })
         }
@@ -320,16 +409,14 @@ export const billing: MockModule = {
           order_no: nextOrderNo(),
           user_id: user.id,
           user_email: user.email,
-          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'change' ? (amount > credit ? 'upgrade' : 'downgrade') : 'new',
+          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'stack' ? 'stack' : pick.kind === 'change' ? 'upgrade' : 'new',
           status: 'pending_payment',
-          currency: price.currency,
           subtotal_amount: amount,
           discount_amount: grant ? amount : 0,
           total_amount: payable,
           balance_applied: 0,
           payable_amount: payable,
           paid_amount: 0,
-          refunded_amount: 0,
           state_version: 1,
           manual_reason: reason,
           created_by: ctx.user.userId,
@@ -355,14 +442,12 @@ export const billing: MockModule = {
               interval_count: price.interval_count,
               quantity: 1,
               unit_amount: amount,
-              currency: price.currency,
             },
           ],
           intents: [],
           payments: [],
-          refunds: [],
         }
-        if (pick.kind !== 'new' && targetSub) pendingEffects.set(o.id, { kind: pick.kind as 'renew' | 'change', subscriptionId: targetSub.id, credit, refund })
+        if (pick.kind !== 'new' && targetSub) pendingEffects.set(o.id, { kind: pick.kind as 'renew' | 'stack' | 'change', subscriptionId: targetSub.id, credit, refund })
         if (paysNow) {
           o.paid_at = at
           if (!grant) Object.assign(o, { state_version: 3 })
@@ -374,10 +459,10 @@ export const billing: MockModule = {
           fulfil(o, at)
         }
         orders.push(o)
-        const { discount_amount, id: order_id, order_no, currency, total_amount, balance_applied, payable_amount, status } = o
+        const { discount_amount, id: order_id, order_no, total_amount, balance_applied, payable_amount, status } = o
         // 落成换套餐时多这两项：原套餐的剩余价值，与已经退进余额的部分（待支付的单付款后才退）
         const change = pick.kind === 'change' ? { proration_credit: credit, balance_refund: o.status === 'fulfilled' ? refund : 0 } : {}
-        return { status: 201, body: { discount_amount, order_id, order_no, currency, total_amount, balance_applied, payable_amount, status, ...change } }
+        return { status: 201, body: { discount_amount, order_id, order_no, total_amount, balance_applied, payable_amount, status, ...change } }
       })
     },
 
@@ -397,7 +482,7 @@ export const billing: MockModule = {
         const r = referenceProblem(reference)
         if (r) return invalid(r)
         const owner = referenceOwner(reference)
-        if (o.status !== 'pending_payment' && o.status !== 'processing') return err(409, 'conflict', `只有待支付的订单可以标记为已支付，当前状态：${o.status}`)
+        if (o.status !== 'pending_payment') return err(409, 'conflict', `只有待支付的订单可以标记为已支付，当前状态：${o.status}`)
         // 同一凭证在仍待支付的单上入过账：上一次钱进了挂账（R117）
         if (owner === o) return err(409, 'conflict', `凭证号 ${reference} 已经入过账，不能重复标记`)
         if (o.payable_amount <= 0) return err(409, 'conflict', '这张订单不需要支付')
@@ -407,7 +492,7 @@ export const billing: MockModule = {
         o.payments.push(p)
         // 续费 / 变更单的订阅已结束：钱照常入账、隔离进挂账，订单不动，回 409 说明去向（R117）
         if (subscriptionEnded.has(o.id)) {
-          lateCases.unshift({ id: randomUUID(), case_kind: 'ineligible_subscription', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
+          lateCases.unshift({ id: randomUUID(), case_kind: 'ineligible_subscription', status: 'suspense', amount: o.payable_amount, order: o, received_at: at })
           return err(409, 'conflict', '订阅已结束，款项已转入挂账，可在挂账里转入用户余额')
         }
         Object.assign(o, { paid_amount: o.payable_amount, paid_at: at, state_version: o.state_version + 2, updated_at: at })
@@ -432,7 +517,7 @@ export const billing: MockModule = {
           status: 200,
           body: { order_id: o.id, order_no: o.order_no, provider_code: last.provider_code, channel_status: channel, reconciled, already_recorded: already, ...(quarantine ? { quarantine_kind: quarantine } : {}), order_status: o.status },
         })
-        const pending = o.status === 'pending_payment' || o.status === 'processing'
+        const pending = o.status === 'pending_payment'
         const ref = `${last.provider_code}:${o.order_no}`
         if (o.payments.some((p) => p.provider_payment_id === ref)) return view('paid', false, true)
         const lostCallback = Date.now() - Date.parse(o.created_at) > 60 * 60_000
@@ -442,10 +527,10 @@ export const billing: MockModule = {
           if (o.status !== 'cancelled' && o.status !== 'expired') return view('unpaid', false, false)
           const p = paymentFor(o, last.provider_code, null, at, ref)
           o.payments.push(p)
-          lateCases.unshift({ id: randomUUID(), case_kind: 'released_order', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
+          lateCases.unshift({ id: randomUUID(), case_kind: 'released_order', status: 'suspense', amount: o.payable_amount, order: o, received_at: at })
           return view('paid', true, false, 'released_order')
         }
-        const active = o.intents.find((i) => ['created', 'requires_action', 'processing'].includes(i.status))
+        const active = o.intents.find((i) => i.status === 'requires_action')
         const intent = active ?? intentFor(o, last.provider_code, 'succeeded', at)
         if (active) Object.assign(active, { status: 'succeeded', updated_at: at })
         else o.intents.push(intent)
@@ -467,12 +552,12 @@ export const billing: MockModule = {
       const rows = lateCases
         .filter((c) => !status || c.status === status)
         .sort((a, b) => Number(b.status === 'suspense') - Number(a.status === 'suspense') || b.received_at.localeCompare(a.received_at))
-      const pending: Record<string, number> = {}
-      for (const c of lateCases) if (c.status === 'suspense') pending[c.currency] = (pending[c.currency] ?? 0) + c.amount
+      let pending_amount = 0
+      for (const c of lateCases) if (c.status === 'suspense') pending_amount += c.amount
       ctx.send(200, {
         cases: rows.slice(offset, offset + limit).map(lateView),
         total: rows.length,
-        pending_amounts: pending,
+        pending_amount,
       })
     },
 
@@ -490,7 +575,7 @@ export const billing: MockModule = {
         const at = new Date().toISOString()
         Object.assign(c, { status: 'applied', resolved_at: at, resolution_reason: reason })
         const u = userStore.find((x) => x.id === c.order.user_id)
-        if (u && u.currency === c.currency) u.balance += c.amount
+        if (u) u.balance += c.amount
         return { status: 200, body: { ledger_txn_id: randomUUID() } }
       })
     },
@@ -498,6 +583,24 @@ export const billing: MockModule = {
     // ---- 支付渠道 -------------------------------------------------------------
     'GET /v1/payment-providers': (ctx) => {
       ctx.send(200, { providers: [...providers].sort((a, b) => a.code.localeCompare(b.code)).map(providerView) })
+    },
+
+    'GET /v1/payment-settings': (ctx) => {
+      const effective = effectiveNotifyBase()
+      ctx.send(200, { notify_base_url: paymentSettings.notify_base_url, effective_base: effective, public_base_url: PUBLIC_BASE_URL })
+    },
+
+    'PUT /v1/payment-settings': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
+      const bad = unknownField(body, ['notify_base_url'])
+      if (bad) return ctx.send(bad.status, bad.body)
+      const norm = normalizeNotifyBase(str(body.notify_base_url))
+      if ('field' in norm) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { notify_base_url: norm.field })
+      paymentSettings.notify_base_url = norm.ok
+      const effective = effectiveNotifyBase()
+      ctx.send(200, { notify_base_url: paymentSettings.notify_base_url, effective_base: effective, public_base_url: PUBLIC_BASE_URL })
     },
 
     // 启停：reauth，没有幂等；两个布尔漏传按 false
@@ -522,20 +625,37 @@ export const billing: MockModule = {
       await ctx.idempotent('payment_provider_create', () => {
         const bad = unknownField(body, ['code', 'adapter', ...PROVIDER_SETTINGS])
         if (bad) return bad
-        const parsed = providerSettings(body)
+        const adapter = str(body.adapter).trim()
+        const parsed = providerSettings(body, adapter || 'epay')
         if ('bad' in parsed) return parsed.bad
         const f = 'fields' in parsed ? { ...parsed.fields } : {}
         const code = str(body.code).trim()
         if (!/^[a-z][a-z0-9_-]{1,31}$/.test(code)) f.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
         else if (code === 'offline') f.code = 'offline 是系统内置渠道的编码'
-        if (str(body.adapter).trim() !== 'epay') f.adapter = '只支持易支付（epay）'
+        if (!ONLINE_ADAPTERS.includes(adapter as (typeof ONLINE_ADAPTERS)[number])) f.adapter = '只支持易支付（epay）、BTCPay（btcpay）、CoinPayments（coinpayments）'
         if (!str(body.merchant_id).trim()) f.merchant_id = '必填'
         if (!str(body.key).trim()) f.key = '必填'
+        if (adapter === 'btcpay' && !str(body.webhook_secret).trim()) f.webhook_secret = '必填'
         if (Object.keys(f).length || !('ok' in parsed)) return invalid(f)
         if (providers.some((p) => p.code === code)) return err(409, 'conflict', '渠道编码已存在，请换一个')
-        const p: Provider = { id: randomUUID(), code, adapter: 'epay', enabled: true, accepting_new: false, has_credentials: true, currencies: ['CNY'], ...parsed.ok.config, min_amount: parsed.ok.min_amount ?? 100 }
+        const p: Provider = {
+          id: randomUUID(),
+          code,
+          adapter,
+          enabled: true,
+          accepting_new: false,
+          has_credentials: true,
+          ...parsed.ok.config,
+          min_amount: parsed.ok.min_amount ?? 100,
+          fee_fixed: parsed.ok.fee_fixed,
+          fee_percent: parsed.ok.fee_percent,
+        }
         providers.push(p)
-        providerSecrets.set(p.id, { merchant_id: parsed.ok.merchant_id, key: parsed.ok.key })
+        providerSecrets.set(p.id, {
+          merchant_id: parsed.ok.merchant_id,
+          key: parsed.ok.key,
+          ...(adapter === 'btcpay' && parsed.ok.webhook_secret ? { webhook_secret: parsed.ok.webhook_secret } : {}),
+        })
         return { status: 201, body: { id: p.id, code, credentials_changed: true } }
       })
     },
@@ -548,21 +668,33 @@ export const billing: MockModule = {
       await ctx.idempotent('payment_provider_update', () => {
         const bad = unknownField(body, PROVIDER_SETTINGS)
         if (bad) return bad
-        const parsed = providerSettings(body)
-        if ('bad' in parsed) return parsed.bad
-        if ('fields' in parsed) return invalid(parsed.fields)
         const p = providers.find((x) => x.code === ctx.params.code)
         if (!p) return NOT_FOUND
         if (p.code === 'offline' || p.adapter === 'offline') return err(409, 'conflict', '系统内置渠道不可编辑')
-        if (p.adapter !== 'epay') return err(409, 'conflict', '这类渠道不支持在后台编辑')
+        if (!ONLINE_ADAPTERS.includes(p.adapter as (typeof ONLINE_ADAPTERS)[number])) return err(409, 'conflict', '这类渠道不支持在后台编辑')
+        const parsed = providerSettings(body, p.adapter)
+        if ('bad' in parsed) return parsed.bad
+        if ('fields' in parsed) return invalid(parsed.fields)
         const current = providerSecrets.get(p.id) ?? { merchant_id: '', key: '' }
-        const next = { merchant_id: parsed.ok.merchant_id || current.merchant_id, key: parsed.ok.key || current.key }
+        const next = {
+          merchant_id: parsed.ok.merchant_id || current.merchant_id,
+          key: parsed.ok.key || current.key,
+          webhook_secret: parsed.ok.webhook_secret || current.webhook_secret,
+        }
         const missing: Record<string, string> = {}
         if (!next.merchant_id) missing.merchant_id = '该渠道还没有商户号，需填写'
         if (!next.key) missing.key = '该渠道还没有密钥，需填写'
+        if (p.adapter === 'btcpay' && !next.webhook_secret) missing.webhook_secret = '该渠道还没有 Webhook 密钥，需填写'
         if (Object.keys(missing).length) return invalid(missing)
-        const changed = next.merchant_id !== current.merchant_id || next.key !== current.key
-        Object.assign(p, parsed.ok.config, { has_credentials: true, min_amount: parsed.ok.min_amount ?? p.min_amount })
+        const changed = next.merchant_id !== current.merchant_id || next.key !== current.key || next.webhook_secret !== current.webhook_secret
+        const fee_fixed = body.fee_fixed !== undefined ? parsed.ok.fee_fixed : p.fee_fixed
+        const fee_percent = body.fee_percent !== undefined ? parsed.ok.fee_percent : p.fee_percent
+        Object.assign(p, parsed.ok.config, {
+          has_credentials: true,
+          min_amount: parsed.ok.min_amount ?? p.min_amount,
+          fee_fixed,
+          fee_percent,
+        })
         providerSecrets.set(p.id, next)
         return { status: 200, body: { id: p.id, code: p.code, credentials_changed: changed } }
       })
@@ -570,10 +702,7 @@ export const billing: MockModule = {
 
     // ---- 收入调整（报表口径，只追加）---------------------------------------------
     'GET /v1/revenue/adjustments': (ctx) => {
-      const currency = (ctx.query.get('currency') ?? '').toUpperCase()
-      if (currency && currency !== 'CNY' && currency !== 'USD') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { currency: '仅支持 CNY 或 USD' })
       const rows = adjustments
-        .filter((a) => !currency || a.currency === currency)
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
         .slice(0, 200)
       ctx.send(200, { adjustments: rows.map(adjustmentView) })
@@ -584,11 +713,9 @@ export const billing: MockModule = {
       const body = await ctx.body()
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       await ctx.idempotent('revenue_adjustment_create', () => {
-        const bad = unknownField(body, ['currency', 'amount', 'reason', 'effective_on'])
+        const bad = unknownField(body, ['amount', 'reason', 'effective_on'])
         if (bad) return bad
         const f: Record<string, string> = {}
-        const currency = str(body.currency).trim().toUpperCase()
-        if (currency !== 'CNY' && currency !== 'USD') f.currency = '仅支持 CNY 或 USD'
         const amount = body.amount
         if (typeof amount !== 'number' || !Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 1e12) f.amount = '调整金额必须非零且绝对值不超过 100 亿'
         if (chars(body.reason) < 5 || chars(body.reason) > 500) f.reason = '理由需为 5–500 个字符'
@@ -599,7 +726,6 @@ export const billing: MockModule = {
         if (effective > today) return invalid({ effective_on: '生效日期不能晚于租户今天' })
         const a: Adjustment = {
           id: randomUUID(),
-          currency: currency as Adjustment['currency'],
           amount: amount as number,
           reason: str(body.reason).trim(),
           effective_on: effective || today,
@@ -627,7 +753,6 @@ export const billing: MockModule = {
         if (adjustments.some((a) => a.reversal_of === original.id)) return err(409, 'conflict', '该调整已撤销')
         const a: Adjustment = {
           id: randomUUID(),
-          currency: original.currency,
           amount: -original.amount,
           reason,
           effective_on: original.effective_on,

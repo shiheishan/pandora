@@ -1,13 +1,15 @@
 import { href, useHashLocation } from '../../../core/router'
-import { Card, Empty, Skeleton } from '../../../ui'
+import { Empty, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
+import { Btn } from '../../kit'
 import type { PortalScreenProps } from '../index'
 import { LoadError } from '../common/Blocks'
-import { usePackCatalog, usePlans } from '../common/catalog'
-import { flowCss } from '../common/Flow'
+import { usePlans } from '../common/catalog'
 import { useHoldings } from '../common/holdings'
+import css from './Checkout.module.css'
 import { ConfirmForm } from './Confirm'
 import { Done } from './Done'
+import { LandingChooser } from './Landing'
 import { parseTarget, type Problem as ProblemKind } from './model'
 import { Pay } from './Pay'
 
@@ -25,36 +27,39 @@ function Confirm() {
   const { query } = useHashLocation()
   const h = useHoldings()
   const plans = usePlans()
-  const packs = usePackCatalog()
-  const queries = [h.subs, plans, packs]
+  const queries = [h.subs, plans]
   if (queries.some((q) => q.isPending)) {
     return (
-      <Card aria-busy="true" className={flowCss.narrow}>
-        <Skeleton width={180} height={18} />
-        <Skeleton height={200} />
-      </Card>
+      <div className={css.ck} aria-busy="true">
+        <Skeleton height={320} />
+        <Skeleton height={320} />
+      </div>
     )
   }
   const failed = queries.find((q) => q.isError)
   if (failed) {
     return (
-      <Card>
+      <div className={css.card}>
         <LoadError error={failed.error} onRetry={() => queries.forEach((q) => void q.refetch())} what="价格" />
-      </Card>
+      </div>
     )
   }
-  const parsed = parseTarget(query, h.held, plans.data!, packs.data!)
+  const parsed = parseTarget(query, h.held, plans.data!)
   if ('problem' in parsed) return <Problem kind={parsed.problem} />
   const t = parsed.target
+  if (t.kind === 'choose') {
+    const plan = plans.data!.find((p) => p.id === t.planId)
+    if (!plan) return <Problem kind="plan_gone" />
+    return <LandingChooser planId={t.planId} plan={plan} h={h} price={query.get('price')} />
+  }
   // 目标变了就整块重建：选项、余额开关与幂等键都从头来
-  const identity = `${t.kind}:${'subId' in t ? t.subId : ''}:${'planId' in t ? t.planId : ''}:${'packId' in t ? t.packId : ''}`
-  return <ConfirmForm key={identity} target={t} h={h} plans={plans.data!} packs={packs.data!} requested={query.get('price')} />
+  const identity = `${t.kind}:${'subId' in t ? t.subId : ''}:${'planId' in t ? t.planId : ''}`
+  return <ConfirmForm key={identity} target={t} h={h} plans={plans.data!} requested={query.get('price')} />
 }
 
 const PROBLEMS: Readonly<Record<ProblemKind, readonly [string, string]>> = {
-  missing: ['还没选要买什么', '先到选购页挑一个套餐或流量包。'],
+  missing: ['还没选要买什么', '先到选购页挑一个套餐。'],
   plan_gone: ['这个套餐已经停售了', '去选购页看看别的套餐。'],
-  pack_gone: ['这个流量包已经下架了', '去选购页看看别的流量包。'],
   sub_gone: ['这一份现在不能这样操作', '它可能已经停用了，或者不在你的账号下。可以另买一份。'],
 }
 
@@ -65,11 +70,7 @@ function Problem({ kind }: { kind: ProblemKind }) {
     <Empty
       title={title}
       description={description}
-      action={
-        <a className={flowCss.cta} href={href('/plans', kind === 'pack_gone' ? { tab: 'packs' } : undefined)}>
-          去选购
-        </a>
-      }
+      action={<Btn href={href('/plans')} tone="soft">去选购</Btn>}
     />
   )
 }

@@ -11,14 +11,13 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 )
 
-// defaultPayTitle 是没有订单行（充值单）时收银台的商品名（旧 payments.go 同一兜底）。
+// defaultPayTitle 是没有订单行（充值单）时收银台的商品名。
 const defaultPayTitle = "订阅服务"
 
-// Pay 门户发起支付：锁住自己的待付订单、核对可付，再由 payment 建（或复用）支付意图。
+// Pay 门户发起支付：在事务里锁住自己的待付订单、核对可付，由 payment 占住支付意图（或复用在途的）；提交后再在事务外去渠道建单（渠道可能联网，不能占着库连接和订单锁）。
 func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult, error) {
 	userID, err := portalUser(ctx)
 	if err != nil {
@@ -29,7 +28,7 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 			return paymentsvc.IntentResult{}, err
 		}
 	}
-	var out paymentsvc.IntentResult
+	var draft paymentsvc.IntentDraft
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		o, ok, err := s.repo.OrderForUser(ctx, in.OrderID, userID, repo.ForNoKeyUpdate)
 		if err != nil {
@@ -47,17 +46,30 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 		if !s.clock().Before(o.ExpiresAt) {
 			return ErrPaymentLapsed
 		}
+		// 套餐归档后，归档前下的待付单不让再发起付款（用户 2026-10-16 定）；已建好的在途意图照旧，付了由结算转余额
+		if planOrder(o.Kind) {
+			it, err := s.onlyItem(ctx, o)
+			if err != nil {
+				return err
+			}
+			archived, err := s.planArchivedFor(ctx, it)
+			if err != nil {
+				return err
+			}
+			if archived {
+				return ErrPlanRetired
+			}
+		}
 		title, err := s.payTitle(ctx, o)
 		if err != nil {
 			return err
 		}
 		expires := o.ExpiresAt
-		out, err = s.payments.CreateIntent(ctx, paymentsvc.CreateIntentInput{
+		draft, err = s.payments.BeginIntent(ctx, paymentsvc.CreateIntentInput{
 			OrderID:      o.ID,
 			OrderNo:      o.OrderNo,
 			UserID:       o.UserID,
 			Amount:       o.PayableAmount,
-			Currency:     money.Currency(o.Currency),
 			ProviderCode: in.Provider,
 			Method:       in.Method,
 			Title:        title,
@@ -70,7 +82,7 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 	if err != nil {
 		return paymentsvc.IntentResult{}, err
 	}
-	return out, nil
+	return s.payments.CompleteIntent(ctx, draft)
 }
 
 // payTitle 取收银台商品名：首条订单行的快照名，没有订单行时用兜底名。
@@ -177,7 +189,6 @@ func (s *Service) MarkPaid(ctx context.Context, in MarkPaidInput) (MarkPaidResul
 			OrderNo:   o.OrderNo,
 			UserID:    o.UserID,
 			Amount:    o.PayableAmount,
-			Currency:  money.Currency(o.Currency),
 			Reference: reference,
 			Reason:    reason,
 		})
@@ -198,7 +209,6 @@ func (s *Service) MarkPaid(ctx context.Context, in MarkPaidInput) (MarkPaidResul
 		data := map[string]any{
 			"order_no":  o.OrderNo,
 			"amount":    o.PayableAmount.StringFixed(2),
-			"currency":  o.Currency,
 			"reference": reference,
 			"reason":    reason,
 		}

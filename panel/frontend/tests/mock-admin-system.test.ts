@@ -29,7 +29,7 @@ describe('mock api · admin notifications and hooks', () => {
     expect((await call('POST', '/v1/settings/mail', { ...smtp, smtp_password: '-' })).status).toBe(200)
     expect(mailSettingsSchema.parse(await json(await call('GET', '/v1/settings/mail'))).has_password).toBe(false)
     expect(await json(await call('POST', '/v1/settings/mail/test', { to: '' }))).toMatchObject({ error: { fields: { to: '请填写收件地址' } } })
-    expect(await json(await call('POST', '/v1/settings/mail/test', { to: 'me@x.run' }))).toEqual({ ok: true, to: 'me@x.run' })
+    expect(await json(await call('POST', '/v1/settings/mail/test', { to: 'me@example.test' }))).toEqual({ ok: true, to: 'me@example.test' })
   })
 
   it('keeps the Telegram chat id unless sent and falls back to it for tests', async () => {
@@ -42,11 +42,12 @@ describe('mock api · admin notifications and hooks', () => {
     expect((await call('POST', '/v1/settings/telegram', { enabled: true, bot_username: 'bot', bot_token: '', admin_chat_id: null })).status).toBe(200)
     expect(await json(await call('POST', '/v1/settings/telegram/test', {}))).toMatchObject({ error: { fields: { chat_id: expect.any(String) } } })
     expect(await json(await call('POST', '/v1/settings/telegram', { enabled: false, bot_username: 'bot', bot_token: '', admin_chat_id: 0 }))).toMatchObject({ error: { fields: { admin_chat_id: expect.any(String) } } })
+    expect(await json(await call('POST', '/v1/settings/telegram', { enabled: false, bot_username: 'bot', bot_token: '', admin_chat_id: 42 }))).toMatchObject({ error: { fields: { admin_chat_id: expect.any(String) } } })
   })
 
   it('saves, previews, resets and test-sends templates within the variable whitelist', async () => {
     const list = templatesResponse.parse(await json(await call('GET', '/v1/mail/templates'))).templates
-    expect(list).toHaveLength(12)
+    expect(list).toHaveLength(15)
     expect(list.find((t) => t.code === 'admin.broadcast')).toMatchObject({ has_default: false, is_default: false })
     const t = list.find((x) => x.code === 'quota.warning' && x.channel === 'email')!
     expect(t).toMatchObject({ has_default: true, is_default: true })
@@ -58,7 +59,7 @@ describe('mock api · admin notifications and hooks', () => {
     expect(templateReset.parse(await json(await call('POST', '/v1/mail/templates/reset', { code: t.code, channel: t.channel }))).template.is_default).toBe(true)
     expect((await call('POST', '/v1/mail/templates/reset', { code: 'admin.broadcast', channel: 'email' })).status).toBe(404)
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
-    expect(await json(await call('POST', '/v1/mail/templates/test', { code: t.code, channel: 'email', to: 'me@x.run' }))).toMatchObject({ error: { code: 'reauth_required' } })
+    expect(await json(await call('POST', '/v1/mail/templates/test', { code: t.code, channel: 'email', to: 'me@example.test' }))).toMatchObject({ error: { code: 'reauth_required' } })
   })
 
   it('upserts hooks, hands out a generated secret once and rejects private endpoints', async () => {
@@ -66,7 +67,7 @@ describe('mock api · admin notifications and hooks', () => {
     auth = { Authorization: `Bearer ${((await reauth.json()) as { access_token: string }).access_token}` }
     const listed = hooksResponse.parse(await json(await call('GET', '/v1/plugin-hooks')))
     expect(listed.events.map((e) => e.name)).toContain('giftcard.redeemed')
-    const body = { code: 'hook-test01', name: 'x.run', description: '', enabled: true, events: ['order.paid'], endpoint_url: 'https://x.run/h', secret: '', timeout_ms: 5000, max_attempts: 5 }
+    const body = { code: 'hook-test01', name: 'example.test', description: '', enabled: true, events: ['order.paid'], endpoint_url: 'https://hooks.example.test/h', secret: '', timeout_ms: 5000, max_attempts: 5 }
     expect(await json(await call('POST', '/v1/plugin-hooks', { ...body, endpoint_url: 'https://10.0.0.8/h' }, 'h-1'))).toMatchObject({ error: { fields: { endpoint_url: '不允许指向内网或本机地址' } } })
     expect(await json(await call('POST', '/v1/plugin-hooks', { ...body, events: ['node.offline'] }, 'h-2'))).toMatchObject({ error: { fields: { events: '未知事件：node.offline' } } })
     expect((await call('POST', '/v1/plugin-hooks', { ...body, timeout_ms: 100 }, 'h-3')).status).toBe(500)

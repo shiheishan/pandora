@@ -14,5 +14,6 @@ paths:
 - 查库一律经 `$PSQL`：CI 里是包一层 `psql "$PANDORA_DATABASE_URL"` 的脚本，缺省值 `/opt/pandora/deploy/psql.sh` 对应直装布局。不要在脚本里写死连接串。
 - 管理员由 job 用 `pandora admin create --password-stdin` 建，口令经 `ADMIN_EMAIL` / `ADMIN_PASS` 环境变量交给脚本；脚本不打印口令，不放进命令行参数。
 - 来源 IP 用 `X-Real-IP` 扮演：引擎只信这个头（CI 里没有 nginx）。
+- 注册第 1 步的 IP 限额是后台设置 `signup.ip_limit_*`（缺省每 IP 每分钟 10 次），不受 job env 的 `PANDORA_RATELIMIT_*` 影响：凡是注册账号的脚本，在一次性库守卫（含库名核对）之后调 `tests/lib/signup.sh` 的 `relax_signup_ip_limit`，经后台接口关掉（`risk_e2e.sh` 是 Python，直接调同一个接口）。新脚本照做。
 - 结果用 `[ OK ]` / `[FAIL]` 计数，最后有 FAIL 就非零退出。错误信封里比对码与文案时去掉每次不同的 `request_id`（`auth_e2e.sh` 的 `errsig`）。
 - 测试数据只用虚构值（仓库公开）。

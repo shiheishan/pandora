@@ -4,18 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/dbbackup"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
-
-// defaultBackupDir 与 internal/pkg/config 里 backup.dir 的缺省值相同（系统状态页读同一个目录）。
-const defaultBackupDir = "/var/backups/pandora"
 
 // webdavUploadTimeout 是一次异地上传（探测、归档、校验文件、清单、检查点复制）的总时限。
 const webdavUploadTimeout = 45 * time.Minute
@@ -40,7 +35,7 @@ func newBackupCmd(configPath *string) *cobra.Command {
 		Short: "打印配置的备份目录（backup.dir，配置文件或 PANDORA_BACKUP_DIR）",
 		Args:  backupArgs(0, "pandora backup dir"),
 		RunE: func(c *cobra.Command, _ []string) error {
-			dir, err := loadBackupDir(*configPath)
+			dir, err := config.LoadBackupDir(*configPath)
 			if err != nil {
 				return err
 			}
@@ -141,7 +136,7 @@ func newBackupCmd(configPath *string) *cobra.Command {
 	return cmd
 }
 
-// backupArgs 要求恰好 n 个参数；不对时以退出码 2 结束并打印用法（与旧工具同口径）。
+// backupArgs 要求恰好 n 个参数；不对时以退出码 2 结束并打印用法。
 func backupArgs(n int, usage string) cobra.PositionalArgs {
 	return func(_ *cobra.Command, args []string) error {
 		if len(args) != n {
@@ -153,7 +148,7 @@ func backupArgs(n int, usage string) cobra.PositionalArgs {
 
 // runWebDAVUpload 是 webdav-upload 的完整流程：核本地归档与校验文件 → 读 WebDAV 配置 → 准备清单事务 →
 // 探测 → 传归档、校验文件、清单（各自核摘要）→ 提交检查点 → 交独立 hook 复制检查点。
-// 失败只报阶段名（不带远端地址、凭据与底层错误），与移植前的独立上传工具报错一致。
+// 失败只报阶段名（不带远端地址、凭据与底层错误）。
 func runWebDAVUpload(ctx context.Context, configPath, archive, checksum string) (string, error) {
 	fail := func(stage string) error { return errors.New("webdav backup upload failed: " + stage) }
 	pair, err := dbbackup.VerifyLocalPair(archive, checksum)
@@ -192,30 +187,4 @@ func runWebDAVUpload(ctx context.Context, configPath, archive, checksum string) 
 	}
 	return fmt.Sprintf("webdav backup upload complete: archive=%s bytes=%d sha256=%s",
 		archiveResult.ObjectName, archiveResult.Bytes, archiveResult.SHA256), nil
-}
-
-// loadBackupDir 只读 backup.dir：配置文件（--config）里的值，PANDORA_BACKUP_DIR 覆盖，都没有用缺省。
-// 不走 config.Load：那会要求数据库、Redis 与各把密钥，备份单元的环境里没有这些。
-func loadBackupDir(configPath string) (string, error) {
-	v := viper.New()
-	v.SetEnvPrefix("PANDORA")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-	v.SetDefault("backup.dir", defaultBackupDir)
-	if configPath != "" {
-		v.SetConfigFile(configPath)
-		if err := v.ReadInConfig(); err != nil {
-			return "", fmt.Errorf("读取配置文件: %w", err)
-		}
-	}
-	dir := strings.TrimSpace(v.GetString("backup.dir"))
-	switch {
-	case dir == "":
-		return "", errors.New("backup.dir 为空：没有配置备份目录")
-	case !path.IsAbs(dir) || path.Clean(dir) != dir:
-		return "", fmt.Errorf("backup.dir 必须是规范的绝对路径：%s", dir)
-	case dir == "/":
-		return "", errors.New("backup.dir 不能是 /")
-	}
-	return dir, nil
 }

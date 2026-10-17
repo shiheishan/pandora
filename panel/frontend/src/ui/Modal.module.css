@@ -20,6 +20,7 @@
 
 .overlay::backdrop {
   background: var(--scrim);
+  backdrop-filter: var(--dialog-backdrop-filter);
 }
 
 /* 弹窗开着时页面本身不滚动 */
@@ -31,28 +32,33 @@
   outline: none;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  width: var(--dialog-w);
   max-width: 100%;
-  padding: 22px;
-  border-radius: var(--radius-card);
+  max-height: min(760px, calc(100vh - 32px));
+  padding: 0;
+  border: 1px solid var(--popover-border);
+  border-radius: var(--dialog-radius);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--popover-shadow);
   animation: rise 0.18s ease-out;
 }
 
-.md {
-  width: 560px;
-}
-
-.lg {
-  width: 720px;
+.tall {
+  height: min(860px, calc(100vh - 32px));
+  max-height: none;
 }
 
 .head {
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  padding: 22px 22px 12px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .eyebrow {
@@ -63,20 +69,61 @@
 }
 
 .title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--dialog-title-size);
   font-weight: var(--fw-semibold);
 }
 
+.subtitle {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
 .body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 22px 4px;
   color: var(--text-2);
   text-wrap: pretty;
 }
 
-.actions {
+.foot {
+  flex: none;
   display: flex;
-  justify-content: flex-end;
-  gap: var(--space-8);
+  align-items: center;
+  gap: 8px;
+  padding: 16px 22px 22px;
+}
+
+.grow {
+  flex: var(--dialog-grow);
+}
+
+/* 门户：底部按钮平分整行；后台 0 1 auto 不变 */
+.foot > button {
+  flex: var(--dialog-action-flex);
+}
+
+.divided .head,
+.tall .head {
+  border-bottom: 1px solid var(--border);
+}
+
+.divided .body,
+.tall .body {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.divided .foot,
+.tall .foot {
+  border-top: 1px solid var(--border);
 }
 
 @keyframes rise {
@@ -96,18 +143,27 @@
     place-items: end stretch;
   }
 
-  .panel,
-  .md,
-  .lg {
-    width: 100%;
+  .panel {
+    width: 100% !important;
     max-height: 90dvh;
-    overflow-y: auto;
-    border-radius: 16px 16px 0 0;
-    padding-bottom: calc(22px + env(safe-area-inset-bottom));
+    border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
     animation-name: slide-up;
   }
 
-  .actions > * {
+  .tall {
+    height: 90dvh;
+  }
+
+  .foot {
+    flex-wrap: wrap;
+    padding-bottom: calc(22px + env(safe-area-inset-bottom));
+  }
+
+  .grow {
+    display: none;
+  }
+
+  .foot > button {
     flex: 1;
   }
 

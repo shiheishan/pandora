@@ -92,7 +92,7 @@ func TestPGUserDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	setRegistration(t, actx, e.settings, settingssvc.RegistrationOpen, false)
-	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "child"), inv.Code)
+	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "child"), inv.Code, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,27 +295,6 @@ func TestPGGroupDuplicateCode(t *testing.T) {
 	}
 }
 
-// 被组价引用的分组删不掉：prices.user_group_id 是 ON DELETE RESTRICT（23001），要回 409 而不是 500。放在最后一步。
-func TestPGDeleteGroupReferencedByPrice(t *testing.T) {
-	// 假引用统计为空：走到 DELETE，由外键兜底
-	e, ctx, _ := adminEnv(t)
-	actx := adminCtx(t, e, ctx)
-	gid, err := e.svc.CreateGroup(actx, "", "Priced", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var planID uuid.UUID
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`, "g-"+uuid.NewString()[:8], "组价套餐").Scan(&planID); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.exec(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, user_group_id) VALUES (?, 'CNY', 10, ?)`, planID, gid); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.svc.DeleteGroup(actx, gid); codeOf(err) != errs.Conflict {
-		t.Fatalf("被组价引用时删组应 409，得到 %v", err)
-	}
-}
-
 // 删组前按引用统计拒绝：套餐可见名单是级联删除，外键兜不住，只能靠这一步。
 func TestPGDeleteGroupInUse(t *testing.T) {
 	e, ctx, f := adminEnv(t)
@@ -326,7 +305,6 @@ func TestPGDeleteGroupInUse(t *testing.T) {
 	}
 	cases := []GroupUsage{
 		{Plans: 1},
-		{Prices: 1},
 		{Coupons: 2},
 		{ExclusivePools: []PoolRef{{ID: uuid.New(), Name: "亚太"}}},
 	}

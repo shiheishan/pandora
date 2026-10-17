@@ -1,4 +1,4 @@
-// 本文件归 p5-routing：全局与节点私有路由的读写、生效预览。
+// 全局与节点私有路由的读写、生效预览。
 package service
 
 import (

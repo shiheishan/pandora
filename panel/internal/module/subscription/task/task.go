@@ -25,13 +25,14 @@ const (
 	rollTimeout      = time.Minute     // 一轮配额滚动的上限
 	retentionTimeout = 5 * time.Minute // 一次保留期清理的上限
 	maxPurgeBatches  = 200             // 单次清理最多批数，删不完留给明天
+	purgeBatch       = 5000            // 保留期清理每批删除的行数
 )
 
 // Service 是任务用到的 service 方法。
 type Service interface {
 	ExpireDue(ctx context.Context) (service.ExpireStats, error)
 	RollQuotas(ctx context.Context) (service.RollStats, error)
-	PurgeFetchLogs(ctx context.Context) (int64, error)
+	PurgeFetchLogs(ctx context.Context, limit int) (int64, error)
 }
 
 var _ Service = (*service.Service)(nil)
@@ -75,7 +76,7 @@ func (m *Module) Periodic() []jobs.Periodic {
 			},
 		},
 		{
-			// 03:40 起各表错开，40/41/47/53 已被别的模块占用。
+			// 每天一次的任务各占一分钟，占用情况见 .claude/rules/panel-app.md 的「每日任务分钟表」。
 			Cronspec: "50 3 * * *",
 			Type:     TypeRetentionFetchLog,
 			Opts: []asynq.Option{
@@ -123,22 +124,10 @@ func (m *Module) rollQuota(ctx context.Context, _ *asynq.Task) error {
 func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	ctx, cancel := context.WithTimeout(ctx, retentionTimeout)
 	defer cancel()
-	var total int64
-	var batches int
-	for i := 0; i < maxPurgeBatches; i++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		n, err := m.svc.PurgeFetchLogs(ctx)
-		if err != nil {
-			return fmt.Errorf("拉取日志保留期清理: %w", err)
-		}
-		batches++
-		total += n
-		if n == 0 {
-			break
-		}
+	total, err := jobs.PurgeInBatches(ctx, purgeBatch, maxPurgeBatches, m.svc.PurgeFetchLogs)
+	if err != nil {
+		return fmt.Errorf("拉取日志保留期清理: %w", err)
 	}
-	plog.From(ctx).Info("subscription fetch log retention done", zap.Int64("deleted", total), zap.Int("batches", batches))
+	plog.From(ctx).Info("subscription fetch log retention done", zap.Int64("deleted", total))
 	return nil
 }

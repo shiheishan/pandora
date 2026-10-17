@@ -18,6 +18,15 @@ func vlessInbound(tag string, port int, network string) *core.InboundConfig {
 	}
 }
 
+func ssInbound(tag string, port int, raw map[string]any) *core.InboundConfig {
+	if raw == nil {
+		raw = map[string]any{"method": "aes-128-gcm"}
+	}
+	return &core.InboundConfig{
+		Tag: tag, Protocol: "shadowsocks", Listen: "127.0.0.1", Port: port, Raw: raw,
+	}
+}
+
 func assertPortInUse(t *testing.T, err error, port int, l4, owner string, preserved bool) {
 	t.Helper()
 	var inUse *PortInUseError
@@ -225,17 +234,107 @@ func TestInboundPortKeyDerivation(t *testing.T) {
 		{"hysteria2", nil, "udp"},
 		{"tuic", nil, "udp"},
 		{"juicity", nil, "udp"},
-		{"shadowsocks", map[string]any{"network": "udp"}, "udp"},
-		{"ss", nil, "tcp"},
+		{"shadowsocks", nil, "tcp+udp"},
+		{"ss", nil, "tcp+udp"},
+		{"shadowsocks", map[string]any{"method": "2022-blake3-aes-128-gcm"}, "tcp+udp"},
 		{"mieru", map[string]any{"transport": "UDP"}, "udp"},
 		{"mieru", nil, "tcp"},
 		{"socks", nil, "tcp"},
 		{"anytls", nil, "tcp"},
 	} {
-		got := inboundPortKey(&core.InboundConfig{Protocol: tc.protocol, Port: 443, Raw: tc.raw})
-		if got.l4 != tc.want || got.port != 443 {
-			t.Errorf("%s %v → %v，期望 443/%s", tc.protocol, tc.raw, got, tc.want)
+		got := inboundPortKeys(&core.InboundConfig{Protocol: tc.protocol, Port: 443, Raw: tc.raw})
+		if portL4Label(got) != tc.want {
+			t.Errorf("%s %v → label %q，期望 %q", tc.protocol, tc.raw, portL4Label(got), tc.want)
 		}
+		for _, k := range got {
+			if k.port != 443 {
+				t.Errorf("%s %v → 键端口 %d，期望 443", tc.protocol, tc.raw, k.port)
+			}
+		}
+		wantKeys := 1
+		if tc.want == "tcp+udp" {
+			wantKeys = 2
+		}
+		if len(got) != wantKeys {
+			t.Errorf("%s %v → %d 个键，期望 %d", tc.protocol, tc.raw, len(got), wantKeys)
+		}
+	}
+}
+
+func TestPortL4Label(t *testing.T) {
+	for _, tc := range []struct {
+		keys []portKey
+		want string
+	}{
+		{[]portKey{{443, "tcp"}}, "tcp"},
+		{[]portKey{{443, "udp"}}, "udp"},
+		{[]portKey{{443, "tcp"}, {443, "udp"}}, "tcp+udp"},
+		{[]portKey{{443, "udp"}, {443, "tcp"}}, "tcp+udp"},
+	} {
+		if got := portL4Label(tc.keys); got != tc.want {
+			t.Errorf("%v → %q，期望 %q", tc.keys, got, tc.want)
+		}
+	}
+}
+
+// Shadowsocks 同端口占 TCP+UDP：与只占 UDP 的入站（此处用 mKCP vless 代替 hy2，同样只占 UDP）冲突。
+func TestPortClaimShadowsocksConflictsWithUDPInbound(t *testing.T) {
+	c := newTestNativeCore(t)
+	port := reserveTCPAndUDPPort(t)
+	p := strconv.Itoa(port)
+	if err := c.ApplyInbound(vlessInbound("vless-kcp", port, "mkcp"), nil); err != nil {
+		t.Fatal(err)
+	}
+	err := c.ApplyInbound(ssInbound("ss-a", port, nil), nil)
+	assertPortInUse(t, err, port, "udp", "vless-kcp", false)
+	assertConflictText(t, err, "端口 "+p+"/UDP 已被本机其他服务占用", "port_in_use:"+p+"/udp:other")
+	if c.PortOwner(port, "tcp") != "" {
+		t.Fatal("冲突时 TCP 键也不该被 SS 占着")
+	}
+
+	_ = c.DelInbound("vless-kcp")
+	if err := c.ApplyInbound(ssInbound("ss-a", port, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	err = c.ApplyInbound(vlessInbound("vless-kcp", port, "mkcp"), nil)
+	assertPortInUse(t, err, port, "udp", "ss-a", false)
+}
+
+func TestPortClaimShadowsocksConflictsWithTCPInbound(t *testing.T) {
+	c := newTestNativeCore(t)
+	port := reserveTCPAndUDPPort(t)
+	if err := c.ApplyInbound(vlessInbound("vless-tcp", port, "tcp"), nil); err != nil {
+		t.Fatal(err)
+	}
+	err := c.ApplyInbound(ssInbound("ss-a", port, nil), nil)
+	assertPortInUse(t, err, port, "tcp", "vless-tcp", false)
+	if c.PortOwner(port, "udp") != "" {
+		t.Fatal("冲突时 UDP 键也不该被 SS 占着")
+	}
+}
+
+func TestPortClaimShadowsocksTwiceReportsTCPUDP(t *testing.T) {
+	c := newTestNativeCore(t)
+	port := reserveTCPAndUDPPort(t)
+	p := strconv.Itoa(port)
+	if err := c.ApplyInbound(ssInbound("ss-a", port, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	err := c.ApplyInbound(ssInbound("ss-b", port, nil), nil)
+	assertPortInUse(t, err, port, "tcp+udp", "ss-a", false)
+	assertConflictText(t, err, "端口 "+p+"/TCP+UDP 已被本机其他服务占用", "port_in_use:"+p+"/tcp+udp:other")
+
+	if err := c.DelInbound("ss-a"); err != nil {
+		t.Fatal(err)
+	}
+	if c.PortOwner(port, "tcp") != "" || c.PortOwner(port, "udp") != "" {
+		t.Fatal("ss-a 删掉后两个键都该空")
+	}
+	if err := c.ApplyInbound(ssInbound("ss-b", port, nil), nil); err != nil {
+		t.Fatalf("ss-a 退场后 ss-b 仍起不来：%v", err)
+	}
+	if c.PortOwner(port, "tcp") != "ss-b" || c.PortOwner(port, "udp") != "ss-b" {
+		t.Fatalf("登记表 tcp=%q udp=%q，期望 ss-b", c.PortOwner(port, "tcp"), c.PortOwner(port, "udp"))
 	}
 }
 

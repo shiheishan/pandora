@@ -42,7 +42,7 @@ func TestPortalListNotificationsLimitAndUnread(t *testing.T) {
 	}{
 		{"/v1/me/notifications", 30, false},
 		{"/v1/me/notifications?limit=100", 100, false},
-		{"/v1/me/notifications?limit=101", 30, false},
+		{"/v1/me/notifications?limit=101", 100, false},
 		{"/v1/me/notifications?unread=1", 30, true},
 	} {
 		fake.inboxLimit = 0
@@ -60,6 +60,11 @@ func TestPortalListNotificationsLimitAndUnread(t *testing.T) {
 		if fake.inboxUnread != tc.wantUnread {
 			t.Fatalf("%s unread %v want %v", tc.path, fake.inboxUnread, tc.wantUnread)
 		}
+	}
+
+	rec := ptlDo(e, http.MethodGet, "/v1/me/notifications?limit=abc", "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("limit=abc status %d want 422", rec.Code)
 	}
 }
 

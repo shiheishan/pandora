@@ -1,51 +1,44 @@
+import { ArrowRight01Icon } from '@hugeicons-pro/core-stroke-rounded'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { formatCount } from '../../../core/format'
-import { Skeleton } from '../../../ui'
+import { Card } from '../../../ui'
 import { useDashboardTasks } from '../../tasks'
-import { useBacklog } from './api'
 import css from './Dash.module.css'
-import { taskCards, type TaskCard } from './model'
-import { CardError, Dot, targetHref } from './parts'
+import { todoBoard } from './model'
+import { CardError, PanelSkeleton, Section, targetHref } from './parts'
 
 export function Tasks() {
-  const tasks = useDashboardTasks()
-  const backlog = useBacklog()
-
-  const loading = tasks.isPending || backlog.isPending
-  const cards = taskCards(tasks.data?.items, backlog.data)
-  const pending = cards.filter((c) => c.pending).length
-  const summary = pending === 0 ? '眼下没有要处理的事' : `${pending} 项 · 点一下直接去处理`
+  const { data, isPending, isError, error, refetch } = useDashboardTasks()
+  const board = todoBoard(data?.items)
+  const gridClass = board.cards.length === 4 ? css.todo4 : css.todo3
 
   return (
-    <section className={css.section} aria-labelledby="dash-tasks">
-      <div className={css.sectionHead}>
-        <h2 id="dash-tasks" className={css.sectionTitle}>
-          需要处理
-        </h2>
-        {!loading && cards.length > 0 && <span className={css.hint}>{summary}</span>}
-      </div>
-      {tasks.isError && <CardError boxed what="待办计数" error={tasks.error} onRetry={() => void tasks.refetch()} />}
-      {backlog.isError && <CardError boxed what="通知积压" error={backlog.error} onRetry={() => void backlog.refetch()} />}
-      {(loading || cards.length > 0) && (
-        <div className={css.taskGrid}>
-          {loading
-            ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} height={126} radius="var(--radius-lg)" />)
-            : cards.map((card) => <TaskTile key={card.key} card={card} />)}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function TaskTile({ card }: { card: TaskCard }) {
-  return (
-    <a className={css.task} href={targetHref(card.target)} title={card.hint}>
-      <span className={css.taskHead}>
-        <Dot tone={card.tone} />
-        <span>{card.title}</span>
-      </span>
-      <span className={css.taskCount}>{formatCount(card.count)}</span>
-      <span className={css.taskSub}>{card.sub}</span>
-      <span className={css.taskAct}>{card.action} →</span>
-    </a>
+    <Section id="dash-todo" title="要处理" sub={data ? board.summary : undefined}>
+      <Card flush>
+        {isPending ? (
+          <PanelSkeleton rows={3} height={36} />
+        ) : isError && !data ? (
+          <CardError what="待办计数" error={error} onRetry={() => void refetch()} />
+        ) : (
+          <div className={`${gridClass} ${css.todo}`}>
+            {board.cards.map((card) => (
+              <a
+                key={card.key}
+                className={card.hot ? `${css.tc} ${css.tcHot}` : css.tc}
+                href={targetHref(card.target)}
+              >
+                <span className={css.k}>{card.title}</span>
+                <span className={css.n}>{formatCount(card.count)}</span>
+                <span className={css.m}>{card.meta}</span>
+                <span className={css.go}>
+                  {card.action}
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} aria-hidden="true" />
+                </span>
+              </a>
+            ))}
+          </div>
+        )}
+      </Card>
+    </Section>
   )
 }

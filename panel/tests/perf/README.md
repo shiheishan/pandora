@@ -147,7 +147,7 @@ sudo systemctl restart pandora-serve pandora-worker
 ### 3.2 压测机准备
 
 #### (1) 安装 k6、Prometheus 与 Mailpit
-- **k6**：安装官方 release（deb 或二进制），确认版本为 v1.x：
+- **k6**：安装官方 release（deb 或二进制），确认版本为 v2.x：
   ```bash
   k6 version
   ```
@@ -221,6 +221,7 @@ source nodesim.env
 mkdir -p state
 
 # 面板每分钟限 10 次接入；首批接入加流控参数，大约耗时 20 分钟
+# --spread 让各台按真实节点错开上报（首轮随机、每轮 ±10% 抖动），免得 200 台同一时刻打到面板
 setsid -f ./nodesim \
   --panel "$PANEL" \
   --ca-sha256 "$CA_SHA256" \
@@ -231,6 +232,7 @@ setsid -f ./nodesim \
   --enroll-attempts 0 \
   --enroll-concurrency 4 \
   --enroll-retry-wait 10s \
+  --spread \
   --report-interval 10s > nodesim.log 2>&1 < /dev/null
 ```
 【检查点】：在压测机上循环查看接入汇总，必须等到 200 台全部接入并建立连接：

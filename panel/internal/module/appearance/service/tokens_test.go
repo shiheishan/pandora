@@ -15,7 +15,7 @@ import (
 
 type designToken struct{ name, light, dark string }
 
-// frontendColorTokens 从前端 design-tokens.ts 的 COLOR_TOKENS 里逐行取出 43 个令牌。
+// frontendColorTokens 从前端 design-tokens.ts 的 COLOR_TOKENS 里逐行取出 48 个令牌。
 func frontendColorTokens(t *testing.T) []designToken {
 	t.Helper()
 	src := readFile(t, filepath.Join("..", "..", "..", "..", "frontend", "src", "styles", "design-tokens.ts"))
@@ -24,8 +24,8 @@ func frontendColorTokens(t *testing.T) []designToken {
 	for _, m := range re.FindAllStringSubmatch(src, -1) {
 		out = append(out, designToken{m[1], m[2], m[3]})
 	}
-	if len(out) != 43 {
-		t.Fatalf("design-tokens.ts 解析出 %d 个颜色令牌，应为 43（格式变了就改这里的解析）", len(out))
+	if len(out) != 48 {
+		t.Fatalf("design-tokens.ts 解析出 %d 个颜色令牌，应为 48（格式变了就改这里的解析）", len(out))
 	}
 	return out
 }
@@ -40,7 +40,7 @@ func TestDesignTokenKeysMatchFrontend(t *testing.T) {
 	}
 }
 
-// 「默认 · 纸白」的两组取值必须与 design-tokens.ts 逐字一致，站点名是 Pandora。
+// 「默认 · 森林绿」（code paper）的两组取值必须与 design-tokens.ts 逐字一致，站点名是 Pandora。
 func TestPaperThemeSeedMatchesFrontend(t *testing.T) {
 	sqlText := readFile(t, filepath.Join("..", "..", "..", "..", "db", "migrations", "00029_appearance.sql"))
 	up := sqlText[strings.Index(sqlText, "+goose Up"):strings.Index(sqlText, "+goose Down")]
@@ -71,7 +71,7 @@ func TestPaperThemeSeedMatchesFrontend(t *testing.T) {
 		t.Fatalf("种子本身过不了保存校验：%v", err)
 	}
 	for _, need := range []string{
-		`'paper', '默认 · 纸白', true, true`,
+		`'paper', '默认 · 森林绿', true, true`,
 		`'{"site_name":"Pandora"}'::jsonb`,
 	} {
 		if !strings.Contains(up, need) {
@@ -80,8 +80,8 @@ func TestPaperThemeSeedMatchesFrontend(t *testing.T) {
 	}
 }
 
-// 旧前端 applySiteTheme 里的两道校验，原样复制过来（历史种子按它写）。
-// 新门户的白名单是 DesignTokenKeys，见本文件。
+// 主题 token 键名与取值的两道格式校验（迁移里的种子主题按它写）。
+// 门户的白名单是 DesignTokenKeys，见本文件。
 var (
 	themeTokenKeyRe = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
 	themeTokenBadRe = regexp.MustCompile(`[;{}<>]`)

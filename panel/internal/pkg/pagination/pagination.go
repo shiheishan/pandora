@@ -1,4 +1,4 @@
-// Package pagination 解析列表查询的分页参数并构造统一分页响应。
+// Package pagination 解析列表查询的分页参数（limit、offset）。
 package pagination
 
 import (
@@ -33,18 +33,4 @@ func Parse(c *gin.Context, def, max int) (limit, offset int, err error) {
 		limit = max
 	}
 	return limit, offset, nil
-}
-
-// Page 是分页列表的 JSON 形状。
-type Page[T any] struct {
-	Items []T   `json:"items"`
-	Total int64 `json:"total"`
-}
-
-// NewPage 构造分页响应；items 为 nil 时输出空数组。
-func NewPage[T any](items []T, total int64) Page[T] {
-	if items == nil {
-		items = []T{}
-	}
-	return Page[T]{Items: items, Total: total}
 }

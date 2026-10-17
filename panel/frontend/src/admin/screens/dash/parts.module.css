@@ -1,0 +1,95 @@
+/* ===========================================================================
+ * 仪表盘共用小件（parts.tsx，样稿 admin-v4 #p-dash）
+ * ========================================================================= */
+
+/* 分节：标题在卡片外（样稿 .blk / .sh） */
+.section {
+  margin-top: 40px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* 箭头链接（样稿 .link） */
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+/* 卡内空状态 */
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  padding: 24px 18px;
+}
+
+.emptyTitle {
+  font-size: 14px;
+  font-weight: var(--fw-medium);
+}
+
+.emptyText {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.emptyLink {
+  margin-top: var(--space-4);
+}
+
+/* 卡内出错与骨架 */
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 14px 18px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.skeletonStack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+}
+
+@media (max-width: 639px) {
+  .section {
+    margin-top: 32px;
+  }
+}

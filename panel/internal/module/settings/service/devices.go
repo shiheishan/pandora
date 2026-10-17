@@ -131,13 +131,14 @@ func (s *Service) DevicePolicy(ctx context.Context) (DevicePolicy, error) {
 	return decodeDevicePolicy(ctx, vals), nil
 }
 
-// SetDevicePolicy 在锁住本组各行的事务里合并、写入设备限制；有改动才写 devices.settings_changed 审计。
-func (s *Service) SetDevicePolicy(ctx context.Context, u DevicePolicyUpdate) error {
+// SetDevicePolicy 在锁住本组各行的事务里合并、写入设备限制；有改动才写 devices.settings_changed 审计。返回是否真的改了值。
+func (s *Service) SetDevicePolicy(ctx context.Context, u DevicePolicyUpdate) (bool, error) {
 	if err := ValidateDevicePolicyUpdate(u); err != nil {
-		return err
+		return false, err
 	}
 
-	return s.tx.Do(ctx, func(ctx context.Context) error {
+	var changed bool
+	err := s.tx.Do(ctx, func(ctx context.Context) error {
 		vals, err := s.store.LockValues(ctx, devicesKeys)
 		if err != nil {
 			return err
@@ -158,12 +159,20 @@ func (s *Service) SetDevicePolicy(ctx context.Context, u DevicePolicyUpdate) err
 		if err := s.writeChanges(ctx, changes); err != nil {
 			return err
 		}
-		return s.writeAudit(ctx, auditDevicesChanged, auditResourceSettings, map[string]any{
+		if err := s.writeAudit(ctx, auditDevicesChanged, auditResourceSettings, map[string]any{
 			"group":  "devices",
 			"before": b,
 			"after":  a,
-		})
+		}); err != nil {
+			return err
+		}
+		changed = true
+		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
 }
 
 // devicesMap 把设备策略摊成「键 → 存储值」。

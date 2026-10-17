@@ -3,8 +3,6 @@ import { readStrict } from './billing.ts'
 import { clientName, gate, linkUrl, newToken, portalState, subscriptionView } from './fixtures.ts'
 import { normalizeLabel } from './purchase.ts'
 
-// 节点接口只对这三种状态下发（subscription/service.go ListOwnedNodePreviews）
-const NODE_STATUSES = new Set(['active', 'trialing', 'grace'])
 const MINUTE_MS = 60_000
 const DAY_MS = 86_400_000
 
@@ -25,12 +23,10 @@ function rotateWait(perSub: number[], all: number[], now: number): number | null
 
 export const subs: MockModule = {
   routes: {
-    // 设计稿 2.9：每项多 label / client_name / changeable / renew_until，pack_remaining_bytes 是这一份自己的；
-    // 顶层 unattached_pack_bytes 是还没加到任何一份的流量包余量
     'GET /v1/me/subscriptions': async (ctx) => {
       if (!(await gate(ctx))) return
       const state = portalState(ctx.user.userId)
-      ctx.send(200, { subscriptions: state.subs.map(subscriptionView), unattached_pack_bytes: state.unattachedBytes })
+      ctx.send(200, { subscriptions: state.subs.map(subscriptionView) })
     },
 
     // 设计稿 2.8：改名不推进节点纪元；空串或 null 清除；同一用户下不区分大小写唯一，冲突 409
@@ -55,11 +51,10 @@ export const subs: MockModule = {
       if (!(await gate(ctx))) return
       const closedBefore = Date.now() - 30 * DAY_MS
       const links = portalState(ctx.user.userId)
-        .subs.filter((s) => s.token !== null && s.status !== 'cancelled' && !s.renewalClosed && (s.status !== 'expired' || new Date(s.current_period_end).getTime() > closedBefore))
+        .subs.filter((s) => s.token !== null && !s.renewalClosed && (s.status !== 'expired' || new Date(s.current_period_end).getTime() > closedBefore))
         .map((s) => ({
           subscription_id: s.id,
           url: linkUrl(s.token!),
-          expires_at: null,
           fetch_count: s.fetchCount,
           last_fetched_at: s.lastFetchedAt,
           distinct_sources_24h: s.sources24h,
@@ -68,11 +63,11 @@ export const subs: MockModule = {
       ctx.send(200, { links })
     },
 
-    // 不属于本人、状态不在 {active,trialing,grace}、没有有效凭据：一律 404
+    // 不属于本人、订阅不在生效中、没有有效凭据：一律 404（subscription/service nodes_preview.go）
     'GET /v1/me/subscriptions/:id/nodes': async (ctx) => {
       if (!(await gate(ctx))) return
       const sub = portalState(ctx.user.userId).subs.find((s) => s.id === ctx.params.id)
-      if (!sub || !NODE_STATUSES.has(sub.status) || sub.token === null) return ctx.fail(404, 'not_found', '资源不存在')
+      if (!sub || sub.status !== 'active' || sub.token === null) return ctx.fail(404, 'not_found', '资源不存在')
       ctx.res.setHeader('Cache-Control', 'no-store')
       ctx.send(200, { count: sub.nodes.length, nodes: sub.nodes })
     },

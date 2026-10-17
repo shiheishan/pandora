@@ -18,7 +18,7 @@ func TestPGRegistrationOpenNoVerify(t *testing.T) {
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, false)
 
 	email := uniqEmail(t, "New")
-	start, err := e.svc.StartRegistration(ctx, " "+strings.ToUpper(email)+" ", "")
+	start, err := e.svc.StartRegistration(ctx, " "+strings.ToUpper(email)+" ", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestPGRegistrationEmailVerify(t *testing.T) {
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, true)
 	email := uniqEmail(t, "verify")
 
-	start, err := e.svc.StartRegistration(ctx, email, "")
+	start, err := e.svc.StartRegistration(ctx, email, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestPGStartRegistrationExistingEmail(t *testing.T) {
 	e.mkUser(t, ctx, email, "Passw0rdLong1")
 
 	e.mailer.sent = nil
-	start, err := e.svc.StartRegistration(ctx, email, "")
+	start, err := e.svc.StartRegistration(ctx, email, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestPGRegistrationClosed(t *testing.T) {
 	e, ctx := newEnv(t)
 	admin := e.mkUser(t, ctx, uniqEmail(t, "clsadm"), "Passw0rdLong1")
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationClosed, false)
-	_, err := e.svc.StartRegistration(ctx, uniqEmail(t, "closed"), "")
+	_, err := e.svc.StartRegistration(ctx, uniqEmail(t, "closed"), "", "")
 	if !errors.Is(err, ErrRegistrationUnavailable) {
 		t.Fatalf("%v", err)
 	}
@@ -113,7 +113,7 @@ func TestPGRegistrationInviteOnly(t *testing.T) {
 	admin := e.mkUser(t, ctx, uniqEmail(t, "invadm"), "Passw0rdLong1")
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationInviteOnly, false)
 
-	_, err := e.svc.StartRegistration(ctx, uniqEmail(t, "noinv"), "")
+	_, err := e.svc.StartRegistration(ctx, uniqEmail(t, "noinv"), "", "")
 	if codeOf(err) != errs.Forbidden {
 		t.Fatalf("no invite: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestPGRegistrationInviteOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	newEmail := uniqEmail(t, "invited")
-	start, err := e.svc.StartRegistration(ctx, newEmail, inv.Code)
+	start, err := e.svc.StartRegistration(ctx, newEmail, inv.Code, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestPGPasswordResetFlow(t *testing.T) {
 	email := uniqEmail(t, "reset")
 	u := e.mkUser(t, ctx, email, "Passw0rdLong1")
 
-	_, err := e.svc.StartPasswordReset(ctx, email)
+	_, err := e.svc.StartPasswordReset(ctx, email, "")
 	if !errors.Is(err, ErrPasswordResetUnavailable) {
 		t.Fatalf("no smtp: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestPGPasswordResetFlow(t *testing.T) {
 	mailAdmin := e.mkUser(t, ctx, uniqEmail(t, "mailadm"), "Passw0rdLong1")
 	enableMail(t, asAdmin(ctx, mailAdmin.ID), e.settings)
 	e.mailer.sent = nil
-	start, err := e.svc.StartPasswordReset(ctx, email)
+	start, err := e.svc.StartPasswordReset(ctx, email, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestPGPasswordResetFlow(t *testing.T) {
 	code := start.DevCode
 
 	e.mailer.sent = nil
-	_, err = e.svc.StartPasswordReset(ctx, uniqEmail(t, "ghost"))
+	_, err = e.svc.StartPasswordReset(ctx, uniqEmail(t, "ghost"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestPGPasswordResetFlow(t *testing.T) {
 
 	e.staff.staff[u.ID] = true
 	e.mailer.sent = nil
-	_, err = e.svc.StartPasswordReset(ctx, email)
+	_, err = e.svc.StartPasswordReset(ctx, email, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,10 +361,10 @@ func TestPGRegistrationCodeRotationAndAttempts(t *testing.T) {
 	target := e.svc.targetHash(email)
 	const liveSQL = `SELECT count(*) FROM verification_codes WHERE purpose = 'email_verify' AND target_hash = ? AND consumed_at IS NULL AND expires_at > now()`
 
-	if _, err := e.svc.StartRegistration(ctx, email, ""); err != nil {
+	if _, err := e.svc.StartRegistration(ctx, email, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	second, err := e.svc.StartRegistration(ctx, email, "")
+	second, err := e.svc.StartRegistration(ctx, email, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestPGSelfAuditActor(t *testing.T) {
 	admin := e.mkUser(t, ctx, uniqEmail(t, "audadm"), "Passw0rdLong1")
 	setRegistration(t, asAdmin(ctx, admin.ID), e.settings, settingssvc.RegistrationOpen, false)
 
-	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "anon"), "")
+	start, err := e.svc.StartRegistration(ctx, uniqEmail(t, "anon"), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestPGSelfAuditActor(t *testing.T) {
 	}
 
 	other := e.mkUser(t, ctx, uniqEmail(t, "logged"), "Passw0rdLong1")
-	start2, err := e.svc.StartRegistration(ctx, uniqEmail(t, "withp"), "")
+	start2, err := e.svc.StartRegistration(ctx, uniqEmail(t, "withp"), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

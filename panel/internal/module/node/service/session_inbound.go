@@ -13,8 +13,9 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
+// log 是这条会话的 logger：server_id 已由 gRPC 鉴权拦截器挂在 ctx 的 logger 上，这里只加 session_id。
 func (s *Session) log(ctx context.Context) *zap.Logger {
-	return plog.From(ctx).With(zap.String("server_id", s.serverID.String()), zap.String("session_id", s.id))
+	return plog.From(ctx).With(zap.String("session_id", s.id))
 }
 
 // HandleHeartbeat 记一拍心跳：服务器的最后心跳时间（每拍写）、各节点运行状态（只在变化时写）、机器指标。
@@ -70,7 +71,7 @@ func (s *Session) HandleOnline(ctx context.Context, entries []OnlineEntry) {
 }
 
 // HandleRenew 用建流时出示的证书序列号与 CSR 续期，成功回 Certificate。certSerial 是建流时出示的证书序列号，
-// 续期只在它仍是这台服务器 active 那张时受理；证书剩余有效期还长或刚续过时面板拒绝（普通错误，只记日志，不断流）。
+// 续期只在它仍是这台服务器 active 那张时受理；证书剩余有效期还长或刚续过时面板拒绝（记 Warn，不断流）。
 // 身份已失效时对本会话 Tombstone；其它错误只记日志（节点稍后再试）。
 func (s *Session) HandleRenew(ctx context.Context, certSerial *big.Int, csrDER []byte) {
 	chain, ca, err := s.m.b.RenewCertificate(ctx, s.serverID, certSerial, csrDER)
@@ -78,6 +79,11 @@ func (s *Session) HandleRenew(ctx context.Context, certSerial *big.Int, csrDER [
 		if errors.Is(err, ErrSessionRevoked) {
 			s.log(ctx).Warn("续期时发现身份已失效，发 Tombstone")
 			s.Tombstone(TombstoneIdentityRevoked)
+			return
+		}
+		if errors.Is(err, errRenewTooEarly) || errors.Is(err, errRenewTooFrequent) {
+			// 剩余有效期还长、刚续过：面板按规则拒绝，节点稍后再试，不是故障
+			s.log(ctx).Warn("续期暂不受理", zap.Error(err))
 			return
 		}
 		s.log(ctx).Error("续期失败", zap.Error(err))

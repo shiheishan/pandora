@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -19,7 +20,7 @@ func validProviderSettings() ProviderSettings {
 }
 
 func TestNormalizeSettingsDefaults(t *testing.T) {
-	got, fields := normalizeSettings(validProviderSettings(), false)
+	got, fields := normalizeSettings(validProviderSettings(), AdapterEpay, false)
 	if len(fields) != 0 {
 		t.Fatalf("fields=%v", fields)
 	}
@@ -65,7 +66,7 @@ func TestNormalizeSettingsRejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := validProviderSettings()
 			tc.mutate(&in)
-			_, fields := normalizeSettings(in, tc.allow)
+			_, fields := normalizeSettings(in, AdapterEpay, tc.allow)
 			if fields[tc.field] == "" {
 				t.Fatalf("fields=%v, want error on %s", fields, tc.field)
 			}
@@ -73,7 +74,7 @@ func TestNormalizeSettingsRejects(t *testing.T) {
 	}
 	in := validProviderSettings()
 	in.BaseURL, in.AllowPrivateHost = "http://127.0.0.1:8080", true
-	if _, fields := normalizeSettings(in, true); len(fields) != 0 {
+	if _, fields := normalizeSettings(in, AdapterEpay, true); len(fields) != 0 {
 		t.Fatalf("dev private host fields=%v", fields)
 	}
 }
@@ -111,8 +112,8 @@ func TestResolveMethod(t *testing.T) {
 		}, "", "wxpay", false},
 		{"legacy default only", legacy, "alipay", "alipay", false},
 		{"legacy rejects other", legacy, "wxpay", "", true},
-		{"unconfigured empty", providerRecord{Adapter: AdapterDemo}, "", "", false},
-		{"unconfigured rejects named", providerRecord{Adapter: AdapterDemo}, "alipay", "", true},
+		{"unconfigured empty", providerRecord{Adapter: AdapterOffline}, "", "", false},
+		{"unconfigured rejects named", providerRecord{Adapter: AdapterOffline}, "alipay", "", true},
 		{"epay no methods", providerRecord{Adapter: AdapterEpay}, "", "", true},
 	}
 	for _, tc := range cases {
@@ -143,5 +144,98 @@ func TestProviderMethods(t *testing.T) {
 	empty := providerMethods(providerRecord{})
 	if len(empty) != 0 {
 		t.Fatalf("got=%v", empty)
+	}
+}
+
+func TestNormalizeSettingsCrypto(t *testing.T) {
+	btcpayIn := ProviderSettings{
+		DisplayName:   "BTCPay",
+		BaseURL:       "https://btcpay.example.test",
+		SubmitPath:    "/x",
+		Methods:       []string{"alipay"},
+		MerchantID:    "STORE1",
+		Key:           "fake-api-key",
+		WebhookSecret: "fake-hook-secret",
+	}
+	got, fields := normalizeSettings(btcpayIn, AdapterBTCPay, false)
+	if len(fields) != 0 {
+		t.Fatalf("btcpay fields=%v", fields)
+	}
+	if got.submitPath != "" || got.apiPath != "" || len(got.methods) != 0 || got.defaultMethod != "" {
+		t.Fatalf("btcpay paths/methods not cleared: submit=%q api=%q methods=%v default=%q",
+			got.submitPath, got.apiPath, got.methods, got.defaultMethod)
+	}
+
+	btcpayHTTP := btcpayIn
+	btcpayHTTP.BaseURL = "http://btcpay.example.test"
+	_, fields = normalizeSettings(btcpayHTTP, AdapterBTCPay, false)
+	if fields["base_url"] == "" {
+		t.Fatalf("http without private fields=%v", fields)
+	}
+
+	cpIn := ProviderSettings{
+		DisplayName: "CoinPayments",
+		MerchantID:  "CLIENT1",
+		Key:         "fake-secret",
+	}
+	got, fields = normalizeSettings(cpIn, AdapterCoinPayments, false)
+	if len(fields) != 0 {
+		t.Fatalf("coinpayments fields=%v", fields)
+	}
+	if got.baseURL != "https://a-api.coinpayments.net" {
+		t.Fatalf("coinpayments default baseURL=%q", got.baseURL)
+	}
+}
+
+func TestNormalizeSettingsFee(t *testing.T) {
+	in := validProviderSettings()
+	got, fields := normalizeSettings(in, AdapterEpay, false)
+	if len(fields) != 0 {
+		t.Fatalf("fields=%v", fields)
+	}
+	if got.feeFixedSet || got.feePercentSet {
+		t.Fatalf("nil fees should not set: fixed=%v percent=%v", got.feeFixedSet, got.feePercentSet)
+	}
+
+	ff := decimal.RequireFromString("0.30")
+	fp := decimal.RequireFromString("2.5")
+	in.FeeFixed = &ff
+	in.FeePercent = &fp
+	got, fields = normalizeSettings(in, AdapterEpay, false)
+	if len(fields) != 0 {
+		t.Fatalf("valid fee fields=%v", fields)
+	}
+	if !got.feeFixedSet || !got.feePercentSet || !got.feeFixed.Equal(ff) || !got.feePercent.Equal(fp) {
+		t.Fatalf("fee got fixed=%s/%v percent=%s/%v", got.feeFixed, got.feeFixedSet, got.feePercent, got.feePercentSet)
+	}
+
+	badFixed := []string{"1000.01", "-0.01", "0.001"}
+	for _, s := range badFixed {
+		in := validProviderSettings()
+		d := decimal.RequireFromString(s)
+		in.FeeFixed = &d
+		_, fields := normalizeSettings(in, AdapterEpay, false)
+		if fields["fee_fixed"] == "" {
+			t.Fatalf("fee_fixed %s fields=%v", s, fields)
+		}
+	}
+	badPercent := []string{"100.01", "0.001"}
+	for _, s := range badPercent {
+		in := validProviderSettings()
+		d := decimal.RequireFromString(s)
+		in.FeePercent = &d
+		_, fields := normalizeSettings(in, AdapterEpay, false)
+		if fields["fee_percent"] == "" {
+			t.Fatalf("fee_percent %s fields=%v", s, fields)
+		}
+	}
+}
+
+func TestNormalizeSettingsWebhookSecretLimit(t *testing.T) {
+	in := validProviderSettings()
+	in.WebhookSecret = strings.Repeat("a", 257)
+	_, fields := normalizeSettings(in, AdapterBTCPay, false)
+	if fields["webhook_secret"] == "" {
+		t.Fatalf("fields=%v", fields)
 	}
 }

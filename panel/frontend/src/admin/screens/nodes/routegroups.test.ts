@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { groupCreateBody, groupFormErrors, groupFormFrom, groupPatchBody, referenceOutbounds, renameOutbound, rulesUsing, sameIds, sourceLabel, sourceTone } from './logic'
+import { outboundAddress } from './routing'
 import { effectiveRoutingSchema, nodeRoutingSchema, routeGroupsResponse } from './schemas'
 
 const G = { id: '0199a000-0000-7000-8000-000000000001', name: '香港 · 解锁', description: '', sort_order: 10, row_version: 3 }
@@ -45,8 +46,8 @@ describe('route group references and sources', () => {
 
   it('counts and renames references exactly, like the backend and pdnd', () => {
     const rows = [
-      { kind: 'port' as const, value: '1', outbound: 'HK', enabled: true, note: '' },
-      { kind: 'port' as const, value: '2', outbound: 'hk', enabled: true, note: '' },
+      { kind: 'domain_suffix' as const, value: '1', outbound: 'HK', enabled: true, note: '' },
+      { kind: 'domain_suffix' as const, value: '2', outbound: 'hk', enabled: true, note: '' },
     ]
     expect(rulesUsing(rows, ' HK ')).toBe(1)
     expect(renameOutbound(rows, 'HK', 'HK-2').map((r) => r.outbound)).toEqual(['HK-2', 'hk'])
@@ -73,5 +74,23 @@ describe('route group schemas', () => {
     })
     expect(eff.routes[0]!.source.group_name).toBeUndefined()
     expect(() => effectiveRoutingSchema.parse({ groups: [], outbounds: [], routes: [{ matcher: {}, outbound: 'x', source: { scope: 'pool' } }] })).toThrow()
+  })
+})
+
+describe('outbound address column', () => {
+  it('reads server and server_port, falls back to port, brackets IPv6', () => {
+    expect(outboundAddress({ server: 'proxy.example.com', server_port: 443 })).toBe('proxy.example.com:443')
+    expect(outboundAddress({ server: 'proxy.example.com', port: '8388' })).toBe('proxy.example.com:8388')
+    expect(outboundAddress({ server: 'proxy.example.com', server_port: 443, port: 80 })).toBe('proxy.example.com:443')
+    expect(outboundAddress({ server: 'proxy.example.com' })).toBe('proxy.example.com')
+    expect(outboundAddress({ server: '2001:db8::1', server_port: 51820 })).toBe('[2001:db8::1]:51820')
+  })
+
+  it('shows a dash when there is no server', () => {
+    expect(outboundAddress({})).toBe('—')
+    expect(outboundAddress({ server: '  ', server_port: 1 })).toBe('—')
+    expect(outboundAddress(null)).toBe('—')
+    expect(outboundAddress([])).toBe('—')
+    expect(outboundAddress('proxy.example.com')).toBe('—')
   })
 })

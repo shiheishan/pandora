@@ -2,6 +2,7 @@
   display: inline-flex;
   align-items: center;
   gap: 9px;
+  color: var(--text);
 }
 
 .img {
@@ -11,9 +12,22 @@
 }
 
 .word {
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-wordmark);
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
   white-space: nowrap;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: var(--brand-mark);
+  align-self: flex-end;
+  margin-bottom: 0.18em;
+  flex: none;
 }
 
 .stack {

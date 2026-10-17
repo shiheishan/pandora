@@ -1,213 +1,280 @@
-/* 侧栏内的中性层次取自 管理后台.dc.html 外壳（规范只收了 --sidebar* 五个令牌），
- * 这里把它们映射到 ui 组件读的语义令牌上，账户菜单因此不必另写一套 */
-.sidebar {
-  --surface: #1f1f23;
-  --surface-2: #1b1b1f;
-  --surface-3: #2a2a2f;
-  --border: #303036;
-  --border-strong: #2a2a2f;
-  --text: #d9d7d1;
-  --text-2: #9a988f;
-  --text-3: #6d6b66;
-  --shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-  --focus-ring: var(--sidebar-text);
-  --danger: #f07a86;
-  --danger-tint: #2a2a2f;
-
+.side {
+  --side-w: 232px;
+  position: sticky;
+  top: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px 10px;
-  overflow-y: auto;
-  background: var(--sidebar);
-  color: var(--sidebar-text-2);
+  width: var(--side-w);
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  /* 侧栏里的弹层（实时动态、账户菜单）要盖住右边内容里的定位元素 */
+  z-index: 20;
 }
 
-.brand {
+.team {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 4px 8px;
+  gap: 10px;
+  margin: 10px 10px 6px;
+  padding: 6px 8px;
+  min-width: 0;
 }
 
-.logo {
-  color: var(--sidebar-text);
-  font-size: var(--fs-body);
-  --logo-dot: var(--sidebar-brand);
+.team b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
 }
 
-.release {
-  margin-left: auto;
-  padding: 1px 5px;
-  border: 1px solid #2c2c31;
-  border-radius: 4px;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+.badge {
+  font-size: 11px;
+  font-weight: var(--fw-medium);
+  padding: 0 6px;
+  height: 18px;
+  line-height: 16px;
+  border-radius: 99px;
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+  flex: none;
 }
 
-.search {
+.find {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 2px 10px 10px;
+  padding: 0 6px 0 10px;
   height: 32px;
-  padding: 0 10px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: #8f8d87;
+  background: var(--surface);
+  color: var(--text-3);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: text;
   text-align: left;
-  cursor: pointer;
 }
 
-.search:hover {
-  border-color: #3a3a40;
-  color: #c9c7c1;
+.find:hover {
+  border-color: var(--border-hover);
 }
 
-.search > span {
+.find span {
   flex: 1;
 }
 
-.kbd {
+.find kbd {
+  font: 11px var(--font-mono);
+  min-width: 20px;
+  height: 20px;
   padding: 0 5px;
-  border: 1px solid #34343a;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+  display: inline-grid;
+  place-items: center;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
 .nav {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  overflow-y: auto;
+  padding: 0 10px 10px;
+  scrollbar-width: none;
 }
 
-.group {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.groupLabel {
-  padding: 0 10px 4px;
+.grp {
+  margin: 0;
+  font-size: 12px;
   color: var(--text-3);
-  font-size: var(--fs-caption);
-  letter-spacing: 0.04em;
+  padding: 16px 8px 4px;
 }
 
-.item {
+.na {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   height: 32px;
-  padding: 0 10px;
-  border-radius: var(--radius-sm);
-  color: var(--sidebar-text-2);
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--text-2);
+  font-size: 13.5px;
   text-decoration: none;
 }
 
-.item:hover {
-  background: #222226;
-  color: var(--sidebar-text);
+.na:hover {
+  background: var(--surface-2);
+  color: var(--text);
   text-decoration: none;
 }
 
-.on,
-.on:hover {
-  background: var(--sidebar-active);
-  color: var(--sidebar-text);
+.na[aria-current='page'] {
+  background: var(--surface-3);
+  color: var(--text);
   font-weight: var(--fw-medium);
 }
 
-.dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 2px;
-  background: #3a3a40;
+.na:focus-visible {
+  outline-offset: -2px;
 }
 
-.on .dot {
-  background: var(--sidebar-brand);
+.ct {
+  margin-left: auto;
+  font: 12px var(--font-mono);
+  color: var(--text-3);
 }
 
-.itemLabel {
-  flex: 1;
+.hot {
+  color: var(--danger);
 }
 
-.badge {
-  min-width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: #3a231c;
-  color: #f2a58f;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+.alert {
+  display: block;
+  margin: 8px 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--danger-line);
+  background: var(--danger-soft);
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-decoration: none;
 }
 
-.account {
+.alert:hover {
+  border-color: var(--danger);
+  color: var(--text-2);
+  text-decoration: none;
+}
+
+.alert b {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 2px;
+  font-weight: var(--fw-medium);
 }
 
-.accountButton {
-  width: 100%;
-  gap: 10px;
-  padding: 8px;
-  border-radius: 8px;
-  text-align: left;
-}
-
-.accountButton:hover {
-  background: var(--surface);
-}
-
-.accountMenu {
-  width: auto;
-  left: 0;
-  right: 0;
-  padding: 5px;
-  border-radius: 9px;
-}
-
-.avatar {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  display: grid;
-  place-items: center;
+.alert b i {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #2d1b16;
-  color: #f2a58f;
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-semibold);
+  background: var(--danger);
 }
 
-.who {
+.foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.acctWrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.acct {
   flex: 1;
   min-width: 0;
   display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.acct:hover {
+  background: var(--surface-2);
+}
+
+.acct:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.acctName {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acctMenu {
+  width: calc(var(--side-w) - 20px);
+}
+
+.mh {
+  display: flex;
   flex-direction: column;
 }
 
-.whoTitle {
-  color: #e9e8e4;
-  font-size: var(--fs-caption);
+.mh b {
+  font-size: 13.5px;
   font-weight: var(--fw-medium);
 }
 
-.whoSub {
+.mh small {
+  font-size: 12.5px;
+  color: var(--text-2);
   overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  white-space: nowrap;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.more {
-  color: var(--text-3);
+.ib {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-2);
+  flex: none;
+  text-decoration: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.ib:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+a.ib:hover {
+  text-decoration: none;
+}
+
+@media (max-width: 959px) {
+  .side {
+    --side-w: 272px;
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 35;
+    transform: translateX(-100%);
+    transition: transform 0.2s;
+  }
+
+  .open {
+    transform: none;
+    box-shadow: var(--shadow);
+  }
+}
+
+@media (max-width: 959px) and (prefers-reduced-motion: reduce) {
+  .side {
+    transition: none;
+  }
 }

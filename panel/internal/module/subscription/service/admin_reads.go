@@ -39,9 +39,8 @@ func (s *Service) AdminSubs(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 			}
 		}
 		out[uid] = identitysvc.AdminUserSubs{
-			Subscriptions:       subs,
-			Current:             current,
-			UnattachedPackBytes: us.UnattachedPackBytes,
+			Subscriptions: subs,
+			Current:       current,
 		}
 	}
 	return out, nil
@@ -74,6 +73,7 @@ func adminSubFrom(sm Summary, online int) identitysvc.AdminSub {
 	for _, q := range sm.Quotas {
 		quotas = append(quotas, identitysvc.AdminQuota{
 			Metric:    q.Metric,
+			Period:    q.Period,
 			Limit:     q.Limit,
 			Consumed:  q.Consumed,
 			Remaining: q.Remaining,
@@ -89,11 +89,9 @@ func adminSubFrom(sm Summary, online int) identitysvc.AdminSub {
 		PeriodStart:         sm.PeriodStart,
 		PeriodEnd:           sm.PeriodEnd,
 		Amount:              sm.Price.Amount,
-		Currency:            string(sm.Price.Currency),
 		Quotas:              quotas,
 		DeviceLimitOverride: sm.DeviceLimit,
 		PlanMaxDevices:      sm.PlanMaxDevices,
 		OnlineDevices:       online,
-		PackRemainingBytes:  sm.PackRemainingBytes,
 	}
 }

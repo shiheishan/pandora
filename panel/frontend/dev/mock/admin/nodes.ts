@@ -3,6 +3,20 @@ import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 import { canonicalTag, emptyBody, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
 import { copyMemberships, groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
+import {
+  applyXB,
+  GI,
+  TI,
+  type XBHost,
+  type XBState,
+  XB_BODY_KEYS,
+  XB_EXCEEDED_NOTE,
+  xbAdmin,
+  xbDefaults,
+  xbErrors,
+  xbRoutes,
+  xbRow,
+} from './nodes-xb.ts'
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -29,14 +43,13 @@ interface Node {
   node_no: number
   row_version: number
   name: string
-  status: string
+  deleted: boolean
   serving_status: string
   server_id: string | null
   pool_id: string | null
   node_type: string | null
   server_host: string | null
   server_port: number | null
-  kernel: string
   traffic_rate: number
   display_name: string | null
   country_code: string | null
@@ -51,8 +64,8 @@ interface Node {
   created_at: string
   updated_at: string
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Array<Json> }
-  serverToken: { present: boolean; issued_at?: string; issued_by?: string; issued_by_name?: string }
   identityRevoked: boolean
+  xb: XBState
 }
 
 let nodeNo = 100
@@ -64,12 +77,11 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     id: randomUUID(),
     node_no: nodeNo,
     row_version: 3,
-    status: p.serving_status === 'draft' ? 'draft' : p.serving_status === 'retired' ? 'retired' : 'active',
+    deleted: false,
     server_id: serverAt(server).id,
     pool_id: pools[0]!.id,
-    server_host: `n${nodeNo}.pandora.run`,
+    server_host: `n${nodeNo}.example.test`,
     server_port: 443,
-    kernel: 'auto',
     traffic_rate: 1,
     display_name: null,
     country_code: null,
@@ -84,45 +96,110 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     created_at: created,
     updated_at: created,
     routing: { outbounds: [], routes: [] },
-    serverToken: { present: true, issued_at: ago(86400 * 20), issued_by: randomUUID(), issued_by_name: '林舟' },
     identityRevoked: false,
+    xb: xbDefaults(),
     ...p,
   }
 }
 const store: Node[] = [
-  node({ name: '香港 01 · 原生', node_type: 'vless', serving_status: 'active', country_code: 'HK', online_users: 412, online_ips: 530, traffic_bytes_24h: Math.round(1.8 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, flow: 'xtls-rprx-vision', reality_settings: { dest: 'www.microsoft.com:443', server_name: 'www.microsoft.com', public_key: 'Hx3mQe9Z2y5rTq8WkVbN1cXyL0pOaSdFgHjK7uIoP4A', short_id: '6ba85179' } } }, 0),
-  node({ name: '香港 02 · IPLC', node_type: 'hysteria2', serving_status: 'active', country_code: 'HK', server_port: 8443, online_users: 288, online_ips: 301, traffic_bytes_24h: Math.round(1.12 * 1024 * GB), protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', 'bandwidth': { up: 200, down: 1000 } } }, 0),
+  node(
+    {
+      name: '香港 01 · 原生',
+      node_type: 'vless',
+      serving_status: 'active',
+      country_code: 'HK',
+      online_users: 412,
+      online_ips: 530,
+      traffic_bytes_24h: Math.round(1.8 * 1024 * GB),
+      protocol_config: { network: 'tcp', tls: 2, flow: 'xtls-rprx-vision', reality_settings: { dest: 'www.microsoft.com:443', server_name: 'www.microsoft.com', public_key: 'Hx3mQe9Z2y5rTq8WkVbN1cXyL0pOaSdFgHjK7uIoP4A', short_id: '6ba85179' } },
+      xb: { ...xbDefaults(), tags: ['香港', '原生'], limit_bytes: 2 * TI, used_bytes: Math.round(1.2 * TI), reset_day: 1 },
+    },
+    0,
+  ),
+  node(
+    {
+      name: '香港 02 · IPLC',
+      node_type: 'hysteria2',
+      serving_status: 'active',
+      country_code: 'HK',
+      server_port: 8443,
+      online_users: 288,
+      online_ips: 301,
+      traffic_bytes_24h: Math.round(1.12 * 1024 * GB),
+      protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', bandwidth: { up: 200, down: 1000 } },
+      xb: {
+        ...xbDefaults(),
+        tags: ['香港', 'IPLC'],
+        schedule: [{ start: '00:00', end: '08:00', rate: 0.5 }],
+        relays: [
+          {
+            id: 'a1000001-0000-4000-8000-000000000001',
+            name: '香港 02 · 中转 A',
+            server_host: 'relay-hk-a.example.test',
+            server_port: 443,
+            sni: null,
+            host_header: null,
+            enabled: true,
+            sort_order: 0,
+            row_version: 1,
+            created_at: ago(86400 * 14),
+            updated_at: ago(86400 * 14),
+          },
+          {
+            id: 'a1000001-0000-4000-8000-000000000002',
+            name: '香港 02 · 中转 B',
+            server_host: 'relay-hk-b.example.test',
+            server_port: 8443,
+            sni: 'n102.example.test',
+            host_header: null,
+            enabled: false,
+            sort_order: 10,
+            row_version: 1,
+            created_at: ago(86400 * 13),
+            updated_at: ago(86400 * 13),
+          },
+        ],
+      },
+    },
+    0,
+  ),
   node({ name: '东京 03', node_type: 'trojan', serving_status: 'active', country_code: 'JP', online_users: 356, online_ips: 402, traffic_bytes_24h: Math.round(1.49 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } } }, 1),
   node({ name: '新加坡 02', node_type: 'shadowsocks', serving_status: 'active', country_code: 'SG', server_port: 8388, last_heartbeat_at: ago(900), online_users: 0, traffic_bytes_24h: 864 * GB, protocol_config: { cipher: 'aes-256-gcm' } }, 2),
-  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'draining', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' } }, 3),
+  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' }, xb: { ...xbDefaults(), tags: ['流媒体'], limit_bytes: 500 * GI, used_bytes: 540 * GI, reset_day: 20, exceeded_at: ago(86400) } }, 3),
   node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
-  node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, serverToken: { present: false }, protocol_config: {} }, 2),
+  node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, protocol_config: {} }, 2),
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
   // R105：在役但没划进节点池，不服务任何用户
   node({ name: '香港 03（未入池）', node_type: 'shadowsocks', serving_status: 'active', country_code: 'HK', server_port: 8389, pool_id: null, protocol_config: { cipher: 'aes-256-gcm' } }, 0),
-  // R108：新服务器（大阪，草稿）上刚接入完的节点，生命周期停在 attesting，等「上线」一步推到 active
-  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  // R108：新服务器（大阪，草稿）上刚接入完的草稿节点，等「上线」一步推到 active
+  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
   // R113：同一台新服务器上、划进还没绑套餐的新池的节点——首次搭建的常态，上线成功但带 warnings
-  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  node(
+    {
+      name: '法兰克福 01 · ECH',
+      node_type: 'trojan',
+      serving_status: 'active',
+      country_code: 'DE',
+      protocol_config: { network: 'tcp', tls: 1, cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' },
+      xb: {
+        ...xbDefaults(),
+        tags: ['欧洲'],
+        ech: { public_name: 'ech.example.test', config_list: 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU2Nzg5QUJDREVGR0g=', created_at: ago(86400 * 3) },
+      },
+    },
+    4,
+  ),
 ]
-keepAlive(store, (n) => n.serving_status !== 'retired' && n.status !== 'destroyed' && !n.identityRevoked)
+keepAlive(store, (n) => n.serving_status !== 'retired' && !n.deleted && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }
 
 const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
 
-// R108：接入尾段的生命周期（attesting 之后、active 之前），「上线」按 00005 的合法边逐条推进到 active
-const ACTIVATABLE = ['attesting', 'installing', 'validating', 'standby', 'canary']
 // 服务器状态机里能进 ready 的状态（已 ready 的不动）
 const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
 
-/** nodefabric.activateRefusal：不在接入尾段时为什么不能上线 */
-function activateRefusal(status: string): string {
-  if (['draft', 'provisioning', 'bootstrapping'].includes(status)) return `节点还没完成接入（${status}），等接入提交后再上线`
-  if (['provisioning_failed', 'bootstrap_failed', 'destroy_failed', 'quarantined', 'retired'].includes(status)) return `节点处于 ${status}，不能上线；需要重新接入或先处理这个状态`
-  return `节点处于 ${status}，不在接入尾段，请用启用或状态操作恢复服务`
-}
-
-/** nodefabric.activationWarnings：上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113） */
+/** 上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113；见 node/service 的 nodeNoPoolWarning） */
 function activationWarnings(n: Node): string[] {
   if (n.pool_id === null) return [NO_POOL_NOTE]
   return pools.find((p) => p.id === n.pool_id)?.plans.length ? [] : ['所在节点池没有绑定任何套餐，暂时不服务任何用户']
@@ -130,7 +207,7 @@ function activationWarnings(n: Node): string[] {
 
 // subscription.DeliveryState / NodeDeliveryFacts.Refine 的文案，与 Go 一字不差
 const DELIVERY_NOTES = {
-  notActive: '服务状态不是 active，不下发',
+  notActive: '节点不在服务中（草稿、已停用或已退役）',
   neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
   stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
   serverNotReady: '所属服务器未就绪或已删除，不下发',
@@ -141,8 +218,8 @@ const STABLE_TYPES = new Set(SCHEMAS.filter((s) => s.status === 'stable').map((s
 
 /** subscription.DeliverableNodeSQL 的镜像：与用户、套餐都无关的节点自身条件 */
 function deliverable(n: Node): boolean {
+  if (n.xb.exceeded_at !== null) return false
   const srv = servers.find((s) => s.id === n.server_id)
-  // 假后端的服务器没有控制节点（control_node_id 恒为 null），Go 里那一条在这里恒真
   if (!srv || srv.status !== 'ready') return false
   const port = n.server_port ?? 0
   const host = n.server_host || srv.public_ipv4 || ''
@@ -157,6 +234,7 @@ function deliveryOf(n: Node): { delivered: boolean; note: string } {
   if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
   if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
   if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
+  if (n.xb.exceeded_at) return { delivered: false, note: XB_EXCEEDED_NOTE }
   if (!deliverable(n)) {
     const srv = servers.find((s) => s.id === n.server_id)
     return { delivered: false, note: srv?.status === 'ready' ? DELIVERY_NOTES.nodeNotReady : DELIVERY_NOTES.serverNotReady }
@@ -177,7 +255,6 @@ function listRow(n: Node) {
     node_no: n.node_no,
     row_version: n.row_version,
     name: n.name,
-    status: n.status,
     serving_status: n.serving_status,
     server_id: n.server_id,
     server_name: srv?.name ?? null,
@@ -189,14 +266,13 @@ function listRow(n: Node) {
     cpu_cores: 4,
     memory_mb: 4096,
     disk_gb: 80,
-    health_score: n.last_heartbeat_at ? 96 : null,
-    applied_config_version: n.last_heartbeat_at ? 42 : null,
-    desired_config_version: n.serving_status === 'retired' ? null : 42,
     last_heartbeat_at: n.last_heartbeat_at,
     stale,
     delivered_to_users: delivered,
     delivery_note: note,
     identity_serial: n.identity_serial,
+    // 与 service.nodeMovableState 同口径：假后端里草稿不会回到草稿，草稿就等于从没服务过（不看服务器心跳与身份）
+    movable: n.serving_status === 'draft',
     created_at: n.created_at,
     node_type: n.node_type,
     server_host: n.server_host,
@@ -211,23 +287,22 @@ function listRow(n: Node) {
     mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
     metrics_at: cpu === null ? null : ago(20),
     granted_plans: pool?.plans.length ? pool.plans : null,
+    ...xbRow(n.xb),
   }
 }
 
-/** GET v1/nodes?id= 的一行：列表行加上编辑表单才用的字段（nodefabric.AdminNodeDetail） */
+/** GET v1/nodes?id= 的一行：列表行加上编辑表单才用的字段（对应 node/handler 的 nodeDetailResponse） */
 function detailRow(n: Node) {
   return {
     ...listRow(n),
     traffic_rate: n.traffic_rate,
-    kernel: n.kernel,
     protocol_config: redact(n.protocol_config),
     protocol_schema_version: n.protocol_schema_version,
     config_validated_at: n.node_type ? n.updated_at : null,
-    traffic_bytes: n.traffic_bytes_24h * 30,
   }
 }
 
-/** nodefabric.AdminNodeStates 与 adminNodeFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
+/** node/repo 的 nodeListFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
 const NODE_STATES = ['all', 'online', 'offline', 'disabled', 'retired']
 function matchesState(n: Node, state: string): boolean {
   const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
@@ -235,7 +310,7 @@ function matchesState(n: Node, state: string): boolean {
     case 'all':
       return n.serving_status !== 'retired'
     case 'online':
-      return n.serving_status === 'draining' || (n.serving_status === 'active' && !stale)
+      return n.serving_status === 'active' && !stale
     case 'offline':
       return n.serving_status === 'active' && stale
     case 'disabled':
@@ -254,7 +329,7 @@ function matchesSearch(n: Node, q: string): boolean {
   return hay.includes(q.toLowerCase())
 }
 
-/** nodefabric.RedactProtocolConfig：按名字在任意深度删掉敏感键 */
+/** 按名字在任意深度删掉敏感键（node/protocol 的 Redact 与 sensitiveProtocolKey） */
 // R107：mask_password（mKCP）也在抹敏名单里
 const SENSITIVE = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password', 'mask_password'])
 // R107：跟着开关走的密钥——请求里带了开关键且值没变时才从库里补回（关掉掩码、去掉开关、切出 mKCP 都不补）
@@ -287,10 +362,11 @@ function redact(value: unknown): unknown {
 function adminNode(n: Node, warnings?: string[]) {
   const pick = <K extends keyof Node>(...keys: K[]) => Object.fromEntries(keys.map((k) => [k, n[k]]))
   return {
-    ...pick('id', 'row_version', 'name', 'server_id', 'pool_id', 'status', 'serving_status', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'display_name', 'country_code', 'protocol_schema_version', 'sort_order', 'created_at', 'updated_at'),
+    ...pick('id', 'row_version', 'name', 'server_id', 'pool_id', 'serving_status', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'country_code', 'protocol_schema_version', 'sort_order', 'created_at', 'updated_at'),
     protocol_config: redact(n.protocol_config),
     config_validated_at: n.updated_at,
     ...(warnings?.length ? { warnings } : {}),
+    ...xbAdmin(n.xb),
   }
 }
 
@@ -321,10 +397,9 @@ function validateProtocol(nodeType: string, config: unknown): Record<string, str
 }
 
 const EDGES: Readonly<Record<string, readonly string[]>> = {
-  draft: ['active', 'disabled', 'retired'],
-  active: ['draining', 'disabled'],
-  draining: ['active', 'disabled', 'retired'],
-  disabled: ['draft', 'active', 'retired'],
+  draft: ['active', 'retired'],
+  active: ['disabled', 'retired'],
+  disabled: ['active', 'retired'],
   retired: [],
 }
 
@@ -341,15 +416,66 @@ function basicErrors(body: Json, creating: boolean): Record<string, string> {
   return f
 }
 
-const findNode = (id: string | undefined) => store.find((n) => n.id === id && n.status !== 'destroyed')
+const findNode = (id: string | undefined) => store.find((n) => n.id === id && !n.deleted)
 
 /** 只给 tests/mock-admin-nodes.test.ts 核对 R106 / R107 的补回：接口永远抹掉敏感键，测试只能从库里看 */
+/** 没删除的节点 id（实时事件模拟取真实行用，见 events.ts） */
+export const liveNodeIds = () => store.filter((n) => !n.deleted).map((n) => n.id)
 export const storedProtocolConfig = (id: string) => structuredClone(findNode(id)?.protocol_config ?? null)
 const touch = (n: Node) => {
   n.row_version += 1
   n.updated_at = new Date().toISOString()
 }
 const conflict = (n: Node) => err(409, 'conflict', '节点已被其他人修改，请刷新后重试', { row_version: `current=${n.row_version}` })
+
+function validateListTag(raw: string): { ok: true; tag: string } | { ok: false; fields: Record<string, string> } {
+  const tag = raw.trim()
+  if (!tag) return { ok: true, tag: '' }
+  for (const ch of tag) {
+    const c = ch.codePointAt(0)!
+    if (c <= 0x1f || c === 0x7f) return { ok: false, fields: { tag: '标签最多 16 个字、不能含控制字符' } }
+  }
+  if ([...tag].length > 16) return { ok: false, fields: { tag: '标签最多 16 个字、不能含控制字符' } }
+  return { ok: true, tag }
+}
+
+/** 批量/PATCH 共用的可改字段校验（pool_id、traffic_rate、XB 字段） */
+function patchErrors(n: Node, set: Json): Record<string, string> | null {
+  const f: Record<string, string> = {}
+  if ('pool_id' in set) {
+    const pid = text(set.pool_id)
+    if (pid && !pools.some((p) => p.id === pid)) f.pool_id = '资源池不存在'
+    if (!pid && n.serving_status === 'active') f.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
+  }
+  if ('traffic_rate' in set && !(Number(set.traffic_rate) > 0)) f.traffic_rate = '必须大于 0'
+  const xbBody: Json = {}
+  for (const k of XB_BODY_KEYS) if (k in set) xbBody[k] = set[k]
+  Object.assign(f, xbErrors(xbBody))
+  return Object.keys(f).length ? f : null
+}
+
+function patchApply(n: Node, set: Json): void {
+  if ('pool_id' in set) n.pool_id = set.pool_id === null || set.pool_id === '' ? null : text(set.pool_id)
+  if ('traffic_rate' in set) n.traffic_rate = Number(set.traffic_rate)
+  applyXB(n.xb, set)
+}
+
+/** 与 POST /v1/nodes/status:batch 相同的状态边校验；null = 通过（此时不改状态） */
+function batchStatusCheck(rows: Node[], to: string): MockResult | null {
+  if (!(to in EDGES)) return invalid({ serving_status: '不支持的服务状态' })
+  for (const n of rows) {
+    if (!EDGES[n.serving_status]!.includes(to)) return err(409, 'conflict', '不允许的节点服务状态转换', { serving_status: `${n.serving_status} -> ${to}` })
+    if (to === 'active' && (!n.node_type || servers.find((s) => s.id === n.server_id)?.status !== 'ready')) return err(409, 'conflict', '节点协议或服务器状态未满足启用条件')
+  }
+  return null
+}
+
+function batchApplyStatus(rows: Node[], to: string): void {
+  for (const n of rows) {
+    n.serving_status = to
+    touch(n)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 路由
@@ -358,23 +484,35 @@ export const nodes: MockModule = {
   routes: {
     ...infraRoutes(store),
     ...routeGroupRoutes(store),
+    ...xbRoutes({
+      find: (id) => (id === undefined ? undefined : findNode(id)),
+      list: () => store.filter((n) => !n.deleted) as XBHost[],
+      batchPatch: (n, set) => patchErrors(n as Node, set),
+      batchApply: (n, set) => patchApply(n as Node, set),
+      batchStatus: (rows, to) => batchStatusCheck(rows as Node[], to),
+      batchApplyStatus: (rows, to) => batchApplyStatus(rows as Node[], to),
+    }),
     'GET /v1/node-protocol-schemas': (ctx) => {
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
     },
     'GET /v1/nodes': (ctx) => {
-      // nodefabric.validateAdminNodeQuery：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
+      // 节点列表查询校验：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
       const state = ctx.query.get('state') ?? ''
       const q = (ctx.query.get('q') ?? '').trim()
       const id = (ctx.query.get('id') ?? '').trim()
       if (state && !NODE_STATES.includes(state)) return reply(ctx, invalid({ state: '只能是 all、online、offline、disabled、retired 之一' }))
       if ([...q].length > 120) return reply(ctx, invalid({ q: '搜索词太长' }))
       if (id && !UUID.test(id)) return reply(ctx, invalid({ id: '格式不正确' }))
+      const tagRaw = ctx.query.get('tag') ?? ''
+      const tagParsed = validateListTag(tagRaw)
+      if (!tagParsed.ok) return reply(ctx, invalid(tagParsed.fields))
+      const tagFilter = tagParsed.tag
       // 给了 state 就由它决定含不含已退役
       const withRetired = state !== '' || ctx.query.get('include_retired') === '1'
       const limit = Number(ctx.query.get('limit'))
       const offset = Number(ctx.query.get('offset')) || 0
       const rows = store
-        .filter((n) => n.status !== 'destroyed' && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id))
+        .filter((n) => !n.deleted && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id) && (!tagFilter || n.xb.tags.includes(tagFilter)))
         .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
       const size = limit >= 1 && limit <= 1000 ? limit : 500
       const page = rows.slice(offset, offset + size)
@@ -384,13 +522,13 @@ export const nodes: MockModule = {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('node_create', () => {
-        const extra = unknownField(body, ['name', 'server_id', 'node_type', 'server_host', 'server_port', 'protocol_config', 'pool_id', 'kernel', 'traffic_rate', 'display_name', 'sort_order', 'country_code'])
+        const extra = unknownField(body, ['name', 'server_id', 'node_type', 'server_host', 'server_port', 'protocol_config', 'pool_id', 'traffic_rate', 'display_name', 'sort_order', 'country_code', ...XB_BODY_KEYS])
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
-        const fields = { ...basicErrors(body, true), ...validateProtocol(text(body.node_type), body.protocol_config) }
+        const fields = { ...basicErrors(body, true), ...validateProtocol(text(body.node_type), body.protocol_config), ...xbErrors(body) }
         if (Object.keys(fields).length) return invalid(fields)
         const srv = servers.find((s) => s.id === body.server_id)!
         if (srv.status !== 'ready' && srv.status !== 'draft') return err(409, 'conflict', '目标服务器当前不接受节点')
-        if (store.some((n) => n.name === text(body.name).trim() && n.status !== 'destroyed')) return err(409, 'conflict', '节点名称已存在')
+        if (store.some((n) => n.name === text(body.name).trim() && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
         const n = node({
           name: text(body.name).trim(),
           node_type: text(body.node_type),
@@ -398,17 +536,16 @@ export const nodes: MockModule = {
           server_host: text(body.server_host),
           server_port: int(body.server_port),
           pool_id: text(body.pool_id) || null,
-          kernel: text(body.kernel) || 'auto',
           traffic_rate: Number(body.traffic_rate) > 0 ? Number(body.traffic_rate) : 1,
           display_name: text(body.display_name) || null,
           country_code: text(body.country_code).toUpperCase() || null,
           protocol_config: body.protocol_config as Json,
           last_heartbeat_at: null,
           identity_serial: null,
-          serverToken: { present: false },
         })
         n.server_id = srv.id
         n.row_version = 1
+        applyXB(n.xb, body)
         store.push(n)
         return { status: 201, body: adminNode(n) }
       })
@@ -416,7 +553,7 @@ export const nodes: MockModule = {
     'PATCH /v1/nodes/:id': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'kernel', 'traffic_rate', 'display_name', 'protocol_config', 'country_code'])
+      const extra = unknownField(body, ['row_version', 'name', 'pool_id', 'node_type', 'server_host', 'server_port', 'traffic_rate', 'display_name', 'protocol_config', 'country_code', ...XB_BODY_KEYS])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
@@ -425,9 +562,9 @@ export const nodes: MockModule = {
       const nodeType = body.node_type === undefined ? n.node_type ?? '' : text(body.node_type)
       // 换协议类型时不补旧密钥（R106）
       const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
-      const touched = ['node_type', 'server_host', 'server_port', 'kernel', 'protocol_config'].some((k) => body[k] !== undefined)
-      const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
-      // nodefabric.PatchAdminNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
+      const touched = ['node_type', 'server_host', 'server_port', 'protocol_config'].some((k) => body[k] !== undefined)
+      const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}), ...xbErrors(body) }
+      // node/service 的 PatchNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
       if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (body.name !== undefined && store.some((x) => x !== n && x.name === text(body.name).trim())) return ctx.fail(409, 'conflict', '节点名称已存在')
@@ -436,11 +573,11 @@ export const nodes: MockModule = {
       if (body.node_type !== undefined) n.node_type = nodeType
       if (body.server_host !== undefined) n.server_host = text(body.server_host)
       if (body.server_port !== undefined) n.server_port = int(body.server_port)
-      if (body.kernel !== undefined) n.kernel = text(body.kernel) || 'auto'
       if (body.traffic_rate !== undefined) n.traffic_rate = Number(body.traffic_rate)
       if (body.display_name !== undefined) n.display_name = text(body.display_name) || null
       if (body.country_code !== undefined) n.country_code = text(body.country_code).toUpperCase() || null
       if (body.protocol_config !== undefined) n.protocol_config = config as Json
+      applyXB(n.xb, body)
       touch(n)
       ctx.send(200, adminNode(n))
     },
@@ -452,17 +589,30 @@ export const nodes: MockModule = {
         if (!src) return notFound('节点不存在')
         if (body.row_version !== src.row_version) return conflict(src)
         const name = text(body.name).trim() || `${src.name}-copy`
-        if (store.some((n) => n.name === name && n.status !== 'destroyed')) return err(409, 'conflict', '节点名称已存在')
+        if (store.some((n) => n.name === name && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
         const target = body.target_server_id ? servers.find((s) => s.id === body.target_server_id) : servers.find((s) => s.id === src.server_id)
         if (!target) return invalid({ target_server_id: '服务器不存在' })
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
-        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0, serverToken: { present: false } })
+        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0 })
         // node() 先给新 id 与编号，再被源节点的字段覆盖：复制出来的必须是新节点
         copy.id = randomUUID()
         copy.node_no = nodeNo
         copy.server_id = target.id
         copy.sort_order = src.sort_order + 1
         copy.row_version = 1
+        copy.xb = {
+          ...xbDefaults(),
+          tags: [...src.xb.tags],
+          limit_bytes: src.xb.limit_bytes,
+          reset_day: src.xb.reset_day,
+          schedule: src.xb.schedule.map((s) => ({ ...s })),
+          used_bytes: 0,
+          exceeded_at: null,
+          reset_at: new Date().toISOString(),
+          relays: [],
+          ech: null,
+          ech_retired: 0,
+        }
         if (body.copy_routing) copyMemberships(src.id, copy.id)
         store.push(copy)
         return { status: 201, body: adminNode(copy) }
@@ -478,10 +628,8 @@ export const nodes: MockModule = {
         const target = servers.find((s) => s.id === body.server_id)
         if (!target) return invalid({ server_id: '服务器不存在' })
         if (target.id === n.server_id) return { status: 200, body: adminNode(n) }
-        if (n.serving_status === 'active' || n.serving_status === 'draining') return err(409, 'conflict', '活动或排空中的节点不能移动')
-        if (n.last_heartbeat_at || n.identity_serial) {
-          return err(409, 'conflict', '节点仍绑定控制面或 Agent 资产', { control_node: '0', active_identities: n.identityRevoked ? '0' : '1', runtime_instances: '1', metrics: '288', pending_tasks: '0', provisioning: '1', bootstrap_tokens: '0', config_applications: '12', usage_sources: '1', usage_batches: '30', traffic_reports: '1440', active_server_token: n.serverToken.present ? '1' : '0' })
-        }
+        // 与 service.nodeMovableState 一致：只有从没服务过的草稿（不看服务器心跳与身份）；409 只带文案，不带 fields
+        if (n.serving_status !== 'draft') return err(409, 'conflict', '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点')
         if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
         n.server_id = target.id
         touch(n)
@@ -512,37 +660,17 @@ export const nodes: MockModule = {
         const to = text(body.serving_status)
         if (items.length < 1 || items.length > 100) return invalid({ items: '一次 1–100 项' })
         if (!(to in EDGES)) return invalid({ serving_status: '不支持的服务状态' })
+        const rows: Node[] = []
         for (const it of items) {
           const n = findNode(text(it.id))
           if (!n) return notFound('节点不存在')
           if (it.row_version !== n.row_version) return conflict(n)
-          if (!EDGES[n.serving_status]!.includes(to)) return err(409, 'conflict', '不允许的节点服务状态转换', { serving_status: `${n.serving_status} -> ${to}` })
-          if (to === 'active' && (!n.node_type || servers.find((s) => s.id === n.server_id)?.status !== 'ready')) return err(409, 'conflict', '节点协议或服务器状态未满足启用条件')
+          rows.push(n)
         }
-        for (const it of items) {
-          const n = findNode(text(it.id))!
-          n.serving_status = to
-          if (to === 'active' && n.status === 'draft') n.status = 'active'
-          touch(n)
-        }
+        const st = batchStatusCheck(rows, to)
+        if (st) return st
+        batchApplyStatus(rows, to)
         return { status: 200, body: { ok: true, updated: items.length, serving_status: to } }
-      })
-    },
-    'POST /v1/nodes/bootstrap-token': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      const body = await ctx.body()
-      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('node_bootstrap_token_issue', () => {
-        const name = text(body.node_name).trim()
-        if (!name) return invalid({ node_name: '必填' })
-        const n = store.find((x) => x.name === name)
-        if (n && (n.serving_status === 'retired' || n.status === 'destroyed')) return err(409, 'conflict', '已退役或销毁节点不能签发引导令牌')
-        const ttl = int(body.ttl_minutes)
-        const minutes = ttl && ttl >= 1 && ttl <= 30 ? ttl : 20
-        return {
-          status: 201,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.pandora.run/install.sh | sudo bash -s -- --enroll' },
-        }
       })
     },
     'POST /v1/nodes/reality-keypair': (ctx) => {
@@ -555,15 +683,15 @@ export const nodes: MockModule = {
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       if (int(body.row_version) && body.row_version !== n.row_version) return reply(ctx, conflict(n))
-      if (n.serving_status === 'active' || n.serving_status === 'draining') return ctx.fail(422, 'validation_failed', '节点还在服务中')
-      if (!['draft', 'provisioning_failed', 'bootstrap_failed', 'retired', 'destroy_failed'].includes(n.status)) return ctx.fail(422, 'validation_failed', '节点当前状态不能直接销毁，请先将其退役')
-      n.status = 'destroyed'
-      n.name = `${n.name}#destroyed-${Date.now()}`
+      if (n.serving_status !== 'draft' && n.serving_status !== 'retired') return ctx.fail(422, 'validation_failed', '节点还在服务或已停用，先退役再删除')
+      n.serving_status = 'retired'
+      n.deleted = true
+      n.name = `${n.name}#deleted-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
-    // R108 / R113：一步上线，照 nodefabric.ActivateNode：幂等 node_activate、无 reauth；
-    // 判断顺序同 Go——版本号非法 400、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409，
-    // 再依次是接入尾段、节点身份、协议就绪、服务器；服务器跟着进 ready；warnings 没有提示时不出现
+    // R108 / R113：一步上线，照 node/service 的 ActivateNode：幂等 node_activate、无 reauth；
+    // 判断顺序同 Go——版本号非法 422、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409、
+    // retired 409、协议就绪、未绑服务器、服务器不存在、节点身份、服务器状态；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
@@ -573,16 +701,15 @@ export const nodes: MockModule = {
         if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
         const n = findNode(ctx.params.id)
         if (!n) return notFound('节点不存在')
-        if (n.status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
+        if (n.serving_status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
         if (body.row_version !== n.row_version) return conflict(n)
-        if (!ACTIVATABLE.includes(n.status)) return err(409, 'conflict', activateRefusal(n.status))
-        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '节点没有有效的节点身份，请重新接入后再上线')
+        if (n.serving_status === 'retired') return err(409, 'conflict', '节点已退役，不能上线')
         if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、端口与稳定协议配置），先保存协议再上线')
         if (!n.server_id) return err(409, 'conflict', '节点没有绑定服务器，不能上线')
         const srv = servers.find((s) => s.id === n.server_id)
         if (!srv) return err(409, 'conflict', '节点所在的服务器已删除，不能上线')
+        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '服务器还没接入（先在服务器页生成安装命令完成接入）')
         if (srv.status !== 'ready' && !SERVER_TO_READY.includes(srv.status)) return err(409, 'conflict', `节点所在的服务器处于 ${srv.status}，不能进入 ready，先处理服务器状态再上线`)
-        n.status = 'active'
         n.serving_status = 'active'
         srv.status = 'ready'
         touch(n)
@@ -600,7 +727,6 @@ export const nodes: MockModule = {
         if (body.row_version !== n.row_version) return conflict(n)
         if (n.serving_status === 'retired') return err(409, 'conflict', '节点已经退役')
         n.serving_status = 'retired'
-        if (n.status !== 'draft') n.status = 'retired'
         n.identityRevoked = true
         touch(n)
         return { status: 200, body: adminNode(n) }
@@ -656,19 +782,6 @@ export const nodes: MockModule = {
       touch(n)
       ctx.send(200, { ok: true, row_version: n.row_version })
     },
-    'POST /v1/nodes/:id/server-token': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      await ctx.idempotent('node_server_token_issue', () => {
-        const n = findNode(ctx.params.id)
-        if (!n) return notFound('节点不存在')
-        if (n.serving_status === 'retired') return err(409, 'conflict', '已退役或销毁的节点不能签发服务端令牌')
-        n.serverToken = { present: true, issued_at: new Date().toISOString(), issued_by: ctx.user.userId, issued_by_name: ctx.user.displayName ?? ctx.user.email }
-        return {
-          status: 201,
-          body: { token: `srv_${randomBytes(24).toString('hex')}`, node_type: n.node_type ?? '', panel_url: 'https://panel.pandora.run', install_command: 'curl -fsSL https://panel.pandora.run/uniproxy.sh | sudo bash -s --', hint: '旧令牌立即失效；在节点上执行命令后粘贴令牌' },
-        }
-      })
-    },
     'GET /v1/nodes/:id/identity': (ctx) => {
       if (!UUID.test(ctx.params.id!)) return reply(ctx, notFound('节点不存在'))
       const n = findNode(ctx.params.id)
@@ -684,7 +797,7 @@ export const nodes: MockModule = {
             ...(n.identityRevoked ? { revoked_at: ago(60), revoked_reason: 'admin_revoked' } : {}),
           }
         : null
-      ctx.send(200, { identity, server_token: n.serverToken, bootstrap_tokens_pending: n.last_heartbeat_at ? 0 : 1 })
+      ctx.send(200, { identity, bootstrap_tokens_pending: n.last_heartbeat_at ? 0 : 1 })
     },
   },
 }

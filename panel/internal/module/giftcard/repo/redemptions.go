@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/giftcard/model"
 )
@@ -18,8 +17,8 @@ type StatsRow struct {
 	CodesUsed     int64
 	CodesUnused   int64
 	TrafficOut    int64
-	BalanceOut    map[string]decimal.Decimal
-	BalanceIssued map[string]decimal.Decimal
+	BalanceOut    decimal.Decimal
+	BalanceIssued decimal.Decimal
 }
 
 // MyRedemptionRow 是门户兑换记录的一行（JOIN 模板与码）。
@@ -28,7 +27,6 @@ type MyRedemptionRow struct {
 	Type          string           `gorm:"column:type"`
 	CodeMask      string           `gorm:"column:code_mask"`
 	PrizeLabel    *string          `gorm:"column:prize_label"`
-	Currency      string           `gorm:"column:currency"`
 	BalanceAmount *decimal.Decimal `gorm:"column:balance_amount"`
 	TrafficBytes  *int64           `gorm:"column:traffic_bytes"`
 	ExpireDays    *int             `gorm:"column:expire_days"`
@@ -41,7 +39,6 @@ type UsageRow struct {
 	CodeMask      string           `gorm:"column:code_mask"`
 	UserID        uuid.UUID        `gorm:"column:user_id"`
 	PrizeLabel    *string          `gorm:"column:prize_label"`
-	Currency      string           `gorm:"column:currency"`
 	BalanceAmount *decimal.Decimal `gorm:"column:balance_amount"`
 	TrafficBytes  *int64           `gorm:"column:traffic_bytes"`
 	ExpireDays    *int             `gorm:"column:expire_days"`
@@ -81,8 +78,6 @@ func (r *Repo) UserTemplateUsage(ctx context.Context, userID, templateID uuid.UU
 func (r *Repo) Stats(ctx context.Context) (StatsRow, error) {
 	conn := r.d.Conn(ctx)
 	var row StatsRow
-	row.BalanceOut = make(map[string]decimal.Decimal)
-	row.BalanceIssued = make(map[string]decimal.Decimal)
 
 	// 计数一条 SQL 取完：模板数（未归档）、码总数、已用、未用、送出流量
 	if err := conn.Raw(`
@@ -95,19 +90,12 @@ func (r *Repo) Stats(ctx context.Context) (StatsRow, error) {
 		return StatsRow{}, mapErr(err)
 	}
 
-	if err := scanCurrencySums(conn,
-		`SELECT currency, coalesce(sum(balance_amount), 0) FROM gift_card_redemptions WHERE balance_amount IS NOT NULL GROUP BY currency`,
-		row.BalanceOut,
-	); err != nil {
-		return StatsRow{}, err
+	// 送出余额与发出余额各一条合计，都是单行单列
+	if err := conn.Raw(`SELECT coalesce(sum(balance_amount), 0) FROM gift_card_redemptions WHERE balance_amount IS NOT NULL`).Row().Scan(&row.BalanceOut); err != nil {
+		return StatsRow{}, mapErr(err)
 	}
-	if err := scanCurrencySums(conn,
-		`SELECT t.currency, coalesce(sum(t.balance_amount), 0)
-		FROM gift_card_codes c JOIN gift_card_templates t ON t.id = c.template_id
-		WHERE t.type = 'general' AND t.balance_amount IS NOT NULL GROUP BY t.currency`,
-		row.BalanceIssued,
-	); err != nil {
-		return StatsRow{}, err
+	if err := conn.Raw(`SELECT coalesce(sum(t.balance_amount), 0) FROM gift_card_codes c JOIN gift_card_templates t ON t.id = c.template_id WHERE t.type = 'general' AND t.balance_amount IS NOT NULL`).Row().Scan(&row.BalanceIssued); err != nil {
+		return StatsRow{}, mapErr(err)
 	}
 	return row, nil
 }
@@ -116,7 +104,7 @@ func (r *Repo) Stats(ctx context.Context) (StatsRow, error) {
 func (r *Repo) MyRedemptions(ctx context.Context, userID uuid.UUID, limit int) ([]MyRedemptionRow, error) {
 	var rows []MyRedemptionRow
 	err := r.d.Conn(ctx).Raw(`
-		SELECT t.name AS template_name, t.type, c.code_mask, r.prize_label, r.currency,
+		SELECT t.name AS template_name, t.type, c.code_mask, r.prize_label,
 		       r.balance_amount, r.traffic_bytes, r.expire_days, r.redeemed_at
 		FROM gift_card_redemptions r
 		JOIN gift_card_templates t ON t.id = r.template_id
@@ -144,7 +132,7 @@ func (r *Repo) Usages(ctx context.Context, templateID *uuid.UUID, limit int) ([]
 	args = append(args, limit)
 	var rows []UsageRow
 	err := r.d.Conn(ctx).Raw(`
-		SELECT t.name AS template_name, c.code_mask, r.user_id, r.prize_label, r.currency,
+		SELECT t.name AS template_name, c.code_mask, r.user_id, r.prize_label,
 		       r.balance_amount, r.traffic_bytes, r.expire_days, r.quota_reset, r.redeemed_at
 		FROM gift_card_redemptions r
 		JOIN gift_card_templates t ON t.id = r.template_id
@@ -159,22 +147,4 @@ func (r *Repo) Usages(ctx context.Context, templateID *uuid.UUID, limit int) ([]
 		return []UsageRow{}, nil
 	}
 	return rows, nil
-}
-
-// scanCurrencySums 把「币种, 合计」两列的结果读进 dest。
-func scanCurrencySums(conn *gorm.DB, sql string, dest map[string]decimal.Decimal) error {
-	rows, err := conn.Raw(sql).Rows()
-	if err != nil {
-		return mapErr(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cur string
-		var sum decimal.Decimal
-		if err := rows.Scan(&cur, &sum); err != nil {
-			return err
-		}
-		dest[cur] = sum
-	}
-	return mapErr(rows.Err())
 }

@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"sort"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/module/catalog/model"
 	"github.com/aegispanel/aegis/internal/module/catalog/repo"
@@ -13,231 +13,197 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
-// CreatePrice 给套餐加一档价格。
-func (s *Service) CreatePrice(ctx context.Context, planID uuid.UUID, in PriceInput) (Price, error) {
-	if err := validatePriceInput(&in); err != nil {
-		return Price{}, err
-	}
-	var out Price
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		p, err := s.createPriceTx(ctx, planID, in)
-		if err != nil {
-			return err
-		}
-		out = p
-		return nil
-	})
-	return out, catalogErr(err)
-}
-
-// createPriceTx 在调用方事务里插入价格并写审计。
-func (s *Service) createPriceTx(ctx context.Context, planID uuid.UUID, in PriceInput) (Price, error) {
-	plan, found, err := s.repo.PlanByID(ctx, planID, repo.ForUpdate)
-	if err != nil {
-		return Price{}, err
-	}
-	if !found {
-		return Price{}, ErrNotFound
-	}
-	if plan.Status == PlanArchived {
-		return Price{}, errs.Newf(errs.Conflict, "已归档套餐不能新增价格")
-	}
-
+// insertPriceTx 在调用方事务里插入一档在售价格并推送变更。
+func (s *Service) insertPriceTx(ctx context.Context, planID uuid.UUID, kind, interval string, count int, amount decimal.Decimal, validityDays *int) (model.Price, error) {
 	m := &model.Price{
 		PlanID:          planID,
-		Currency:        in.Currency,
-		UnitAmount:      in.UnitAmount,
-		BillingInterval: in.BillingInterval,
-		IntervalCount:   in.IntervalCount,
-		TrialDays:       in.TrialDays,
+		PlanKind:        kind,
+		UnitAmount:      amount,
+		BillingInterval: interval,
+		IntervalCount:   count,
+		ValidityDays:    validityDays,
 		Status:          PriceActive,
-		UserGroupID:     in.UserGroupID,
-		ValidFrom:       in.ValidFrom,
-		ValidUntil:      in.ValidUntil,
 	}
 	if err := s.repo.InsertPrice(ctx, m); err != nil {
-		if errors.Is(err, repo.ErrForeignKey) {
-			return Price{}, errs.Invalid(map[string]string{"user_group_id": "用户组不存在"})
-		}
 		if errors.Is(err, repo.ErrDuplicate) {
-			return Price{}, errs.Newf(errs.Conflict, "同一周期与币种已有在售价格，请先下架旧价")
+			return model.Price{}, errs.Newf(errs.Conflict, "同一周期已有在售价格")
 		}
-		return Price{}, err
+		return model.Price{}, err
 	}
 	s.catalogChanged(ctx, rtTablePrices, realtime.OpInsert, m.ID)
-
-	row, found, err := s.repo.PriceByID(ctx, m.ID, repo.NoLock)
-	if err != nil {
-		return Price{}, err
-	}
-	if !found {
-		return Price{}, ErrNotFound
-	}
-	out := priceFromModel(row)
-
-	var ug any
-	if in.UserGroupID != nil {
-		ug = in.UserGroupID.String()
-	}
-	if err := s.writeAudit(ctx, ActionPriceCreate, ResourcePrice, out.ID, map[string]any{
-		"after": map[string]any{
-			"plan_id":          planID,
-			"currency":         in.Currency,
-			"unit_amount":      in.UnitAmount.StringFixed(2),
-			"billing_interval": in.BillingInterval,
-			"interval_count":   in.IntervalCount,
-			"user_group_id":    ug,
-		},
-	}); err != nil {
-		return Price{}, err
-	}
-	return out, nil
+	return *m, nil
 }
 
-// ArchivePrice 下架一档价格，返回新的 row_version。
-func (s *Service) ArchivePrice(ctx context.Context, planID, priceID uuid.UUID, expected int64) (int64, error) {
-	if expected <= 0 {
-		return 0, errs.Invalid(map[string]string{"expected_row_version": "必须为正整数"})
+// archivePriceTx 在调用方事务里归档一档在售价格。
+func (s *Service) archivePriceTx(ctx context.Context, p model.Price) error {
+	ok, err := s.repo.ArchivePrice(ctx, p.ID, p.RowVersion)
+	if err != nil {
+		return err
 	}
-	var next int64
+	if !ok {
+		return rowConflict("价格", p.RowVersion)
+	}
+	s.catalogChanged(ctx, rtTablePrices, realtime.OpUpdate, p.ID)
+	return nil
+}
+
+func validityDaysEqual(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// priceAuditRow 是改价审计里的一档：UnitAmount 为 nil 表示这一档不再卖。
+type priceAuditRow struct {
+	BillingInterval string  `json:"billing_interval"`
+	IntervalCount   int     `json:"interval_count"`
+	UnitAmount      *string `json:"unit_amount"`
+	ValidityDays    *int    `json:"validity_days"`
+}
+
+func priceAuditFromAmount(amount decimal.Decimal) *string {
+	s := amount.StringFixed(2)
+	return &s
+}
+
+// UpdatePrices 改价：归档旧价、建新价；以套餐 row_version 做乐观锁。
+func (s *Service) UpdatePrices(ctx context.Context, planID uuid.UUID, in PricesUpdate) (PlanDetail, error) {
+	if err := checkExpected(in.ExpectedRowVersion); err != nil {
+		return PlanDetail{}, err
+	}
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		cur, found, err := s.repo.PriceByID(ctx, priceID, repo.ForUpdate)
+		cur, err := s.lockEditablePlan(ctx, planID, in.ExpectedRowVersion)
 		if err != nil {
 			return err
 		}
-		if !found || cur.PlanID != planID {
-			return ErrNotFound
+		fields := map[string]string{}
+		switch cur.Kind {
+		case KindSubscription:
+			if in.OneTime != nil {
+				fields["unit_amount"] = "订阅套餐按周期定价，不能设一次性价格"
+			}
+			validateTierChanges(in.Tiers, fields)
+		case KindOneTime:
+			if len(in.Tiers) > 0 {
+				fields["prices"] = "一次性套餐只有一个价格，不能设周期价"
+			}
+			if in.OneTime == nil {
+				fields["unit_amount"] = "一次性套餐必须设价格"
+			} else {
+				validateOneTime(*in.OneTime, fields)
+			}
+		default:
+			fields["kind"] = "套餐类型无效"
 		}
-		if cur.RowVersion != expected {
-			return rowConflict("价格", cur.RowVersion)
+		if err := invalid(fields); err != nil {
+			return err
 		}
-		if !CanTransitionPrice(cur.Status, PriceArchived) {
-			return errs.Newf(errs.Conflict, "价格已经归档")
-		}
-		ok, err := s.repo.ArchivePrice(ctx, priceID, expected)
+
+		active, err := s.repo.ActivePrices(ctx, []uuid.UUID{planID}, repo.ForUpdate)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			return rowConflict("价格", cur.RowVersion)
+		byTier := make(map[string]model.Price, len(active))
+		for _, p := range active {
+			byTier[tierKey(p.BillingInterval, p.IntervalCount)] = p
 		}
-		s.catalogChanged(ctx, rtTablePrices, realtime.OpUpdate, priceID)
-		next = expected + 1
-		return s.writeAudit(ctx, ActionPriceArchive, ResourcePrice, priceID, map[string]any{
-			"before": map[string]any{"status": cur.Status, "row_version": expected},
-			"after":  map[string]any{"status": PriceArchived, "row_version": next},
+
+		changes := 0
+		auditPrices := make([]priceAuditRow, 0)
+
+		switch cur.Kind {
+		case KindSubscription:
+			for _, t := range in.Tiers {
+				k := tierKey(t.BillingInterval, t.IntervalCount)
+				old, hasOld := byTier[k]
+				if t.UnitAmount == nil {
+					if hasOld {
+						if err := s.archivePriceTx(ctx, old); err != nil {
+							return err
+						}
+						changes++
+						auditPrices = append(auditPrices, priceAuditRow{BillingInterval: t.BillingInterval, IntervalCount: t.IntervalCount})
+					}
+					continue
+				}
+				if hasOld && old.UnitAmount.Equal(*t.UnitAmount) {
+					continue
+				}
+				if hasOld {
+					if err := s.archivePriceTx(ctx, old); err != nil {
+						return err
+					}
+				}
+				if _, err := s.insertPriceTx(ctx, planID, cur.Kind, t.BillingInterval, t.IntervalCount, *t.UnitAmount, nil); err != nil {
+					return err
+				}
+				changes++
+				auditPrices = append(auditPrices, priceAuditRow{
+					BillingInterval: t.BillingInterval,
+					IntervalCount:   t.IntervalCount,
+					UnitAmount:      priceAuditFromAmount(*t.UnitAmount),
+					ValidityDays:    nil,
+				})
+			}
+		case KindOneTime:
+			if in.OneTime == nil {
+				return nil
+			}
+			k := tierKey(IntervalOneTime, 1)
+			old, hasOld := byTier[k]
+			if hasOld && old.UnitAmount.Equal(in.OneTime.UnitAmount) && validityDaysEqual(old.ValidityDays, in.OneTime.ValidityDays) {
+				break
+			}
+			if hasOld {
+				if err := s.archivePriceTx(ctx, old); err != nil {
+					return err
+				}
+			}
+			if _, err := s.insertPriceTx(ctx, planID, cur.Kind, IntervalOneTime, 1, in.OneTime.UnitAmount, in.OneTime.ValidityDays); err != nil {
+				return err
+			}
+			changes++
+			auditPrices = append(auditPrices, priceAuditRow{
+				BillingInterval: IntervalOneTime,
+				IntervalCount:   1,
+				UnitAmount:      priceAuditFromAmount(in.OneTime.UnitAmount),
+				ValidityDays:    in.OneTime.ValidityDays,
+			})
+		}
+
+		if cur.Status == PlanActive {
+			left, err := s.repo.ActivePrices(ctx, []uuid.UUID{planID}, repo.NoLock)
+			if err != nil {
+				return err
+			}
+			if len(left) == 0 {
+				return errs.Invalid(map[string]string{"prices": "在售套餐至少保留一档价格"})
+			}
+		}
+
+		if changes == 0 {
+			return nil
+		}
+
+		next, err := s.bumpPlanRow(ctx, planID, in.ExpectedRowVersion)
+		if err != nil {
+			return err
+		}
+		return s.writeAudit(ctx, ActionPlanPrices, ResourcePlan, planID, map[string]any{
+			"before": map[string]any{"row_version": in.ExpectedRowVersion},
+			"after": map[string]any{
+				"row_version": next,
+				"changes":     changes,
+				"prices":      auditPrices,
+			},
 		})
 	})
-	return next, catalogErr(err)
-}
-
-// syncPublicPricesTx 让清单币种内的在售公开价与 wanted 一致，返回改动条数。
-func (s *Service) syncPublicPricesTx(ctx context.Context, planID uuid.UUID, wanted map[string]WizardPrice) (int, error) {
-	currencies := priceSyncCurrencies(wanted)
-	if len(currencies) == 0 {
-		return 0, nil
-	}
-
-	plan, found, err := s.repo.PlanByID(ctx, planID, repo.ForUpdate)
 	if err != nil {
-		return 0, err
+		return PlanDetail{}, catalogErr(err)
 	}
-	if !found {
-		return 0, ErrNotFound
-	}
-	if plan.Status == PlanArchived {
-		return 0, errs.Newf(errs.Conflict, "已归档套餐不能更新价格")
-	}
-
-	locked, err := s.repo.LockActivePublicPrices(ctx, planID, currencies)
-	if err != nil {
-		return 0, err
-	}
-	have := make(map[string]model.Price, len(locked))
-	for _, row := range locked {
-		k := wizardKey(row.BillingInterval, row.IntervalCount, row.Currency)
-		have[k] = row
-	}
-
-	changes := 0
-
-	hkeys := make([]string, 0, len(have))
-	for k := range have {
-		hkeys = append(hkeys, k)
-	}
-	sort.Strings(hkeys)
-	for _, k := range hkeys {
-		old := have[k]
-		w, keep := wanted[k]
-		if keep && priceRowMatchesWizard(old, w) {
-			continue
-		}
-		ok, err := s.repo.ArchivePrice(ctx, old.ID, old.RowVersion)
-		if err != nil {
-			return 0, err
-		}
-		if !ok {
-			return 0, rowConflict("价格", old.RowVersion)
-		}
-		s.catalogChanged(ctx, rtTablePrices, realtime.OpUpdate, old.ID)
-		changes++
-	}
-
-	wkeys := make([]string, 0, len(wanted))
-	for k := range wanted {
-		wkeys = append(wkeys, k)
-	}
-	sort.Strings(wkeys)
-	for _, k := range wkeys {
-		w := wanted[k]
-		old, exists := have[k]
-		if exists && priceRowMatchesWizard(old, w) {
-			continue
-		}
-		pin := wizardPriceInput(w)
-		m := &model.Price{
-			PlanID:          planID,
-			Currency:        pin.Currency,
-			UnitAmount:      pin.UnitAmount,
-			BillingInterval: pin.BillingInterval,
-			IntervalCount:   pin.IntervalCount,
-			TrialDays:       pin.TrialDays,
-			Status:          PriceActive,
-		}
-		if err := s.repo.InsertPrice(ctx, m); err != nil {
-			if errors.Is(err, repo.ErrDuplicate) {
-				return 0, errs.Newf(errs.Conflict, "同一周期与币种已有在售价格，请先下架旧价")
-			}
-			return 0, err
-		}
-		s.catalogChanged(ctx, rtTablePrices, realtime.OpInsert, m.ID)
-		changes++
-	}
-
-	if changes == 0 {
-		return 0, nil
-	}
-	if err := s.writeAudit(ctx, ActionPriceSync, ResourcePlan, planID, map[string]any{
-		"after": map[string]any{"changes": changes, "currencies": currencies},
-	}); err != nil {
-		return 0, err
-	}
-	return changes, nil
-}
-
-func priceSyncCurrencies(wanted map[string]WizardPrice) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range wanted {
-		if !seen[p.Currency] {
-			seen[p.Currency] = true
-			out = append(out, p.Currency)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func priceRowMatchesWizard(old model.Price, w WizardPrice) bool {
-	return old.UnitAmount.Equal(w.UnitAmount) && old.TrialDays == w.TrialDays
+	return s.GetPlan(ctx, planID)
 }

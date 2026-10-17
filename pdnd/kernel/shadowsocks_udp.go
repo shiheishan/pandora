@@ -1,209 +1,155 @@
 package kernel
 
 import (
-	"context"
 	"crypto/cipher"
-	"crypto/rand"
-	"encoding/binary"
-	"fmt"
+	"errors"
 	"net"
 	"net/netip"
-	"strconv"
-	"time"
+	"sync/atomic"
 
-	M "github.com/sagernet/sing/common/metadata"
-
-	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/route"
+	"github.com/sagernet/sing/common/buf"
 )
 
+// ssUDPDropStats 按原因记 SS UDP 丢掉的包数（诊断与测试用，不上报）。
+type ssUDPDropStats struct {
+	pending  atomic.Uint64 // 会话建立期间小队列已满
+	queue    atomic.Uint64 // 慢路径队列已满
+	rate     atomic.Uint64 // 上行超出限速
+	route    atomic.Uint64 // 目标的出站与会话的上游不一致
+	replay   atomic.Uint64 // salt 重放
+	resolve  atomic.Uint64 // 会话正在解析域名目标
+	downlink atomic.Uint64 // 下行编码失败、超出桶容量或写回临时出错
+}
+
+var (
+	errSSUDPTooShort = markConnError(connErrAuth, errors.New("shadowsocks UDP packet too short"))
+	errSSUDPAuth     = markConnError(connErrAuth, errors.New("shadowsocks UDP user authentication failed"))
+)
+
+// ssUDPMaxPacket 是读循环的收包缓冲（一个 UDP 包的上限）。
+const ssUDPMaxPacket = 65535
+
+// packetLoop 是入站唯一的 UDP 读循环，不按包起 goroutine：快路径（已有会话的用户试解）
+// 与上行写上游在这里同步做（非阻塞 UDP 写）；解不开的包交给慢路径 worker 池
+// （shadowsocks_udp_pool.go）。wire、plain、found 归本循环独占。
 func (a *shadowsocksAdapter) packetLoop() {
 	defer a.wg.Done()
-	buffer := make([]byte, 64<<10)
+	wire := make([]byte, ssUDPMaxPacket)
+	plain := make([]byte, ssUDPMaxPacket)
+	var found []*ssUDPSession
 	for {
-		n, addr, err := a.packet.ReadFrom(buffer)
+		n, from, err := a.udpConn.ReadFromUDPAddrPort(wire)
 		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
+			if a.ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
 			continue
 		}
-		payload := append([]byte(nil), buffer[:n]...)
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			_ = a.handlePacket(a.ctx, payload, addr)
-		}()
+		from = netip.AddrPortFrom(from.Addr().Unmap(), from.Port())
+		handled, err := a.fastPathUDP(wire[:n], plain, &found, from)
+		if err != nil {
+			a.connErr.addr(StageSession, net.UDPAddrFromAddrPort(from), err)
+		}
+		if !handled {
+			a.dispatchSlowUDP(wire[:n], from)
+		}
 	}
 }
 
-func (a *shadowsocksAdapter) handlePacket(ctx context.Context, wire []byte, clientAddr net.Addr) error {
-	user, destination, payload, err := a.decodeUDPPacket(wire, clientAddr)
-	if err != nil {
-		return err
-	}
-	ip := remoteIP(clientAddr)
-	if !a.online.enter(user, ip) {
-		return fmt.Errorf("shadowsocks device limit")
-	}
-	defer a.online.leave(user, ip)
-	sourceIP, _ := netip.ParseAddr(ip)
-	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "shadowsocks", SourceIP: sourceIP}
-	upstream, err := a.plane.ListenUDP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
-	if err != nil {
-		return err
-	}
-	defer upstream.Close()
-	destinationAddr, err := destinationUDPAddr(destination)
-	if err != nil {
-		return err
-	}
-	if _, err := upstream.WriteTo(payload, destinationAddr); err != nil {
-		return err
-	}
-	_ = upstream.SetReadDeadline(time.Now().Add(2 * time.Second))
-	response := make([]byte, 64<<10)
-	n, sourceAddr, err := upstream.ReadFrom(response)
-	if err != nil {
-		return err
-	}
-	responseDestination := destination
-	if sourceAddr != nil {
-		responseDestination = destinationFromNetAddr(sourceAddr)
-	}
-	encoded, err := a.encodeUDPPacket(user, responseDestination, response[:n])
-	if err != nil {
-		return err
-	}
-	_, err = a.packet.WriteTo(encoded, clientAddr)
-	if err == nil {
-		a.addTraffic(user, int64(len(payload)), int64(n))
-	}
-	return err
-}
-
-func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
-	if destination.IP.IsValid() {
-		return &net.UDPAddr{IP: net.IP(destination.IP.AsSlice()), Port: int(destination.Port)}, nil
-	}
-	return net.ResolveUDPAddr("udp", net.JoinHostPort(destination.Domain, strconv.Itoa(int(destination.Port))))
-}
-
-// decodeUDPPacket 与 TCP 握手共用快照、零分配派生和来源 IP 提示（clientAddr
-// 可为 nil）；每个候选用户都做完整 AEAD 校验并解析出合法目标地址才算认证通过。
-func (a *shadowsocksAdapter) decodeUDPPacket(wire []byte, clientAddr net.Addr) (core.User, vlessDestination, []byte, error) {
-	var destination vlessDestination
+// fastPathUDP 是读循环里的快路径：来自已有会话地址的包先用该会话的用户试解（用户记录
+// retired 就跳过）。解开了就转发并返回 handled=true；过短的包直接判失败（handled=true）；
+// 解不开或该地址没有会话返回 false，由调用方交给慢路径。明文写进读循环独占的 plain。
+func (a *shadowsocksAdapter) fastPathUDP(wire, plain []byte, found *[]*ssUDPSession, from netip.AddrPort) (bool, error) {
 	if len(wire) < a.method.SaltLen+16 {
-		return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP packet too short")
+		return true, errSSUDPTooShort
 	}
 	salt := wire[:a.method.SaltLen]
 	ciphertext := wire[a.method.SaltLen:]
+	*found = a.lookupUDPSessions(ssUDPKey{addr: from}, (*found)[:0])
+	for _, s := range *found {
+		if s.user.retired.Load() {
+			continue
+		}
+		sc := getSSScratch()
+		dest, payload, ok := a.openUDPWith(sc, s.user, salt, ciphertext, plain)
+		putSSScratch(sc)
+		if ok {
+			if !a.acceptUDPSalt(salt) {
+				return true, errSSUDPReplay
+			}
+			return true, a.forwardUDP(s, dest, payload)
+		}
+	}
+	return false, nil
+}
+
+func (a *shadowsocksAdapter) openUDPWith(sc *ssScratch, user *ssUser, salt, ciphertext, plain []byte) (vlessDestination, []byte, bool) {
+	sc.setSalt(salt)
+	aead, err := a.method.NewAEAD(sc.subkey(user.MasterKey, a.method.KeyLen))
+	if err != nil {
+		return vlessDestination{}, nil, false
+	}
+	if cap(plain) < len(ciphertext) {
+		return vlessDestination{}, nil, false
+	}
+	opened, err := aead.Open(plain[:0], sc.zeroNonce(), ciphertext, nil)
+	if err != nil {
+		return vlessDestination{}, nil, false
+	}
+	var dest vlessDestination
+	consumed, err := parseSSAddr(opened, &dest)
+	if err != nil {
+		return vlessDestination{}, nil, false
+	}
+	return dest, opened[consumed:], true
+}
+
+func (a *shadowsocksAdapter) decodeUDPPacket(salt, ciphertext, plain []byte, from netip.AddrPort) (*ssUser, vlessDestination, []byte, error) {
+	var dest vlessDestination
 	sc := getSSScratch()
 	defer putSSScratch(sc)
-	if cap(sc.plain) < len(ciphertext) {
-		sc.plain = make([]byte, 0, len(ciphertext))
-	}
 	var payload []byte
-	selected, aead := a.findSSUser(sc, salt, ssSourceKey(clientAddr), func(aead cipher.AEAD) bool {
-		plain, err := aead.Open(sc.plain[:0], sc.zeroNonce(), ciphertext, nil)
+	selected, _ := a.findSSUser(sc, salt, ssSourceKey(net.UDPAddrFromAddrPort(from)), func(aead cipher.AEAD) bool {
+		if cap(plain) < len(ciphertext) {
+			return false
+		}
+		opened, err := aead.Open(plain[:0], sc.zeroNonce(), ciphertext, nil)
 		if err != nil {
 			return false
 		}
 		var candidate vlessDestination
-		consumed, err := parseSSDestination(plain, &candidate)
+		consumed, err := parseSSAddr(opened, &candidate)
 		if err != nil {
 			return false
 		}
-		destination, payload = candidate, plain[consumed:]
+		dest, payload = candidate, opened[consumed:]
 		return true
 	})
-	if aead == nil {
-		return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP user authentication failed")
+	if selected == nil {
+		return nil, dest, nil, errSSUDPAuth
 	}
-	return core.User{ID: selected.ID, DeviceLimit: selected.DeviceLimit, SpeedLimit: selected.SpeedLimit}, destination, append([]byte(nil), payload...), nil
+	return selected, dest, payload, nil
 }
 
-func (a *shadowsocksAdapter) encodeUDPPacket(user core.User, destination vlessDestination, payload []byte) ([]byte, error) {
-	key := a.userMasterKey(user.ID)
-	if len(key) == 0 {
-		return nil, fmt.Errorf("shadowsocks UDP user no longer exists")
-	}
-	salt := make([]byte, a.method.SaltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, err
-	}
-	subkey, err := deriveSSSubkey(key, salt, a.method.KeyLen)
+// slowPathUDP 对全部用户试解一个包；认证通过后找到或新建 (地址, 用户) 会话并转发。
+// 明文借池化缓冲（不能原地解：GCM 失败会清零 dst），forwardUDP 同步写完或复制进
+// 建立期小队列后不再引用，返回前归还。
+func (a *shadowsocksAdapter) slowPathUDP(wire []byte, from netip.AddrPort) error {
+	salt := wire[:a.method.SaltLen]
+	ciphertext := wire[a.method.SaltLen:]
+	plain := buf.Get(len(ciphertext))
+	defer func() { _ = buf.Put(plain) }()
+	epoch := a.sessions.epoch()
+	user, dest, payload, err := a.decodeUDPPacket(salt, ciphertext, plain, from)
 	if err != nil {
-		return nil, err
+		return errSSUDPAuth
 	}
-	aead, err := a.method.NewAEAD(subkey)
+	if !a.acceptUDPSalt(salt) {
+		return errSSUDPReplay
+	}
+	sess, err := a.getOrOpenUDPSession(ssUDPKey{addr: from}, from, user, epoch, dest, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	address, err := serializeSSDestination(destination)
-	if err != nil {
-		return nil, err
-	}
-	plain := append(address, payload...)
-	return append(salt, aead.Seal(nil, makeSSNonce(0), plain, nil)...), nil
-}
-
-func (a *shadowsocksAdapter) userMasterKey(id int64) []byte {
-	// 快照里的 MasterKey 发布后不再修改，可以直接返回、不复制。
-	if user := a.loadUsers().byID[id]; user != nil {
-		return user.MasterKey
-	}
-	return nil
-}
-
-func destinationFromNetAddr(addr net.Addr) vlessDestination {
-	if udp, ok := addr.(*net.UDPAddr); ok {
-		ip, ok := netip.AddrFromSlice(udp.IP)
-		if ok {
-			return vlessDestination{Host: ip.String(), IP: ip, Port: uint16(udp.Port)}
-		}
-	}
-	host, port, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return vlessDestination{Host: addr.String()}
-	}
-	parsed, _ := strconv.ParseUint(port, 10, 16)
-	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
-		return vlessDestination{Host: host, IP: ip, Port: uint16(parsed)}
-	}
-	return vlessDestination{Host: host, Domain: host, Port: uint16(parsed)}
-}
-
-func serializeSSDestination(destination vlessDestination) ([]byte, error) {
-	var out []byte
-	if destination.IP.IsValid() {
-		if destination.IP.Is4() {
-			out = append(out, 1)
-			ip := destination.IP.As4()
-			out = append(out, ip[:]...)
-		} else {
-			out = append(out, 4)
-			ip := destination.IP.As16()
-			out = append(out, ip[:]...)
-		}
-	} else {
-		host := destination.Domain
-		if host == "" {
-			host = destination.Host
-		}
-		if len(host) == 0 || len(host) > 253 {
-			return nil, fmt.Errorf("shadowsocks destination domain invalid")
-		}
-		out = append(out, 3, byte(len(host)))
-		out = append(out, host...)
-	}
-	if destination.Port == 0 {
-		return nil, fmt.Errorf("shadowsocks destination port invalid")
-	}
-	var port [2]byte
-	binary.BigEndian.PutUint16(port[:], destination.Port)
-	return append(out, port[:]...), nil
+	return a.forwardUDP(sess, dest, payload)
 }

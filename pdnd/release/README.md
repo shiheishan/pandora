@@ -8,8 +8,7 @@ stream/packet modes).
 
 The request header selects the destination; subsequent datagrams use the native
 VLESS two-byte length framing and are routed through the same DataPlane policy
-and per-user traffic accounting as TCP. No compatibility kernel is started for
-this path.
+and per-user traffic accounting as TCP.
 
 NativeCore also accepts Trojan UDP ASSOCIATE and forwards each address-bearing
 datagram using the Trojan length/CRLF framing, with per-destination DataPlane
@@ -27,7 +26,7 @@ valid identity-encoded gRPC frames for broad client compatibility.
 ./pandora-native --capabilities
 ```
 
-输出是稳定的 JSON，包含 `kernel`、`native_only` 和各协议的网络、加密、特性与明确边界。面板下发组合前应先读取该矩阵；VLESS `REALITY + xhttp-h3` 走 Pandora NativeCore 的 QUIC-native REALITY 握手，不会静默降级为普通 HTTP/3 TLS。
+输出是稳定的 JSON，包含 `kernel` 和各协议的网络、加密、特性与明确边界。面板下发组合前应先读取该矩阵；VLESS `REALITY + xhttp-h3` 走 Pandora NativeCore 的 QUIC-native REALITY 握手，不会静默降级为普通 HTTP/3 TLS。
 
 发布或升级后可先运行原生适配器自检；它不会打开监听端口，只检查能力矩阵与默认注册表是否一致：
 
@@ -55,7 +54,7 @@ go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -
 
 上面的 Xray 门与这条 AnyTLS 门都由 CI 的 `linux-race` job 执行。
 
-另有 `interop_mihomo` 黑盒门禁，要求显式提供外部 Mihomo 可执行文件及其 SHA-256（未提供二进制则跳过；提供了二进制却缺哈希或哈希不符即失败）：
+另有 `interop_mihomo` 黑盒门禁，要求显式提供外部 Mihomo 可执行文件及其 SHA-256（未提供二进制则跳过；提供了二进制却缺哈希或哈希不符即失败）。CI 的 `linux-race` job 每次都跑它：下载钉住版本的官方包、按 release 公布的 digest 核对后执行全部 `TestExternalMihomo*`，逐协议那组必须真的通过（不许跳过）。本机手跑：
 
 ```bash
 MIHOMO_BIN=/path/to/mihomo MIHOMO_SHA256=<64位hex> go test -mod=readonly -tags interop_mihomo -run TestExternalMihomoVLESSXHTTPRealityH3Interop -count=1 -v ./kernel
@@ -77,7 +76,7 @@ python3 pdnd/release/check_native_panel_parity.py
 
 该检查只读取源码，不启动 Go、监听端口或任何节点进程。
 
-`build.sh` 生成不依赖 CGO 的 Linux x64 与 ARM64 产物，并写出包含 `runtime:pandora-native`、`native_only:true`、版本、提交、Go 工具链和 SHA-256 的 `manifest.json`；脚本会拒绝默认构建重新依赖兼容多内核。
+`build.sh` 生成不依赖 CGO 的 Linux x64 与 ARM64 产物，并写出包含 `runtime:pandora-native`、版本、提交、Go 工具链和 SHA-256 的 `manifest.json`；脚本会拒绝发布物依赖 sing-box。
 
 ```bash
 cd pdnd
@@ -154,11 +153,7 @@ Windows 交叉构建只能证明 `CGO_ENABLED=0` 编译产物可生成，不能�
 `pandora-native.service` 假定二进制安装到 `/usr/local/bin/pandora-native`，配置文件为
 `/etc/pandora-native/config.json`，并以无特权 `pandora` 用户运行。安装后应执行：
 
-正式部署省略 `native_only` 即启用 NativeCore-only，让未验证的协议组合直接报错；只有迁移阶段显式设置
-使用 `-tags compat` 构建并设置 `"native_only": false` 才允许
-回落到兼容内核；默认发布物不链接兼容多内核。
-默认构建只链接 NativeCore，节点配置里的 `kernel` 字段被忽略；只有 `-tags compat` 构建在 native-only 模式下才会拒绝显式的
-`kernel: "xray-core"` 与 `kernel: "sing-box"`。
+节点端只有 NativeCore 一个数据面，未验证的协议组合直接报错，不回落到任何第三方内核。
 
 手工安装不经安装器的系统参数段（面板安装模板 `panel/internal/module/node/service/pdnd_install.sh.tmpl` 的 `pandora_tune_sysctl`：conntrack、监听队列、端口范围、收发缓冲），至少要补上
 UDP 收发缓冲上限：Debian 13 缺省 `rmem_max` / `wmem_max` 是 212992，Hysteria2 / TUIC 的 quic-go 要 8MB
@@ -193,8 +188,8 @@ interoperability pass.
 The external interop gate therefore reports TLS + XHTTP/H3 and REALITY +
 XHTTP/H2 separately. Until an independent client completes a REALITY + XHTTP/H3
 round trip, the capability matrix must continue to expose
-`external-reality-xhttp-h3-unverified`; release tooling must not silently
-delegate that combination to Xray or sing-box.
+`external-reality-xhttp-h3-unverified`. There is no fallback kernel: pdnd ships
+NativeCore only, so the combination is served natively and simply marked unverified.
 
 The current pinned Xray dependency (`github.com/xtls/xray-core`) provides an
 auditable reason for this boundary: its XHTTP dialer selects HTTP/2 whenever a
@@ -203,8 +198,8 @@ ordinary TLS with a single `h3` ALPN.
 
 Consequently, the checked-in Xray gates prove REALITY + XHTTP/H2 and TLS +
 XHTTP/H3 as separate combinations; they do not prove REALITY + XHTTP/H3. This is
-an explicit interop limitation, not a NativeCore fallback or a silently
-delegated compatibility path.
+an explicit interop limitation of the reference client, not a NativeCore
+fallback.
 
 The legacy REALITY `Show` field survives only in the forked `internal/reality`
 config struct; the panel-delivered node config does not decode it, so it cannot

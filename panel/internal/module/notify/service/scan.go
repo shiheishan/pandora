@@ -52,12 +52,14 @@ var expiredNotices = []struct {
 // 流量预警档位（%）。
 var quotaThresholds = []int{80, 95}
 
+// scanItem 是扫描要写的一件通知。Code 为空表示不给用户写通知、只写 Admin 那条管理员提醒（此时 Key 用管理员提醒的去重键，Admin 必须非 nil）。
 type scanItem struct {
 	UserID uuid.UUID
 	Code   string
 	Vars   map[string]string
 	Key    string
-	Plugin *scanPlugin // 要同时发的插件事件，nil 表示不发
+	Plugin *scanPlugin  // 要同时发的插件事件，nil 表示不发
+	Admin  *adminNotice // 同一事务里一起写的管理员群组提醒，nil 表示不写
 }
 
 // quotaTier 返回 consumed/total 已跨过的最高一档；都没跨或 total<=0 返回 0。
@@ -258,12 +260,16 @@ func (s *Service) resolvePlanNames(ctx context.Context, items []scanItem) error 
 	seen := map[uuid.UUID]bool{}
 	for _, it := range items {
 		id, err := uuid.Parse(it.Vars["plan"])
-		if err != nil {
-			continue
-		}
-		if !seen[id] {
+		if err == nil && !seen[id] {
 			seen[id] = true
 			planIDs = append(planIDs, id)
+		}
+		if it.Admin != nil && it.Admin.Vars != nil {
+			aid, err := uuid.Parse(it.Admin.Vars["plan"])
+			if err == nil && !seen[aid] {
+				seen[aid] = true
+				planIDs = append(planIDs, aid)
+			}
 		}
 	}
 	plans, err := s.plans.PlansByIDs(ctx, planIDs)
@@ -274,9 +280,17 @@ func (s *Service) resolvePlanNames(ctx context.Context, items []scanItem) error 
 		id, err := uuid.Parse(items[i].Vars["plan"])
 		if err != nil {
 			items[i].Vars["plan"] = "套餐"
-			continue
+		} else {
+			items[i].Vars["plan"] = planName(plans, id)
 		}
-		items[i].Vars["plan"] = planName(plans, id)
+		if items[i].Admin != nil && items[i].Admin.Vars != nil {
+			aid, err := uuid.Parse(items[i].Admin.Vars["plan"])
+			if err != nil {
+				items[i].Admin.Vars["plan"] = "套餐"
+			} else {
+				items[i].Admin.Vars["plan"] = planName(plans, aid)
+			}
+		}
 	}
 	return nil
 }
@@ -316,7 +330,7 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 	if err != nil {
 		return written, err
 	}
-	n, _, err := s.writeScanItems(ctx, items)
+	n, _, err := s.writeScanItems(ctx, items, 0)
 	written += n
 	if written > 0 {
 		log.Info("notify: 扫描写入完成", zap.Int("count", written))
@@ -327,7 +341,7 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 // writeScanItems 按顺序给尚未去重的条目写通知，最多写 scanBatch 件（余下的下一轮接着写，已写的靠去重键跳过）：
 // 首次上线或长时间停机后待发件可能很多，一轮全写会超任务时限，联系人查询的参数也会超过 PG 单条语句的上限。
 // 返回新写件数，以及从头算起连续处理完（写成或已去重）的条目数，给按游标推进的调用方用。
-func (s *Service) writeScanItems(ctx context.Context, items []scanItem) (written, done int, err error) {
+func (s *Service) writeScanItems(ctx context.Context, items []scanItem, adminChatID int64) (written, done int, err error) {
 	if len(items) == 0 {
 		return 0, 0, nil
 	}
@@ -389,9 +403,27 @@ func (s *Service) writeScanItems(ctx context.Context, items []scanItem) (written
 		}
 		c := contacts[it.UserID]
 		err := s.tx.Do(ctx, func(ctx context.Context) error {
+			// Code 为空：只写管理员提醒的条目（如流量重置单的收款提醒），不给用户写通知
+			if it.Code == "" {
+				if adminChatID != 0 && it.Admin != nil {
+					ok, err := s.writeAdminNotice(ctx, adminChatID, *it.Admin)
+					if err != nil {
+						return err
+					}
+					if ok {
+						written++
+					}
+				}
+				return s.emitScanPlugin(ctx, it)
+			}
 			ok, err := s.writeNotice(ctx, env, it.UserID, c, it.Code, it.Vars, it.Key)
 			if err != nil {
 				return err
+			}
+			if ok && adminChatID != 0 && it.Admin != nil {
+				if _, err := s.writeAdminNotice(ctx, adminChatID, *it.Admin); err != nil {
+					return err
+				}
 			}
 			if err := s.emitScanPlugin(ctx, it); err != nil {
 				return err

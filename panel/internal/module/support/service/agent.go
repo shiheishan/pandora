@@ -13,7 +13,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
-// 队列分页的缺省与上限（与旧接口一致）。
+// 队列分页的缺省与上限。
 const (
 	queueDefaultLimit = 25
 	queueMaxLimit     = 100
@@ -158,10 +158,14 @@ func (s *Service) AgentReply(ctx context.Context, in AgentReplyInput) error {
 		}
 		s.messagesAdded(ctx, t.UserID, []*model.Message{msg})
 		if in.InternalNote {
-			if err := s.writeAudit(ctx, ActionInternalNote, ResourceTicket, t.ID, map[string]any{
+			data := map[string]any{
 				"message_id":    msg.ID.String(),
 				"internal_note": true,
-			}); err != nil {
+			}
+			if in.Source != "" {
+				data["via"] = in.Source
+			}
+			if err := s.writeAudit(ctx, ActionInternalNote, ResourceTicket, t.ID, data); err != nil {
 				return err
 			}
 			return s.completeIdem(ctx, in.Reply)
@@ -187,12 +191,16 @@ func (s *Service) AgentReply(ctx context.Context, in AgentReplyInput) error {
 		}
 		s.ticketChanged(ctx, realtime.OpUpdate, t.ID, t.UserID)
 		s.ticketReplied(ctx, t.ID, t.UserID)
-		if err := s.writeAudit(ctx, ActionReply, ResourceTicket, t.ID, map[string]any{
+		auditData := map[string]any{
 			"from":          t.Status,
 			"to":            StatusPendingUser,
 			"message_id":    msg.ID.String(),
 			"internal_note": false,
-		}); err != nil {
+		}
+		if in.Source != "" {
+			auditData["via"] = in.Source
+		}
+		if err := s.writeAudit(ctx, ActionReply, ResourceTicket, t.ID, auditData); err != nil {
 			return err
 		}
 		// 与回复同一事务：回复回滚则通知一起消失；去重键带消息 id，每条回复恰好一条

@@ -7,10 +7,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// UserOrderStat 是一个用户的订单总数与按币种划分的实付金额汇总。
+// UserOrderStat 是一个用户的订单总数与实付合计。
 type UserOrderStat struct {
 	Orders int64
-	Paid   map[string]decimal.Decimal
+	Paid   decimal.Decimal
 }
 
 // UserOrderStats 批量查询用户的订单聚合统计；空输入返回空 map。
@@ -24,13 +24,7 @@ func (s *Service) UserOrderStats(ctx context.Context, userIDs []uuid.UUID) (map[
 	}
 	out := make(map[uuid.UUID]UserOrderStat, len(rows))
 	for _, r := range rows {
-		st := out[r.UserID]
-		if st.Paid == nil {
-			st.Paid = make(map[string]decimal.Decimal)
-		}
-		st.Orders += r.Orders
-		st.Paid[r.Currency] = r.Paid
-		out[r.UserID] = st
+		out[r.UserID] = UserOrderStat{Orders: r.Orders, Paid: r.Paid}
 	}
 	return out, nil
 }

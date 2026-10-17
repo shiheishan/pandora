@@ -39,6 +39,11 @@
   border-top: 0;
 }
 
+.app button,
+.app a {
+  flex: none;
+}
+
 .appIcon {
   display: grid;
   flex: none;

@@ -32,6 +32,7 @@ const (
 	ClosedByUser    = "user_closed"
 	ClosedWithdrawn = "withdrawn"
 	ClosedByAgent   = "agent_closed"
+	ClosedAuto      = "auto_closed" // 客服回复后用户太久没回，定时任务按后台设置自动关闭
 )
 
 // 消息作者类型。
@@ -41,12 +42,13 @@ const (
 	AuthorSystem = "system"
 )
 
-// 审计动作（沿用旧代码的名字）与资源类型。
+// 审计动作与资源类型。
 const (
 	ActionCreate       = "ticket.create"
 	ActionReply        = "ticket.reply"
 	ActionInternalNote = "ticket.internal_note"
 	ActionClose        = "ticket.close"
+	ActionAutoClose    = "ticket.auto_closed"
 	ActionWithdraw     = "ticket.withdraw"
 	ActionAssign       = "ticket.assign"
 	ActionStatusChange = "ticket.status_change"
@@ -79,6 +81,7 @@ var (
 	ErrAlreadyClosed  = errs.Newf(errs.Conflict, "这个工单已经关闭了")
 	ErrAgentReplied   = errs.Newf(errs.Conflict, "客服已经回复过这个工单，不能再撤回。如果问题已解决，请直接关闭")
 	ErrStatusConflict = errs.Newf(errs.Conflict, "工单状态已变化，请刷新后重试")
+	ErrWaitForAgent   = errs.Newf(errs.Conflict, "请等客服回复后再继续发送")
 )
 
 // Category 是一个工单分类。
@@ -121,7 +124,7 @@ type Ticket struct {
 	EscalatedAt         *time.Time
 	// SLABreached 首次响应已超时、还没响应、未解决未关闭
 	SLABreached bool
-	// LastMessageAuthorKind 是最后一条非内部备注消息的作者类型，没有时为空串（只队列填）
+	// LastMessageAuthorKind 是最后一条非内部备注、非系统消息的作者类型，没有时为空串（只队列填）
 	LastMessageAuthorKind string
 	// UserActivePlan 是提单人当前生效订阅的套餐名，没有为 nil
 	UserActivePlan *string
@@ -142,6 +145,8 @@ type Message struct {
 type TicketDetail struct {
 	Ticket
 	Messages []Message
+	// ReplyBlocked 门户：开了「须等客服回复」且最后一条公开消息是用户自己的，回复框要禁用（只门户详情填）
+	ReplyBlocked bool
 }
 
 // Assignee 是可指派的客服（可登录的管理员）。
@@ -193,12 +198,19 @@ type QueueFilter struct {
 	Offset       int
 }
 
+// 回复来源。
+const (
+	SourceTelegram = "telegram"
+)
+
 // AgentReplyInput 是客服回复或内部备注。
 type AgentReplyInput struct {
 	TicketID     uuid.UUID
 	Body         string
 	InternalNote bool
-	Reply        ReplyFunc
+	// Source 是回复来源：空串是后台，"telegram" 是在 Telegram 管理员群组里回复；非空时写进审计 data 的 via
+	Source string
+	Reply  ReplyFunc
 }
 
 // AssignInput 是指派；AssigneeID 为 nil 表示取消指派。

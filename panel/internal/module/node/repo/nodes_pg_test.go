@@ -46,7 +46,7 @@ func inventoryTestNode(serverID uuid.UUID, name string, port int, l4 string) *mo
 	typ, host := "shadowsocks", "203.0.113.10"
 	return &model.Node{
 		ServerID: &serverID, Name: name, ServingStatus: "draft", NodeType: &typ, ServerHost: &host,
-		ServerPort: &port, ListenL4: &l4, Kernel: "auto", ProtocolConfig: `{"cipher":"aes-256-gcm"}`,
+		ServerPort: &port, ListenL4: &l4, ProtocolConfig: `{"cipher":"aes-256-gcm"}`,
 		ProtocolSchemaVersion: 1, TrafficRate: decimal.NewFromInt(1),
 	}
 }
@@ -113,13 +113,86 @@ func TestInventoryErrTranslation(t *testing.T) {
 		t.Fatalf("退役后同端口应能再建: %v", err)
 	}
 
-	holder, taken, err := r.NodePortHolder(ctx, srv.ID, 23001, "tcp", nil)
+	holder, taken, err := r.NodePortHolder(ctx, srv.ID, 23001, []string{"tcp", "tcp+udp"}, nil)
 	if err != nil || !taken || holder != "d-"+tag {
 		t.Fatalf("占用者 %q %v %v", holder, taken, err)
 	}
 	n, err := r.CountLiveNodesOnServer(ctx, srv.ID)
 	if err != nil || n != 1 {
 		t.Fatalf("未退役节点数 %d %v", n, err)
+	}
+}
+
+func TestListenClaimIndexesTCPUDP(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	r := New(d)
+	tag := inventoryTestTag(t)
+
+	srv := model.Server{Name: "repo-tcpudp-" + tag, CapacityNodes: 16}
+	if err := r.InsertServer(ctx, &srv); err != nil {
+		t.Fatal(err)
+	}
+
+	ss := inventoryTestNode(srv.ID, "ss-"+tag, 23101, "tcp+udp")
+	if err := r.InsertNode(ctx, ss); err != nil {
+		t.Fatal(err)
+	}
+
+	err := inventorySavepoint(t, r, ctx, func() error {
+		return r.InsertNode(ctx, inventoryTestNode(srv.ID, "udp-"+tag, 23101, "udp"))
+	})
+	if !errors.Is(err, ErrListenClaimTaken) {
+		t.Fatalf("23101 udp 与 tcp+udp 冲突：%v", err)
+	}
+	err = inventorySavepoint(t, r, ctx, func() error {
+		return r.InsertNode(ctx, inventoryTestNode(srv.ID, "tcp-"+tag, 23101, "tcp"))
+	})
+	if !errors.Is(err, ErrListenClaimTaken) {
+		t.Fatalf("23101 tcp 与 tcp+udp 冲突：%v", err)
+	}
+	err = inventorySavepoint(t, r, ctx, func() error {
+		return r.InsertNode(ctx, inventoryTestNode(srv.ID, "ss2-"+tag, 23101, "tcp+udp"))
+	})
+	if !errors.Is(err, ErrListenClaimTaken) {
+		t.Fatalf("23101 第二个 tcp+udp：%v", err)
+	}
+
+	if err := r.InsertNode(ctx, inventoryTestNode(srv.ID, "t23102-"+tag, 23102, "tcp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.InsertNode(ctx, inventoryTestNode(srv.ID, "u23102-"+tag, 23102, "udp")); err != nil {
+		t.Fatal(err)
+	}
+	err = inventorySavepoint(t, r, ctx, func() error {
+		return r.InsertNode(ctx, inventoryTestNode(srv.ID, "both-"+tag, 23102, "tcp+udp"))
+	})
+	if !errors.Is(err, ErrListenClaimTaken) {
+		t.Fatalf("23102 tcp+udp 与 tcp/udp 冲突：%v", err)
+	}
+
+	err = inventorySavepoint(t, r, ctx, func() error {
+		return r.InsertNode(ctx, inventoryTestNode(srv.ID, "quic-"+tag, 23103, "quic"))
+	})
+	if !errors.Is(err, ErrInventoryCheck) {
+		t.Fatalf("CHECK quic：%v", err)
+	}
+
+	holder, taken, err := r.NodePortHolder(ctx, srv.ID, 23101, []string{"udp", "tcp+udp"}, nil)
+	if err != nil || !taken || holder != "ss-"+tag {
+		t.Fatalf("NodePortHolder 23101：%q %v %v", holder, taken, err)
+	}
+	holder, taken, err = r.NodePortHolder(ctx, srv.ID, 23101, nil, nil)
+	if err != nil || taken {
+		t.Fatalf("空 l4s 不应查库：%q %v %v", holder, taken, err)
+	}
+
+	ok, err := r.SetNodeServing(ctx, ss.ID, "draft", ss.RowVersion, "retired")
+	if err != nil || !ok {
+		t.Fatalf("退役 ss：%v %v", ok, err)
+	}
+	if err := r.InsertNode(ctx, inventoryTestNode(srv.ID, "udp-after-"+tag, 23101, "udp")); err != nil {
+		t.Fatalf("退役后 23101 udp 应成功：%v", err)
 	}
 }
 

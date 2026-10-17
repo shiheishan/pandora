@@ -16,6 +16,28 @@ func (s *Service) Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]st
 	return s.repo.Emails(ctx, ids)
 }
 
+// IsDeleted 报告用户是否已注销；用户不存在返回 false（由调用方按自己的口径处理不存在）。
+// 别的模块对用户的写入口在自己的事务里先调它（排在锁自己的行之前）：读时给用户行加共享锁并持有到提交，
+// 与注销（先锁用户行，再取消待付订单、停订阅）互斥，注销提交前进来的写入要等，提交后读到 deleted 被拒。
+func (s *Service) IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error) {
+	st, ok, err := s.repo.UserStatusShared(ctx, userID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return st == StatusDeleted, nil
+}
+
+// AccountDeleted 报告用户是否已注销，无锁读（用户不存在返回 false）。给不能等用户行锁的读面用：commission 在订单结算事务里
+// 判断邀请人是否已注销，那时已持有库存、券与平台收入等行锁，再去等邀请人的用户行会与注销（锁用户行后释放他的待付单）互等。
+// 竞态的代价只是注销提交前那一刻的一单仍记给他。写入口要互斥时用 IsDeleted。
+func (s *Service) AccountDeleted(ctx context.Context, userID uuid.UUID) (bool, error) {
+	u, ok, err := s.repo.UserByID(ctx, userID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return u.Status == StatusDeleted, nil
+}
+
 // UserGroupID 取用户所在的用户组，没有分组时返回 nil；用户不存在回 errs.NotFound（catalog、promo 按组过滤用）。
 func (s *Service) UserGroupID(ctx context.Context, userID uuid.UUID) (*uuid.UUID, error) {
 	u, ok, err := s.repo.UserByID(ctx, userID)

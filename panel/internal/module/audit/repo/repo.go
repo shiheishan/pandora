@@ -120,7 +120,7 @@ func selectRecords(tx *gorm.DB) *gorm.DB {
 
 func apply(tx *gorm.DB, q Query) *gorm.DB {
 	if q.ActionPrefix != "" {
-		pat := escapeLike(q.ActionPrefix) + "%"
+		pat := db.EscapeLike(q.ActionPrefix) + "%"
 		tx = tx.Where("action LIKE ? ESCAPE '\\'", pat)
 	}
 	if q.ActorKind != "" {
@@ -139,7 +139,7 @@ func apply(tx *gorm.DB, q Query) *gorm.DB {
 		tx = tx.Where("occurred_at <= ?", *q.AsOf)
 	}
 	if q.Text != "" {
-		pat := "%" + escapeLike(q.Text) + "%"
+		pat := db.ContainsPattern(q.Text)
 		parts := []string{"action ILIKE ? ESCAPE '\\'"}
 		args := []any{pat}
 		if len(q.TextActorIDs) > 0 {
@@ -153,19 +153,4 @@ func apply(tx *gorm.DB, q Query) *gorm.DB {
 		tx = tx.Where("("+strings.Join(parts, " OR ")+")", args...)
 	}
 	return tx
-}
-
-// escapeLike 为 PG LIKE/ILIKE 转义 \、%、_。
-func escapeLike(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '\\', '%', '_':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

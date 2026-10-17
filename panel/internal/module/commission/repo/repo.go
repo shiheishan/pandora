@@ -4,12 +4,9 @@ package repo
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -30,32 +27,15 @@ var (
 	ErrCheck = errors.New("commission: CHECK 约束不满足")
 )
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵，并包住原错误。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, gorm.ErrDuplicatedKey):
-		return fmt.Errorf("%w: %v", ErrDuplicate, err)
-	case errors.Is(err, gorm.ErrForeignKeyViolated):
-		return fmt.Errorf("%w: %v", ErrForeignKey, err)
-	case errors.Is(err, gorm.ErrCheckConstraintViolated):
-		return fmt.Errorf("%w: %v", ErrCheck, err)
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23505":
-			return fmt.Errorf("%w: %v", ErrDuplicate, err)
-		case "23503":
-			return fmt.Errorf("%w: %v", ErrForeignKey, err)
-		case "23514":
-			return fmt.Errorf("%w: %v", ErrCheck, err)
-		}
-	}
-	return err
-}
+// constraintErrs 把约束违例翻译成本模块哨兵（统一做法见 internal/pkg/db/constraint.go）。
+var constraintErrs = db.ConstraintErrors{ByCode: map[string]error{
+	db.CodeUnique:     ErrDuplicate,
+	db.CodeForeignKey: ErrForeignKey,
+	db.CodeCheck:      ErrCheck,
+}}
+
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 // checkMoney 在写入前校验金额最多 2 位小数。
 func checkMoney(vals ...decimal.Decimal) error {
@@ -77,7 +57,7 @@ func (r *Repo) LockUser(ctx context.Context, userID uuid.UUID) error {
 	return mapErr(err)
 }
 
-// LockReferee 在当前事务里对被推荐人加咨询锁，串行化「首单」口径的计提判定（不同币种的订单不共用平台收入科目锁）。
+// LockReferee 在当前事务里对被推荐人加咨询锁，串行化「首单」口径的计提判定。
 func (r *Repo) LockReferee(ctx context.Context, refereeID uuid.UUID) error {
 	key := "commission:referee:" + refereeID.String()
 	err := r.d.Conn(ctx).Exec(

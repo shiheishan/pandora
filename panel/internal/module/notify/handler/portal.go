@@ -1,13 +1,13 @@
 package handler
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/notify/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
+	"github.com/aegispanel/aegis/internal/pkg/pagination"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -67,10 +67,11 @@ type setPreferenceRequest struct {
 }
 
 type telegramBindingResponse struct {
-	Bound       bool   `json:"bound"`
-	Username    string `json:"username,omitempty"`
-	BotUsername string `json:"bot_username,omitempty"`
-	Enabled     bool   `json:"enabled"`
+	Bound       bool    `json:"bound"`
+	Username    string  `json:"username,omitempty"`
+	BotUsername string  `json:"bot_username,omitempty"`
+	Enabled     bool    `json:"enabled"`
+	DiscussLink *string `json:"discuss_link"`
 }
 
 type bindCodeResponse struct {
@@ -81,15 +82,6 @@ type bindCodeResponse struct {
 
 type telegramUnbindResponse struct {
 	Unbound bool `json:"unbound"`
-}
-
-func inboxLimitFromQuery(c *gin.Context) int {
-	limit := 30
-	v, err := strconv.Atoi(c.Query("limit"))
-	if err == nil && v > 0 && v <= 100 {
-		limit = v
-	}
-	return limit
 }
 
 func toInboxNotificationDTO(entry service.InboxEntry) inboxNotificationDTO {
@@ -136,8 +128,12 @@ func (h *Handler) listNotifications(c *gin.Context) {
 	if !ok {
 		return
 	}
+	limit, _, err := pagination.Parse(c, 30, 100)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	onlyUnread := c.Query("unread") == "1"
-	limit := inboxLimitFromQuery(c)
 	entries, unread, err := h.svc.Inbox(c.Request.Context(), uid, onlyUnread, limit)
 	if err != nil {
 		httpx.Fail(c, err)
@@ -228,11 +224,16 @@ func (h *Handler) myTelegram(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	var discussLink *string
+	if info.DiscussLink != "" {
+		discussLink = &info.DiscussLink
+	}
 	httpx.OK(c, telegramBindingResponse{
 		Bound:       info.Bound,
 		Username:    info.Username,
 		BotUsername: info.BotUsername,
 		Enabled:     info.Enabled,
+		DiscussLink: discussLink,
 	})
 }
 

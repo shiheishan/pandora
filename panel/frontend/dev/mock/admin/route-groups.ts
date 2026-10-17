@@ -31,10 +31,10 @@ function group(name: string, description: string, sort_order: number, outbounds:
 }
 
 export const routeGroups: RouteGroup[] = [
-  group('香港 · 流媒体解锁', '香港节点的 Netflix / Disney+ 走解锁出口', 10, [{ tag: 'HK-UNLOCK', type: 'trojan', settings: { server: 'unlock-hk.example.invalid', port: 443 } }], [
+  group('香港 · 流媒体解锁', '香港节点的 Netflix / Disney+ 走解锁出口', 10, [{ tag: 'HK-UNLOCK', type: 'trojan', settings: { server: 'unlock-hk.example.invalid', server_port: 443 } }], [
     { priority: 10, matcher: { domain_suffix: ['netflix.com', 'nflxvideo.net', 'disneyplus.com'] }, outbound_tag: 'HK-UNLOCK', enabled: true, note: '流媒体解锁' },
   ]),
-  group('日本 · 中转', '日本节点回程走中转', 20, [{ tag: 'JP-RELAY', type: 'shadowsocks', settings: { server: 'relay-jp.example.invalid', port: 8388 } }], [
+  group('日本 · 中转', '日本节点回程走中转', 20, [{ tag: 'JP-RELAY', type: 'shadowsocks', settings: { server: 'relay-jp.example.invalid', server_port: 8388 } }], [
     { priority: 10, matcher: { domain_suffix: ['jp', 'nicovideo.jp'] }, outbound_tag: 'JP-RELAY', enabled: true, note: '日本站点' },
   ]),
 ]
@@ -63,7 +63,7 @@ export function danglingRefs(nodes: readonly RoutedNode[]): Set<string> {
     }
   }
   for (const n of nodes) {
-    if (n.status === 'destroyed') continue
+    if (n.deleted) continue
     const seen = new Set([...visibleTagsForNode(n.id), ...n.routing.outbounds.map((o) => o.tag)])
     for (const r of n.routing.routes) {
       const tag = text(r.outbound_tag)
@@ -110,7 +110,7 @@ const bump = (g: RouteGroup) => {
   g.row_version += 1
   g.updated_at = now()
 }
-const serving = (n: RoutedNode) => n.status !== 'retired' && n.status !== 'destroyed' && n.serving_status !== 'retired'
+const serving = (n: RoutedNode) => !n.deleted && n.serving_status !== 'retired'
 
 function normalizeIds(raw: unknown, field: string): string[] | MockResult {
   const ids = Array.isArray(raw) ? raw : []
@@ -151,7 +151,7 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
     routeGroups[1]!.members = nodes.filter((n) => n.name.startsWith('东京')).map((n) => n.id)
   }
   const findGroup = (id: string | undefined) => (id && UUID.test(id) ? routeGroups.find((g) => g.id === id) : undefined)
-  const findNode = (id: string | undefined) => nodes.find((n) => n.id === id && n.status !== 'destroyed')
+  const findNode = (id: string | undefined) => nodes.find((n) => n.id === id && !n.deleted)
   const live = (ids: readonly string[]) => nodes.filter((n) => ids.includes(n.id) && serving(n)).length
 
   return {

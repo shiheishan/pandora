@@ -371,16 +371,14 @@ func TestPreview(t *testing.T) {
 
 	P := newPlan(t, e, ctx)
 	R := uuid.New()
-	K := uuid.New()
-	e.cat.prices[R] = fakePrice{plan: P, currency: "CNY", amount: decimal.RequireFromString("30.00")}
-	e.cat.packs[K] = fakePrice{currency: "CNY", amount: decimal.RequireFromString("12.00")}
+	e.cat.prices[R] = fakePrice{plan: P, amount: decimal.RequireFromString("30.00")}
 
 	code := randCode("PRV")
 	ps := percentSpec(1000)
 	ps.PlanIDs = []uuid.UUID{P}
 	createCoupon(t, e, ctx, admin, code, ps)
 
-	pv, err := e.svc.Preview(ctx, u, code, PreviewItem{PlanID: &P, PriceID: &R})
+	pv, err := e.svc.Preview(ctx, u, code, PreviewItem{PlanID: P, PriceID: R})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,11 +395,7 @@ func TestPreview(t *testing.T) {
 		t.Fatal("Applied 应为非 nil")
 	}
 
-	if _, err := e.svc.Preview(ctx, u, code, PreviewItem{PackID: &K}); !errors.Is(err, ErrCouponNotForPlan) {
-		t.Fatalf("流量包: %v", err)
-	}
-
-	pv, err = e.svc.Preview(ctx, u, "", PreviewItem{PlanID: &P, PriceID: &R})
+	pv, err = e.svc.Preview(ctx, u, "", PreviewItem{PlanID: P, PriceID: R})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +404,7 @@ func TestPreview(t *testing.T) {
 	}
 
 	wrongPlan := uuid.New()
-	_, err = e.svc.Preview(ctx, u, code, PreviewItem{PlanID: &wrongPlan, PriceID: &R})
+	_, err = e.svc.Preview(ctx, u, code, PreviewItem{PlanID: wrongPlan, PriceID: R})
 	if errCode(err) != errs.NotFound {
 		t.Fatalf("价格不属于套餐: code=%s err=%v", errCode(err), err)
 	}

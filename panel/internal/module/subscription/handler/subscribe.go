@@ -21,7 +21,7 @@ import (
 // 一律回同一个伪装 404（出错的那种在日志里留 ERROR，日志不带令牌、前缀与路径）。
 // 唯一的例外是令牌有效、订阅过期：回 200 与一条到期提示节点。超限回 429 纯文本；分发依赖没装配回 503。
 
-// decoyPage 是所有失败请求看到的静态 404 页（与旧 subscribe 一字不差）。
+// decoyPage 是所有失败请求看到的静态 404 页。
 const decoyPage = `<!doctype html>
 <html><head><meta charset="utf-8"><title>404 Not Found</title></head>
 <body><h1>Not Found</h1><p>The requested URL was not found on this server.</p></body></html>
@@ -58,9 +58,12 @@ func subscribeTarget(c *gin.Context) string {
 func (h *Handler) subscribe(c *gin.Context) {
 	ctx := c.Request.Context()
 	res, err := h.svc.Pull(ctx, service.PullRequest{
+		Host:   c.Request.Host,
 		Prefix: c.Param("prefix"),
 		Token:  c.Param("token"),
 		Target: subscribeTarget(c),
+		Types:  c.Query("types"),
+		Filter: c.Query("filter"),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrPullDenied) {

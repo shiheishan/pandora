@@ -17,7 +17,8 @@ paths:
 
 - `panel/` 只管协议与线格式，不做编排：接入（`enroll.go`）、身份目录（`identity.go`）、会话（`session.go`）。
   会话收到的配置、名单、流量回执经 `Events()` 交给编排层；编排层要发的心跳、流量、在线、回执经 `Send*` 交回来。
-- `node/` 是编排，只认 `core.Core` 抽象，不知道背后是 NativeCore 还是 compat 内核。
+- `node/` 是编排，只认 `core.Core` 抽象，发布物里背后只有 NativeCore（`kernel.NativeCore`），测试里换成 fake。
+  NativeCore 要提供的能力（整代装入站 `ApplyInbound` / `ApplyInboundWithUsers`、就绪探测 `InboundReady`、入站归属 `SetInboundOwner`）都是 `core.Core` 接口本身的方法，编排层不做可选接口断言；fake 实现完整接口（`node/fixture_test.go` 的 `fakeKernel`）。
 - `release/acceptancepanel` 按面板契约独立实现 CA 指纹、证书签发与会话规则，刻意不 import `pdnd/panel`：
   夹具借用被测代码，两边一起错时验收照样变绿。只有它的 `main_test.go` 可以用 `pdnd/panel` 对打。
 
@@ -57,8 +58,9 @@ paths:
 - 用户镜像：`n.known` 与 `n.userVersion` 说的是同一件事「内核里已是这一版」，内核用户表被清空（入站重建失败、回滚失败、名单预装失败）
   时只能经 `resetUserMirror` 一起作废，并回 `UsersAck{ok:false, reason:resync}`。
 - 名单增量只在本地确是 from_version 时打，否则回 `version_mismatch`；装不进内核回 `apply_failed`。面板对任何 ok=false 都应发全量。
-- 先有名单、再开 accept：入站起来之前收到的全量存在 `n.staged`，装入站时经 `ApplyInboundWithUsers` 一起交给内核；
-  兼容内核装完入站再补装，换配置重建入站后把手上的名单补回。
+- 先有名单、再开 accept：入站起来之前收到的全量存在 `n.staged`，装入站时经 `ApplyInboundWithUsers` 一起交给内核
+  （名单来源依次是内核里现有的 `n.known`、`n.staged`、冷启动时的落盘缓存，都没有就带空名单）；入站起来了、名单没装上（`UsersPreloadFailed`）
+  按内核用户表已空处理。只有回滚装回旧配置时走 `ApplyInbound`，随后 `AddUsers` 补回旧名单。
 - 流量不丢：按 (节点, uid) 合并；inflight 收到 TrafficAck 才丢，每个上报节拍与每次 Welcome 原样重发（同一 report_id）；
   缓冲上限 2^17 条，超限先丢最旧的 inflight 并计数。退出时先关内核让在途连接入账，再报最后一轮并等 ack。
 - 落盘缓存（`<cache_dir>/nodes/`）：`server.json` 记身份与节点顺序，每节点 `config.json`（原字节 base64 + 摘要）与 `users.json`，
@@ -83,10 +85,10 @@ paths:
 | 键 | 类型 | 说明 |
 |---|---|---|
 | `server_port` | 整数 1–65535，必填 | 入站端口。监听地址固定为全部地址（不读 listen_ip）。 |
-| `kernel` | 字符串，可选 | 承载运行时：空或 auto / pandora-native；multi 构建可显式选 sing-box / xray-core，native-only 运行时拒绝兼容内核。 |
 | `outbounds` | 数组，可选 | 每项 `tag`、`type`（字符串，必填）、`settings`（对象，可选，按出站类型解析）。 |
 | `routes` | 数组，可选 | 每项 `outbound`（必填，引用 outbounds 的 tag）、`matcher`（对象，可选）。 |
 | `final` | 字符串，可选 | 没命中规则时走的出站。outbounds / routes / final 都不给 = 没配分流（直出）；给了空的 = 清空已有规则。 |
+| `ech_keys` | 数组，可选，≤8 项 | ECH 服务端密钥（迁移 00045）：每项 `config`（base64，单个 ECHConfig，版本 0xfe0d）、`private_key`（base64，32 字节 X25519）、`send_as_retry`（布尔，只有当前钥为 true）。面板只给能用 Go 标准库 TLS 的入站下发（vless/vmess/trojan 普通 TLS、AnyTLS、naive 等，不含 REALITY 与 QUIC 类）；节点端在 `loadInboundTLSConfig` 与 AnyTLS 的 TLS 配置上装 `EncryptedClientHelloKeys`，开了即只收 TLS 1.3（`kernel/inbound_tls_ech.go`）。轮换后旧钥在过渡期内仍下发，供拿着旧订阅的客户端解密。 |
 
 共用块（`kernel/`）：
 
@@ -111,7 +113,7 @@ paths:
 | vless | network、security、tls / cert_path / key_path、REALITY 块、传输块 |
 | vmess | network、security（加密方式）、tls / cert_path / key_path、`alterId`（只接受 0）、传输块 |
 | trojan | network（tcp / ws / httpupgrade / grpc / mkcp）、security、tls / cert_path / key_path、REALITY 块、fallback、传输块 |
-| shadowsocks | `method`、`password`（2022 系列的服务端密钥）、network（tcp / udp）；`plugin` 非空即拒绝 |
+| shadowsocks | `method`（经典 AEAD 五种；2022 只认 `2022-blake3-aes-128-gcm` / `2022-blake3-aes-256-gcm`，`2022-blake3-chacha20-poly1305` 没有 SIP023 身份头，按「不支持的加密方式」拒绝启动入站）、`password`（只 2022 方法有：标准 base64 的服务端身份密钥 iPSK，解出长度必须等于方法的密钥长度，否则入站不启动；用户的 uPSK 由 UUID 算，见 pdnd-kernel 规则文件）；同端口总是 TCP+UDP，带 `network` 键即拒绝；`plugin` 非空即拒绝 |
 | hysteria2 | network（只 udp）、cert_path、key_path（必填）、`obfs`（对象：`type: salamander`、`password`）、`up_mbps`、`down_mbps`、`udp_timeout`、`udp_queue_size` |
 | tuic | network（只 udp）、cert_path、key_path（必填）、`congestion_control`（cubic / new_reno / bbr）、`alpn`、`zero_rtt`、`auth_timeout`、`heartbeat`、`udp_timeout`；出现 `udp_over_stream` 即拒绝 |
 | anytls | network（只 tcp）、cert_path、key_path、`tls`、`padding_scheme`、fallback |

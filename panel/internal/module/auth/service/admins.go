@@ -15,8 +15,8 @@ import (
 
 // 管理员授予与取消的审计动作。
 const (
-	ActionAdminGranted = "adminctl.admin_granted"
-	ActionAdminRevoked = "adminctl.admin_revoked"
+	ActionAdminGranted = "admin.admin_granted"
+	ActionAdminRevoked = "admin.admin_revoked"
 )
 
 var errLastAdmin = errs.Newf(errs.Conflict, "必须保留至少一个可登录的有效管理员")

@@ -13,13 +13,16 @@ paths:
 ## 分层由 depguard 钉住
 - 规则在 `panel/.golangci.yml`，由 `go run ./tools/depguardgen` 按 `panel/internal/module/` 的目录生成，不手改；加模块、改规则后重新生成，CI 用 `-check` 查漂移。改规则改生成器。
 - 几条通用规则：`handler-no-db`（handler、task、grpc 不碰 gorm、`internal/pkg/db`、`internal/pkg/tx`）、`service-no-gorm`（service 不碰 gorm 与 `internal/pkg/db`，事务只经 `internal/pkg/tx`）、`model-plain`、`pure-packages`（`render`、`protocol` 不依赖任何模块与库）、`pkg-no-business`（`internal/pkg` 不依赖模块与 app）、`httpx-no-db`（中间件不碰库）。
-- 每个模块一条 `module-<名>-boundary`：不许 import 别的模块的 repo、model、handler、task，模块之间只调 service。
+- 每个模块一条 `module-<名>-boundary`：不许 import 别的模块的 repo、model、handler、task、grpc、provider，模块之间只调 service（测试可以用别的模块的 repo 装真 service、用支付 provider 造验签回调）；`module-<名>-entry`：本模块的 handler、task、grpc 也不许 import 本模块的 repo 与 model。
+- 技术栈规则：`stack-conventions` 禁 chi、pgxpool；`stack-no-stdlog` 禁生产代码用 `log`、`log/slog`（日志用 zap；测试里 pebble 之类要 `*log.Logger` 的夹具可用）；`stack-no-database-sql` 禁生产代码用 `database/sql`（`internal/app/migrate.go`、`internal/pkg/testkit`、`db/migrations` 例外，测试不管）；`stack-no-pgx` 禁 `github.com/jackc/pgx`（含 pgconn，测试同样适用；只有 `internal/pkg/db`、`testkit`、`migrate.go`、`db/migrations/migrations_test.go` 例外）。
 - lint 命令：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（本机加 `GOTOOLCHAIN=go1.26.9`）。
 
 ## 模块与表属主
 - 每张表只有一个属主模块（表见 `docs/architecture.md` 4.1）。要别的模块的数据，调属主 service 的批量读方法，一条 SQL，不逐行查。
 - 依赖方向见 4.2。反向通知用构造时注入的接口或回调（如 order 的 `PaidHook` 回调 commission，subscription 的 `RosterNotifier` 由 node 实现），不反向 import、不造事件总线。
+- 插件事件口只有 `internal/pkg/pluginevents` 一套：发事件的模块持有 `pluginevents.Emitter` 字段（`UsePluginEvents` 注入），经 `pluginevents.Emit(ctx, s.events, …)` 发，不在模块里再定义事件接口或 nil 判断的包装。
 - 跨模块的适配（把一个模块的 service 包成另一个模块要的接口）集中在 `panel/internal/app/adapters.go`，装配在 `wire.go`。
+- 带 `Use*` 注入的 service 都实现 `MissingPorts() []string`：返回还没注入的必需端口名（端口名用接口类型名），可选端口（如只在 serve 里装的、可以是 nil 的、配置值）在方法注释里写明为什么不算。`wire.go` 的 `buildServices` 末尾经 `checkPorts` 统一检查，缺了就拒绝启动；新加带 `Use*` 的 service 要加进那张表，不在各处各写一份检查。
 
 ## 事务
 - 事务只经 `tx.Manager.Do`：ctx 里已有事务就加入，只有最外层提交。事务边界在 service 的公开方法；被别的 service 调的方法加入调用方事务。

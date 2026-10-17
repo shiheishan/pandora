@@ -4,51 +4,70 @@ import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, Modal, TextArea, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
 import { macroSavedSchema, okSchema, useInvalidateTickets, type Macro } from './api'
-import css from './Tickets.module.css'
+import css from './Composer.module.css'
 
 const TITLE_MAX = 20
 const BODY_MAX = 5000
-
-interface Draft {
-  id: string | null
-  title: string
-  body: string
-  sort_order: number
-}
 
 export function MacroManager({ open, onClose, macros }: { open: boolean; onClose: () => void; macros: readonly Macro[] }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateTickets()
-  const [draft, setDraft] = useState<Draft | null>(null)
+  // 新增的两个输入框
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [adding, setAdding] = useState(false)
+  // 「修改」小弹窗（在列表弹窗之上）
+  const [editing, setEditing] = useState<Macro | null>(null)
   const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState<Macro | null>(null)
 
-  const edit = (d: Draft | null) => {
-    setDraft(d)
+  const closeEditing = () => {
+    setEditing(null)
     setErrors({})
   }
-  const close = () => {
-    edit(null)
-    onClose()
+
+  /** 底部「添加」：两个都填了才新建；都空时等于关闭；只填一个标到对应输入 */
+  const add = async () => {
+    const t = title.trim()
+    const b = body.trim()
+    if (!t && !b) return onClose()
+    const local: Record<string, string> = {}
+    if ([...t].length < 1 || [...t].length > TITLE_MAX) local.title = `标题 1 到 ${TITLE_MAX} 个字`
+    if ([...b].length < 1 || [...b].length > BODY_MAX) local.body = `内容 1 到 ${BODY_MAX} 个字`
+    if (Object.keys(local).length) return setErrors(local)
+    setAdding(true)
+    try {
+      const sort_order = macros.reduce((max, m) => Math.max(max, m.sort_order), 0) + 10
+      await api.post('v1/ticket-macros', macroSavedSchema, { body: { title: t, body: b, sort_order } })
+      toast('快捷回复已添加')
+      setTitle('')
+      setBody('')
+      setErrors({})
+      void invalidate('macros')
+    } catch (e) {
+      fail(e, setErrors)
+    } finally {
+      setAdding(false)
+    }
   }
 
+  /** 修改小弹窗里的「保存」：sort_order 沿用原值 */
   const save = async () => {
-    if (!draft) return
-    const title = draft.title.trim()
-    const body = draft.body.trim()
+    if (!editing) return
+    const t = editing.title.trim()
+    const b = editing.body.trim()
     const local: Record<string, string> = {}
-    if ([...title].length < 1 || [...title].length > TITLE_MAX) local.title = `标题 1 到 ${TITLE_MAX} 个字`
-    if ([...body].length < 1 || [...body].length > BODY_MAX) local.body = `内容 1 到 ${BODY_MAX} 个字`
+    if ([...t].length < 1 || [...t].length > TITLE_MAX) local.title = `标题 1 到 ${TITLE_MAX} 个字`
+    if ([...b].length < 1 || [...b].length > BODY_MAX) local.body = `内容 1 到 ${BODY_MAX} 个字`
     if (Object.keys(local).length) return setErrors(local)
     setSaving(true)
     try {
-      const path = draft.id ? `v1/ticket-macros/${encodeURIComponent(draft.id)}` : 'v1/ticket-macros'
-      await api.post(path, macroSavedSchema, { body: { title, body, sort_order: draft.sort_order } })
-      toast(draft.id ? '快捷回复已保存' : '已新建快捷回复')
-      edit(null)
+      await api.post(`v1/ticket-macros/${encodeURIComponent(editing.id)}`, macroSavedSchema, { body: { title: t, body: b, sort_order: editing.sort_order } })
+      toast(`已保存「${t}」`)
+      closeEditing()
       void invalidate('macros')
     } catch (e) {
       fail(e, setErrors)
@@ -57,59 +76,27 @@ export function MacroManager({ open, onClose, macros }: { open: boolean; onClose
     }
   }
 
-  const nextOrder = macros.reduce((max, m) => Math.max(max, m.sort_order), 0) + 10
-
   return (
     <>
       <Modal
-        open={open && removing === null}
-        onClose={close}
-        dismissible={!saving}
-        size="md"
-        title={draft ? (draft.id ? '编辑快捷回复' : '新建快捷回复') : '快捷回复'}
+        // 打开「修改」或删除确认时把列表弹窗藏起来，回来时状态还在
+        open={open && editing === null && removing === null}
+        onClose={onClose}
+        dismissible={!adding}
+        size={560}
+        title="快捷回复"
         actions={
-          draft ? (
-            <>
-              <Button size="dialog" onClick={() => edit(null)} disabled={saving}>
-                返回列表
-              </Button>
-              <Button size="dialog" variant="primary" busy={saving} onClick={() => void save()}>
-                保存
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button size="dialog" onClick={close}>
-                完成
-              </Button>
-              <Button size="dialog" variant="primary" onClick={() => edit({ id: null, title: '', body: '', sort_order: nextOrder })}>
-                新建
-              </Button>
-            </>
-          )
+          <>
+            <Button size="dialog" onClick={onClose}>
+              完成
+            </Button>
+            <Button size="dialog" variant="primary" busy={adding} onClick={() => void add()}>
+              添加
+            </Button>
+          </>
         }
       >
-        {draft ? (
-          <div className={css.macroForm}>
-            <Input
-              label="标题"
-              hint={`显示在回复框上方，最多 ${TITLE_MAX} 字`}
-              value={draft.title}
-              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              error={errors.title}
-              data-autofocus=""
-            />
-            <TextArea label="内容" rows={6} value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} error={errors.body} hint="点标签后填进回复框，发送前还能改。" />
-            <Input
-              label="排序"
-              type="number"
-              hint="数字小的排前面"
-              value={String(draft.sort_order)}
-              onChange={(e) => setDraft({ ...draft, sort_order: Number.parseInt(e.target.value, 10) || 0 })}
-              error={errors.sort_order}
-            />
-          </div>
-        ) : macros.length === 0 ? (
+        {macros.length === 0 ? (
           <Empty bare title="还没有快捷回复" description="把常用的答复存下来，回复时点一下就能填进去。" />
         ) : (
           <ul className={css.macroList}>
@@ -119,17 +106,49 @@ export function MacroManager({ open, onClose, macros }: { open: boolean; onClose
                   <div className={css.macroTitle}>{m.title}</div>
                   <div className={css.macroBody}>{m.body}</div>
                 </div>
-                <Button size="xs" variant="ghost" onClick={() => edit({ id: m.id, title: m.title, body: m.body, sort_order: m.sort_order })}>
-                  编辑
+                <Button size="xs" variant="ghost" onClick={() => setEditing(m)}>
+                  修改
                 </Button>
-                <Button size="xs" variant="ghost" onClick={() => setRemoving(m)}>
+                <Button size="xs" variant="ghost" className={css.macroActionDanger} onClick={() => setRemoving(m)}>
                   删除
                 </Button>
               </li>
             ))}
           </ul>
         )}
+        <div className={css.macroForm}>
+          <Input
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value)
+              setErrors({})
+            }}
+            placeholder="标题，如「线路排查」"
+            aria-label="新快捷回复标题"
+            error={errors.title}
+          />
+          <TextArea
+            rows={3}
+            value={body}
+            onChange={(e) => {
+              setBody(e.target.value)
+              setErrors({})
+            }}
+            placeholder="回复正文"
+            aria-label="新快捷回复正文"
+            error={errors.body}
+          />
+        </div>
       </Modal>
+      <EditDialog
+        macro={editing}
+        errors={errors}
+        saving={saving}
+        onErrors={setErrors}
+        onChange={setEditing}
+        onClose={closeEditing}
+        onSave={save}
+      />
       <ConfirmModal
         open={removing !== null}
         title={`删除「${removing?.title ?? ''}」？`}
@@ -156,5 +175,68 @@ export function MacroManager({ open, onClose, macros }: { open: boolean; onClose
         }}
       />
     </>
+  )
+}
+
+/** 「修改快捷回复」小弹窗（size 480）：打开时列表弹窗隐藏 */
+function EditDialog({
+  macro,
+  errors,
+  saving,
+  onErrors,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  macro: Macro | null
+  errors: Record<string, string>
+  saving: boolean
+  onErrors: (errors: Record<string, string>) => void
+  onChange: (draft: Macro) => void
+  onClose: () => void
+  onSave: () => void
+}) {
+  return (
+    <Modal
+      open={macro !== null}
+      onClose={onClose}
+      dismissible={!saving}
+      size={480}
+      title="修改快捷回复"
+      actions={
+        <>
+          <Button size="dialog" onClick={onClose} disabled={saving}>
+            取消
+          </Button>
+          <Button size="dialog" variant="primary" busy={saving} onClick={onSave}>
+            保存
+          </Button>
+        </>
+      }
+    >
+      {macro && (
+        <div className={css.macroForm}>
+          <Input
+            label="标题"
+            value={macro.title}
+            onChange={(e) => {
+              onErrors({})
+              onChange({ ...macro, title: e.target.value })
+            }}
+            error={errors.title}
+          />
+          <TextArea
+            label="回复正文"
+            rows={6}
+            value={macro.body}
+            onChange={(e) => {
+              onErrors({})
+              onChange({ ...macro, body: e.target.value })
+            }}
+            error={errors.body}
+          />
+        </div>
+      )}
+    </Modal>
   )
 }

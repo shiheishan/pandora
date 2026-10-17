@@ -17,6 +17,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/geoip"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/ratelimit"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -32,6 +33,7 @@ type auditWriter interface {
 type settingsReader interface {
 	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
+	Signup(ctx context.Context) (settingssvc.Signup, error)
 }
 
 // txRunner 是 *tx.Manager 的事务入口。
@@ -43,7 +45,7 @@ type txRunner interface {
 type Service struct {
 	repo     *repo.Repo
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	settings settingsReader
 	audit    auditWriter
 	keys     *crypto.Keys
@@ -62,6 +64,15 @@ type Service struct {
 
 	// roster 由 node 实现（roster_notify.go）：账号状态、用户组变了，提交后通知节点名单重算。
 	roster RosterNotifier
+
+	// xb-reg 端口：注册试用、注销停订阅、注销取消待付订单、注销作废佣金、解绑 Telegram
+	// （subscription / order / commission / notify 实现，启动装配时注入）。
+	trials         TrialGranter
+	closer         AccountCloser
+	cancelOrders   OrderCanceller
+	voidCommission CommissionVoider
+	tgUnbind       TelegramUnbinder
+	captcha        *captchaVerifier
 
 	// 批量运营与风控（ops_types.go）：ops 是 audit 的读与复核写；subs 由 subscription 实现、queue 是 asynq 客户端，装配时注入。
 	ops    auditOps
@@ -93,6 +104,7 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		hasher:   newPasswordHasher(cfg.Auth.PasswordHash),
 		devMode:  !cfg.IsProduction(),
 		now:      time.Now,
+		captcha:  newCaptchaVerifier(cfg.PublicBaseURL),
 	}
 }
 
@@ -197,4 +209,37 @@ var (
 // errCodeInvalid 是找回密码第 2 步一切「对不上」的统一回应：没有验证码、过期、次数用完、账号不可用。
 func errCodeInvalid() error {
 	return errs.Invalid(map[string]string{"code": "验证码错误或已失效，请重新获取"})
+}
+
+// MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：geo（没放 IP 归属地数据文件时就是 nil，归属地留空）。
+func (s *Service) MissingPorts() []string {
+	var out []string
+	for _, p := range []struct {
+		name string
+		ok   bool
+	}{
+		{"SessionRevoker", s.revoker != nil},
+		{"AdminGuard", s.adminGuard != nil},
+		{"StaffGuard", s.staff != nil},
+		{"VerificationMailer", s.mailer != nil},
+		{"RosterNotifier", s.roster != nil},
+		{"OpsSubscriptions", s.subs != nil},
+		{"OpsOrders", s.orders != nil},
+		{"OpsWallets", s.wallets != nil},
+		{"OpsTelegram", s.telegram != nil},
+		{"OpsGroupUsage", s.groupUsage != nil},
+		{"JobQueue", s.queue != nil},
+		{"PluginEvents", s.events != nil},
+		{"TrialGranter", s.trials != nil},
+		{"AccountCloser", s.closer != nil},
+		{"OrderCanceller", s.cancelOrders != nil},
+		{"CommissionVoider", s.voidCommission != nil},
+		{"TelegramUnbinder", s.tgUnbind != nil},
+	} {
+		if !p.ok {
+			out = append(out, p.name)
+		}
+	}
+	return out
 }

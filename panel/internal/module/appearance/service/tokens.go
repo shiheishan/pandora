@@ -10,23 +10,22 @@ import (
 
 // DesignTokenKeys 是主题能覆盖的全部 CSS 变量，键即变量名（带 --）。
 //
-// 唯一来源是前端 panel/frontend/src/styles/design-tokens.ts 的 COLOR_TOKENS：
-// 模块文件 html:root 的 33 个 + 设计规范页补充的 10 个（危险按钮字色、Toast
-// 圆点、分段控件阴影、后台侧栏配色）。tokens_test.go 逐条对照那个文件，
+// 唯一来源是前端 panel/frontend/src/styles/design-tokens.ts 的 COLOR_TOKENS（48 个，
+// 10-16 起默认是门户样稿 v5 的森林绿，比原来多了主按钮深端、选中描边、Logo 圆点、
+// 阴影基色、卡片浮起阴影 5 个）。tokens_test.go 逐条对照那个文件，
 // 两边改一边测试就会红。主题只管颜色：字号、间距、圆角是设计规范的骨架，
 // 换主题不该让排版走样，所以不在白名单里。门户照这张表 setProperty(键, 值)。
 var DesignTokenKeys = []string{
-	"--bg", "--surface", "--surface-2", "--surface-3",
-	"--border", "--border-strong", "--border-hover",
-	"--text", "--text-2", "--text-3",
+	"--bg", "--surface", "--surface-2", "--surface-3", "--border", "--border-strong",
+	"--border-hover", "--text", "--text-2", "--text-3",
 	"--brand", "--brand-hover", "--brand-ink", "--brand-soft", "--brand-tint", "--on-brand",
-	"--ok", "--ok-soft", "--ok-line",
-	"--warn", "--warn-soft", "--warn-line",
-	"--danger", "--danger-soft", "--danger-line", "--danger-tint",
-	"--info", "--info-soft", "--info-line",
-	"--on-ink", "--hdr", "--scrim", "--shadow",
-	"--on-danger", "--toast-ok", "--toast-danger", "--shadow-segment",
-	"--sidebar", "--sidebar-active", "--sidebar-text", "--sidebar-text-2", "--sidebar-text-3", "--sidebar-brand",
+	"--brand-deep", "--brand-line", "--brand-mark",
+	"--ok", "--ok-soft", "--ok-line", "--warn", "--warn-soft", "--warn-line",
+	"--danger", "--danger-soft", "--danger-line", "--danger-tint", "--info", "--info-soft",
+	"--info-line",
+	"--on-ink", "--hdr", "--scrim", "--shadow", "--shade", "--lift",
+	"--on-danger", "--toast-ok", "--toast-danger", "--shadow-segment", "--sidebar", "--sidebar-active",
+	"--sidebar-text", "--sidebar-text-2", "--sidebar-text-3", "--sidebar-brand",
 }
 
 // TokenGroups 是 tokens 的两个分组。主题值按深浅两套分开存：旧主题是一组

@@ -121,7 +121,7 @@ func TestSubscribeOKHeaders(t *testing.T) {
 	if h.Get("Profile-Web-Page-Url") != "" {
 		t.Fatalf("生效中不该带续费页: %q", h.Get("Profile-Web-Page-Url"))
 	}
-	if f.pullReq != (service.PullRequest{Prefix: "a1b2c3d4e5f6", Token: "tok.yaml", Target: "clash"}) {
+	if f.pullReq != (service.PullRequest{Prefix: "a1b2c3d4e5f6", Token: "tok.yaml", Target: "clash", Host: "example.com"}) {
 		t.Fatalf("pullReq %+v", f.pullReq)
 	}
 }
@@ -202,8 +202,8 @@ func TestSubscriptionLinksShape(t *testing.T) {
 		t.Fatalf("links %v", links)
 	}
 	first := links[0].(map[string]any)
-	sameKeys(t, first, "subscription_id", "url", "expires_at", "fetch_count", "last_fetched_at", "distinct_sources_24h", "expired")
-	if first["expires_at"] != nil || first["last_fetched_at"] != "2026-10-01T00:00:00Z" {
+	sameKeys(t, first, "subscription_id", "url", "fetch_count", "last_fetched_at", "distinct_sources_24h", "expired")
+	if first["last_fetched_at"] != "2026-10-01T00:00:00Z" {
 		t.Fatalf("first %v", first)
 	}
 	if second := links[1].(map[string]any); second["last_fetched_at"] != nil || second["expired"] != true {

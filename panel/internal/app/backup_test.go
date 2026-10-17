@@ -37,7 +37,7 @@ func stubBackupRoot(t *testing.T, err error) {
 	t.Cleanup(func() { backupRequireRoot = orig })
 }
 
-// 参数个数不对：退出码 2，打印用法（与移植前的独立上传工具同口径）。
+// 参数个数不对：退出码 2，打印用法。
 func TestBackupUsageExitCode(t *testing.T) {
 	stubBackupRoot(t, nil)
 	for _, args := range [][]string{

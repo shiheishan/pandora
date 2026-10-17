@@ -12,13 +12,14 @@ import {
   reviewEntriesResponse,
   templatesResponse,
   usagesResponse,
+  overridesResponse,
   withdrawalsResponse,
 } from './schemas'
 
 // 写操作共用的三件在 admin/actions.ts，这里转出，模块内各文件照旧从 ./queries 取
 export { useFailure, useIntentKey } from '../../actions'
 
-export const MK = ['admin', 'marketing'] as const
+const MK = ['admin', 'marketing'] as const
 
 /** 套餐目录：券的适用套餐、套餐卡的套餐与价格 */
 export function usePlanCatalog() {
@@ -100,15 +101,27 @@ export function useCommissionOverview() {
   })
 }
 
-export function useWithdrawals() {
+/**
+ * 提现列表按「处理中 / 已完成 / 全部」筛：后端 status 收逗号分隔的多个状态
+ * （处理中 = requested,approved；已完成 = paid,rejected；全部不带 status）
+ */
+export type WithdrawalFilter = 'open' | 'done' | 'all'
+export const WITHDRAWAL_FILTER_STATUS: Readonly<Record<WithdrawalFilter, string | undefined>> = {
+  open: 'requested,approved',
+  done: 'paid,rejected',
+  all: undefined,
+}
+
+export function useWithdrawals(filter: WithdrawalFilter) {
   const api = useApi()
+  const status = WITHDRAWAL_FILTER_STATUS[filter]
   return useQuery({
-    queryKey: [...MK, 'withdrawals'],
-    queryFn: ({ signal }) => api.get('v1/withdrawals', withdrawalsResponse, { signal }).then((r) => r.withdrawals),
+    queryKey: [...MK, 'withdrawals', filter],
+    queryFn: ({ signal }) => api.get('v1/withdrawals', withdrawalsResponse, { signal, query: status ? { status } : {} }).then((r) => r.withdrawals),
   })
 }
 
-export const REVIEW_PAGE = 20
+const REVIEW_PAGE = 20
 export function useReviewEntries() {
   const api = useApi()
   return useInfiniteQuery({
@@ -125,4 +138,12 @@ export function useReviewEntries() {
 export function useInvalidateMarketing() {
   const client = useQueryClient()
   return useCallback(() => client.invalidateQueries({ queryKey: MK }), [client])
+}
+
+export function useCommissionOverrides() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...MK, 'commission-overrides'],
+    queryFn: ({ signal }) => api.get('v1/commission/overrides', overridesResponse, { signal }).then((r) => r.overrides),
+  })
 }

@@ -41,7 +41,9 @@ export interface SeedState {
   gift_card_id: string
   coupon_id: string
   coupon_order_id: string
-  pack_id: string
+  one_time_plan_id: string
+  one_time_price_id: string
+  one_time_subscription_id: string
   hook_code: string
   provider_code: string
 }

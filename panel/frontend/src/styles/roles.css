@@ -13,55 +13,280 @@
   --link-hover: var(--brand-ink);
   --link-decoration: none;
   --link-underline: transparent;
+  --link-hover-decoration: underline;
 
   --body-size: var(--fs-body);
   --body-leading: var(--lh-body);
-  /* 控件高度：主按钮与输入框 40，弹窗按钮与菜单项 36，顶栏控件 32 */
-  --h-control: 40px;
-  --h-control-sm: 36px;
+  /* 控件高度：主按钮与输入框 50（样稿 v5），小按钮 38，顶栏控件 32 */
+  --h-control: 50px;
+  --h-control-sm: 38px;
   --h-control-xs: 32px;
-  /* 按钮 16 / 输入框 12 的水平内边距；实心按钮再加 2（规范：主按钮 0 18，次按钮 0 16） */
-  --pad-button: 16px;
+  /* 按钮 22 / 输入框 12 的水平内边距；实心按钮再加 2（样稿 v5：主按钮 0 24） */
+  --pad-button: 22px;
   --pad-input: 12px;
-  /* 弹窗按钮：门户 36 / 9 */
-  --h-dialog-action: 36px;
+  /* 弹窗按钮：门户 50 / 9 */
+  --h-dialog-action: 50px;
   /* 开关选中时的圆钮：门户朱砂底上始终是白 */
   --switch-knob-on: #fff;
-  --radius-control: var(--radius-md);
+  --radius-control: 14px;
   --radius-card: var(--radius-xl);
   --pad-card: var(--space-20);
+  /* 输入框四边框、白底 */
+  --control-border-width: 1px;
+  --control-bg: var(--bg);
+  /* 浮层（菜单、弹窗、抽屉、下拉列表）：浅边框加阴影 */
+  --popover-border: var(--border);
+  --popover-shadow: var(--shadow);
+  /* 表单字段的标签：12 号灰字 */
+  --label-size: var(--fs-caption);
+  --label-color: var(--text-2);
+  --label-weight: var(--fw-regular);
+  /* 门户正文用系统字体（样稿 v5）；数字与档位名另用 --font-display / --font-serif */
+  --font-ui: var(--font-system);
+  /* --- 按钮、弹窗、分段控件与页面底（样稿 v5） ----------------------------- */
+  --button-weight: var(--fw-semibold);
+  --button-strong-weight: var(--fw-semibold);
+  --button-font-size: 15.5px;
+  --button-font-size-sm: 14px;
+  --pad-button-sm: 14px;
+  --button-primary-bg: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  --button-primary-hover-bg: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  --button-primary-border: color-mix(in srgb, var(--brand-deep) 55%, var(--shade));
+  --button-primary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 10px 22px -12px color-mix(in srgb, var(--shade) 90%, transparent);
+  --button-secondary-border: transparent;
+  --button-secondary-shadow: 0 0 0 1px var(--border), 0 6px 14px -10px color-mix(in srgb, var(--shade) 40%, transparent);
+  --button-secondary-hover-bg: var(--surface);
+  --button-hover-filter: brightness(1.1);
+  --button-press: translateY(1px);
+  --control-border-color: var(--border);
+  --dialog-radius: 26px;
+  --dialog-title-size: 18px;
+  --dialog-backdrop-filter: blur(3px);
+  --dialog-action-flex: 1;
+  --dialog-grow: 0;
+  --segment-pad: 4px;
+  --segment-radius: 14px;
+  --segment-bg: color-mix(in srgb, var(--surface) 80%, transparent);
+  --segment-ring: 0 0 0 1px var(--border);
+  --segment-h: 36px;
+  --segment-option-pad: 18px;
+  --segment-option-radius: 10px;
+  --segment-font-size: 14px;
+  --segment-on-weight: var(--fw-semibold);
+  --segment-bg-sm: var(--bg);
+  --segment-h-sm: 30px;
+  --segment-option-pad-sm: 14px;
+  --segment-font-size-sm: 13px;
+  --page-bg: radial-gradient(var(--border) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--bg);
+
+  /* --- 12 个新角色键（组件改用它们由另一个任务做，这里先声明；门户值 = 组件里现在写死的效果） --- */
+  --control-focus-border: var(--accent);
+  --switch-on: var(--accent);
+  --switch-w: 32px;
+  --segment-on-bg: var(--surface);
+  --tag-h: auto;
+  --tag-pad: 2px 8px;
+  --tag-font-size: var(--fs-caption);
+  --tag-weight: var(--fw-regular);
+  --button-danger-bg: var(--danger);
+  --button-danger-color: var(--on-danger);
+  --button-danger-border: transparent;
+  --button-danger-hover-bg: var(--danger);
 }
 
 /* ===========================================================================
- * 后台：保持中性。朱砂只出现在 Logo 的点和侧栏当前菜单的小圆点上
+ * 后台：Vercel 式黑白灰（样稿 v4）。主按钮墨色，蓝色只给链接、焦点圈与进行中
  * ========================================================================= */
 :root[data-app='admin'] {
-  --accent: var(--text);
-  /* 设计稿里墨色主按钮没有悬停变化 */
-  --accent-hover: var(--text);
-  --on-accent: var(--on-ink);
-  --focus-halo: var(--border);
-  --focus-ring: var(--text);
-  /* 文字链接：墨色加下划线，下划线用 --border-hover */
-  --link: var(--text);
-  --link-hover: var(--text-2);
-  --link-decoration: underline;
-  --link-underline: var(--border-hover);
+  --accent: var(--brand);
+  --accent-hover: var(--brand-hover);
+  --on-accent: var(--on-brand);
+  /* 聚焦没有外圈，键盘焦点圈用 --info 蓝 */
+  --focus-halo: transparent;
+  --focus-ring: var(--info);
+  /* 文字链接：蓝色，不带下划线 */
+  --link: var(--info);
+  --link-hover: var(--info);
+  --link-decoration: none;
+  --link-underline: transparent;
+  --link-hover-decoration: none;
 
-  --body-size: var(--fs-body-sm);
+  --body-size: var(--fs-body);
   --body-leading: var(--lh-body-sm);
   /* 控件高度：默认 32，工具栏与表格内 28，紧凑 24 */
   --h-control: 32px;
   --h-control-sm: 28px;
   --h-control-xs: 24px;
-  /* 规范：主按钮 0 14，次按钮 0 12，输入框 0 10 */
+  /* 主按钮 0 12，输入框 0 10 */
   --pad-button: 12px;
   --pad-input: 10px;
-  /* 弹窗按钮：后台 32 / 7 */
+  /* 弹窗按钮：后台 32 */
   --h-dialog-action: 32px;
-  /* 墨色底上的圆钮用页面底色，深色模式下随之变深 */
-  --switch-knob-on: var(--bg);
+  /* 墨色底上的圆钮用白 */
+  --switch-knob-on: #fff;
   --radius-control: var(--radius-sm);
   --radius-card: var(--radius-lg);
   --pad-card: var(--space-16);
+  /* 输入框四边框、卡片同色底 */
+  --control-border-width: 1px;
+  --control-bg: var(--surface);
+  /* 浮层不画边框：--shadow 自带 1px 描边圈 */
+  --popover-border: transparent;
+  --popover-shadow: var(--shadow);
+  /* 表单字段的标签：13 号灰字常规字重 */
+  --label-size: var(--fs-body-sm);
+  --label-color: var(--text-2);
+  --label-weight: var(--fw-regular);
+  --font-ui: var(--font-sans);
+  /* --- 按钮、弹窗、分段控件与页面底 --------------------------------------- */
+  --button-weight: var(--fw-medium);
+  --button-strong-weight: var(--fw-medium);
+  --button-font-size: 13.5px;
+  --button-font-size-sm: 13px;
+  --pad-button-sm: 10px;
+  --button-primary-bg: var(--accent);
+  --button-primary-hover-bg: var(--accent-hover);
+  --button-primary-border: transparent;
+  --button-primary-shadow: none;
+  --button-secondary-border: var(--border-strong);
+  --button-secondary-shadow: none;
+  --button-secondary-hover-bg: var(--surface-2);
+  --button-hover-filter: none;
+  --button-press: none;
+  --control-border-color: var(--border-strong);
+  --dialog-radius: var(--radius-card);
+  --dialog-title-size: 16px;
+  --dialog-backdrop-filter: none;
+  --dialog-action-flex: 0 1 auto;
+  --dialog-grow: 1;
+  --segment-pad: 2px;
+  --segment-radius: 8px;
+  --segment-bg: var(--bg);
+  --segment-ring: 0 0 0 1px var(--border-strong);
+  --segment-h: 24px;
+  --segment-option-pad: 10px;
+  --segment-option-radius: 6px;
+  --segment-font-size: 12.5px;
+  --segment-on-weight: var(--fw-medium);
+  --segment-bg-sm: var(--bg);
+  --segment-h-sm: 22px;
+  --segment-option-pad-sm: 8px;
+  --segment-font-size-sm: var(--fs-caption);
+  --page-bg: var(--bg);
+
+  /* --- 12 个新角色键（与 design-tokens.ts 的 ROLE_TOKENS 末尾同源） --- */
+  --control-focus-border: var(--text-3);
+  --switch-on: var(--ok);
+  --switch-w: 30px;
+  --segment-on-bg: var(--surface-3);
+  --tag-h: 18px;
+  --tag-pad: 0 6px;
+  --tag-font-size: 11.5px;
+  --tag-weight: var(--fw-medium);
+  --button-danger-bg: var(--surface);
+  --button-danger-color: var(--danger);
+  --button-danger-border: var(--danger-line);
+  --button-danger-hover-bg: var(--danger-soft);
+}
+
+/* ===========================================================================
+ * 后台调色与圆角（样稿 v4：Vercel 式黑白灰，管理后台样稿的令牌）
+ * 后台没有品牌色：--brand 系是墨色（与主按钮同色），蓝色用 --info（链接、
+ * 焦点圈、进行中）。
+ * 卡片（--surface）比页面（--bg）浅一档；悬停 --surface-2、选中 --surface-3；
+ * 线三档 --border / --border-strong / --border-hover。
+ * 浅色 --text-3 用 #737373（样稿的 #8f8f8f 白底对比度只有 3.3:1，小字不够），
+ * 深色用 #8f8f8f。
+ * 浮层阴影 --shadow 自带 1px 描边圈，浮层不再另画边框。
+ * 选择器仍用 html[...]：压过 tokens.css 的 :root；深色块
+ * html[data-app='admin'][data-theme='dark'] 又压过 :root[data-theme='dark']。
+ * 值与 design-tokens.ts 的 ADMIN_OVERRIDES / ADMIN_RADIUS 同源
+ * （tests/tokens.test.ts 核对）。
+ * ========================================================================= */
+html[data-app='admin'] {
+  --bg: #fafafa;
+  --surface: #fff;
+  --surface-2: #f4f4f4;
+  --surface-3: #ebebeb;
+  --border: #ebebeb;
+  --border-strong: #e0e0e0;
+  --border-hover: #c9c9c9;
+  --text: #171717;
+  --text-2: #666;
+  --text-3: #737373;
+  --brand: #171717;
+  --brand-hover: #383838;
+  --brand-ink: #171717;
+  --brand-soft: #ebebeb;
+  --brand-tint: #f4f4f4;
+  --on-brand: #fff;
+  --brand-deep: #171717;
+  --brand-line: #c9c9c9;
+  --ok: #1a8a4f;
+  --ok-soft: #e8f7ee;
+  --ok-line: #b8e6cb;
+  --warn: #a35200;
+  --warn-soft: #fff4d6;
+  --warn-line: #f5d9a3;
+  --danger: #d93036;
+  --danger-soft: #fff0f0;
+  --danger-line: #f7c5c7;
+  --danger-tint: #fff7f7;
+  --info: #0070f3;
+  --info-soft: #ebf4ff;
+  --info-line: #c2dcfc;
+  --on-ink: #fff;
+  --hdr: rgba(250,250,250,.85);
+  --scrim: rgba(0,0,0,.18);
+  --shadow: 0 0 0 1px #ebebeb,0 12px 32px -12px rgba(0,0,0,.18);
+  --shadow-segment: none;
+  --shade: #000;
+  /* 后台圆角（深浅色相同，只写在浅色块）：标签 4、控件 7、按钮与输入框 10、
+   * 卡片与弹窗 12、胶囊 999 */
+  --radius-tag: 4px;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+}
+
+html[data-app='admin'][data-theme='dark'] {
+  --bg: #000;
+  --surface: #0a0a0a;
+  --surface-2: #161616;
+  --surface-3: #1f1f1f;
+  --border: #1f1f1f;
+  --border-strong: #2e2e2e;
+  --border-hover: #454545;
+  --text: #ededed;
+  --text-2: #a1a1a1;
+  --text-3: #8f8f8f;
+  --brand: #ededed;
+  --brand-hover: #fff;
+  --brand-ink: #ededed;
+  --brand-soft: #1f1f1f;
+  --brand-tint: #161616;
+  --on-brand: #0a0a0a;
+  --brand-deep: #ededed;
+  --brand-line: #454545;
+  --ok: #3ecf8e;
+  --ok-soft: rgba(62,207,142,.12);
+  --ok-line: rgba(62,207,142,.35);
+  --warn: #f5a524;
+  --warn-soft: rgba(245,165,36,.12);
+  --warn-line: rgba(245,165,36,.35);
+  --danger: #ff5f56;
+  --danger-soft: rgba(255,95,86,.1);
+  --danger-line: rgba(255,95,86,.35);
+  --danger-tint: rgba(255,95,86,.06);
+  --info: #3291ff;
+  --info-soft: rgba(50,145,255,.12);
+  --info-line: rgba(50,145,255,.35);
+  --on-ink: #0a0a0a;
+  --hdr: rgba(0,0,0,.85);
+  --scrim: rgba(0,0,0,.5);
+  --shadow: 0 0 0 1px #2e2e2e,0 16px 40px -12px rgba(0,0,0,.8);
+  --shadow-segment: none;
+  --shade: #000;
 }

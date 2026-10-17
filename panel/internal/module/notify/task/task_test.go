@@ -27,6 +27,7 @@ type fakeService struct {
 	scanErr, publishErr    error
 	inboxCalls, eventCalls []purgeCall
 	codeCalls              []purgeCall
+	ticketMsgCalls         []purgeCall
 }
 
 func (f *fakeService) Scan(context.Context) (int, error) { return f.scanN, f.scanErr }
@@ -47,6 +48,11 @@ func (f *fakeService) PurgeEvents(_ context.Context, before time.Time, batch int
 
 func (f *fakeService) PurgeBindCodes(_ context.Context, before time.Time, batch int) (int, error) {
 	f.codeCalls = append(f.codeCalls, purgeCall{before: before, batch: batch})
+	return 0, nil
+}
+
+func (f *fakeService) PurgeTicketMessages(_ context.Context, before time.Time, batch int) (int, error) {
+	f.ticketMsgCalls = append(f.ticketMsgCalls, purgeCall{before: before, batch: batch})
 	return 0, nil
 }
 
@@ -158,6 +164,9 @@ func TestRetentionAllKinds(t *testing.T) {
 	}
 	if len(fs.codeCalls) != 1 || !fs.codeCalls[0].before.Equal(fixed.Add(-bindCodeGrace)) {
 		t.Fatalf("codes %+v", fs.codeCalls)
+	}
+	if len(fs.ticketMsgCalls) != 1 || !fs.ticketMsgCalls[0].before.Equal(fixed.AddDate(0, 0, -service.TicketMessageRetentionDays)) {
+		t.Fatalf("ticket messages %+v", fs.ticketMsgCalls)
 	}
 }
 

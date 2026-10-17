@@ -2,11 +2,9 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 )
 
 // publishedFixture 返回已发布套餐的版本 id、价格 id 与管理员用户 id。
@@ -35,69 +33,39 @@ func publishedFixture(t *testing.T, e *env, ctx context.Context) (planID, versio
 func publishedWithEntitlementFixture(t *testing.T, e *env, ctx context.Context) (versionID, entitlementID uuid.UUID) {
 	t.Helper()
 	ctx, _ = seedAdmin(t, ctx, e)
-	plan, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "entf"), Name: "带权益", Visibility: VisibilityPublic,
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-	})
-	if err != nil {
-		t.Fatal(err)
+	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
+	if detail.DraftVersionID == nil {
+		t.Fatal("无草稿版本")
 	}
-	ver, err := e.svc.CreateVersion(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lim := int64(1 << 30)
-	verRV, err := e.svc.UpdateVersion(ctx, plan.ID, ver.ID, ver.RowVersion, VersionInput{
-		QuotaResetStrategy: ResetBillingCycle, GraceKeepsService: true,
-		RenewalExtendsPeriod: true, RenewalResetsQuota: true, RenewalKeepsAddons: true,
-		DeviceReleaseHours: 24, OveragePolicy: OveragePolicySuspend,
-		Entitlements: []Entitlement{{Code: "feat.a", Value: json.RawMessage(`true`)}},
-		Quotas:       []Quota{{Metric: MetricTraffic, Limit: &lim, Unit: "bytes", Period: PeriodCycle}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.CreatePrice(ctx, plan.ID, PriceInput{
-		Currency: "CNY", UnitAmount: decimal.RequireFromString("9.90"),
-		BillingInterval: "month", IntervalCount: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, _ := e.svc.GetPlan(ctx, plan.ID)
-	_, _, err = e.svc.PublishVersion(ctx, plan.ID, ver.ID, detail.RowVersion, verRV)
-	if err != nil {
+	verID := *detail.DraftVersionID
+	if err := e.exec(ctx, `INSERT INTO entitlements (plan_version_id, code, value) VALUES (?, 'feat.a', 'true'::jsonb)`, verID); err != nil {
 		t.Fatal(err)
 	}
 	var eid uuid.UUID
-	if err := e.row(ctx, `SELECT id FROM entitlements WHERE plan_version_id = ? LIMIT 1`, ver.ID).Scan(&eid); err != nil {
+	if err := e.row(ctx, `SELECT id FROM entitlements WHERE plan_version_id = ? LIMIT 1`, verID).Scan(&eid); err != nil {
 		t.Fatal(err)
 	}
-	return ver.ID, eid
+	if _, err := e.svc.PublishVersion(ctx, detail.ID, verID, detail.RowVersion); err != nil {
+		t.Fatal(err)
+	}
+	return verID, eid
 }
 
 func draftFixture(t *testing.T, e *env, ctx context.Context) (planID, versionID uuid.UUID) {
 	t.Helper()
 	ctx, _ = seedAdmin(t, ctx, e)
-	plan, err := e.svc.CreatePlan(ctx, PlanInput{
-		Code: uniqCode(t, "dr"), Name: "草稿", Visibility: VisibilityPublic,
-		AllowNewPurchase: true, AllowRenewal: true, AllowUpgrade: true, Highlights: []string{},
-	})
-	if err != nil {
-		t.Fatal(err)
+	detail := publishedPlan(t, ctx, e, publishedPlanOpts{Draft: true})
+	if detail.DraftVersionID == nil {
+		t.Fatal("无草稿版本")
 	}
-	ver, err := e.svc.CreateVersion(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return plan.ID, ver.ID
+	return detail.ID, *detail.DraftVersionID
 }
 
-func TestFreezeTriggerPlanVersionUpdateGrace(t *testing.T) {
+func TestFreezeTriggerPlanVersionUpdate(t *testing.T) {
 	e, ctx := newEnv(t)
 	_, verID, _, _ := publishedFixture(t, e, ctx)
 	err := execSavepoint(t, ctx, e, "sp1",
-		`UPDATE plan_versions SET grace_period_hours = grace_period_hours + 1 WHERE id = ?`, verID)
+		`UPDATE plan_versions SET max_devices = COALESCE(max_devices, 0) + 1 WHERE id = ?`, verID)
 	assertRestrictViolation(t, err)
 }
 
@@ -159,7 +127,8 @@ func TestFreezeTriggerPriceUnarchive(t *testing.T) {
 	plan := publishedPlan(t, ctx, e, publishedPlanOpts{})
 	detail, _ := e.svc.GetPlan(ctx, plan.ID)
 	p := detail.Prices[0]
-	_, err := e.svc.ArchivePrice(ctx, plan.ID, p.ID, p.RowVersion)
+	err := execSavepoint(t, ctx, e, "sp_arch",
+		`UPDATE prices SET status = 'archived', row_version = row_version + 1 WHERE id = ?`, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +148,8 @@ func TestFreezeTriggerInsertPublishedVersionRow(t *testing.T) {
 	e, ctx := newEnv(t)
 	planID, _, _, _ := publishedFixture(t, e, ctx)
 	err := execSavepoint(t, ctx, e, "sp1",
-		`INSERT INTO plan_versions (plan_id, version, status, frozen_at, quota_reset_strategy, grace_period_hours, grace_keeps_service, renewal_extends_period, renewal_resets_quota, renewal_keeps_addons, device_release_hours, row_version)
-		 VALUES (?, 99, 'published', now(), 'billing_cycle', 0, true, true, true, true, 24, 1)`, planID)
+		`INSERT INTO plan_versions (plan_id, version, status, frozen_at, row_version)
+		 VALUES (?, 99, 'published', now(), 1)`, planID)
 	assertRestrictViolation(t, err)
 }
 
@@ -188,7 +157,7 @@ func TestFreezeTriggerDraftVersionUpdateOK(t *testing.T) {
 	e, ctx := newEnv(t)
 	_, verID := draftFixture(t, e, ctx)
 	err := execSavepoint(t, ctx, e, "sp1",
-		`UPDATE plan_versions SET grace_period_hours = 1 WHERE id = ?`, verID)
+		`UPDATE plan_versions SET max_devices = 5 WHERE id = ?`, verID)
 	if err != nil {
 		t.Fatalf("草稿版本应可改: %v", err)
 	}
@@ -197,8 +166,9 @@ func TestFreezeTriggerDraftVersionUpdateOK(t *testing.T) {
 func TestFreezeTriggerDraftChildInsertOK(t *testing.T) {
 	e, ctx := newEnv(t)
 	_, verID := draftFixture(t, e, ctx)
+	// 草稿已带 traffic.bytes/cycle（唯一键是 版本 + 指标 + 周期），插一条别的周期，证明的是冻结守卫放行草稿。
 	err := execSavepoint(t, ctx, e, "sp1",
-		`INSERT INTO quota_definitions (plan_version_id, metric, limit_value, unit, period) VALUES (?, 'traffic.bytes', 100, 'bytes', 'cycle')`, verID)
+		`INSERT INTO quota_definitions (plan_version_id, metric, limit_value, unit, period) VALUES (?, 'traffic.bytes', 100, 'bytes', 'day')`, verID)
 	if err != nil {
 		t.Fatalf("草稿子表应可插: %v", err)
 	}
@@ -228,11 +198,11 @@ func TestFreezeTriggerPriceArchiveOK(t *testing.T) {
 	}
 }
 
-// 行级触发器挡不住 TRUNCATE：五张表都有语句级守卫（CASCADE 也挡，避免先撞外键检查）。
+// 行级触发器挡不住 TRUNCATE：四张表都有语句级守卫（CASCADE 也挡，避免先撞外键检查）。
 func TestFreezeTriggerDenyTruncate(t *testing.T) {
 	e, ctx := newEnv(t)
 	publishedFixture(t, e, ctx)
-	for _, table := range []string{"plan_versions", "entitlements", "quota_definitions", "prices", "traffic_packs"} {
+	for _, table := range []string{"plan_versions", "entitlements", "quota_definitions", "prices"} {
 		t.Run(table, func(t *testing.T) {
 			err := execSavepoint(t, ctx, e, "sp_trunc", "TRUNCATE "+table+" CASCADE")
 			assertRestrictViolation(t, err)

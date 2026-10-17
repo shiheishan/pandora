@@ -30,6 +30,8 @@ type nodeListExtras struct {
 	usage     map[uuid.UUID]catalogsvc.PoolUsage  // 池 id →
 	desired   map[uuid.UUID]string                // 节点 id → 期望配置文档 SHA-256
 	livePlans map[uuid.UUID][]string              // 池 id → 在用套餐名（去重升序）
+	// 节点 id → 面板生成配置文档失败的记录：这些节点不在下发的文档里，节点端会停掉其入站，列表显示为失败。
+	configSkips map[uuid.UUID]configSkip
 }
 
 // QueryNodes 返回后台节点列表的一页与筛选后的总数；只读，ListNodePage 一次，
@@ -46,6 +48,15 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 	if q.State != "" {
 		q.IncludeRetired = true
 	}
+	q.Tag = strings.TrimSpace(q.Tag)
+	var tagFilter string
+	if q.Tag != "" {
+		tag, ok := NormalizeNodeTag(q.Tag)
+		if !ok {
+			return nil, 0, errs.Invalid(map[string]string{"tag": "标签最多 16 个字、不能含控制字符"})
+		}
+		tagFilter = tag
+	}
 	if s.catalog == nil || s.inUse == nil {
 		return nil, 0, errPoolPortMissing
 	}
@@ -54,6 +65,7 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 		IncludeRetired: q.IncludeRetired,
 		State:          q.State,
 		Search:         q.Search,
+		Tag:            tagFilter,
 		ID:             q.ID,
 		Limit:          q.Limit,
 		Offset:         q.Offset,
@@ -123,7 +135,7 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	for _, u := range usage {
 		for _, b := range u.Bindings {
 			if !b.OnSale {
-				notOnSale = append(notOnSale, b.VersionID)
+				notOnSale = append(notOnSale, b.VersionIDs...)
 			}
 		}
 	}
@@ -138,12 +150,13 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	livePlans := livePlanNames(usage, inUse)
 
 	desired := make(map[uuid.UUID]string)
-	// 某个节点的配置拼不出文档（协议配置不是对象等）时不让整个列表 500，否则连去修它的页面都打不开；
+	// 单个节点的文档拼不出来（协议配置不是对象等）由 configSkips 带回，那一行显示为失败；
+	// 这里的 err 是读配置行或路由层的库错误：不让整个列表 500，否则连去修它的页面都打不开；
 	// 记警告，期望摘要留空，生效状态退回只看节点回报。
-	configs, err := s.ServerConfigs(ctx, serverIDs)
+	configs, skips, err := s.serverConfigsWithSkips(ctx, serverIDs)
 	if err != nil {
-		plog.From(ctx).Warn("节点列表算期望配置失败，生效状态只看节点回报", zap.Error(err))
-		configs = nil
+		plog.From(ctx).Warn("节点列表读期望配置失败，生效状态只看节点回报", zap.Error(err))
+		configs, skips = nil, nil
 	}
 	for _, docs := range configs {
 		for _, doc := range docs {
@@ -151,16 +164,17 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 		}
 	}
 	return nodeListExtras{
-		live:      live,
-		metrics:   metrics,
-		seqs:      seqs,
-		usage:     usage,
-		desired:   desired,
-		livePlans: livePlans,
+		live:        live,
+		metrics:     metrics,
+		seqs:        seqs,
+		usage:       usage,
+		desired:     desired,
+		livePlans:   livePlans,
+		configSkips: skips,
 	}, nil
 }
 
-// livePlanNames 计算每个池的在用套餐名列表（在售或有人在用的版本所属套餐名，去重升序）。
+// livePlanNames 计算每个池的在售或有人在用的套餐名列表（去重升序）。
 // usage 为空或池无在用绑定时返回空切片。
 func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID]bool) map[uuid.UUID][]string {
 	out := make(map[uuid.UUID][]string, len(usage))
@@ -168,7 +182,7 @@ func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID
 		seen := make(map[string]bool)
 		var names []string
 		for _, b := range u.Bindings {
-			if b.OnSale || inUse[b.VersionID] {
+			if b.OnSale || anyInUse(b.VersionIDs, inUse) {
 				if !seen[b.PlanName] {
 					seen[b.PlanName] = true
 					names = append(names, b.PlanName)
@@ -183,6 +197,18 @@ func livePlanNames(usage map[uuid.UUID]catalogsvc.PoolUsage, inUse map[uuid.UUID
 		out[pid] = names
 	}
 	return out
+}
+
+func anyInUse(ids []uuid.UUID, inUse map[uuid.UUID]bool) bool {
+	if inUse == nil {
+		return false
+	}
+	for _, id := range ids {
+		if inUse[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeRowFromList 把一行读模型转成 NodeRow：心跳取所在服务器的，下发说明按 nodeDeliveryVerdict；
@@ -206,18 +232,22 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 	}
 
 	facts := nodeDeliveryFacts{
-		Serving:     row.ServingStatus,
-		Pooled:      row.PoolID != nil,
-		PoolActive:  poolActive,
-		PoolBound:   poolBound,
-		EverSeen:    everSeen,
-		BeatFresh:   beatFresh,
-		Deliverable: row.Deliverable,
-		ServerReady: row.ServerReady,
-		Degraded:    nodeDegraded(row),
+		Serving:         row.ServingStatus,
+		Pooled:          row.PoolID != nil,
+		PoolActive:      poolActive,
+		PoolBound:       poolBound,
+		EverSeen:        everSeen,
+		BeatFresh:       beatFresh,
+		Deliverable:     row.Deliverable,
+		ServerReady:     row.ServerReady,
+		Degraded:        nodeDegraded(row),
+		TrafficExceeded: row.TrafficExceededAt != nil,
 	}
 	delivered, note := nodeDeliveryVerdict(facts)
 	eff, fail := nodeEffectiveState(row, desired)
+	if sk, ok := x.configSkips[row.ID]; ok {
+		eff, fail = configSkipState(sk, now)
+	}
 
 	nr := NodeRow{
 		ID:                row.ID,
@@ -240,6 +270,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		Delivered:         delivered,
 		DeliveryNote:      note,
 		CreatedAt:         row.CreatedAt,
+		Movable:           nodeMovableState(row.ServingStatus, row.AppliedConfigSHA256, row.ApplyFailedSHA256, row.RuntimeStatus),
 		NodeType:          row.NodeType,
 		ServerHost:        row.ServerHost,
 		ServerPort:        row.ServerPort,
@@ -254,6 +285,17 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		RuntimeReasonNode: row.RuntimeReasonNode,
 		DeliveryDegraded:  nodeDegraded(row),
 		GrantedPlans:      []string{},
+		Tags:              decodeNodeTags(row.Tags),
+		Traffic: NodeTrafficLimit{
+			LimitBytes: row.TrafficLimitBytes,
+			ResetDay:   row.TrafficResetDay,
+			UsedBytes:  row.TrafficUsedBytes,
+			ResetAt:    row.TrafficResetAt,
+			ExceededAt: row.TrafficExceededAt,
+		},
+		RateSchedule: decodeRateScheduleInputs(row.RateSchedule),
+		RelayCount:   row.RelayCount,
+		ECHEnabled:   row.ECHEnabled,
 	}
 
 	if live, ok := x.live[row.ID]; ok {
@@ -296,7 +338,6 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		}
 		nr.Detail = &NodeDetail{
 			TrafficRate:           row.TrafficRate,
-			Kernel:                row.Kernel,
 			ProtocolConfig:        redacted,
 			ProtocolSchemaVersion: row.ProtocolSchemaVersion,
 			ConfigValidatedAt:     row.ConfigValidatedAt,

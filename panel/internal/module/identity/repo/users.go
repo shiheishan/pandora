@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/identity/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // UserListQuery 是后台用户列表的筛选；零值不筛。
@@ -36,7 +37,7 @@ type UserRef struct {
 }
 
 // LikePattern 导出给 service：生成 ILIKE 包含模式。
-func LikePattern(q string) string { return likePattern(q) }
+func LikePattern(q string) string { return db.ContainsPattern(q) }
 
 // UserByID 按主键查用户。
 func (r *Repo) UserByID(ctx context.Context, id uuid.UUID) (model.User, bool, error) {
@@ -49,6 +50,20 @@ func (r *Repo) UserByID(ctx context.Context, id uuid.UUID) (model.User, bool, er
 		return model.User{}, false, err
 	}
 	return u, true, nil
+}
+
+// UserStatusShared 读用户状态并加共享行锁（FOR SHARE）：在调用方事务里持有到提交，与注销的 FOR NO KEY UPDATE 互斥。
+// 用户不存在返回 false。
+func (r *Repo) UserStatusShared(ctx context.Context, id uuid.UUID) (string, bool, error) {
+	var rows []struct{ Status string }
+	err := r.d.Conn(ctx).Raw("SELECT status FROM users WHERE id = ? FOR SHARE", id).Scan(&rows).Error
+	if err != nil {
+		return "", false, err
+	}
+	if len(rows) == 0 {
+		return "", false, nil
+	}
+	return rows[0].Status, true, nil
 }
 
 // UsersByIDs 批量按 id 查用户。
@@ -162,7 +177,7 @@ func (r *Repo) IDsByEmailLike(ctx context.Context, q string, limit int) ([]uuid.
 	var rows []UserRef
 	err := r.d.Conn(ctx).Raw(
 		"SELECT id FROM users WHERE email::text ILIKE ? ESCAPE '\\' ORDER BY id LIMIT ?",
-		likePattern(q), limit,
+		db.ContainsPattern(q), limit,
 	).Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -199,11 +214,11 @@ func (r *Repo) ListUsers(ctx context.Context, q UserListQuery, limit, offset int
 	return rows, nil
 }
 
-// Referrer 查被邀请人的上级。
+// Referrer 查被邀请人的上级（读生效视图：后台改过邀请人的以最新一条为准）。
 func (r *Repo) Referrer(ctx context.Context, refereeID uuid.UUID) (UserRef, bool, error) {
 	var ref UserRef
 	err := r.d.Conn(ctx).Raw(
-		"SELECT u.id, u.email::text AS email FROM referrals r JOIN users u ON u.id = r.referrer_user_id WHERE r.referee_user_id = ?",
+		"SELECT u.id, u.email::text AS email FROM effective_referrals r JOIN users u ON u.id = r.referrer_user_id WHERE r.referee_user_id = ?",
 		refereeID,
 	).Scan(&ref).Error
 	if err != nil {
@@ -215,11 +230,11 @@ func (r *Repo) Referrer(ctx context.Context, refereeID uuid.UUID) (UserRef, bool
 	return ref, true, nil
 }
 
-// ReferralCount 统计某人邀请的人数。
+// ReferralCount 统计某人邀请的人数（读生效视图：后台改过邀请人的以最新一条为准）。
 func (r *Repo) ReferralCount(ctx context.Context, referrerID uuid.UUID) (int64, error) {
 	var n int64
 	err := r.d.Conn(ctx).Raw(
-		"SELECT count(*) FROM referrals WHERE referrer_user_id = ?", referrerID,
+		"SELECT count(*) FROM effective_referrals WHERE referrer_user_id = ?", referrerID,
 	).Scan(&n).Error
 	return n, err
 }
@@ -249,9 +264,9 @@ func applyUserListWhere(tx *gorm.DB, q UserListQuery) *gorm.DB {
 	return applySubIDs(tx, q.SubFilter, q.SubIDs, q.SubExclude)
 }
 
-// TotalReferrals 统计全站邀请关系总数。
+// TotalReferrals 统计全站邀请关系总数（读生效视图：后台改过邀请人的以最新一条为准）。
 func (r *Repo) TotalReferrals(ctx context.Context) (int64, error) {
 	var n int64
-	err := r.d.Conn(ctx).Raw("SELECT count(*) FROM referrals").Scan(&n).Error
+	err := r.d.Conn(ctx).Raw("SELECT count(*) FROM effective_referrals").Scan(&n).Error
 	return n, err
 }

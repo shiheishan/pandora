@@ -3,7 +3,7 @@ import { card, expect, go, narrowShot, openAdmin, openPortal, payByCashier, seen
 import type { Locator, Page } from '@playwright/test'
 
 // ============================================================================
-//  后台（w8walk C1–C4 与赠送）：人工开单弹窗。入口是用户抽屉「为其开单」跳的约定地址
+//  后台（C1–C4 与赠送）：人工开单弹窗。入口是用户抽屉「为其开单」跳的约定地址
 //  #/billing/orders?new=<用户 id>（.claude/rules/screens-admin-billing.md），弹窗里预选这个用户
 // ============================================================================
 
@@ -15,14 +15,13 @@ async function openManual(page: Page, u: User): Promise<Locator> {
   return dlg
 }
 
-/** 「套餐与周期」下拉：按「套餐名 · … ¥金额」选 */
+/** 「套餐与周期」下拉（ui 的 Select：combobox 按钮 + listbox）：按「套餐名 · … ¥金额」选 */
 async function pickPrice(dlg: Locator, plan: string, amount: string): Promise<string> {
-  const select = dlg.getByLabel('套餐与周期')
-  const option = select.locator('option').filter({ hasText: new RegExp(`^${plan} · .*¥${amount.replace('.', '\\.')}`) })
-  const value = await option.first().getAttribute('value')
-  if (!value) throw new Error(`下拉里没有 ${plan} ¥${amount}`)
-  await select.selectOption(value)
-  return text(option.first())
+  await dlg.getByRole('combobox', { name: '套餐与周期' }).click()
+  const option = dlg.getByRole('option', { name: new RegExp(`^${plan} · .*¥${amount.replace('.', '\\.')}$`) })
+  const label = await text(option)
+  await option.click()
+  return label
 }
 
 /** 落点区（多项时是 fieldset，只有一项时是带名字的 group） */
@@ -51,7 +50,7 @@ test('C1：后台开单的落点', async ({ browser, world }) => {
   await step(page, 'C1b', async () => {
     const price = await pickPrice(dlg, pro.name, '42.00')
     const place = placement(dlg)
-    await expect(place.getByRole('radio', { name: new RegExp(`把${std.name}换成${pro.name}`) })).toBeVisible()
+    await expect(place.getByRole('radio', { name: new RegExp(`^换掉${std.name}，改成${pro.name}`) })).toBeVisible()
     await expect(place.getByRole('radio', { checked: true })).toHaveCount(0)
     const submit = dlg.getByRole('button', { name: '先选落点' })
     await expect(submit).toBeDisabled()
@@ -60,15 +59,15 @@ test('C1：后台开单的落点', async ({ browser, world }) => {
   })
 
   await step(page, 'C1c', async () => {
-    await placement(dlg).getByRole('radio', { name: new RegExp(`把${std.name}换成${pro.name}`) }).check()
-    await dlg.getByLabel('结算方式').selectOption({ label: '赠送（0 元）' })
+    await placement(dlg).getByRole('radio', { name: new RegExp(`^换掉${std.name}，改成${pro.name}`) }).check()
+    await dlg.getByRole('radio', { name: /^赠送（0 元）/ }).check()
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台开单换套餐')
     await submit(page, dlg.getByRole('button', { name: '赠送开通' }))
     const toast = await seen(page, /已在原订阅上换套餐/)
     await expect(dlg).toBeHidden()
     const subs = await subscriptionsOf(u)
     expect(subs.map((s) => s.plan_id)).toEqual([pro.id])
-    return `选「把${std.name}换成${pro.name}」后按钮「赠送开通」；提示「${toast}」；用户名下只有一份，已是 ${pro.name}`
+    return `选「换掉${std.name}，改成${pro.name}」后按钮「赠送开通」；提示「${toast}」；用户名下只有一份，已是 ${pro.name}`
   })
 })
 
@@ -81,7 +80,7 @@ test('C2：待支付低于最低额，改用赠送', async ({ browser, world }) 
   await step(page, 'C2', async () => {
     dlg = await openManual(page, u)
     await pickPrice(dlg, mini.name, '0.50')
-    await expect(dlg.getByLabel('结算方式')).toHaveValue('pending')
+    await expect(dlg.getByRole('radio', { name: /^待用户支付/ })).toBeChecked()
     const warn = dlg.getByRole('alert').filter({ hasText: '低于支付渠道的最低付款额' })
     await expect(warn).toBeVisible()
     const said = await text(warn)
@@ -94,10 +93,10 @@ test('C2：待支付低于最低额，改用赠送', async ({ browser, world }) 
 
   await step(page, 'C4b', async () => {
     await dlg.getByRole('button', { name: '改用赠送' }).click()
-    await expect(dlg.getByLabel('结算方式')).toHaveValue('grant')
+    await expect(dlg.getByRole('radio', { name: /^赠送（0 元）/ })).toBeChecked()
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台赠送开通')
     await submit(page, dlg.getByRole('button', { name: '赠送开通' }))
-    const toast = await seen(page, /已赠送开通，已另开一份订阅/)
+    const toast = await seen(page, /已赠送开通，已新开一份订阅/)
     const portal = await openPortal(browser, u)
     await expect(card(portal, mini.name)).toBeVisible()
     return `点「改用赠送」后结算方式变成赠送，「赠送开通」；提示「${toast}」；门户我的套餐有${mini.name}`
@@ -112,7 +111,7 @@ test('C3：后台待支付，用户在门户付', async ({ browser, world }) => 
   await step(page, 'C3', async () => {
     const dlg = await openManual(page, u)
     await pickPrice(dlg, std.name, '30.00')
-    await expect(placement(dlg)).toContainText(`另开一份${std.name}`)
+    await expect(placement(dlg)).toContainText(`新开一份${std.name}`)
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台待支付开单')
     await submit(page, dlg.getByRole('button', { name: '创建订单' }))
     const toast = await seen(page, /已创建，等待用户在 30 分钟内支付/)
@@ -124,7 +123,9 @@ test('C3：后台待支付，用户在门户付', async ({ browser, world }) => 
     const row = await text(pending)
     await pending.getByRole('button', { name: '去支付' }).click()
     const modal = portal.getByRole('dialog')
-    await submit(portal, modal.getByRole('button', { name: '支付宝' }))
+    // 10-16 起付款方式是单选行，选好再点「去支付 ¥…」
+    await modal.getByRole('radio', { name: /^支付宝/ }).click()
+    await submit(portal, modal.getByRole('button', { name: /^去支付/ }))
     const paid = await payByCashier(modal, world, '30.00')
     await expect(modal.getByText(/已开通，有效期至/)).toBeVisible({ timeout: 20_000 })
     const ok = await text(modal.getByText(/已开通，有效期至/))
@@ -142,11 +143,11 @@ test('C4：后台线下已收款', async ({ browser, world }) => {
   await step(page, 'C4', async () => {
     const dlg = await openManual(page, u)
     await pickPrice(dlg, basic.name, '10.00')
-    await dlg.getByLabel('结算方式').selectOption({ label: '线下已收款' })
+    await dlg.getByRole('radio', { name: /^线下已收款/ }).check()
     await dlg.getByLabel('凭证号').fill(`W9B-OFFLINE-${u.id.slice(0, 6)}`)
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台线下已收款')
     await submit(page, dlg.getByRole('button', { name: '入账并开通' }))
-    const toast = await seen(page, /已按线下收款入账，已另开一份订阅/)
+    const toast = await seen(page, /已按线下收款入账，已新开一份订阅/)
     const portal = await openPortal(browser, u)
     await expect(card(portal, basic.name)).toBeVisible()
     return `填凭证号后「入账并开通」；提示「${toast}」；门户我的套餐有${basic.name}`

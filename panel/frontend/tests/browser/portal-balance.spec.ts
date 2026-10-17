@@ -3,7 +3,7 @@ import { backToSubs, buyNew, card, expect, happened, narrowShot, nav, openPortal
 import type { Page } from '@playwright/test'
 
 // ============================================================================
-//  门户 B 组（w8walk B1–B6b）：余额与站点最低付款额（¥1.00）。每条路径一个新用户，
+//  门户 B 组（B1–B6b）：余额与站点最低付款额（¥1.00）。每条路径一个新用户，
 //  前提（赠送开一份、调余额）经后台接口造，要验证的那一步在页面上点
 // ============================================================================
 
@@ -73,7 +73,18 @@ test('B3：换贵的', async ({ browser, world }) => {
   const before = await tailOf(card(page, std.name))
 
   await step(page, 'B3', async () => {
-    const row = await changeTo(page, std.name, pro.name)
+    // 从选购页买别的套餐：有份时先问放到哪里（落点由用户选，不预选），选「把你的W9 标准换成W9 进阶」
+    await nav(page, '选购')
+    await planCard(page, pro.name).getByRole('link', { name: `买${pro.name}` }).click()
+    await expect(page.getByRole('heading', { level: 1, name: `买${pro.name}` })).toBeVisible()
+    const choices = page.getByRole('radiogroup', { name: `${pro.name}放到哪里` })
+    await expect(choices.getByRole('radio', { checked: true })).toHaveCount(0)
+    const options = (await choices.getByRole('radio').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim())
+    expect(options.some((o) => o.startsWith('另开一份')), `选项里要有另开一份：${options.join(' / ')}`).toBe(true)
+    await narrowShot(page, 'B3-landing')
+    await choices.getByRole('radio', { name: new RegExp(`^把你的${std.name}换成${pro.name}`) }).click()
+    await expect(page.getByRole('heading', { level: 1, name: `换成${pro.name}` })).toBeVisible()
+    const row = options.join(' / ')
     const formula = await seen(page, /^¥42\.00 − 原套餐没用完的 ¥[\d.]+ = 今天付 ¥[\d.]+$/)
     const [, credit = '', pay = ''] = /没用完的 ¥([\d.]+) = 今天付 ¥([\d.]+)/.exec(formula) ?? []
     expect(yuan(credit), '刚买的一份几乎没用：抵扣接近 ¥30').toBeGreaterThan(2900)
@@ -87,7 +98,7 @@ test('B3：换贵的', async ({ browser, world }) => {
     await backToSubs(page)
     const after = await tailOf(card(page, pro.name))
     expect(after, '换套餐链接不变').toBe(before)
-    return `换个套餐页「${row}」；确认页「${formula}」；${paid}；完成页「${lines[0]}」；链接 ····${before} → ····${after}`
+    return `选购页买${pro.name}先选落点「${row}」；确认页「${formula}」；${paid}；完成页「${lines[0]}」；链接 ····${before} → ····${after}`
   })
 })
 
@@ -101,7 +112,7 @@ test('B4：换便宜的', async ({ browser, world }) => {
     const sum = await seen(page, /^这次不用付钱，多出的 ¥[\d.]+ 退到钱包余额$/)
     const refund = /¥([\d.]+)/.exec(sum)?.[1] ?? ''
     expect(yuan(refund), '进阶 ¥42 几乎没用，换成基础 ¥10 退回约 ¥32').toBeGreaterThan(3100)
-    await submit(page, page.getByRole('button', { name: `换成${basic.name}`, exact: true }))
+    await submit(page, page.getByRole('button', { name: `换成${basic.name}` }))
     await expect(page.getByRole('heading', { name: `已换成${basic.name}` })).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText(`¥${refund} 已退到余额，现在余额 ¥${refund}`)).toBeVisible()
     const lines = await happened(page)
@@ -121,7 +132,7 @@ test('B5：换套餐只差几分钱', async ({ browser, world }) => {
     await changeTo(page, std.name, plus.name)
     const sum = await seen(page, /^零头 ¥0\.\d\d 不到支付最低额，这次免了$/)
     const waived = /¥([\d.]+)/.exec(sum)?.[1] ?? ''
-    await submit(page, page.getByRole('button', { name: `换成${plus.name}`, exact: true }))
+    await submit(page, page.getByRole('button', { name: `换成${plus.name}` }))
     await expect(page.getByRole('heading', { name: `已换成${plus.name}` })).toBeVisible({ timeout: 20_000 })
     const lines = await happened(page)
     expect(lines.join('；')).toContain(`零头 ¥${waived} 已免`)
@@ -136,7 +147,7 @@ test('B6：低于最低额', async ({ browser, world }) => {
 
   await step(page, 'B6', async () => {
     await nav(page, '选购')
-    await planCard(page, mini.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, mini.name).getByRole('link', { name: `买${mini.name}` }).click()
     await expect(page.getByRole('heading', { level: 1, name: `买${mini.name}` })).toBeVisible()
     const sum = await seen(page, /还差 ¥0\.50。在线付款最少要付 ¥1\.00，这一单付不了/)
     await expect(page.getByRole('button', { name: '余额不够，先充值再来' })).toBeDisabled()

@@ -1,0 +1,302 @@
+# Pandora 容器编排 (Docker Compose)
+#
+# TLS 证书配置方式：
+#   方式 1：由内置 nginx 终止 TLS（缺省）。
+#          80 与 443 端口直出公网；证书存放在 ./tls/fullchain.pem 与 ./tls/privkey.pem（没有时自动生成自签证书兜底）。
+#   方式 2：前面已有反向代理（如 1Panel OpenResty / Caddy / Nginx 等）。
+#          .env 中设 PANDORA_HTTP_PUBLISH=127.0.0.1: 与 PANDORA_HTTPS_PUBLISH=127.0.0.1:（不对公网开放 80/443），
+#          PANDORA_REALIP_FROM=gateway；前面反向代理转发至 http://127.0.0.1:9080，并务必覆写 X-Real-IP 请求头。
+#
+# 启动方式：
+#   docker compose up -d
+#
+# 升级步骤：
+#   在 .env 中修改 PANDORA_VERSION 为新版本号，随后执行 docker compose up -d。
+#   migrate 服务将按依赖关系先跑完数据库迁移，再拉起 serve 与 worker。
+#
+# 运维管理：
+#   所有日常运维命令通过 ops 服务执行：
+#   docker compose run --rm ops <命令> (如 migrate, backup, verify, restore, psql, help)
+#
+# 1Panel 导入：
+#   本 compose.yaml 可直接导入 1Panel「容器 → 编排」，在编排环境变量中填入 .env 的变量即可。
+
+name: pandora
+
+x-pandora-env: &pandora-env
+  PANDORA_ENV: production
+  PANDORA_PUBLIC_BASE_URL: ${PANDORA_PUBLIC_BASE_URL:?在 .env 里填 PANDORA_PUBLIC_BASE_URL}
+  PANDORA_GRPC_NODE_PUBLIC_HOST: ${PANDORA_GRPC_PUBLIC_HOST:?在 .env 里填 PANDORA_GRPC_PUBLIC_HOST}
+  PANDORA_GRPC_NODE_PUBLIC_PORT: ${PANDORA_GRPC_PUBLIC_PORT:-0}
+  PANDORA_DATABASE_URL: postgres://pandora_app:${PANDORA_APP_DB_PASSWORD:?在 .env 里填 PANDORA_APP_DB_PASSWORD}@postgres:5432/pandora?sslmode=disable
+  PANDORA_REDIS_URL: redis://:${PANDORA_REDIS_PASSWORD:?在 .env 里填 PANDORA_REDIS_PASSWORD}@redis:6379/0
+  PANDORA_SECRETS_MASTER_KEY: ${PANDORA_SECRETS_MASTER_KEY:?在 .env 里填 PANDORA_SECRETS_MASTER_KEY}
+  PANDORA_AUTH_PUBLIC_JWT_SECRET: ${PANDORA_AUTH_PUBLIC_JWT_SECRET:?在 .env 里填 PANDORA_AUTH_PUBLIC_JWT_SECRET}
+  PANDORA_AUTH_ADMIN_JWT_SECRET: ${PANDORA_AUTH_ADMIN_JWT_SECRET:?在 .env 里填 PANDORA_AUTH_ADMIN_JWT_SECRET}
+
+x-ops-env: &ops-env
+  <<: *pandora-env
+  POSTGRES_SUPER_PASSWORD: ${POSTGRES_SUPER_PASSWORD:?在 .env 里填 POSTGRES_SUPER_PASSWORD}
+  PANDORA_OWNER_DB_PASSWORD: ${PANDORA_OWNER_DB_PASSWORD:?在 .env 里填 PANDORA_OWNER_DB_PASSWORD}
+  PANDORA_APP_DB_PASSWORD: ${PANDORA_APP_DB_PASSWORD:?在 .env 里填 PANDORA_APP_DB_PASSWORD}
+  PANDORA_BACKUP_AGE_KEY: ${PANDORA_BACKUP_AGE_KEY:?在 .env 里填 PANDORA_BACKUP_AGE_KEY}
+  PANDORA_BACKUP_RETENTION_DAYS: ${PANDORA_BACKUP_RETENTION_DAYS:-14}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPER_PASSWORD:?在 .env 里填 POSTGRES_SUPER_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    command:
+      - postgres
+      - -c
+      - max_connections=60
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=48MB
+      - -c
+      - jit=off
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - min_wal_size=96MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_checkpoints=on
+      - -c
+      - timezone=UTC
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks:
+      - backend
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    environment:
+      PANDORA_REDIS_PASSWORD: ${PANDORA_REDIS_PASSWORD:?在 .env 里填 PANDORA_REDIS_PASSWORD}
+      REDISCLI_AUTH: ${PANDORA_REDIS_PASSWORD:?在 .env 里填 PANDORA_REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - |
+        exec docker-entrypoint.sh redis-server - <<EOF
+        requirepass $${PANDORA_REDIS_PASSWORD}
+        maxmemory 256mb
+        maxmemory-policy noeviction
+        appendonly yes
+        appendfsync everysec
+        save ""
+        rename-command FLUSHALL ""
+        rename-command FLUSHDB ""
+        EOF
+    volumes:
+      - redisdata:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  migrate:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora-ops:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    command: ["migrate"]
+    restart: "no"
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    network_mode: "service:postgres"
+    environment: *ops-env
+    volumes:
+      - backups:/var/backups/pandora
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 只占住网络命名空间与发布端口（同 Kubernetes Pod 的 pause 容器）：serve 与 nginx 都 network_mode 挂在它上面。
+  # 命名空间跟着这个几乎不重建的容器走，重建或就地拉起 serve、nginx 都不会让另一个留在失效的命名空间里。
+  # 镜像借用 pandora-nginx（自带 coreutils 的 sleep），只跑 sleep，不起 nginx。
+  netns:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora-nginx:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    entrypoint: ["sleep", "infinity"]
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    read_only: true
+    cap_drop:
+      - ALL
+    networks:
+      - edge
+      - backend
+    ports:
+      - "${PANDORA_HTTP_PUBLISH:-80}:80"
+      - "${PANDORA_HTTPS_PUBLISH:-443}:443"
+      - "${PANDORA_LOOPBACK_PUBLISH:-127.0.0.1:9080}:9080"
+      - "${PANDORA_GRPC_PUBLISH:-9443}:9443"
+
+  serve:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    command: ["serve"]
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    environment:
+      <<: *pandora-env
+      GOMEMLIMIT: 410MiB
+    mem_limit: 512m
+    stop_grace_period: 45s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    # 门户 127.0.0.1:9000、后台 127.0.0.1:9001 只在回环上（validate.go 在 production 强制），nginx 要同一个回环才能反代：
+    # serve 与 nginx 都加入 netns 的网络命名空间（端口也发布在 netns 上）。节点 gRPC 9443 由面板自己终结 mTLS。
+    network_mode: "service:netns"
+    volumes:
+      - backups:/var/backups/pandora:ro
+    depends_on:
+      netns:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    command: ["worker"]
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    environment:
+      <<: *pandora-env
+      GOMEMLIMIT: 204MiB
+      PANDORA_DATABASE_MAX_CONNS: "10"
+    mem_limit: 256m
+    stop_grace_period: 45s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    networks:
+      - edge
+      - backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora-nginx:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    network_mode: "service:netns"
+    environment:
+      PANDORA_PUBLIC_BASE_URL: ${PANDORA_PUBLIC_BASE_URL:?在 .env 里填 PANDORA_PUBLIC_BASE_URL}
+      PANDORA_ADMIN_PATH: ${PANDORA_ADMIN_PATH:?在 .env 里填 PANDORA_ADMIN_PATH}
+      PANDORA_REALIP_FROM: ${PANDORA_REALIP_FROM:-}
+      PANDORA_REALIP_HEADER: ${PANDORA_REALIP_HEADER:-X-Real-IP}
+      PANDORA_SUB_DOMAINS: ${PANDORA_SUB_DOMAINS:-}
+    volumes:
+      - ${PANDORA_TLS_DIR:-./tls}:/etc/pandora/tls/user:ro
+      - ${PANDORA_SUB_TLS_DIR:-./tls-sub}:/etc/pandora/tls/sub:ro
+      - ${PANDORA_ACME_DIR:-./acme}:/var/www/pandora-acme:ro
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    stop_grace_period: 30s
+    depends_on:
+      netns:
+        condition: service_started
+      serve:
+        condition: service_started
+    # pandora 镜像没有 shell，就绪由这里一并看（serve 两个 /readyz 会 ping PG 与 Redis；
+    # 最后一条只看 nginx 在不在答，/healthz 在边缘被 deny，回 403 也算）
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null --max-time 3 http://127.0.0.1:9000/readyz && curl -fsS -o /dev/null --max-time 3 http://127.0.0.1:9001/readyz && curl -sS -o /dev/null --max-time 3 http://127.0.0.1:9080/healthz"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+
+  # 运维工具服务：只经 docker compose run --rm ops <命令> 调用
+  # 在 PostgreSQL 网络命名空间中运行，部署脚本可直接经 127.0.0.1 连接数据库
+  ops:
+    image: ${PANDORA_IMAGE_REPO:-ghcr.io/shiheishan}/pandora-ops:${PANDORA_VERSION:?在 .env 里填 PANDORA_VERSION}
+    profiles: ["ops"]
+    security_opt:
+      - "no-new-privileges:true"
+    logging: *logging
+    network_mode: "service:postgres"
+    environment: *ops-env
+    volumes:
+      - backups:/var/backups/pandora
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  edge: {}
+  # PG 与 Redis 仅处于 backend 网络，不出公网、不暴露宿主端口
+  backend:
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+  backups:

@@ -1,30 +1,34 @@
 // ---------------------------------------------------------------------------
-// 旧栈 purchase 包的原样移植（新栈在 order 模块）：落点选项与默认值、备注名规范化、余额与支付最低额。
-// 规则以 Go 为准（options.go / balance.go / label.go），改 Go 要同步这里。
+// 参照 Go 的落点与开单规则（giftcard/service/placement.go、order 的余额与最低额等）：落点选项与默认值、备注名规范化、余额与支付最低额。
+// 规则以 Go 为准，改 Go 要同步这里。
 // ---------------------------------------------------------------------------
 
 export type State = 'live' | 'revivable' | 'dead'
 export type OfferKind = 'plan' | 'days' | 'reset' | 'traffic' | 'mixed'
-export type Kind = 'renew' | 'change' | 'new' | 'extend_days' | 'reset_traffic' | 'add_traffic'
+export type Kind = 'renew' | 'stack' | 'change' | 'new' | 'extend_days' | 'reset_traffic' | 'add_traffic'
 
 export interface Candidate {
   subscriptionId: string
   planId: string
+  planKind: 'subscription' | 'one_time'
   state: State
   /** 毫秒；null = 永不过期 */
   periodEnd: number | null
+  permanent: boolean
   trafficUsed: number
   /** 0 = 不限 */
   trafficCap: number
-  packRemaining: number
 }
 
 export interface Offer {
   kind: OfferKind
   planId?: string
+  planKind?: 'subscription' | 'one_time'
   hasDays?: boolean
   hasReset?: boolean
   hasTraffic?: boolean
+  /** 盲盒：不排除永久 / 不限流量的订阅 */
+  mystery?: boolean
 }
 
 export interface Option {
@@ -48,25 +52,57 @@ const byEndDesc = (cs: Candidate[]) => byEndAsc(cs).reverse()
 const only = (cs: Candidate[], ...states: State[]) => cs.filter((c) => states.includes(c.state))
 const option = (kind: Kind, c: Candidate): Option => ({ key: optionKey(kind, c.subscriptionId), kind, subscription_id: c.subscriptionId })
 const usedRatio = (c: Candidate) => (c.trafficCap <= 0 ? 0 : c.trafficUsed / c.trafficCap)
-const remaining = (c: Candidate) => (c.trafficCap <= 0 ? Number.MAX_SAFE_INTEGER : Math.max(0, c.trafficCap - c.trafficUsed) + c.packRemaining)
+const remaining = (c: Candidate) => (c.trafficCap <= 0 ? Number.MAX_SAFE_INTEGER : Math.max(0, c.trafficCap - c.trafficUsed))
 
-function planOptions(planId: string, cands: Candidate[]): [Option[], string] {
+function subscriptionPlanOptions(planId: string, cands: Candidate[], allowChange: boolean): [Option[], string] {
   const alive = cands.filter((c) => c.state !== 'dead')
   const same = alive.filter((c) => c.planId === planId)
   const other = alive.filter((c) => c.planId !== planId)
   const opts: Option[] = [...byEndAsc(only(same, 'live')), ...byEndDesc(only(same, 'revivable'))].map((c) => option('renew', c))
   const renews = opts.length
   if (alive.length === 1 && renews === 1) return [opts, opts[0]!.key]
-  for (const c of byEndDesc(only(other, 'revivable'))) opts.push({ ...option('change', c), expired: true })
+  if (allowChange) {
+    for (const c of byEndDesc(only(other, 'revivable'))) opts.push({ ...option('change', c), expired: true })
+  }
   opts.push({ key: 'new', kind: 'new' })
-  for (const c of byEndAsc(only(other, 'live'))) opts.push(option('change', c))
+  if (allowChange) {
+    for (const c of byEndAsc(only(other, 'live'))) opts.push(option('change', c))
+  }
   if (renews > 0) {
     opts[0]!.badge = 'same_plan'
     return [opts, opts[0]!.key]
   }
   if (opts.length === 1) return [opts, opts[0]!.key]
-  // 不同款一律不预选（10-07）
   return [opts, '']
+}
+
+function oneTimePlanOptions(planId: string, cands: Candidate[], allowChange: boolean): [Option[], string] {
+  const alive = cands.filter((c) => c.state !== 'dead')
+  const same = alive.filter((c) => c.planId === planId)
+  const other = alive.filter((c) => c.planId !== planId)
+  const opts: Option[] = []
+  for (const c of byEndAsc(only(same, 'live'))) opts.push(option('stack', c))
+  const stacks = opts.length
+  if (allowChange) {
+    for (const c of byEndDesc(only(other, 'revivable'))) opts.push({ ...option('change', c), expired: true })
+  }
+  opts.push({ key: 'new', kind: 'new' })
+  if (allowChange) {
+    for (const c of byEndAsc(only(other, 'live'))) opts.push(option('change', c))
+  }
+  switch (true) {
+    case stacks > 0:
+      opts[0]!.badge = 'same_plan'
+      return [opts, opts[0]!.key]
+    case opts.length === 1:
+      return [opts, opts[0]!.key]
+    default:
+      return [opts, '']
+  }
+}
+
+function planOptions(planId: string, planKind: 'subscription' | 'one_time', cands: Candidate[], allowChange = true): [Option[], string] {
+  return planKind === 'one_time' ? oneTimePlanOptions(planId, cands, allowChange) : subscriptionPlanOptions(planId, cands, allowChange)
 }
 
 function daysOptions(cands: Candidate[]): [Option[], string] {
@@ -102,23 +138,35 @@ function trafficOptions(cands: Candidate[]): [Option[], string] {
   return [opts, opts[best]!.key]
 }
 
+function filterCandidates(o: Offer, cands: Candidate[]): Candidate[] {
+  if (o.mystery) return cands
+  const hasDays = o.kind === 'days' || (o.kind === 'mixed' && o.hasDays)
+  const hasTraffic = o.kind === 'traffic' || (o.kind === 'mixed' && o.hasTraffic)
+  return cands.filter((c) => {
+    if (hasDays && c.permanent) return false
+    if (hasTraffic && c.trafficCap <= 0) return false
+    return true
+  })
+}
+
 export function options(o: Offer, cands: Candidate[], entrySub = ''): [Option[], string] {
+  const filtered = filterCandidates(o, cands)
   let res: [Option[], string] = [[], '']
-  if (o.kind === 'plan') res = planOptions(o.planId ?? '', cands)
-  else if (o.kind === 'days') res = daysOptions(cands)
-  else if (o.kind === 'reset') res = resetOptions(cands)
-  else if (o.kind === 'traffic') res = trafficOptions(cands)
-  else if (o.hasDays && !o.hasReset && !o.hasTraffic) res = daysOptions(cands)
-  else if (o.hasDays) res = daysOptions(only(cands, 'live'))
-  else if (o.hasReset) res = resetOptions(cands)
-  else if (o.hasTraffic) res = trafficOptions(cands)
+  if (o.kind === 'plan') res = planOptions(o.planId ?? '', o.planKind ?? 'subscription', filtered)
+  else if (o.kind === 'days') res = daysOptions(filtered)
+  else if (o.kind === 'reset') res = resetOptions(filtered)
+  else if (o.kind === 'traffic') res = trafficOptions(filtered)
+  else if (o.hasDays && !o.hasReset && !o.hasTraffic) res = daysOptions(filtered)
+  else if (o.hasDays) res = daysOptions(only(filtered, 'live'))
+  else if (o.hasReset) res = resetOptions(filtered)
+  else if (o.hasTraffic) res = trafficOptions(filtered)
   const entry = entrySub ? res[0].find((op) => op.subscription_id === entrySub) : undefined
   return entry ? [res[0], entry.key] : res
 }
 
 export class ChoiceError extends Error {}
 
-/** purchase.Resolve：给了选择就 Match；没给且只有一项就用它；多项回「请先选一种用法」；没有选项回 null */
+/** giftcard.resolveChoice：给了选择就 Match；没给且只有一项就用它；多项回「请先选一种用法」；没有选项回 null */
 export function resolve(choice: Choice | null, opts: Option[]): Option | null {
   if (choice && choice.kind) {
     const hit = opts.find((o) => o.key === optionKey(choice.kind, choice.subscription_id))
@@ -201,5 +249,5 @@ export function normalizeLabel(raw: string): { ok: string } | { error: string } 
   return { ok: s }
 }
 
-/** subscription.ProfileName：「站点名 · 备注名」，没有备注名时用套餐名 */
+/** 订阅模块 render.ProfileName：「站点名 · 备注名」，没有备注名时用套餐名 */
 export const profileName = (site: string, label: string | null, planName: string) => `${site} · ${label || planName}`

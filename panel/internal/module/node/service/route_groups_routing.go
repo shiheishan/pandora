@@ -1,4 +1,4 @@
-// 本文件归 p5-routing：路由组内路由与成员关系写路径。
+// 路由组内路由与成员关系写路径。
 package service
 
 import (

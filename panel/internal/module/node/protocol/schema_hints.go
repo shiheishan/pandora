@@ -3,6 +3,9 @@ package protocol
 // 协议 schema 里的表单说明与 REALITY 多值字段。单独成文件，免得
 // schema.go 的字面量被说明文字淹没（对齐门按正则读那份字面量）。
 
+// ss2022CipherHint 是 Shadowsocks 加密方式的说明：2022 方法的密钥谁来管、哪些客户端不支持。
+const ss2022CipherHint = "2022 开头的是 Shadowsocks 2022：服务端密钥由面板按节点生成，用户密钥跟随各自的订阅链接，不用填密码；Clash Premium、Surfboard、Loon、Stash 不支持，这几种订阅里会略过该节点。"
+
 // fallbackHint 是回落字段的说明：回落目标是什么、谁会被转过去。
 const fallbackHint = "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，" +
 	"让节点看起来像个普通网站；可以填本机（如 127.0.0.1:80 的本机 nginx），不能填内网地址。留空时回一个中性的 404 页面。"
@@ -29,7 +32,7 @@ func withCertHints(in map[string]string) map[string]string {
 // withRealityHints 给 REALITY 的 dest / server_name / short_id 补说明。
 func withRealityHints(in map[string]string) map[string]string {
 	// 示例站点取 node-e2e（2026-10-08）在 pdnd 上实测可用的；www.microsoft.com 这类证书链大、
-	// 单条握手记录超出旧版 pdnd 缓冲上限的站点不能当示例。
+	// 单条握手记录很大的站点不当示例。
 	in["reality_settings.dest"] = "借用握手的真实公网站点，域名:端口，例如 www.apple.com:443；dest 需支持 TLS 1.3 + X25519。不能填 IP、localhost 或内网域名。"
 	in["reality_settings.server_name"] = "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。"
 	in["reality_settings.short_id"] = "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。"

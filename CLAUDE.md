@@ -4,10 +4,11 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - 项目全貌、部署与进度看 README.md；当前任务看 `.claude/TASKS.md`。
 - 面板前端在 `panel/frontend`（React + TypeScript + Vite），构建产物嵌入 `panel/web`，由面板在根 `/` 下发。
+- 「交互」里停下问我的规则、「协作方式」「长任务的任务清单」「环境与工具坑」「Compact instructions」写给主会话和 opus 子 Agent；经 composer-dispatch 启动的编码子 Agent 按任务说明和自己的系统提示办，这几节跳过。
 
-## 当前阶段：后端换主流技术栈（2026-10-12 起）
+## 当前阶段：清理与发版准备（P8 之后）
 
-先把后端换成主流、有社区和第三方维护的技术栈，把架构理顺；性能与占用的系统优化放到换栈完成之后。
+后端已换成主流、有社区和第三方维护的技术栈（P0–P7，2026-10-13 完成），下表与下面的架构规矩继续有效。P8 测出的四个瓶颈已优化合入（10-14），性能改动从此一律过同机性能闸门。现在按 10-14 的审计删旧代码、死代码，统一重复的机制，然后发第一个 Release。
 
 | 方面 | 用什么 |
 |---|---|
@@ -30,7 +31,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 取舍原则
 
 - 先看需求，再找现成方案：成熟的第三方库或标准做法能解决的，不自己写。不为理论上的性能优势引入自研协议、自研格式或额外的复杂度。
-- 方案看四件事：可维护性、安全、用户体验、性能。换栈阶段可维护性和安全优先；性能只防明显退化（N+1、全表扫描、无界并发、每请求多余的往返），细调放到换栈之后。
+- 方案看四件事：可维护性、安全、用户体验、性能。可维护性和安全不为性能让步。新代码照样防明显退化（N+1、全表扫描、无界并发、每请求多余的往返）；性能优化要有测出来的瓶颈，过性能闸门（`panel/tests/perf/gate/`，perf-gate skill）：同机 A/B、先量噪声，带改前改后的数字，有退化不合。
 - 安全不让步：认证、权限、钱、密钥相关的做法不能比现在弱。
 - 改动量不是取舍理由；也不为「以后可能用到」提前做抽象或通用化。
 - 换掉一种做法就删掉旧的，不留长期双轨。
@@ -58,8 +59,9 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - **主 Agent**（当前会话）：先调查，再拆解任务、分配子 Agent；负责任务管理、冲突解决、build / test、集成、提交、推送和等 CI。
 - **opus 子 Agent**（Agent 工具，显式传 `model: opus`）：只在大任务里用，每个负责一块（一个模块或一个主题），在自己的 worktree 里读代码、定细节、把编码派给 composer、核对 composer 的改动并提交。
-- **composer-2.5**：写代码的主力，用 composer-dispatch skill 派（`claude -p` 经本机 magpie 代理，参数在它的 launch.sh 里），不用 Agent 工具。它只有读写文件的工具，不能跑命令。
-  - 模型用 magpie 的顺序分组 `group/gemini`：composer-2.5 不可用时依次换到 FLUX、vef 的 gemini-3.8-flash（兔子已撤），所以同一次派活实际可能由三者之一完成。FLUX 不流式，长回复期间没有帧。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
+- **composer-2.5**：写代码的主力，用 composer-dispatch skill 派（`claude -p` 经本机 magpie，参数都在它的 launch.sh 里），不用 Agent 工具。它只有读写文件的工具，不能跑命令。
+  - composer（`claude -p`）改不了 `.claude/` 下的文件（敏感文件策略），规则文件由派它的人自己改。
+  - 经 magpie 调子 Agent 只有一套接口：`ANTHROPIC_BASE_URL=http://127.0.0.1:3425`、`ANTHROPIC_API_KEY=magpie`、模型 `group/gemini`。分组成员与分配方式由用户在 magpie 里配，同一次派活可能由其中任一成员完成；不要擅自改 magpie 分组。核对改动不因模型降低标准；Gemini 常见小错是排序、测试夹具不合库约束、漏装配。
 
 ### 按任务大小选路
 
@@ -71,7 +73,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - 调查优先：先读代码，定好接口、数据结构、迁移号、要改的文件，写进任务说明；子 Agent 不负责定这些。
 - 按覆盖面切：一块是一组互不重叠的文件或一个主题，同一个文件只归一个子 Agent。共享文件（公共类型、路由表、proto、迁移）由主 Agent 先写好，或先派一块单独做完。
-- 任务说明写到不用再判断：只许改的文件、要做什么、可核对的完成标准。子 Agent 看不到主对话，也读不到 `~/.claude/CLAUDE.md`。
+- 任务说明写到不用再判断：只许改的文件、要做什么、可核对的完成标准。子 Agent 会自动加载 CLAUDE.md，但看不到主对话和记忆，记忆里的产品决定要写进说明。
 
 ### 子 Agent 规则
 
@@ -83,15 +85,16 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ### 收回、集成与清理
 
 - 主 Agent 自己读 diff、跑 build / test，不只信转述。问题小的自己改；大的写新任务说明再派，返工次数记进 TASKS.md。
-- 认证、权限、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 子 Agent 只读审查（或用内置 security-review）。
+- 认证、权限、钱、迁移、节点通道的改动，合入前另派一个没参与实现的 opus 子 Agent 只读审查（pre-merge-review skill）。
 - 子 Agent 的分支合入后，立刻删掉它的 worktree、本地分支和中间产物（`.claude/runs/` 的运行记录、构建产物、临时目录）；没合入的先问我。
 - 要用浏览器的验证（flow-walk、ux-review）与上服务器的操作由主 Agent 做。
 - 收尾附一张表：子任务 | 执行者 | 结论 | 证据。
 
 ## 在哪里找约定
 
-- 按目录生效的约定在 `.claude/rules/`，改到对应文件时自动加载。它们描述的是旧代码，某块迁到新栈后同步改写或删除。
+- 按目录生效的约定在 `.claude/rules/`，文件头的 `paths:` 写着管哪些目录。它只在用 Read / Edit / Write 碰到匹配文件时自动加载；用 Bash（cat、sed、grep）读文件或只看 `git diff` 时不会加载。所以要改或审某个目录的代码，先用 Read 打开那里的一个文件，或直接读对应的规则文件；给子 Agent 写任务说明、审查简报时，把相关规则文件的路径写进去。改了对应代码，同步改写这些规则。
 - 验证、推送后等 CI：verify skill。
+- 性能改动：perf-gate skill；合入前独立审查：pre-merge-review skill；发版：release skill。
 - skill 用 `~/ai/skills/bin/skills` 管理：项目自己的 skill 在 `.agents/skills/`（`.claude/skills` 是指向它的链接）；共享的 composer-dispatch、skill-creator 是本机链接，不入库。新做或改 skill 用 skill-creator。
 
 ## 仓库约定
@@ -99,6 +102,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - panel 与 pdnd 是两个独立的 Go module：面板是 `github.com/aegispanel/aegis`，pdnd 沿用旧名 `github.com/aegispanel/nodeagent`。
 - 本地数据基座是 `panel/dev/docker-compose.yml`（PostgreSQL 18 与 Redis 8 只绑 `127.0.0.1:5433` / `6380`），变量在 `panel/dev/.env`（从 `dev/.env.example` 复制，被 git 忽略）。
 - 全仓库用 LF，只有 `*.ps1` 用 CRLF（`.gitattributes`）。
+- 发版：在 `main` 上打 `v*` 标签并推送，`.github/workflows/release.yml` 构建、出来源证明、建 Release。推 `main`、打标签、发 Release 都先问我。
 - 只删注释、不改行为的全仓批量提交，登记在 `.git-blame-ignore-revs`；clone 后执行 `git config blame.ignoreRevsFile .git-blame-ignore-revs` 启用。
 - 单个 .go 文件不超过 800 行（含测试）。豁免只有 fork 来的 `pdnd/internal/reality/**`、`pdnd/internal/realityquic/**`（保持上游的文件划分以便合上游）。守卫是 panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go`；超限按主题拆分，不加豁免，改豁免表要我授权。
 
@@ -125,10 +129,11 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 环境与工具坑
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）。
-- 本机 Go：缺省 1.27.1，比 go.mod 的 1.26.9 新，pdnd 在 1.27 下链接失败（sing-box v1.13.14 用 go:linkname 取 x/net http2 的私有符号）。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（模块缓存里已有，`GOPROXY=off` 也能切），报告里注明本机 Go 版本。升 Go 1.27 前先解决这个 linkname，见 deps-upgrade skill。
+- 本机 Go：缺省 1.27.1，比 go.mod 的 1.26.9 新。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（模块缓存里已有，`GOPROXY=off` 也能切），结论才与 CI 同口径，报告里注明本机 Go 版本。pdnd 去掉 sing-box 后已能在 1.27 下链接（10-14）；还依赖 sing-box 的只剩 subscription-e2e 的 tools 模块，升 Go 1.27 前先处理它，见 deps-upgrade skill。
 - 本机（这台 Mac）没有 docker、psql、redis-cli：PG18 用例、迁移往返、e2e 脚本、冒烟栈、Playwright 购买路径本机跑不了；本机跳过不等于通过，以 CI 为准（verify skill）。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请我解锁；不改走 HTTPS。
 - 测试机上起后台进程一律 `ssh -n host 'cd /root/x; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；远端 `pkill -f` 的模式要锚定（`pkill -f '^vmstat'`），否则会误杀自己的 ssh 会话；限时的故障注入在远端自带撤销（`setsid -f sh -c 'sleep N; iptables -D …'`）。本机是 macOS，没有 setsid。
+- 性能闸门的测试机用 ssh 别名指定（主目录 `ops-local/netcup-perf/gate.env`），机器规矩先读 `~/ai/servers/` 下它的 `AGENTS.md`：只放虚构数据、测试端口只听回环、不改系统设置；机上日志可能带后台路径前缀，引用前先打码（`gate.sh` 的输出已打码）。一次运行约 30 分钟，放后台跑，同一时间只跑一个。
 - 等 CI：前台跑主目录 `ops-local/memoh-ci/` 的 `wait-status.sh` / `wait-github.sh`，Bash timeout 设 600000，wait-status 加 `MEMOH_PICKUP=540`；被截断就原样再跑，累计 wait-status 30 分钟、wait-github 60 分钟仍无结论按退出 2 处理。
 - 子 Agent 再派的子 Agent：完成通知落到主 Agent，派出方按 output 文件自己取结果。
 

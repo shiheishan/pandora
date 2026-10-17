@@ -142,3 +142,14 @@ type TelegramBindCode struct {
 
 // TableName 固定表名。
 func (TelegramBindCode) TableName() string { return "telegram_bind_codes" }
+
+// TelegramTicketMessage 对应 telegram_ticket_messages 的一行：管理员群组里的一条工单提醒消息对应哪张工单。
+type TelegramTicketMessage struct {
+	ChatID    int64     `gorm:"column:chat_id;primaryKey;autoIncrement:false"`
+	MessageID int64     `gorm:"column:message_id;primaryKey;autoIncrement:false"`
+	TicketID  uuid.UUID `gorm:"column:ticket_id;type:uuid"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+// TableName 固定表名。
+func (TelegramTicketMessage) TableName() string { return "telegram_ticket_messages" }

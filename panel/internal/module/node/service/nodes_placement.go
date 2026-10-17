@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：节点的复制、迁移与排序。
+// 节点的复制、迁移与排序。
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/module/node/protocol"
+	"github.com/aegispanel/aegis/internal/module/node/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
@@ -20,7 +21,8 @@ import (
 // nodeReorderMax 是一次排序最多的节点数。
 const nodeReorderMax = 200
 
-// CopyNode 把节点复制成另一台（或同一台）服务器上的草稿：协议原样复制，端口可换。
+// CopyNode 把节点复制成另一台（或同一台）服务器上的草稿：协议原样复制，端口可换；
+// CopyRouting 时连节点私有路由与所在路由组一起复制（copyNodeRouting）。
 func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) (AdminNode, error) {
 	if in.RowVersion <= 0 {
 		return AdminNode{}, inventoryInvalid("row_version", nodeRowVersionHint)
@@ -31,6 +33,12 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 	var copyID uuid.UUID
 	var warnings []string
 	err := s.tx.Do(ctx, func(ctx context.Context) error {
+		if in.CopyRouting {
+			// 锁序同其它改路由的写：先拿路由写锁，再锁节点行
+			if err := s.repo.LockRoutingWrites(ctx); err != nil {
+				return err
+			}
+		}
 		before, found, err := s.repo.NodeByID(ctx, id, true)
 		if err != nil {
 			return err
@@ -91,12 +99,15 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 			ServingStatus:         NodeDraft,
 			NodeType:              before.NodeType,
 			ServerHost:            before.ServerHost,
-			Kernel:                before.Kernel,
 			ProtocolConfig:        before.ProtocolConfig,
 			ProtocolSchemaVersion: before.ProtocolSchemaVersion,
 			ConfigValidatedAt:     before.ConfigValidatedAt,
 			TrafficRate:           before.TrafficRate,
 			SortOrder:             sortOrder,
+			Tags:                  before.Tags,
+			TrafficLimitBytes:     before.TrafficLimitBytes,
+			TrafficResetDay:       before.TrafficResetDay,
+			TrafficRateSchedule:   before.TrafficRateSchedule,
 		}
 		if n.ProtocolConfig == "" {
 			n.ProtocolConfig = "{}"
@@ -110,14 +121,20 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 		}
 		s.nodeChanged(ctx, realtime.OpInsert, n.ID)
 		copyID = n.ID
+		var copied routingCopy
+		if in.CopyRouting {
+			if copied, err = s.copyNodeRouting(ctx, id, copyID); err != nil {
+				return err
+			}
+		}
 		var poolID any
 		if pool != nil {
 			poolID = pool.String()
 		}
-		// in.CopyRouting：路由第二波才有，这一波只记进审计
 		if err := s.nodeAudit(ctx, "node.copy", copyID, map[string]any{
 			"source_node_id": id.String(), "name": name, "server_id": target.String(),
 			"pool_id": poolID, "copy_routing": in.CopyRouting,
+			"outbounds": copied.outbounds, "routes": copied.routes, "route_groups": copied.groups,
 		}); err != nil {
 			return err
 		}
@@ -130,10 +147,56 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 	return s.nodeWithWarnings(ctx, copyID, warnings)
 }
 
+// routingCopy 是 copyNodeRouting 复制的条数，进审计。
+type routingCopy struct{ outbounds, routes, groups int }
+
+// copyNodeRouting 把源节点的私有出站、规则和路由组成员关系原样复制给副本。在调用方事务里调，调用方已拿路由写锁。
+// 组成员一起复制：私有规则可以指向所在组的出站，只复制规则会造出悬空引用。复制后照常用 refuseNewDangling 拒绝新出现的悬空引用。
+func (s *Service) copyNodeRouting(ctx context.Context, srcID, dstID uuid.UUID) (routingCopy, error) {
+	outs, routes, err := s.repo.ScopeRouting(ctx, repo.RoutingScope{NodeID: &srcID})
+	if err != nil {
+		return routingCopy{}, err
+	}
+	rows, err := s.repo.NodeRouteGroups(ctx, []uuid.UUID{srcID})
+	if err != nil {
+		return routingCopy{}, err
+	}
+	groups := make([]uuid.UUID, 0, len(rows))
+	for _, row := range rows {
+		groups = append(groups, row.GroupID)
+	}
+	groups = normalizeIDs(groups)
+	if err := s.repo.LockRouteGroups(ctx, groups); err != nil {
+		return routingCopy{}, err
+	}
+	before, err := s.repo.DanglingRefs(ctx)
+	if err != nil {
+		return routingCopy{}, err
+	}
+	if err := s.repo.ReplaceScopeRouting(ctx, repo.RoutingScope{NodeID: &dstID}, outs, routes); err != nil {
+		return routingCopy{}, routingWriteErr(err)
+	}
+	if err := s.repo.ReplaceNodeGroups(ctx, dstID, groups); err != nil {
+		return routingCopy{}, err
+	}
+	if err := refuseNewDangling(ctx, s, before, "原节点的路由有悬空引用，修好后再复制路由"); err != nil {
+		return routingCopy{}, err
+	}
+	if err := s.repo.BumpRouteGroupVersions(ctx, groups); err != nil {
+		return routingCopy{}, err
+	}
+	return routingCopy{outbounds: len(outs), routes: len(routes), groups: len(groups)}, nil
+}
+
 // nodeMovable 报告节点能不能迁移：只有从没服务过的草稿（没有配置回执、没有运行状态）。
 func nodeMovable(n model.Node) bool {
-	return n.ServingStatus == NodeDraft && n.AppliedConfigSHA256 == nil &&
-		n.ApplyFailedSHA256 == nil && n.RuntimeStatus == nil
+	return nodeMovableState(n.ServingStatus, n.AppliedConfigSHA256, n.ApplyFailedSHA256, n.RuntimeStatus)
+}
+
+// nodeMovableState 是迁移资格的唯一判断，只看节点自己的字段（不看服务器心跳与身份）；
+// MoveNode 与后台列表的 movable 都用它，前端只读 movable、不自己算。
+func nodeMovableState(servingStatus string, appliedSHA, applyFailedSHA, runtimeStatus *string) bool {
+	return servingStatus == NodeDraft && appliedSHA == nil && applyFailedSHA == nil && runtimeStatus == nil
 }
 
 // MoveNode 把从没服务过的草稿节点迁到另一台服务器；目标就是当前服务器时不改。

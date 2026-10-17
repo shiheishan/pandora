@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 新栈鉴权端到端（P2 完成标准，docs/architecture.md 第 8、17 节）：
+# 鉴权端到端（docs/architecture.md 第 8、17 节）：
 #   1. 注册、登录：响应体只有 access，refresh 在 HttpOnly + SameSite=Strict 的 cookie 里；
 #   2. refresh 轮换；随便拼的值只回 401 不吊销；上一枚超出 30 秒宽限再用 = 重放，整条会话吊销；
 #   3. 跨域令牌：门户令牌进不了后台，后台令牌进不了门户；
@@ -37,6 +37,9 @@ errsig(){ python3 -c "import sys,json;e=json.load(sys.stdin)['error'];print(e['c
 DB_NAME=$("$PSQL" -X -qAtc 'SELECT current_database()' | tr -d '[:space:]')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

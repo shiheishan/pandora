@@ -7,22 +7,20 @@ import (
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
 func TestPostTopupUpdatesBalances(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
-	e.fund(t, ctx, user, cur, "10.00")
+	e.fund(t, ctx, user, "10.00")
 
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("10.00")) {
-		t.Fatalf("用户余额应为 10，实际 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("10.00")) {
+		t.Fatalf("用户余额应为 10，实际 %s", e.balanceOf(t, ctx, user))
 	}
 	ch := PlatformAccount(ChannelCash, "test")
-	if !e.accountBalance(t, ctx, ch, cur).Equal(dec("10.00")) {
-		t.Fatalf("channel_cash/test 应为 10，实际 %s", e.accountBalance(t, ctx, ch, cur))
+	if !e.accountBalance(t, ctx, ch).Equal(dec("10.00")) {
+		t.Fatalf("channel_cash/test 应为 10，实际 %s", e.accountBalance(t, ctx, ch))
 	}
 
 	var txnID uuid.UUID
@@ -42,12 +40,10 @@ func TestPostTopupUpdatesBalances(t *testing.T) {
 func TestPostActorFromContext(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
 	amt := dec("1.00")
 	post := func(c context.Context) uuid.UUID {
 		id, err := e.svc.Post(c, Posting{
-			Kind:     KindBalanceTopup,
-			Currency: cur,
+			Kind: KindBalanceTopup,
 			Legs: []Leg{
 				{Account: PlatformAccount(ChannelCash, "test"), Direction: Debit, Amount: amt},
 				{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: amt},
@@ -91,8 +87,7 @@ func TestPostActorFromContext(t *testing.T) {
 func TestPostInsufficientBalance(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
-	e.fund(t, ctx, user, cur, "5.00")
+	e.fund(t, ctx, user, "5.00")
 
 	var before int64
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&before); err != nil {
@@ -100,9 +95,8 @@ func TestPostInsufficientBalance(t *testing.T) {
 	}
 
 	_, err := e.svc.Post(ctx, Posting{
-		Kind:     KindCommissionToBalance,
-		Currency: cur,
-		Memo:     "测试扣减原因说明",
+		Kind: KindCommissionToBalance,
+		Memo: "测试扣减原因说明",
 		Legs: []Leg{
 			{Account: UserAccount(UserBalance, user), Direction: Debit, Amount: dec("10.00")},
 			{Account: PlatformAccount(Suspense, RefManualAdjust), Direction: Credit, Amount: dec("10.00")},
@@ -111,7 +105,7 @@ func TestPostInsufficientBalance(t *testing.T) {
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("期望 ErrInsufficientBalance，得 %v", err)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("5.00")) {
+	if !e.balanceOf(t, ctx, user).Equal(dec("5.00")) {
 		t.Fatalf("余额应仍为 5")
 	}
 	var after int64
@@ -126,10 +120,8 @@ func TestPostInsufficientBalance(t *testing.T) {
 func TestPostUnknownUser(t *testing.T) {
 	e, ctx := newEnv(t)
 	ghost := uuid.New()
-	cur := money.CNY
 	_, err := e.svc.Post(ctx, Posting{
-		Kind:     KindBalanceTopup,
-		Currency: cur,
+		Kind: KindBalanceTopup,
 		Legs: []Leg{
 			{Account: PlatformAccount(ChannelCash, "test"), Direction: Debit, Amount: dec("1.00")},
 			{Account: UserAccount(UserBalance, ghost), Direction: Credit, Amount: dec("1.00")},
@@ -147,14 +139,12 @@ func TestPostDuplicateBySource(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	orderID := uuid.New()
-	cur := money.CNY
 	leg := []Leg{
 		{Account: PlatformAccount(ChannelCash, "p"), Direction: Debit, Amount: dec("1.00")},
 		{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: dec("1.00")},
 	}
 	p := Posting{
 		Kind:       KindBalanceTopup,
-		Currency:   cur,
 		SourceType: SourceOrder,
 		SourceID:   orderID,
 		Legs:       leg,
@@ -173,18 +163,16 @@ func TestPostDuplicateBySource(t *testing.T) {
 	if cnt != 1 {
 		t.Fatalf("同一来源应只有 1 笔交易，得 %d", cnt)
 	}
-	if !e.balanceOf(t, ctx, user, cur).Equal(dec("1.00")) {
-		t.Fatalf("余额应为 1.00，得 %s", e.balanceOf(t, ctx, user, cur))
+	if !e.balanceOf(t, ctx, user).Equal(dec("1.00")) {
+		t.Fatalf("余额应为 1.00，得 %s", e.balanceOf(t, ctx, user))
 	}
 }
 
 func TestPostRejectsInvalid(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
 	_, err := e.svc.Post(ctx, Posting{
-		Kind:     KindBalanceTopup,
-		Currency: cur,
+		Kind: KindBalanceTopup,
 		Legs: []Leg{
 			{Account: PlatformAccount(ChannelCash, "test"), Direction: Debit, Amount: dec("10.00")},
 			{Account: UserAccount(UserBalance, user), Direction: Credit, Amount: dec("9.00")},
@@ -193,13 +181,12 @@ func TestPostRejectsInvalid(t *testing.T) {
 	if !errors.Is(err, ErrInvalidPosting) {
 		t.Fatalf("借贷不平应 ErrInvalidPosting，得 %v", err)
 	}
-	e.fund(t, ctx, user, cur, "1.00")
+	e.fund(t, ctx, user, "1.00")
 }
 
 func TestPostRejectsDedicatedKinds(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
-	cur := money.CNY
 
 	var before int64
 	if err := e.row(ctx, `SELECT count(*) FROM ledger_transactions`).Scan(&before); err != nil {
@@ -217,7 +204,7 @@ func TestPostRejectsDedicatedKinds(t *testing.T) {
 		KindBalanceAdjusted,
 	}
 	for _, k := range dedicated {
-		p := Posting{Kind: k, Currency: cur, Legs: baseLegs}
+		p := Posting{Kind: k, Legs: baseLegs}
 		if k == KindBalanceAdjusted {
 			p.Memo = "五个字以上原因"
 		}
@@ -241,11 +228,10 @@ func TestBalancesBatch(t *testing.T) {
 	u1 := e.mkUser(t, ctx)
 	u2 := e.mkUser(t, ctx)
 	u3 := e.mkUser(t, ctx)
-	cur := money.CNY
-	e.fund(t, ctx, u1, cur, "1.00")
-	e.fund(t, ctx, u2, cur, "2.00")
+	e.fund(t, ctx, u1, "1.00")
+	e.fund(t, ctx, u2, "2.00")
 
-	m, err := e.svc.Balances(ctx, []uuid.UUID{u1, u2, u3}, cur)
+	m, err := e.svc.Balances(ctx, []uuid.UUID{u1, u2, u3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +242,7 @@ func TestBalancesBatch(t *testing.T) {
 		t.Fatalf("批量余额不对: %v", m)
 	}
 
-	empty, err := e.svc.Balances(ctx, nil, cur)
+	empty, err := e.svc.Balances(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,14 +255,12 @@ func TestMyWallet(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
 	admin := e.mkUser(t, ctx)
-	cur := money.CNY
-	e.fund(t, ctx, user, cur, "10.00")
+	e.fund(t, ctx, user, "10.00")
 
 	_, err := e.svc.AdjustBalance(asAdmin(ctx, admin), Adjustment{
-		UserID:   user,
-		Amount:   dec("-3.00"),
-		Currency: "CNY",
-		Reason:   "测试扣减原因",
+		UserID: user,
+		Amount: dec("-3.00"),
+		Reason: "测试扣减原因",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -286,8 +270,8 @@ func TestMyWallet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w.Currency != cur || !w.Balance.Equal(dec("7.00")) {
-		t.Fatalf("钱包余额/币种不对: %s %s", w.Currency, w.Balance)
+	if !w.Balance.Equal(dec("7.00")) {
+		t.Fatalf("钱包余额不对: %s", w.Balance)
 	}
 	if len(w.History) != 2 {
 		t.Fatalf("明细应为 2 条，得 %d", len(w.History))

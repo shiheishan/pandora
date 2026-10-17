@@ -35,34 +35,33 @@ func TestSaveThemeValidatesBeforeTouchingTheDatabase(t *testing.T) {
 		in    SaveThemeInput
 		field string
 	}{
-		"code 为空":       {SaveThemeInput{Name: "x"}, "code"},
-		"code 数字开头":     {SaveThemeInput{Code: "9abc", Name: "x"}, "code"},
-		"code 太短":       {SaveThemeInput{Code: "a", Name: "x"}, "code"},
-		"code 非法字符":     {SaveThemeInput{Code: "ab cd", Name: "x"}, "code"},
-		"name 为空":       {SaveThemeInput{Code: "my-theme", Name: "   "}, "name"},
-		"name 超 60 字":   {SaveThemeInput{Code: "my-theme", Name: strings.Repeat("字", 61)}, "name"},
-		"custom_css 停用": {SaveThemeInput{Code: "my-theme", Name: "x", CustomCSS: "body{}"}, "custom_css"},
-		"tokens 非法":     {SaveThemeInput{Code: "my-theme", Name: "x", Tokens: json.RawMessage(`{"brand":"#fff"}`)}, "tokens"},
-		"branding 非对象":  {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`"Pandora"`)}, "branding"},
-		"站点名缺失":         {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`{"tagline":"t"}`)}, "branding.site_name"},
+		"code 为空":      {SaveThemeInput{Name: "x"}, "code"},
+		"code 数字开头":    {SaveThemeInput{Code: "9abc", Name: "x"}, "code"},
+		"code 太短":      {SaveThemeInput{Code: "a", Name: "x"}, "code"},
+		"code 非法字符":    {SaveThemeInput{Code: "ab cd", Name: "x"}, "code"},
+		"name 为空":      {SaveThemeInput{Code: "my-theme", Name: "   "}, "name"},
+		"name 超 60 字":  {SaveThemeInput{Code: "my-theme", Name: strings.Repeat("字", 61)}, "name"},
+		"tokens 非法":    {SaveThemeInput{Code: "my-theme", Name: "x", Tokens: json.RawMessage(`{"brand":"#fff"}`)}, "tokens"},
+		"branding 非对象": {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`"Pandora"`)}, "branding"},
+		"带站点名":         {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`{"site_name":"x"}`)}, "branding.site_name"},
 	} {
-		if _, err := s.SaveTheme(context.Background(), tc.in); !thIsValidationOn(err, tc.field) && !thIsValidationUnder(err, tc.field) {
+		if err := s.SaveTheme(context.Background(), tc.in); !thIsValidationOn(err, tc.field) && !thIsValidationUnder(err, tc.field) {
 			t.Errorf("%s：得到 %v，want 422 fields.%s", name, err, tc.field)
 		}
 	}
 }
 
 func TestSaveThemeReportsAllFieldsAtOnce(t *testing.T) {
-	_, err := (&Service{}).SaveTheme(context.Background(), SaveThemeInput{
+	err := (&Service{}).SaveTheme(context.Background(), SaveThemeInput{
 		Code: "ok-code", Name: "", Create: true,
 		Tokens:   json.RawMessage(`{"light":{"--bg":"a{b"}}`),
-		Branding: json.RawMessage(`{"site_name":""}`),
+		Branding: json.RawMessage(`{"tagline":"` + strings.Repeat("字", 81) + `"}`),
 	})
 	var he *errs.Error
 	if !errors.As(err, &he) || he.Code != errs.ValidationFailed {
 		t.Fatalf("want 422, got %v", err)
 	}
-	for _, f := range []string{"name", "tokens.light.--bg", "branding.site_name"} {
+	for _, f := range []string{"name", "tokens.light.--bg", "branding.tagline"} {
 		if he.Fields[f] == "" {
 			t.Errorf("fields 缺 %s：%v", f, he.Fields)
 		}
@@ -70,10 +69,10 @@ func TestSaveThemeReportsAllFieldsAtOnce(t *testing.T) {
 }
 
 func TestSaveThemeRejectsNameNUL(t *testing.T) {
-	_, err := (&Service{}).SaveTheme(context.Background(), SaveThemeInput{
+	err := (&Service{}).SaveTheme(context.Background(), SaveThemeInput{
 		Code: "my-theme", Name: "a\x00b",
 		Tokens:   json.RawMessage(`{"light":{"--bg":"#fff"},"dark":{"--bg":"#000"}}`),
-		Branding: json.RawMessage(`{"site_name":"x"}`),
+		Branding: json.RawMessage(`{}`),
 	})
 	if !thIsValidationOn(err, "name") {
 		t.Fatalf("name NUL: %v", err)

@@ -16,7 +16,6 @@ type Order struct {
 	UserID                uuid.UUID       `gorm:"column:user_id;type:uuid"`
 	Kind                  string          `gorm:"column:kind"`
 	Status                string          `gorm:"column:status"`
-	Currency              string          `gorm:"column:currency"`
 	SubtotalAmount        decimal.Decimal `gorm:"column:subtotal_amount"`
 	DiscountAmount        decimal.Decimal `gorm:"column:discount_amount"`
 	ProrationCreditAmount decimal.Decimal `gorm:"column:proration_credit_amount"`
@@ -44,25 +43,22 @@ type Order struct {
 // TableName 固定表名。
 func (Order) TableName() string { return "orders" }
 
-// Item 是 order_items 表的一行（只插不改）。
+// Item 是 order_items 表的一行（只插不改）。PlanID 库里 NOT NULL：买套餐（新购、续费、叠加、换套餐）带价格档与周期，流量重置没有。
 type Item struct {
 	ID                    uuid.UUID       `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
 	OrderID               uuid.UUID       `gorm:"column:order_id;type:uuid"`
 	PriceID               *uuid.UUID      `gorm:"column:price_id;type:uuid"`
 	PlanID                *uuid.UUID      `gorm:"column:plan_id;type:uuid"`
 	PlanVersionID         *uuid.UUID      `gorm:"column:plan_version_id;type:uuid"`
-	TrafficPackID         *uuid.UUID      `gorm:"column:traffic_pack_id;type:uuid"`
 	SnapshotName          string          `gorm:"column:snapshot_name"`
 	SnapshotPlanVersion   *int            `gorm:"column:snapshot_plan_version"`
 	SnapshotInterval      *string         `gorm:"column:snapshot_interval"`
 	SnapshotIntervalCount *int            `gorm:"column:snapshot_interval_count"`
-	SnapshotTrafficBytes  *int64          `gorm:"column:snapshot_traffic_bytes"`
 	SnapshotEntitlements  string          `gorm:"column:snapshot_entitlements;type:jsonb"`
 	SnapshotQuotas        string          `gorm:"column:snapshot_quotas;type:jsonb"`
 	Quantity              int             `gorm:"column:quantity"`
 	UnitAmount            decimal.Decimal `gorm:"column:unit_amount"`
 	LineAmount            decimal.Decimal `gorm:"column:line_amount"`
-	Currency              string          `gorm:"column:currency"`
 	CreatedAt             time.Time       `gorm:"column:created_at;autoCreateTime"`
 }
 
@@ -103,42 +99,3 @@ type ReservationEvent struct {
 
 // TableName 固定表名。
 func (ReservationEvent) TableName() string { return "order_reservation_events" }
-
-// StockReservation 是 order_stock_reservations 表的一行（只追加）。
-type StockReservation struct {
-	ID            uuid.UUID `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	ReservationID uuid.UUID `gorm:"column:reservation_id;type:uuid"`
-	OrderID       uuid.UUID `gorm:"column:order_id;type:uuid"`
-	PlanID        uuid.UUID `gorm:"column:plan_id;type:uuid"`
-	Quantity      int       `gorm:"column:quantity"`
-	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime"`
-}
-
-// TableName 固定表名。
-func (StockReservation) TableName() string { return "order_stock_reservations" }
-
-// LimitReservation 是 order_purchase_limit_reservations 表的一行（只追加）。
-type LimitReservation struct {
-	ID            uuid.UUID `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	ReservationID uuid.UUID `gorm:"column:reservation_id;type:uuid"`
-	OrderID       uuid.UUID `gorm:"column:order_id;type:uuid"`
-	PlanID        uuid.UUID `gorm:"column:plan_id;type:uuid"`
-	UserID        uuid.UUID `gorm:"column:user_id;type:uuid"`
-	Quantity      int       `gorm:"column:quantity"`
-	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime"`
-}
-
-// TableName 固定表名。
-func (LimitReservation) TableName() string { return "order_purchase_limit_reservations" }
-
-// PurchaseCounter 是 plan_purchase_counters 表的一行。
-type PurchaseCounter struct {
-	PlanID    uuid.UUID `gorm:"column:plan_id;type:uuid;primaryKey"`
-	UserID    uuid.UUID `gorm:"column:user_id;type:uuid;primaryKey"`
-	Purchased int       `gorm:"column:purchased"`
-	Reserved  int       `gorm:"column:reserved"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
-}
-
-// TableName 固定表名。
-func (PurchaseCounter) TableName() string { return "plan_purchase_counters" }

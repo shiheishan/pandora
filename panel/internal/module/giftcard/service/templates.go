@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/giftcard/model"
 	"github.com/aegispanel/aegis/internal/module/giftcard/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -29,7 +30,7 @@ func (s *Service) ListTemplates(ctx context.Context) ([]Template, error) {
 }
 
 // SaveTemplate 新建（in.ID 为 nil）或修改一个模板，返回保存后的模板。卡型不能改：已经发出去的码是按原卡型生成的。
-// 套餐卡的套餐、价格档与限定套餐经 catalog 校验存在（价格档必须属于该套餐）。新建时币种取站点币种。
+// 套餐卡的套餐、价格档与限定套餐经 catalog 校验存在（价格档必须属于该套餐）。
 func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template, error) {
 	p, err := adminPrincipal(ctx)
 	if err != nil {
@@ -47,12 +48,8 @@ func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template,
 		action := ActionTemplateCreated
 		var id uuid.UUID
 		if in.ID == nil {
-			cur, err := s.ledger.DefaultCurrency(ctx)
-			if err != nil {
-				return err
-			}
 			admin := p.UserID
-			m := templateModel(in, cur)
+			m := templateModel(in)
 			m.ID = uuid.Must(uuid.NewV7())
 			m.CreatedBy = &admin
 			if err := s.repo.CreateTemplate(ctx, &m, prizeModels(in.Rewards.Pool), in.Conditions.AllowedPlanIDs); err != nil {
@@ -74,7 +71,7 @@ func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template,
 			if old.Type != in.Type {
 				return errs.Newf(errs.Conflict, "不能修改卡型：已经发出去的码是按原卡型生成的")
 			}
-			m := templateModel(in, money.Currency(old.Currency))
+			m := templateModel(in)
 			m.ID = old.ID
 			ok, err := s.repo.UpdateTemplate(ctx, &m, prizeModels(in.Rewards.Pool), in.Conditions.AllowedPlanIDs)
 			if err != nil {
@@ -128,14 +125,14 @@ func (s *Service) checkCatalogRefs(ctx context.Context, in TemplateInput) error 
 			}
 		}
 	}
-	if in.Type == TypePlan && in.Rewards.PriceID != nil {
+	if in.Type == TypePlan {
 		prices, err := s.catalog.PricesByIDs(ctx, []uuid.UUID{*in.Rewards.PriceID})
 		if err != nil {
 			return err
 		}
 		pr, ok := prices[*in.Rewards.PriceID]
-		if !ok || pr.PlanID != *in.Rewards.PlanID {
-			return errs.Invalid(map[string]string{"rewards": "价格档不存在或不属于该套餐"})
+		if !ok || pr.PlanID != *in.Rewards.PlanID || pr.Status != catalogsvc.PriceActive {
+			return errs.Invalid(map[string]string{"rewards": "价格档不存在、已停售或不属于该套餐"})
 		}
 	}
 	return nil
@@ -157,7 +154,7 @@ func (s *Service) loadTemplate(ctx context.Context, id uuid.UUID, withCounts boo
 	return ts[0], nil
 }
 
-// assembleTemplates 给一组模板补上奖池、限定套餐与（可选）码数：每类一条 SQL。
+// assembleTemplates 给一组模板补上奖池、限定套餐与（后台视图 withCounts 时）码数和「价格已下架」：每类一条查询。
 func (s *Service) assembleTemplates(ctx context.Context, rows []model.Template, withCounts bool) ([]Template, error) {
 	out := make([]Template, 0, len(rows))
 	if len(rows) == 0 {
@@ -176,16 +173,46 @@ func (s *Service) assembleTemplates(ctx context.Context, rows []model.Template, 
 		return nil, gcErr(err)
 	}
 	counts := map[uuid.UUID]repo.CodeCounts{}
+	archived := map[uuid.UUID]bool{}
 	if withCounts {
 		if counts, err = s.repo.CodeCountsByTemplates(ctx, ids); err != nil {
 			return nil, gcErr(err)
+		}
+		if archived, err = s.archivedPrices(ctx, rows); err != nil {
+			return nil, err
 		}
 	}
 	for _, m := range rows {
 		t := templateOf(m, prizes[m.ID], plans[m.ID])
 		c := counts[m.ID]
 		t.CodeTotal, t.CodeUsed = c.Total, c.Used
+		t.PriceArchived = m.PriceID != nil && archived[*m.PriceID]
 		out = append(out, t)
+	}
+	return out, nil
+}
+
+// archivedPrices 批量查套餐卡指向的价格档（一次 catalog 查询），回已下架的那些：已归档或已不存在。
+// 只在后台视图（withCounts）里查：后台据此标出「价格已下架」，编辑时 checkCatalogRefs 要求重选在售价。
+func (s *Service) archivedPrices(ctx context.Context, rows []model.Template) (map[uuid.UUID]bool, error) {
+	var priceIDs []uuid.UUID
+	for _, m := range rows {
+		if m.Type == TypePlan && m.PriceID != nil {
+			priceIDs = append(priceIDs, *m.PriceID)
+		}
+	}
+	out := map[uuid.UUID]bool{}
+	if len(priceIDs) == 0 {
+		return out, nil
+	}
+	prices, err := s.catalog.PricesByIDs(ctx, dedupeIDs(priceIDs))
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range priceIDs {
+		if pr, ok := prices[id]; !ok || pr.Status != catalogsvc.PriceActive {
+			out[id] = true
+		}
 	}
 	return out, nil
 }
@@ -198,7 +225,6 @@ func templateOf(m model.Template, prizes []model.Prize, planIDs []uuid.UUID) Tem
 		Description: m.Description,
 		Type:        m.Type,
 		Status:      m.Status,
-		Currency:    money.Currency(m.Currency),
 		Conditions: Conditions{
 			NewUserOnly:    m.NewUserOnly,
 			PaidUserOnly:   m.PaidUserOnly,
@@ -240,14 +266,13 @@ func templateOf(m model.Template, prizes []model.Prize, planIDs []uuid.UUID) Tem
 }
 
 // templateModel 把规范化后的输入转成模板行（不含 ID、CreatedBy）。零值奖励写 NULL。
-func templateModel(in TemplateInput, cur money.Currency) model.Template {
+func templateModel(in TemplateInput) model.Template {
 	r := in.Rewards
 	return model.Template{
 		Name:          in.Name,
 		Description:   in.Description,
 		Type:          in.Type,
 		Status:        in.Status,
-		Currency:      string(cur),
 		BalanceAmount: decPtr(r.Balance),
 		TrafficBytes:  int64Ptr(r.TrafficBytes),
 		ExpireDays:    intPtr(r.ExpireDays),
@@ -282,7 +307,7 @@ func prizeModels(pool []Prize) []model.Prize {
 // auditRewards 是审计里记的奖励摘要（金额写成字符串，不记卡密）。
 func auditRewards(t Template) map[string]any {
 	r := t.Rewards
-	out := map[string]any{"currency": string(t.Currency)}
+	out := map[string]any{}
 	if r.Balance.IsPositive() {
 		out["balance"] = r.Balance.StringFixed(money.Scale)
 	}

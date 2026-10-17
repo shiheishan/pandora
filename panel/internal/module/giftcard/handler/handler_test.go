@@ -25,14 +25,19 @@ import (
 // fakeSvc 只实现用例设置了的方法；没设置时走嵌入的 nil 接口（被调到会 panic）。
 type fakeSvc struct {
 	Service
-	saveTemplate func(service.TemplateInput) (service.Template, error)
-	generate     func(service.GenerateInput) (service.Generated, error)
-	exportBatch  func(uuid.UUID) (service.BatchExport, error)
-	listCodes    func(service.CodeFilter, int, int) ([]service.Code, int64, error)
-	preview      func(string) (service.CardPreview, error)
-	toggle       func(uuid.UUID, bool) error
-	exportCodes  func(service.CodeFilter) ([]service.CodeReportRow, error)
-	redeem       func(service.RedeemInput) (service.RedeemResult, error)
+	listTemplates func() ([]service.Template, error)
+	saveTemplate  func(service.TemplateInput) (service.Template, error)
+	generate      func(service.GenerateInput) (service.Generated, error)
+	exportBatch   func(uuid.UUID) (service.BatchExport, error)
+	listCodes     func(service.CodeFilter, int, int) ([]service.Code, int64, error)
+	preview       func(string) (service.CardPreview, error)
+	toggle        func(uuid.UUID, bool) error
+	exportCodes   func(service.CodeFilter) ([]service.CodeReportRow, error)
+	redeem        func(service.RedeemInput) (service.RedeemResult, error)
+}
+
+func (f *fakeSvc) ListTemplates(_ context.Context) ([]service.Template, error) {
+	return f.listTemplates()
 }
 
 func (f *fakeSvc) SaveTemplate(_ context.Context, in service.TemplateInput) (service.Template, error) {
@@ -149,8 +154,76 @@ func TestPreviewUnusable(t *testing.T) {
 	f := &fakeSvc{preview: func(string) (service.CardPreview, error) { return service.CardPreview{}, service.ErrCodeUnusable }}
 	w := do(newEngine(f, false, nil), http.MethodPost, "/v1/gift-cards/preview", `{"code":"NOPE12345"}`)
 	mustStatus(t, w, http.StatusUnprocessableEntity)
-	if !strings.Contains(w.Body.String(), "卡密无效、已被使用或已过期") {
+	if !strings.Contains(w.Body.String(), "卡号无效、已被使用或已过期") {
 		t.Fatalf("错误文案 %s", w.Body)
+	}
+}
+
+// 预览：套餐卡字段（plan_kind、validity_days、new_permanent）透传。
+func TestPreviewPlanCard(t *testing.T) {
+	valDays := 30
+	subID := uuid.New()
+	f := &fakeSvc{preview: func(code string) (service.CardPreview, error) {
+		return service.CardPreview{
+			ID:           uuid.New(),
+			Name:         "一次性套餐卡",
+			Type:         service.TypePlan,
+			PlanKind:     "one_time",
+			ValidityDays: &valDays,
+			Placement: &service.CardPlacement{
+				Question: "怎么用这张卡？",
+				Options: []service.Placement{
+					{
+						Option:       service.Option{Key: "stack:" + subID.String(), Kind: service.KindStack, SubscriptionID: &subID},
+						NewPermanent: true,
+					},
+				},
+				DefaultKey: "stack:" + subID.String(),
+			},
+		}, nil
+	}}
+	w := do(newEngine(f, false, nil), http.MethodPost, "/v1/gift-cards/preview", `{"code":"ABCD2345EFGH"}`)
+	mustStatus(t, w, http.StatusOK)
+	card := obj(t, w.Body.Bytes())["card"].(map[string]any)
+	if card["plan_kind"] != "one_time" {
+		t.Fatalf("plan_kind = %v", card["plan_kind"])
+	}
+	if card["validity_days"] != float64(30) {
+		t.Fatalf("validity_days = %v", card["validity_days"])
+	}
+	pl := card["placement"].(map[string]any)
+	opts := pl["options"].([]any)
+	if len(opts) != 1 {
+		t.Fatalf("options 数量不对: %v", opts)
+	}
+	opt0 := opts[0].(map[string]any)
+	if opt0["new_permanent"] != true {
+		t.Fatalf("new_permanent = %v", opt0["new_permanent"])
+	}
+}
+
+// 模板列表：PriceArchived 为 true 输出 "price_archived": true。
+func TestListTemplatesPriceArchived(t *testing.T) {
+	f := &fakeSvc{listTemplates: func() ([]service.Template, error) {
+		return []service.Template{
+			{
+				ID:            uuid.New(),
+				Name:          "套餐卡",
+				Type:          service.TypePlan,
+				PriceArchived: true,
+				CreatedAt:     time.Now(),
+			},
+		}, nil
+	}}
+	w := do(newEngine(f, true, nil), http.MethodGet, "/v1/gift-cards", "")
+	mustStatus(t, w, http.StatusOK)
+	tpls := obj(t, w.Body.Bytes())["templates"].([]any)
+	if len(tpls) != 1 {
+		t.Fatalf("templates 数量不对: %v", tpls)
+	}
+	t0 := tpls[0].(map[string]any)
+	if t0["price_archived"] != true {
+		t.Fatalf("price_archived = %v，期望 true", t0["price_archived"])
 	}
 }
 

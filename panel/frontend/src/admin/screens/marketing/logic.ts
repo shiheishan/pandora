@@ -1,5 +1,5 @@
 import { formatMoney } from '../../../core/format'
-import type { Batch, CommissionOverview, Coupon, GiftTemplate, Plan, ReviewEntry, Rewards, Usage } from './schemas'
+import type { Coupon, Plan } from './schemas'
 
 // ---------------------------------------------------------------------------
 // 输入换算：界面填元与百分比，接口收分与万分比。只认最多两位小数，
@@ -52,7 +52,7 @@ export function localInputToIso(value: string): string {
   return Number.isNaN(t.getTime()) ? '' : t.toISOString()
 }
 
-const pad = (n: number) => String(n).padStart(2, '0')
+export const pad = (n: number) => String(n).padStart(2, '0')
 /** 本地日期 YYYY-MM-DD */
 export function formatDate(iso: string): string {
   const t = new Date(iso)
@@ -70,9 +70,9 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 // 优惠券
 // ---------------------------------------------------------------------------
 
-/** percent：discount_value/100 %；fixed：立减金额（币种空串按 CNY） */
-export function discountLabel(c: Pick<Coupon, 'discount_type' | 'discount_value' | 'currency'>): string {
-  return c.discount_type === 'percent' ? `${basisPointsToPercent(c.discount_value)}% 折扣` : `立减 ${formatMoney(c.discount_value, c.currency || 'CNY')}`
+/** percent：discount_value/100 %；fixed：立减金额 */
+export function discountLabel(c: Pick<Coupon, 'discount_type' | 'discount_value'>): string {
+  return c.discount_type === 'percent' ? `${basisPointsToPercent(c.discount_value)}% 折扣` : `立减 ${formatMoney(c.discount_value)}`
 }
 
 /** 用量：「412 / 1000」与进度比例；上限 null 为「不限」、比例 0 */
@@ -82,7 +82,19 @@ export function usage(c: Pick<Coupon, 'redeemed_count' | 'max_redemptions'>): { 
   return { label: `${c.redeemed_count} / ${c.max_redemptions}`, ratio }
 }
 
-export const validUntilLabel = (iso: string | null) => (iso ? formatDate(iso) : '长期')
+/** 有效期标签：short 用于列表列，full 用于 title 与详情 */
+export function couponPeriodLabel(
+  c: Pick<Coupon, 'valid_from' | 'valid_until'>,
+  now: Date,
+): { short: string; full: string } {
+  const fromFuture = c.valid_from ? new Date(c.valid_from).getTime() > now.getTime() : false
+  const prefix = fromFuture && c.valid_from ? `${formatDate(c.valid_from).slice(5)} 起 · ` : ''
+  const suffix = c.valid_until ? `至 ${formatDate(c.valid_until).slice(5)}` : '长期'
+  const short = `${prefix}${suffix}`
+  const fromFull = c.valid_from ? formatDate(c.valid_from) : '创建即生效'
+  const untilFull = c.valid_until ? formatDate(c.valid_until) : '长期'
+  return { short, full: `${fromFull} → ${untilFull}` }
+}
 
 /** 适用套餐：空 →「全部套餐」；套餐目录没取到（加载中或失败）时退回「N 个套餐」 */
 export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | undefined): string {
@@ -95,7 +107,7 @@ export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | 
 export function couponState(status: string): { switchable: boolean; on: boolean; tag: { label: string; tone: Tone } | null } {
   if (status === 'active') return { switchable: true, on: true, tag: null }
   if (status === 'paused') return { switchable: true, on: false, tag: null }
-  if (status === 'expired') return { switchable: false, on: false, tag: { label: '已过期', tone: 'warn' } }
+  if (status === 'expired') return { switchable: false, on: false, tag: { label: '已过期', tone: 'neutral' } }
   if (status === 'exhausted') return { switchable: false, on: false, tag: { label: '已用完', tone: 'neutral' } }
   return { switchable: false, on: false, tag: { label: status, tone: 'neutral' } }
 }
@@ -110,11 +122,11 @@ export interface CouponForm {
   name: string
   kind: 'percent' | 'fixed'
   value: string
-  currency: 'CNY' | 'USD'
   maxRedemptions: string
   perUser: string
   minOrder: string
   maxDiscount: string
+  validFrom: string
   validUntil: string
   planIds: string[]
 }
@@ -126,11 +138,11 @@ export const emptyCouponForm = (batch: boolean): CouponForm => ({
   name: '',
   kind: 'percent',
   value: batch ? '15' : '10',
-  currency: 'CNY',
   maxRedemptions: batch ? '1' : '',
   perUser: '1',
   minOrder: '',
   maxDiscount: '',
+  validFrom: '',
   validUntil: '',
   planIds: [],
 })
@@ -166,7 +178,6 @@ export function buildCouponRequest(f: CouponForm, batch: boolean): Built<Record<
     errors.discount_value = f.kind === 'percent' ? '折扣填 0.01 到 100 之间的数' : '立减金额需大于 0，最多两位小数'
   }
   Object.assign(body, { discount_type: f.kind, discount_value: value ?? 0 })
-  if (f.kind === 'fixed') body.currency = f.currency
 
   const max = parseCount(f.maxRedemptions)
   if (Number.isNaN(max) || max === 0) errors.max_redemptions = '填正整数，留空为不限'
@@ -184,324 +195,23 @@ export function buildCouponRequest(f: CouponForm, batch: boolean): Built<Record<
     if (cap === null || cap < 1) errors.max_discount = '填大于 0 的金额，留空为不封顶'
     else body.max_discount = cap
   }
+  if (f.validFrom) {
+    const iso = localInputToIso(f.validFrom)
+    if (!iso) errors.valid_from = '时间格式不正确'
+    else body.valid_from = iso
+  }
   if (f.validUntil) {
     const iso = localInputToIso(f.validUntil)
     if (!iso) errors.valid_until = '时间格式不正确'
     else if (new Date(iso).getTime() <= Date.now()) errors.valid_until = '结束时间要晚于现在'
     else body.valid_until = iso
   }
+  if (f.validFrom && f.validUntil && !errors.valid_from && !errors.valid_until) {
+    if (new Date(body.valid_until as string).getTime() <= new Date(body.valid_from as string).getTime()) {
+      errors.valid_until = '结束时间要晚于开始时间'
+      delete body.valid_until
+    }
+  }
   if (f.planIds.length) body.applicable_plan_ids = f.planIds
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, body }
-}
-
-// ---------------------------------------------------------------------------
-// 礼品卡
-// ---------------------------------------------------------------------------
-export const TEMPLATE_TYPES = [
-  ['general', '通用卡'],
-  ['plan', '套餐卡'],
-  ['mystery', '盲盒'],
-] as const
-
-/** 模板卡片：面额、类型标签、「兑换后」说明（契约 GET v1/gift-cards 的设计映射） */
-export function templateFace(t: Pick<GiftTemplate, 'type' | 'rewards'>, plans: readonly Plan[] | undefined): { face: string; kind: string; after: string } {
-  const r = t.rewards
-  if (t.type === 'plan') return { face: plans?.find((p) => p.id === r.plan_id)?.name ?? '套餐', kind: '套餐', after: '立即开通' }
-  if (t.type === 'mystery') return { face: '盲盒', kind: `${r.pool?.length ?? 0} 个奖品`, after: '随机抽取' }
-  if (r.balance) return { face: formatMoney(r.balance, 'CNY'), kind: '余额', after: '直接入账' }
-  if (r.traffic_bytes) return { face: formatGB(r.traffic_bytes), kind: '流量', after: '当期有效' }
-  if (r.expire_days) return { face: `${r.expire_days} 天`, kind: '延期', after: '顺延到期' }
-  if (r.reset_quota) return { face: '重置', kind: '流量', after: '清零本期用量' }
-  return { face: '—', kind: '通用', after: '—' }
-}
-
-/** 兑换得到的内容：「余额 +¥100.00 · 流量 +100 GB」；套餐卡 granted 为空用模板名，盲盒用 prize_label */
-export function grantedLabel(u: Pick<Usage, 'granted' | 'template_name' | 'prize_label'>): string {
-  const g = u.granted
-  const parts = [
-    g.balance ? `余额 +${formatMoney(g.balance, 'CNY')}` : '',
-    g.traffic_bytes ? `流量 +${formatGB(g.traffic_bytes)}` : '',
-    g.expire_days ? `+${g.expire_days} 天` : '',
-    g.reset_quota ? '重置流量' : '',
-  ].filter(Boolean)
-  if (u.prize_label) return parts.length ? `${u.prize_label}（${parts.join(' · ')}）` : u.prize_label
-  return parts.length ? parts.join(' · ') : u.template_name
-}
-
-/** 批次显示名：GB-MMDD-前 4 位，同一天的批次也能分开；CSV 文件名另用 id 前 8 位 */
-export function batchLabel(b: Pick<Batch, 'id' | 'created_at'>): string {
-  const t = new Date(b.created_at)
-  return `GB-${pad(t.getMonth() + 1)}${pad(t.getDate())}-${b.id.slice(0, 4).toUpperCase()}`
-}
-export const batchFileName = (id: string) => `gift-codes-${id.slice(0, 8)}.csv`
-
-/**
- * 卡码列表的筛选：列表与「导出当前筛选」（GET v1/gift-cards/codes/report，掩码报表）共用一份，
- * 空状态不进查询串——与后端 CodeFilter 同口径，导出的就是列表里看到的那些行
- */
-export type CodeStatusFilter = '' | 'unused' | 'used' | 'disabled' | 'expired'
-export function codeFilterQuery(batchId: string, status: CodeStatusFilter): { batch_id: string; status?: string } {
-  return status ? { batch_id: batchId, status } : { batch_id: batchId }
-}
-/** 掩码报表的兜底文件名（服务端的 Content-Disposition 优先） */
-export const codesReportFileName = (batchId: string) => `gift-codes-report-${batchId.slice(0, 8)}.csv`
-
-export const CODE_STATUS: Readonly<Record<string, { label: string; tone: Tone }>> = {
-  unused: { label: '可用', tone: 'ok' },
-  used: { label: '已兑换', tone: 'neutral' },
-  disabled: { label: '已停用', tone: 'danger' },
-  expired: { label: '已过期', tone: 'warn' },
-}
-
-/** 兑换率 = used ÷ total，保留一位；total 为 0 时「—」 */
-export function redeemRate(used: number, total: number): string {
-  return total > 0 ? `${((used / total) * 100).toFixed(1)}%` : '—'
-}
-
-export interface PrizeForm {
-  label: string
-  weight: string
-  balance: string
-  trafficGb: string
-  days: string
-}
-
-export interface TemplateForm {
-  id: string | null
-  type: GiftTemplate['type']
-  name: string
-  description: string
-  status: GiftTemplate['status']
-  balance: string
-  trafficGb: string
-  days: string
-  resetQuota: boolean
-  planId: string
-  priceId: string
-  pool: PrizeForm[]
-  newUserOnly: boolean
-  paidUserOnly: boolean
-  requireInvite: boolean
-  allowedPlanIds: string[]
-  maxUsePerUser: string
-  cooldownHours: string
-  themeColor: string
-}
-
-const emptyPrize = (): PrizeForm => ({ label: '', weight: '1', balance: '', trafficGb: '', days: '' })
-
-export function templateToForm(t: GiftTemplate | null): TemplateForm {
-  const r: Rewards = t?.rewards ?? {}
-  const yuan = (v?: number) => (v ? minorToYuan(v) : '')
-  const gb = (v?: number) => (v ? String(Number((v / GB).toFixed(3))) : '')
-  return {
-    id: t?.id ?? null,
-    type: t?.type ?? 'general',
-    name: t?.name ?? '',
-    description: t?.description ?? '',
-    status: t?.status ?? 'active',
-    balance: yuan(r.balance),
-    trafficGb: gb(r.traffic_bytes),
-    days: r.expire_days ? String(r.expire_days) : '',
-    resetQuota: r.reset_quota ?? false,
-    planId: r.plan_id ?? '',
-    priceId: r.price_id ?? '',
-    pool: r.pool?.length
-      ? r.pool.map((p) => ({ label: p.label, weight: String(p.weight), balance: yuan(p.balance), trafficGb: gb(p.traffic_bytes), days: p.expire_days ? String(p.expire_days) : '' }))
-      : [emptyPrize(), emptyPrize()],
-    newUserOnly: t?.conditions.new_user_only ?? false,
-    paidUserOnly: t?.conditions.paid_user_only ?? false,
-    requireInvite: t?.conditions.require_invite ?? false,
-    allowedPlanIds: t?.conditions.allowed_plan_ids ?? [],
-    maxUsePerUser: t?.limits.max_use_per_user ? String(t.limits.max_use_per_user) : '',
-    cooldownHours: t?.limits.cooldown_hours ? String(t.limits.cooldown_hours) : '',
-    themeColor: t?.theme_color || '#b9442b',
-  }
-}
-export { emptyPrize }
-
-/** GB 输入（可带一位以上小数）→ 字节；空串 → 0，非法 → null */
-function gbToBytes(input: string): number | null {
-  const s = input.trim()
-  if (s === '') return 0
-  if (!/^\d+(\.\d+)?$/.test(s)) return null
-  return Math.round(Number(s) * GB)
-}
-
-/** 表单 → POST v1/gift-cards 的请求体；错误键 name / rewards / conditions / limits 与后端 fields 同名 */
-export function buildTemplateRequest(f: TemplateForm): Built<Record<string, unknown>> {
-  const errors: FieldErrors = {}
-  const name = f.name.trim()
-  if (!name || [...name].length > 120) errors.name = '名称必填，不超过 120 字'
-
-  const rewards: Record<string, unknown> = {}
-  const money = (s: string) => (s.trim() ? yuanToMinor(s) : 0)
-  const dayCount = (s: string) => {
-    const n = parseCount(s)
-    return n === null ? 0 : n
-  }
-  if (f.type === 'general') {
-    const balance = money(f.balance)
-    const traffic = gbToBytes(f.trafficGb)
-    const expire = dayCount(f.days)
-    if (balance === null || traffic === null || Number.isNaN(expire)) errors.rewards = '余额填金额、流量填 GB、天数填整数'
-    else if (!balance && !traffic && !expire && !f.resetQuota) errors.rewards = '通用卡至少要送一样东西：余额、流量、延长到期或重置流量'
-    else if (expire > 3650) errors.rewards = '延长天数不能超过 3650 天'
-    else Object.assign(rewards, balance ? { balance } : {}, traffic ? { traffic_bytes: traffic } : {}, expire ? { expire_days: expire } : {}, f.resetQuota ? { reset_quota: true } : {})
-  } else if (f.type === 'plan') {
-    if (!f.planId || !f.priceId) errors.rewards = '套餐卡要选定套餐和价格'
-    else Object.assign(rewards, { plan_id: f.planId, price_id: f.priceId })
-  } else {
-    if (f.pool.length < 2) errors.rewards = '盲盒至少要有 2 个奖品'
-    else if (f.pool.length > 50) errors.rewards = '盲盒奖品不能超过 50 个'
-    const pool = f.pool.map((p, i) => {
-      const weight = parseCount(p.weight)
-      const balance = money(p.balance)
-      const traffic = gbToBytes(p.trafficGb)
-      const expire = dayCount(p.days)
-      if (!errors.rewards) {
-        if (!p.label.trim()) errors.rewards = `第 ${i + 1} 个奖品缺少名称`
-        else if (weight === null || Number.isNaN(weight) || weight < 1) errors.rewards = `第 ${i + 1} 个奖品的权重要填正整数`
-        else if (balance === null || traffic === null || Number.isNaN(expire)) errors.rewards = `第 ${i + 1} 个奖品的数值格式不对`
-        else if (!balance && !traffic && !expire) errors.rewards = `第 ${i + 1} 个奖品什么都不送`
-      }
-      return { label: p.label.trim(), weight: weight ?? 0, ...(balance ? { balance } : {}), ...(traffic ? { traffic_bytes: traffic } : {}), ...(expire ? { expire_days: expire } : {}) }
-    })
-    rewards.pool = pool
-  }
-
-  if (f.newUserOnly && f.paidUserOnly) errors.conditions = '「仅新用户」和「仅付费用户」不能同时勾选'
-  const conditions: Record<string, unknown> = {
-    ...(f.newUserOnly ? { new_user_only: true } : {}),
-    ...(f.paidUserOnly ? { paid_user_only: true } : {}),
-    ...(f.requireInvite ? { require_invite: true } : {}),
-    ...(f.allowedPlanIds.length ? { allowed_plan_ids: f.allowedPlanIds } : {}),
-  }
-  const maxUse = parseCount(f.maxUsePerUser)
-  const cooldown = parseCount(f.cooldownHours)
-  if (Number.isNaN(maxUse) || Number.isNaN(cooldown)) errors.limits = '次数与冷却小时填非负整数，留空为不限'
-  const limits: Record<string, unknown> = { ...(maxUse ? { max_use_per_user: maxUse } : {}), ...(cooldown ? { cooldown_hours: cooldown } : {}) }
-
-  if (Object.keys(errors).length) return { ok: false, errors }
-  return {
-    ok: true,
-    body: {
-      ...(f.id ? { id: f.id } : {}),
-      name,
-      description: f.description.trim(),
-      type: f.type,
-      status: f.status,
-      rewards,
-      conditions,
-      limits,
-      theme_color: f.themeColor,
-    },
-  }
-}
-
-export interface GenerateForm {
-  count: string
-  prefix: string
-  expiresAt: string
-}
-
-/** 表单 → POST v1/gift-cards/{id}/codes：数量 1..5000，前缀大写字母数字 ≤ 8，有效期不能在过去 */
-export function buildGenerateRequest(f: GenerateForm): Built<{ count: number; prefix?: string; expires_at?: string }> {
-  const errors: FieldErrors = {}
-  const count = parseCount(f.count)
-  if (count === null || Number.isNaN(count) || count < 1 || count > 5000) errors.count = '一次生成 1 到 5000 个'
-  const prefix = f.prefix.trim().toUpperCase()
-  if (!/^[A-Z0-9]{0,8}$/.test(prefix)) errors.prefix = '只能用大写字母和数字，最多 8 位'
-  const iso = localInputToIso(f.expiresAt)
-  if (f.expiresAt && !iso) errors.expires_at = '时间格式不正确'
-  else if (iso && new Date(iso).getTime() <= Date.now()) errors.expires_at = '有效期不能设在过去'
-  if (Object.keys(errors).length) return { ok: false, errors }
-  return { ok: true, body: { count: count!, ...(prefix ? { prefix } : {}), ...(iso ? { expires_at: iso } : {}) } }
-}
-
-// ---------------------------------------------------------------------------
-// 佣金与提现
-// ---------------------------------------------------------------------------
-
-/** 作废原因：去掉首尾空白后按字符数 5～500；合格返回 null，否则返回提示 */
-export function voidReasonError(reason: string): string | null {
-  const trimmed = reason.trim()
-  const len = [...trimmed].length
-  if (len < 5) return '作废必须填写原因，至少 5 个字'
-  if (len > 500) return '原因最多 500 个字'
-  return null
-}
-
-/** 通过原因可不填；填了最多 500 字。合格返回 null，否则返回提示 */
-export function approveReasonError(reason: string): string | null {
-  return [...reason.trim()].length > 500 ? '原因最多 500 个字' : null
-}
-
-/**
- * 冻结期说明：未到期「冻结至 MM-DD HH:mm」；已到期「冻结期已过，通过后下一轮自动解冻」。
- * 解冻时待结科目余额不足转来的条目（underfunded）通过后解冻仍会失败、作废也冲不回，只能先核对账本，不说「会自动解冻」。
- */
-export function freezeLabel(entry: Pick<ReviewEntry, 'frozen_until' | 'review_source'>, now: Date): string {
-  if (entry.review_source === 'underfunded') return '待结科目余额不足：通过后解冻仍会失败，作废也冲不回，请先核对账本'
-  if (new Date(entry.frozen_until).getTime() <= now.getTime()) return '冻结期已过，通过后下一轮自动解冻'
-  return `冻结至 ${formatDateTime(entry.frozen_until)}`
-}
-
-/** 状态映射（契约 GET v1/withdrawals）；打款只对 approved 开放（processing 由后端拒绝标记） */
-export function withdrawalState(status: string): { label: string; tone: Tone; canReview: boolean; canPay: boolean } {
-  switch (status) {
-    case 'requested':
-    case 'reviewing':
-      return { label: '待审核', tone: 'warn', canReview: true, canPay: false }
-    case 'approved':
-      return { label: '待打款', tone: 'info', canReview: false, canPay: true }
-    case 'processing':
-      return { label: '打款中', tone: 'info', canReview: false, canPay: false }
-    case 'paid':
-      return { label: '已打款', tone: 'ok', canReview: false, canPay: false }
-    case 'rejected':
-      return { label: '已拒绝', tone: 'neutral', canReview: false, canPay: false }
-    case 'failed':
-      return { label: '打款失败', tone: 'danger', canReview: false, canPay: false }
-    case 'returned':
-      return { label: '已退回', tone: 'danger', canReview: false, canPay: false }
-    default:
-      return { label: status, tone: 'neutral', canReview: false, canPay: false }
-  }
-}
-
-/** 四个统计（契约设计映射） */
-export function commissionStats(o: CommissionOverview): Array<{ label: string; value: string }> {
-  return [
-    { label: '累计佣金', value: formatMoney(o.total_earned, 'CNY') },
-    { label: '冻结中', value: formatMoney(o.pending, 'CNY') },
-    { label: '已提现', value: formatMoney(o.paid_out, 'CNY') },
-    { label: '邀请注册', value: o.invited_users.toLocaleString('zh-CN') },
-  ]
-}
-
-export interface CommissionForm {
-  rate: number
-  scope: 'first_order' | 'every_order'
-  freezeDays: string
-  minWithdraw: string
-}
-
-export const commissionToForm = (o: CommissionOverview): CommissionForm => ({
-  rate: o.rate_percent,
-  scope: o.scope,
-  freezeDays: String(o.freeze_days),
-  minWithdraw: minorToYuan(o.min_withdraw),
-})
-
-/** 表单 → POST v1/commission/config（后端 DisallowUnknownFields，只发这四个字段） */
-export function buildCommissionConfig(f: CommissionForm): Built<Record<string, unknown>> {
-  const errors: FieldErrors = {}
-  if (!Number.isInteger(f.rate) || f.rate < 0 || f.rate > 50) errors.rate_percent = '佣金比例需在 0 到 50 之间'
-  const freeze = parseCount(f.freezeDays)
-  if (freeze === null || Number.isNaN(freeze) || freeze > 90) errors.freeze_days = '冻结天数需在 0 到 90 之间'
-  const min = yuanToMinor(f.minWithdraw)
-  if (min === null) errors.min_withdraw = '填金额，最多两位小数'
-  if (Object.keys(errors).length) return { ok: false, errors }
-  return { ok: true, body: { rate_percent: f.rate, freeze_days: freeze, min_withdraw: min, scope: f.scope } }
 }

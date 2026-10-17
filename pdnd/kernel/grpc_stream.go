@@ -30,10 +30,6 @@ type grpcDuplexConn struct {
 	encoding   string
 }
 
-func newGRPCDuplexConn(ctx context.Context, body io.ReadCloser, writer http.ResponseWriter, maxFrame uint32) net.Conn {
-	return newGRPCDuplexConnWithEncoding(ctx, body, writer, maxFrame, "")
-}
-
 func newGRPCDuplexConnWithEncoding(ctx context.Context, body io.ReadCloser, writer http.ResponseWriter, maxFrame uint32, encoding string) net.Conn {
 	return &grpcDuplexConn{ctx: ctx, body: body, writer: writer, maxFrame: maxFrame, encoding: strings.ToLower(strings.TrimSpace(encoding))}
 }

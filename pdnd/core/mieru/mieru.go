@@ -1,10 +1,10 @@
 // Package mieru 用 mieru 协议提供入站。
 //
-// mieru 与 sing-box 系的协议差别很大，不能挂在 sing-box 的 inbound 注册表上：
+// mieru 与其他协议差别很大，不走 NativeCore 通用的入站适配写法：
 // 它自带监听器，把已认证的连接连同一个 socks5 请求一起交出来，转发由调用方做。
-// 好处是集成面很窄。转发的去向：默认构建里 kernel/mieru.go 经 SetTransport
+// 好处是集成面很窄。转发的去向：kernel/mieru.go 经 SetTransport
 // 注入 NativeCore 的 DataPlane，TCP 与 UDP 都走 NativeCore 的路由与出站；
-// 没有注入 Transport 时（compat 构建经 core/multi）才直接拨号直出。
+// 没有注入 Transport 时拒绝转发（ErrNoTransport），不直接拨号。
 //
 // 这里绕过了 mieru 的 apis/server 门面，直接持有底层的 protocol.Mux。
 // 原因只有一个：apis/server 没有暴露运行时改用户的能力，用它就只能
@@ -13,8 +13,7 @@
 // 代价是要自己复制一遍 apis/server.Start 的组装逻辑（就是下面 Start 里那几行），
 // 换来的是几百个在线用户不会因为别人的订阅到期而掉线。
 //
-// 许可证：mieru 为 GPL-3.0，与 sing-box 同级，不给 pandora-native
-// 增加新的约束（本模块整体已按 GPL-3.0 分发）。
+// 许可证：mieru 为 GPL-3.0，不给 pandora-native 增加新的约束（本模块整体已按 GPL-3.0 分发）。
 package mieru
 
 import (
@@ -40,7 +39,6 @@ import (
 	mcommon "github.com/enfein/mieru/v3/pkg/common"
 	"github.com/enfein/mieru/v3/pkg/protocol"
 	"github.com/enfein/mieru/v3/pkg/sockopts"
-	"github.com/enfein/mieru/v3/pkg/socks5"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/aegispanel/nodeagent/core"
@@ -49,9 +47,8 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
-// Transport is the narrow egress contract used when Mieru is hosted by
-// Pandora NativeCore. The protocol decoder remains Mieru-owned; routing and
-// accounting stay in the NativeCore DataPlane instead of calling net.Dial.
+// Transport 是 mieru 入站的出站契约，由 NativeCore 注入；协议解码归 mieru，
+// 路由与计数留在 NativeCore 的 DataPlane。
 type Transport interface {
 	DialTCP(context.Context, route.Meta, M.Socksaddr) (net.Conn, error)
 	ListenUDP(context.Context, route.Meta, M.Socksaddr) (net.PacketConn, error)
@@ -62,6 +59,8 @@ type Transport interface {
 var (
 	ErrUserRevoked = errors.New("mieru user is no longer active")
 	ErrDeviceLimit = errors.New("mieru device limit")
+	// ErrNoTransport 表示未注入 Transport，拒绝转发（只由 NativeCore 托管，出站必须经 DataPlane）。
+	ErrNoTransport = errors.New("mieru inbound has no transport")
 )
 
 // Inbound 是一个 mieru 入站。
@@ -101,7 +100,7 @@ func (h *Inbound) SetTransport(transport Transport) {
 
 // SetConnErrorHandler 注册已认证连接的失败出口：读请求失败、用户已失效、
 // 设备数到上限、命令不支持、拨目标失败。NativeCore 托管时由 kernel/mieru.go
-// 接到 AdapterHooks.OnConnError；compat 构建不注册，只走本包日志。
+// 接到 AdapterHooks.OnConnError；没注册时只走本包日志。
 //
 // 认证本身（首包解密）在 mieru 的 mux 内部，失败是静默丢弃，这是协议抗探测
 // 的设计，这里看不到。
@@ -378,7 +377,7 @@ func (h *Inbound) handle(ctx context.Context, proxyConn net.Conn) {
 		return
 	}
 
-	// 设备数限制。mieru 不走 sing-box 的入站体系，这一步得自己做 ——
+	// 设备数限制。mieru 自己管连接，不经 NativeCore 通用的入站会话，这一步得自己做 ——
 	// 漏掉的话它就成了绕过限制的那个协议。
 	if !h.online.Admit(u.ID, proxyConn.RemoteAddr(), u.DeviceLimit) {
 		h.log.Info("拒绝连接：已达设备数上限", "user_id", u.ID, "limit", u.DeviceLimit)
@@ -388,9 +387,6 @@ func (h *Inbound) handle(ctx context.Context, proxyConn net.Conn) {
 	// mieru 的 UDP 走 packet-over-stream，与 TCP 共用这条 proxyConn，
 	// 因此只要在这一层计数，两种流量就都算进去了
 	counted := counter.NewConn(proxyConn, h.stats.Get(u.ID))
-	// 限速套在计数之外：同一用户的所有连接、上下行共用一个令牌桶。
-	// UDP 走 packet-over-stream，与 TCP 共用这条连接，一并限住。
-
 	// 限速套在计数之外：同一用户的所有连接、上下行共用一个令牌桶。
 	// UDP 走 packet-over-stream，与 TCP 共用这条连接，一并限住。
 	limited := core.NewSpeedLimitedConn(counted, h.limiters.For(u))
@@ -408,25 +404,23 @@ func (h *Inbound) handle(ctx context.Context, proxyConn net.Conn) {
 
 func (h *Inbound) handleTCP(ctx context.Context, conn net.Conn, req *model.Request) {
 	destination := M.ParseSocksaddr(req.DstAddr.String())
-	var target net.Conn
-	var err error
 	h.mu.Lock()
 	transport := h.transport
 	h.mu.Unlock()
-	if transport != nil {
-		var sourceIP netip.Addr
-		var sourcePort uint16
-		if host, port, splitErr := net.SplitHostPort(conn.RemoteAddr().String()); splitErr == nil {
-			sourceIP, _ = netip.ParseAddr(host)
-			if parsed, parseErr := strconv.ParseUint(port, 10, 16); parseErr == nil {
-				sourcePort = uint16(parsed)
-			}
-		}
-		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "mieru", SourceIP: sourceIP, SourcePort: sourcePort}
-		target, err = transport.DialTCP(ctx, meta, destination)
-	} else {
-		target, err = net.Dial("tcp", req.DstAddr.String())
+	if transport == nil {
+		h.reportConnError(conn.RemoteAddr(), ErrNoTransport)
+		return
 	}
+	var sourceIP netip.Addr
+	var sourcePort uint16
+	if host, port, splitErr := net.SplitHostPort(conn.RemoteAddr().String()); splitErr == nil {
+		sourceIP, _ = netip.ParseAddr(host)
+		if parsed, parseErr := strconv.ParseUint(port, 10, 16); parseErr == nil {
+			sourcePort = uint16(parsed)
+		}
+	}
+	meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "mieru", SourceIP: sourceIP, SourcePort: sourcePort}
+	target, err := transport.DialTCP(ctx, meta, destination)
 	if err != nil {
 		h.log.Debug("连接目标失败", "dst", req.DstAddr.String(), "err", err)
 		h.reportConnError(conn.RemoteAddr(), fmt.Errorf("mieru dial target: %w", err))
@@ -450,32 +444,15 @@ func (h *Inbound) handleUDP(ctx context.Context, conn net.Conn) {
 	transport := h.transport
 	h.mu.Unlock()
 	if transport == nil {
-		// Standalone compatibility mode retains the upstream implementation.
-		udpConn, err := net.ListenUDP("udp", nil)
-		if err != nil {
-			h.log.Debug("监听 UDP 失败", "err", err)
-			return
-		}
-		defer udpConn.Close()
-		local := udpConn.LocalAddr().(*net.UDPAddr)
-		resp := &model.Response{
-			Reply:    constant.Socks5ReplySuccess,
-			BindAddr: model.AddrSpec{IP: net.IPv4zero, Port: local.Port},
-		}
-		if err := resp.WriteToSocks5(conn); err != nil {
-			return
-		}
-		_ = socks5.RunUDPAssociateLoop(udpConn, apicommon.NewPacketOverStreamTunnel(conn), &net.Resolver{})
+		h.reportConnError(conn.RemoteAddr(), ErrNoTransport)
 		return
 	}
 
-	// NativeCore mode uses a packet-over-stream loop whose destination sockets
-	// are created by the Pandora DataPlane. This keeps Mieru's wire framing while
-	// routing every UDP destination through the same policy/accounting boundary.
+	// UDP 经 packet-over-stream 承载，目标 socket 由 NativeCore DataPlane 创建，
+	// 保留 mieru 线格式，每个 UDP 目标仍走同一套策略与计量边界。
 	resp := &model.Response{
 		Reply: constant.Socks5ReplySuccess,
-		// UDP is carried on the authenticated stream; clients send packets back
-		// through that stream rather than dialing this bind address.
+		// UDP 承载在已认证的这条流上，客户端经这条流回包，不会去连这个绑定地址。
 		BindAddr: model.AddrSpec{IP: net.IPv4zero, Port: 0},
 	}
 	if err := resp.WriteToSocks5(conn); err != nil {
@@ -502,9 +479,8 @@ type mieruUDPRoute struct {
 	cancel context.CancelFunc
 }
 
-// runNativeUDPLoop is deliberately kept local to the Mieru adapter instead of
-// calling the upstream *net.UDPConn-only helper. That helper would force a
-// direct socket and bypass NativeCore's route selection and accounting.
+// runNativeUDPLoop 刻意留在 mieru 适配器内，不调用上游只认 *net.UDPConn 的辅助函数；
+// 那样会强制直连 socket，绕过 NativeCore 的路由选择与计量。
 func (h *Inbound) runNativeUDPLoop(ctx context.Context, streamConn net.Conn, transport Transport) error {
 	tunnel := apicommon.NewPacketOverStreamTunnel(streamConn)
 	inCh := make(chan mieruUDPInbound)

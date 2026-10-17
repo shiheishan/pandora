@@ -77,24 +77,28 @@ func TestUserinfoOf(t *testing.T) {
 	periodEnd := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	limit := int64(100)
 	consumed := int64(30)
+	bonus := int64(50)
 
 	row := repo.PullRow{
 		PeriodEnd:       periodEnd,
 		TrafficLimit:    &limit,
 		TrafficConsumed: &consumed,
-		PackRemaining:   50,
+		TrafficBonus:    &bonus,
 	}
 	u := userinfoOf(row)
 	if u.Total != 150 || u.Download != 30 || u.Upload != 0 || u.Expire != periodEnd.Unix() {
-		t.Fatalf("套餐+包: %+v", u)
+		t.Fatalf("上限+送的量: %+v", u)
 	}
 
-	row2 := repo.PullRow{
-		PeriodEnd:     periodEnd,
-		PackRemaining: 7,
-	}
+	row2 := repo.PullRow{PeriodEnd: periodEnd}
 	u2 := userinfoOf(row2)
-	if u2.Total != 7 || u2.Download != 0 || u2.Expire != periodEnd.Unix() {
-		t.Fatalf("无配额行仅包: %+v", u2)
+	if u2.Total != 0 || u2.Download != 0 || u2.Expire != periodEnd.Unix() {
+		t.Fatalf("无配额行: %+v", u2)
+	}
+
+	// 不限量的行：送的量不计入（Total 按 0 = 不限）
+	row3 := repo.PullRow{PeriodEnd: periodEnd, TrafficBonus: &bonus}
+	if u3 := userinfoOf(row3); u3.Total != 0 {
+		t.Fatalf("不限量行: %+v", u3)
 	}
 }

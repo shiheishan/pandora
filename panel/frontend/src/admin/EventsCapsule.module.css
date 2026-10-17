@@ -1,197 +1,415 @@
-.root {
+/*
+ * 实时动态：触发器（侧栏 nav / 手机顶栏 top）+ 弹层，样式照样稿 admin-v4.html。
+ * 只引用全局令牌，断点只用 959 / 639。
+ */
+
+/* ----- 触发器：脉冲点（样稿 .pulse） ----- */
+
+/*
+ * 扩散光圈画在伪元素上，只动 transform 与 opacity，由合成层播放、不触发重绘。
+ * 未连上（重连中）时点用 --warn 且不动画。
+ */
+.pulse {
   position: relative;
-}
-
-.capsule {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 15px;
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
-.capsule:hover {
-  border-color: var(--border-hover);
-}
-
-.dotLive,
-.dotWait {
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--ok);
 }
 
-/*
- * 呼吸灯：扩散的光圈画在伪元素上，只动 transform 与 opacity，由合成层播放、不触发重绘。
- * 原先动画 box-shadow，每一帧都要重绘，在 1000 节点的列表页上空闲时吃掉约 20% 主线程。
- */
-.dotLive {
-  position: relative;
-}
-
-.dotLive::after {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: var(--ok);
+.pulse::after {
   content: '';
-  opacity: 0;
-  animation: pulse 2s ease-out infinite;
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--ok);
+  opacity: 0.5;
+  animation: ping 2s infinite;
   will-change: transform, opacity;
 }
 
+@keyframes ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.pulseWait {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dotLive::after {
+  .pulse::after {
     animation: none;
   }
 }
 
-.dotWait {
-  background: var(--warn);
+/* ----- 触发器：nav（侧栏第一项，样稿 button.na） ----- */
+
+.navRoot {
+  width: 100%;
 }
 
-/* 7px 的点扩到约 19px（原来 6px 的光圈）后淡出，后 30% 静止 */
-@keyframes pulse {
-  0% {
-    opacity: 0.5;
-    transform: scale(1);
-  }
-  70% {
-    opacity: 0;
-    transform: scale(2.7);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(2.7);
+.navBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.navBtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.navBtn[aria-expanded='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.navBtn:focus-visible {
+  outline-offset: -2px;
+}
+
+/* 脉冲点放在 16px 宽的格子里居中，与侧栏图标对齐 */
+.dotCell {
+  width: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.navCount {
+  margin-left: auto;
+  font: 12px var(--font-mono);
+  color: var(--ok);
+}
+
+/* ----- 触发器：top（手机顶栏按钮，样稿 .live） ----- */
+
+.topRoot {
+  position: relative;
+}
+
+.topBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.topBtn:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.topCount {
+  font: 12px var(--font-mono);
+  color: var(--text);
+}
+
+@media (max-width: 639px) {
+  /* 窄屏只留脉冲点和数字 */
+  .topLabel {
+    display: none;
   }
 }
 
-.count {
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--text);
-  color: var(--on-ink);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-}
+/* ----- 弹层（样稿 .pop） ----- */
 
 .panel {
-  position: absolute;
-  top: 38px;
-  right: 0;
+  position: fixed;
   z-index: 30;
-  width: 360px;
-  /* 下拉在右栏的滚动容器里，左边会被侧栏截断：不超过右栏宽度 */
-  max-width: calc(100vw - 224px - 56px);
+  width: 380px;
   overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: 0 16px 40px -12px rgba(20, 20, 30, 0.25);
+  box-shadow: var(--shadow);
 }
 
+/* nav：贴在侧栏右侧 */
+.panelNav {
+  left: calc(232px + 8px);
+  top: 92px;
+}
+
+/* top：横铺在手机顶栏下面 */
+.panelTop {
+  left: 12px;
+  right: 12px;
+  top: 58px;
+  width: auto;
+}
+
+/* 窄于 960 侧栏变抽屉，nav 弹层也横铺在顶栏下面 */
+@media (max-width: 959px) {
+  .panelNav {
+    left: 12px;
+    right: 12px;
+    top: 58px;
+    width: auto;
+  }
+}
+
+/* 头部（样稿 .ph2）：标题 + 连接状态在左，「全部标为已读」在右 */
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--surface-3);
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+  font-weight: var(--fw-medium);
+}
+
+.headText {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
 }
 
 .headTitle {
-  font-weight: var(--fw-semibold);
+  color: var(--text);
 }
 
 .state {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: var(--fw-regular);
   color: var(--text-3);
 }
 
-.list {
-  max-height: 340px;
-  overflow-y: auto;
+.stateDotOk,
+.stateDotWarn {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
 }
 
-.empty {
-  padding: 24px 14px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
+.stateDotOk {
+  background: var(--ok);
 }
 
-.item {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 8px 1fr auto;
-  gap: 10px;
-  align-items: start;
-  padding: 10px 14px;
+.stateDotWarn {
+  background: var(--warn);
+}
+
+/* 文字按钮：无底无框 */
+.readAll {
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--surface-2);
-  background: var(--surface);
-  text-align: left;
+  background: transparent;
+  color: var(--info);
+  font-size: 12.5px;
   cursor: pointer;
 }
 
-.item:hover:not(:disabled) {
+/* 页签（样稿下划线页签的小号版） */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab,
+.tabOn {
+  position: relative;
+  padding: 6px 8px 10px;
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.tab {
+  color: var(--text-2);
+}
+
+.tabOn {
+  color: var(--text);
+}
+
+.tabOn::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  background: var(--text);
+}
+
+/* 事件列表 */
+.list {
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+}
+
+.ev {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.ev:hover {
   background: var(--surface-2);
 }
 
-.item:disabled {
-  cursor: default;
-  color: inherit;
+/* 最后一条不画底边，避免与底栏的 border-top 叠成双线 */
+.ev:last-child {
+  border-bottom: 0;
 }
 
-.ok,
-.warn,
-.danger,
-.info {
+.ev.read {
+  color: var(--text-2);
+}
+
+/* 未读点：未读 --info，已读透明 */
+.evDot {
   width: 6px;
   height: 6px;
-  margin-top: 6px;
+  margin-top: 7px;
   border-radius: 50%;
   background: var(--info);
 }
 
-.ok {
-  background: var(--ok);
-}
-
-.warn {
-  background: var(--warn);
-}
-
-.danger {
-  background: var(--danger);
+.ev.read .evDot {
+  background: transparent;
 }
 
 .text {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
-.title {
-  font-weight: var(--fw-medium);
+.meta {
+  display: block;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
-.body {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  font-family: var(--font-mono);
+.rightCol {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .at {
-  margin-top: 2px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
   color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 只给读屏的未读标记 */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 新到的条目淡入 */
+.fresh {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fresh {
+    animation: none;
+  }
+}
+
+/* 两种空状态共用 */
+.empty {
+  padding: 28px 14px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* 底部提示与审计日志入口 */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 40px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.auditLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--info);
+  font-size: 12px;
+  cursor: pointer;
 }

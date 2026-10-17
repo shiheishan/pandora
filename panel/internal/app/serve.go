@@ -13,7 +13,6 @@ import (
 	audith "github.com/aegispanel/aegis/internal/module/audit/handler"
 	authh "github.com/aegispanel/aegis/internal/module/auth/handler"
 	catalogh "github.com/aegispanel/aegis/internal/module/catalog/handler"
-	certsh "github.com/aegispanel/aegis/internal/module/certs/handler"
 	commissionh "github.com/aegispanel/aegis/internal/module/commission/handler"
 	contenth "github.com/aegispanel/aegis/internal/module/content/handler"
 	giftcardh "github.com/aegispanel/aegis/internal/module/giftcard/handler"
@@ -201,8 +200,13 @@ func newHTTPServer(sc config.HTTPServer, h http.Handler) *http.Server {
 		ReadTimeout:       sc.ReadTimeout,
 		WriteTimeout:      sc.WriteTimeout,
 		IdleTimeout:       sc.IdleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 }
+
+// maxHeaderBytes 是请求头总量上限（Go 缺省 1 MiB）。前面的 nginx 单行头最多 8 KiB、共 4 块，
+// 正常请求（含 refresh cookie 与 Authorization）远小于它；这里收紧是防绕过 nginx 直连回环端口时的大头。
+const maxHeaderBytes = 64 << 10
 
 // newEngines 建门户与后台两个引擎并挂上各模块路由。
 // 引擎级顺序：基础中间件（请求号、日志、指标、恢复、错误、安全头、并发、超时）→（后台）只读门 → 鉴权 → 域守卫；
@@ -211,9 +215,10 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 	settingsH := settingsh.New(svc.settings)
 	authH := authh.New(svc.auth, svc.limiter, authOptions(r.cfg))
 	idemH := idemh.New(svc.idem, svc.idemFPKey)
-	// 套餐列表的可服务节点数由 node 数（catalog 不依赖 node）
+	// 套餐列表的可服务节点数由 node 数、生效订阅数由 subscription 数（catalog 不依赖这两个模块）
 	catalogH := catalogh.New(svc.catalog)
 	catalogH.UseNodeCounter(svc.node)
+	catalogH.UseSubscriptionCounter(svc.sub)
 	notifyH := notifyh.New(svc.notify)
 	notifyH.UseLimiter(svc.limiter)
 	kit := route.Kit{
@@ -240,7 +245,6 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 		contenth.New(svc.content, svc.limiter, r.cfg.RateLimit.AccountPerMin),
 		appearanceh.New(svc.appearance),
 		supporth.New(svc.support, svc.limiter),
-		certsh.New(svc.certs),
 		pluginh.New(svc.plugin),
 		reporth.New(svc.report),
 		realtimeh.New(hub, r.cfg.Auth.AccessTTL),
@@ -255,9 +259,12 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 		authH.Authenticate(authn.AudienceAdmin),
 		authH.DomainGuard(authn.AudienceAdmin),
 	)
-	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*
-	webapp.Mount(publicEng, web.PortalApp)
-	webapp.Mount(adminEng, web.AdminApp)
+	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*；
+	// 门户开了人机验证时入口页 CSP 按设置追加那一家的来源（后台不用人机验证，CSP 不变）；
+	// 两个入口页的 <title>、描述与图标按站点名（系统设置）和生效主题的标语、Logo 改写（appearance 的进程内快照，不每次查库）
+	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCaptchaCSP(svc.settings)),
+		webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PagePortal)))
+	webapp.Mount(adminEng, web.AdminApp, webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PageAdmin)))
 	publicV1 := publicEng.Group("/v1")
 	adminV1 := adminEng.Group("/v1")
 	for _, m := range mods {
@@ -293,7 +300,7 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 		metricsMW,
 		httpx.Recovery(),
 		httpx.Errors(),
-		httpx.SecurityHeaders(),
+		httpx.SecurityHeaders(r.cfg.IsProduction()),
 		httpx.Concurrency(sc.MaxConcurrency, isStream),
 		httpx.Timeout(sc.RequestTimeout, isStream),
 	)

@@ -2,8 +2,8 @@ import type { NodeRow } from './schemas'
 import type { Tone } from './logic'
 
 // ---------------------------------------------------------------------------
-// 节点的真实运行状态（w4deliver）：pdnd 上报的运行原因 + 生效回执，后端读模型见
-// nodefabric/node_runtime_view.go。界面只显示四种：运行中 / 待生效 / 生效失败：原因 / 降级：用缓存服务
+// 节点的真实运行状态：pdnd 上报的运行原因 + 生效回执，后端读模型见
+// node/service 的 node_list_delivery.go。界面只显示四种：运行中 / 待生效 / 生效失败：原因 / 降级：用缓存服务
 // ---------------------------------------------------------------------------
 
 export type RuntimeFields = Pick<
@@ -25,11 +25,11 @@ export interface RunState {
   detail: string
 }
 
-const PORT_IN_USE = /^port_in_use:(\d{1,5})\/(tcp|udp):(.+)$/
+const PORT_IN_USE = /^port_in_use:(\d{1,5})\/(tcp\+udp|tcp|udp):(.+)$/
 
 /**
  * 原因码翻成中文（pdnd node/status.go 与 kernel/port_claims.go 的 RuntimeReason）：
- * port_in_use:<端口>/<tcp|udp>:<节点 id|other>、not_started、config_apply_failed、serving_cached_config。
+ * port_in_use:<端口>/<tcp|udp|tcp+udp>:<节点 id|other>（tcp+udp 是 Shadowsocks 同端口两种都听）、not_started、config_apply_failed、serving_cached_config。
  * holder 是后端按节点 id 查出的占用者名字（同一面板才有）；认不出的码原样显示
  */
 export function runtimeReasonText(reason: string | null | undefined, holder?: string | null): string {
@@ -73,27 +73,3 @@ export function runState(n: RuntimeFields): RunState | null {
 
 export const sameRunState = (a: RunState | null, b: RunState | null): boolean =>
   a === b || (!!a && !!b && a.label === b.label && a.tone === b.tone && a.detail === b.detail)
-
-/** 生效回执的失败阶段（node_config_applications.phase）翻成中文 */
-export function applyPhaseLabel(phase: string): string {
-  switch (phase) {
-    case 'failed':
-      return '应用失败'
-    case 'precheck_failed':
-      return '预检失败'
-    case 'health_failed':
-      return '健康检查失败'
-    case 'rolled_back':
-      return '已回滚'
-  }
-  return phase
-}
-
-/** 复制弹窗的端口框：空串沿用原节点（undefined），合法端口返回数字，其余 'invalid' */
-export function copyPortValue(raw: string): number | undefined | 'invalid' {
-  const v = raw.trim()
-  if (!v) return undefined
-  if (!/^\d{1,5}$/.test(v)) return 'invalid'
-  const n = Number(v)
-  return n >= 1 && n <= 65535 ? n : 'invalid'
-}

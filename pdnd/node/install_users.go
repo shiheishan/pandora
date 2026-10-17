@@ -21,11 +21,6 @@ import (
 //  3. 冷启动（n.offlineStart）且 1、2 都没有时，落盘缓存的名单；
 //  4. 都没有：带空名单装（版本为空），等面板发全量。
 
-// usersApplier 是内核「带名单装入站」的可选契约（NativeCore 实现）。
-type usersApplier interface {
-	ApplyInboundWithUsers(*core.InboundConfig, *core.Routing, []core.User) error
-}
-
 // preparedUsers 是装入站时一起交给内核的名单与它的来源。
 type preparedUsers struct {
 	users   []core.User
@@ -36,11 +31,8 @@ type preparedUsers struct {
 	failed bool
 }
 
-// prepareInstallUsers 在装入站之前准备名单；内核不支持带名单装入站时返回 nil。
+// prepareInstallUsers 在装入站之前准备名单。
 func (n *Node) prepareInstallUsers() *preparedUsers {
-	if _, ok := n.kernel.(usersApplier); !ok {
-		return nil
-	}
 	if len(n.known) > 0 {
 		users := make([]core.User, 0, len(n.known))
 		for _, u := range n.known {
@@ -63,23 +55,6 @@ func (n *Node) prepareInstallUsers() *preparedUsers {
 
 // adoptInstalledUsers 在入站装好之后把本地用户镜像对齐到「内核里已是这份名单」。
 func (n *Node) adoptInstalledUsers(p *preparedUsers) {
-	if p == nil {
-		// 兼容内核不能带名单装，入站重建清空了内核用户表：把手上的名单补回去
-		// （没有就装入站之前收到的全量）。补回失败就整个作废，等面板发全量。
-		if len(n.known) == 0 {
-			n.applyStagedAfterInstall()
-			return
-		}
-		users := make([]core.User, 0, len(n.known))
-		for _, u := range n.known {
-			users = append(users, u)
-		}
-		if err := n.kernel.AddUsers(n.tag, users); err != nil {
-			n.log.Warn("入站重建后补回名单失败，等面板发全量", "err", err)
-			n.resetUserMirror()
-		}
-		return
-	}
 	if p.failed {
 		n.resetUserMirror()
 		if n.pendingUsersAck == nil && p.version != "" {
@@ -100,23 +75,6 @@ func (n *Node) adoptInstalledUsers(p *preparedUsers) {
 	case "cache":
 		n.usersDirty = false
 	}
-}
-
-// applyStagedAfterInstall 给兼容内核用：入站起来之后再装入站之前收到的全量。
-func (n *Node) applyStagedAfterInstall() {
-	st := n.staged
-	if st == nil {
-		return
-	}
-	n.staged = nil
-	if err := n.applyUsers(st.users); err != nil {
-		n.resetUserMirror()
-		n.pendingUsersAck = &nodev1.UsersAck{NodeId: n.id, Version: st.version, Ok: false, ReasonCode: panel.UsersReasonApplyFailed}
-		n.log.Warn("入站起来之后装名单失败，等面板重发全量", "err", err)
-		return
-	}
-	n.userVersion = st.version
-	n.pendingUsersAck = &nodev1.UsersAck{NodeId: n.id, Version: st.version, Ok: true}
 }
 
 // isUsersPreloadError 认出内核的「入站已就绪、名单没装上」（kernel.UsersPreloadError）。

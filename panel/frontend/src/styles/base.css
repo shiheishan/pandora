@@ -7,9 +7,10 @@
 html,
 body {
   margin: 0;
-  background: var(--bg);
+  /* 门户是点阵底纹（样稿 v5，登录页也有），后台就是 --bg；见 roles.css 的 --page-bg */
+  background: var(--page-bg);
   color: var(--text);
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: var(--body-size);
   line-height: var(--body-leading);
   -webkit-font-smoothing: antialiased;
@@ -34,7 +35,7 @@ a {
 
 a:hover {
   color: var(--link-hover);
-  text-decoration: underline;
+  text-decoration: var(--link-hover-decoration);
 }
 
 ::selection {
@@ -68,6 +69,23 @@ a:hover {
 /* 金额与流量用 Geist 加等宽数字，不用 Mono */
 .num {
   font-variant-numeric: tabular-nums;
+}
+
+/* 只在手机（≤639）出现：列表收起列后，把要紧信息补在留下的格里（样稿 .m-only）。
+   m-only 在手机上另起一行，m-only-inline 接在同一行；:root 抬高优先级，压过模块类里的 display */
+:root .m-only,
+:root .m-only-inline {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  :root .m-only {
+    display: block;
+  }
+
+  :root .m-only-inline {
+    display: inline;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

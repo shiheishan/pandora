@@ -2,16 +2,16 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { usersSchema, type UserRow } from '../users/api'
-import { adjustmentsSchema, latePaymentsSchema, manualPreviewSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema, type LateStatus } from './schemas'
+import { adjustmentsSchema, latePaymentsSchema, manualPreviewSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, paymentSettingsSchema, providersSchema, type LateStatus } from './schemas'
 
 export * from './schemas'
 
-export const BK = ['admin', 'billing'] as const
+const BK = ['admin', 'billing'] as const
 export const ORDERS_PAGE = 25
 export const LATE_PAGE = 25
 const orderTopics = ['orders.changed'] as const
 
-export interface OrdersParams {
+interface OrdersParams {
   q?: string
   /** 逗号分隔的后端状态（R63 多值白名单） */
   status?: string
@@ -63,7 +63,7 @@ export function useUserPick(q: string, enabled: boolean) {
   })
 }
 
-export interface ManualPreviewParams {
+interface ManualPreviewParams {
   user_id: string
   plan_id: string
   price_id: string
@@ -105,16 +105,25 @@ export function useProviders() {
   })
 }
 
-/** 最多 200 条、无分页（契约）；currency 空 = 全部 */
-export function useAdjustments(currency: string) {
+/** 支付回调地址前缀（GET v1/payment-settings） */
+export function usePaymentSettings() {
   const api = useApi()
   return useQuery({
-    queryKey: [...BK, 'adjustments', currency],
-    queryFn: ({ signal }) => api.get('v1/revenue/adjustments', adjustmentsSchema, { signal, query: { currency: currency || undefined } }).then((r) => r.adjustments),
+    queryKey: [...BK, 'payment-settings'],
+    queryFn: ({ signal }) => api.get('v1/payment-settings', paymentSettingsSchema, { signal }),
   })
 }
 
-/** 写成功（或失败后状态可能已变）时整个前缀重拉：订单状态、挂账合计、渠道统计互相牵连 */
+/** 最多 200 条、无分页（契约）；只有人民币，不再按币种筛 */
+export function useAdjustments() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...BK, 'adjustments'],
+    queryFn: ({ signal }) => api.get('v1/revenue/adjustments', adjustmentsSchema, { signal }).then((r) => r.adjustments),
+  })
+}
+
+/** 写成功（或失败后状态可能已变）时整个前缀重拉：订单状态、待处理到账合计、渠道统计互相牵连 */
 export function useInvalidateBilling() {
   const client = useQueryClient()
   return useCallback(() => client.invalidateQueries({ queryKey: BK }), [client])

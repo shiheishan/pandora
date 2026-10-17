@@ -168,9 +168,8 @@ type fakeInbound struct {
 	online  map[int64][]string
 }
 
-// fakeKernel 模拟真实内核最关键的几点：AddInbound / DelInbound 清空该入站的用户表；
-// 同一端口先登记者赢（后来者得到带 RuntimeReason 的端口冲突错误）；GetTraffic 取出即清零。
-// 不实现 ApplyInboundWithUsers（兼容内核口径）；要那条路径的测试用 usersKernel 包一层。
+// fakeKernel 模拟 NativeCore 最关键的几点：整代装入站（ApplyInbound：建入站、设分流，分流被拒就撤掉入站）
+// 清空该入站的用户表；ApplyInboundWithUsers 装好入站后随即装名单；同一端口先登记者赢；GetTraffic 取出即清零。
 type fakeKernel struct {
 	mu       sync.Mutex
 	inbounds map[string]*fakeInbound
@@ -184,6 +183,8 @@ type fakeKernel struct {
 	notReady bool
 	// addInboundCalls 计数（看有没有重装）。
 	addInboundCalls int
+	// preload 是每次随入站装的名单，按调用顺序。
+	preload [][]core.User
 }
 
 func newFakeKernel() *fakeKernel {
@@ -195,6 +196,13 @@ type portInUseError struct{ reason string }
 
 func (e *portInUseError) Error() string         { return "端口被占用: " + e.reason }
 func (e *portInUseError) RuntimeReason() string { return e.reason }
+
+// usersPreloadError 是「入站已就绪、名单没装上」（对应 kernel.UsersPreloadError）。
+type usersPreloadError struct{ err error }
+
+func (e *usersPreloadError) Error() string            { return "装名单失败: " + e.err.Error() }
+func (e *usersPreloadError) Unwrap() error            { return e.err }
+func (e *usersPreloadError) UsersPreloadFailed() bool { return true }
 
 func (k *fakeKernel) Type() string                { return "fake" }
 func (k *fakeKernel) Start(context.Context) error { return nil }
@@ -237,6 +245,36 @@ func (k *fakeKernel) SetRouting(tag string, r *core.Routing) error {
 	}
 	if in := k.inbounds[tag]; in != nil {
 		in.routing = r
+	}
+	return nil
+}
+
+// ApplyInbound 按 NativeCore 口径整代装入站：建入站、设分流；分流被拒就撤掉新入站。
+func (k *fakeKernel) ApplyInbound(cfg *core.InboundConfig, routing *core.Routing) error {
+	if err := k.AddInbound(cfg); err != nil {
+		return err
+	}
+	if err := k.SetRouting(cfg.Tag, routing); err != nil {
+		_ = k.DelInbound(cfg.Tag)
+		return err
+	}
+	return nil
+}
+
+// ApplyInboundWithUsers 先整代装入站，再把名单装进去并记进 preload。
+// 名单装不上时入站已在服务，按 NativeCore 口径回 usersPreloadError。
+func (k *fakeKernel) ApplyInboundWithUsers(cfg *core.InboundConfig, routing *core.Routing, users []core.User) error {
+	if err := k.ApplyInbound(cfg, routing); err != nil {
+		return err
+	}
+	k.mu.Lock()
+	k.preload = append(k.preload, append([]core.User(nil), users...))
+	k.mu.Unlock()
+	if len(users) == 0 {
+		return nil
+	}
+	if err := k.AddUsers(cfg.Tag, users); err != nil {
+		return &usersPreloadError{err: err}
 	}
 	return nil
 }

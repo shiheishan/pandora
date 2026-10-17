@@ -1,0 +1,328 @@
+/* 新建向导与节点详情协议表单（10-16 设计稿） */
+
+.wizardPanel {
+  height: min(600px, calc(100vh - 32px));
+  max-height: min(600px, calc(100vh - 32px));
+}
+
+.wizardBody {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  padding: 0;
+  overflow: hidden;
+}
+
+.stepNav {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.stepBtn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.stepBtnCurrent {
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--text);
+}
+
+.stepDot {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.stepDotDone {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--on-ink);
+}
+
+.stepDotCurrent {
+  border-color: var(--text);
+}
+
+.stepDotErr {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-ink);
+}
+
+.stepText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stepLabel {
+  color: var(--text-2);
+  font-weight: var(--fw-regular);
+}
+
+.stepLabelCurrent {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.stepSum {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepSumErr {
+  color: var(--danger);
+}
+
+.stepContent {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 22px 24px;
+}
+
+.stepHead {
+  margin-bottom: 16px;
+}
+
+.stepTitle {
+  font-size: 15px;
+  font-weight: var(--fw-semibold);
+}
+
+.stepSub {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.protoGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.protoCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.protoCard:hover {
+  border-color: var(--text);
+}
+
+.protoCardOn {
+  border-color: var(--text);
+  background: var(--surface-2);
+  font-weight: var(--fw-semibold);
+}
+
+.protoKind {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: var(--fw-regular);
+  font-family: var(--font-mono);
+}
+
+.connectGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 20px 16px;
+  align-items: start;
+}
+
+.span2 {
+  grid-column: 1 / -1;
+}
+
+/* 协议参数行：左 140px 标签 + 右控件 */
+.paramBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.paramHead {
+  margin-bottom: 12px;
+}
+
+.paramTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: var(--fw-semibold);
+}
+
+.paramNote {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  text-wrap: pretty;
+}
+
+.paramRow {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 4px 16px;
+  align-items: start;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.paramLabel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: 32px;
+  font-weight: var(--fw-medium);
+}
+
+.paramControl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.paramInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.paramInputRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.boolRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.boolText {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.required {
+  color: var(--danger);
+}
+
+.sensitive {
+  padding: 0 5px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: var(--fw-regular);
+}
+
+.advToggle {
+  align-self: flex-start;
+  margin-top: 8px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--text);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.notice {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--warn-line);
+  background: var(--warn-soft);
+  font-size: var(--fs-caption);
+}
+
+.secretNote {
+  margin-bottom: 12px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 详情编辑：连接信息 + 底部固定栏 */
+.editWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  min-height: 0;
+}
+
+.editSectionTitle {
+  margin: 0 0 var(--space-12);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.editGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px var(--space-12);
+  align-items: start;
+}
+
+.stickyFoot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin: 0 -24px -8px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.footHint {
+  flex: 1;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.footActions {
+  display: flex;
+  gap: var(--space-8);
+}
+

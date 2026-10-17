@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/report/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -67,38 +66,38 @@ func TestShapeOverview(t *testing.T) {
 	}
 	wantKeys(t, "overview", root, "users", "subscriptions", "revenue", "orders", "ledger_drift_accounts", "nodes")
 	wantKeys(t, "users", root["users"].(map[string]any), "total", "active", "today", "last_7_days")
-	rev := root["revenue"].([]any)
-	if len(rev) == 0 {
-		t.Fatal("revenue 空")
+	wantKeys(t, "subscriptions", root["subscriptions"].(map[string]any), "active", "expiring_7_days", "expired", "new_7_days")
+	rev, ok := root["revenue"].(map[string]any)
+	if !ok {
+		t.Fatalf("revenue 应为对象，得 %T", root["revenue"])
 	}
-	row := rev[0].(map[string]any)
-	wantKeys(t, "revenue[0]", row,
-		"currency", "today", "last_7_days", "last_30_days", "total",
+	wantKeys(t, "revenue", rev,
+		"today", "last_7_days", "last_30_days", "total",
 		"actual_today", "actual_7_days", "actual_30_days", "actual_total",
 		"adjustment_today", "adjustment_7_days", "adjustment_30_days", "adjustment_total",
 		"yesterday", "actual_yesterday",
 	)
 	for _, k := range []string{"today", "actual_today", "yesterday"} {
-		assertInt(t, "revenue."+k, row[k])
+		assertInt(t, "revenue."+k, rev[k])
 	}
 }
 
 func TestShapeRevenueTimeseries(t *testing.T) {
 	f := &fakeSvc{revenueSeries: service.RevenueSeries{
-		Currency: money.CNY, Days: 7,
+		Days: 7,
 		Points: []service.RevenuePoint{{
 			Date: "2026-03-01", ActualCredit: decimal.New(1, 0), ActualDebit: decimal.Zero,
 			Adjustment: decimal.New(1, -2), DisplayedNet: decimal.New(10001, -2),
 		}},
 		PreviousTotal: decimal.New(2, 0),
 	}}
-	w := do(newAdminEngine(f, nil, nil), http.MethodGet, "/v1/revenue/timeseries?currency=CNY&days=7", "")
+	w := do(newAdminEngine(f, nil, nil), http.MethodGet, "/v1/revenue/timeseries?days=7", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}
 	var root map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
-	wantKeys(t, "revenue", root, "currency", "days", "points", "previous_total")
+	wantKeys(t, "revenue", root, "days", "points", "previous_total")
 	pt := root["points"].([]any)[0].(map[string]any)
 	wantKeys(t, "point", pt, "date", "actual_credit", "actual_debit", "adjustment", "displayed_net")
 	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(pt["date"].(string)) {
@@ -111,12 +110,12 @@ func TestShapeAdjustmentsList(t *testing.T) {
 	email := "admin@example.test"
 	f := &fakeSvc{adjustments: []service.Adjustment{
 		{
-			ID: uuid.New(), Currency: money.CNY, Amount: decimal.New(100, -2), Reason: "原因一原因一",
+			ID: uuid.New(), Amount: decimal.New(100, -2), Reason: "原因一原因一",
 			EffectiveOn: "2026-03-01", ReversalOf: &revID, CreatedBy: uuid.New(), CreatedByEmail: &email,
 			CreatedAt: time.Now().UTC(), Reversed: false,
 		},
 		{
-			ID: uuid.New(), Currency: money.USD, Amount: decimal.New(200, -2), Reason: "原因二原因二",
+			ID: uuid.New(), Amount: decimal.New(200, -2), Reason: "原因二原因二",
 			EffectiveOn: "2026-03-02", CreatedBy: uuid.New(), CreatedByEmail: nil,
 			CreatedAt: time.Now().UTC(), Reversed: true,
 		},
@@ -134,12 +133,12 @@ func TestShapeAdjustmentsList(t *testing.T) {
 	}
 	withRev := items[0].(map[string]any)
 	wantKeys(t, "adj with reversal", withRev,
-		"id", "currency", "amount", "reason", "effective_on", "reversal_of",
+		"id", "amount", "reason", "effective_on", "reversal_of",
 		"created_by", "created_by_email", "created_at", "reversed",
 	)
 	withoutRev := items[1].(map[string]any)
 	wantKeys(t, "adj no reversal", withoutRev,
-		"id", "currency", "amount", "reason", "effective_on",
+		"id", "amount", "reason", "effective_on",
 		"created_by", "created_by_email", "created_at", "reversed",
 	)
 	if _, ok := withoutRev["reversal_of"]; ok {
@@ -153,14 +152,14 @@ func TestShapeAdjustmentsList(t *testing.T) {
 func TestShapeCreateAdjustmentResponse(t *testing.T) {
 	f := &fakeSvc{createOut: sampleAdjustment()}
 	w := do(newAdminEngine(f, nil, nil), http.MethodPost, "/v1/revenue/adjustments",
-		`{"currency":"CNY","amount":1234,"reason":"补录线下收款","effective_on":"2026-03-01"}`)
+		`{"amount":1234,"reason":"补录线下收款","effective_on":"2026-03-01"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}
 	var root map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
 	wantKeys(t, "create", root,
-		"id", "currency", "amount", "reason", "effective_on",
+		"id", "amount", "reason", "effective_on",
 		"created_by", "created_by_email", "created_at", "reversed",
 	)
 }
@@ -179,7 +178,7 @@ func TestShapeReverseAdjustmentResponse(t *testing.T) {
 	var root map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
 	wantKeys(t, "reverse", root,
-		"id", "currency", "amount", "reason", "effective_on", "reversal_of",
+		"id", "amount", "reason", "effective_on", "reversal_of",
 		"created_by", "created_by_email", "created_at", "reversed",
 	)
 	assertInt(t, "reverse amount", root["amount"])
@@ -211,6 +210,7 @@ func TestShapeTrafficNodes(t *testing.T) {
 	var root map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
 	wantKeys(t, "node traffic", root, "range", "snapshot_at", "from", "to", "basis", "totals", "quality", "items", "ranking")
+	wantKeys(t, "quality", root["quality"].(map[string]any), "invalid_report_count", "invalid_entry_count")
 	if root["basis"] != "strict_raw_report_entries" {
 		t.Fatalf("basis %v", root["basis"])
 	}
@@ -294,7 +294,7 @@ func TestShapeTasks(t *testing.T) {
 		AsOf:        time.Now().UTC(),
 		TicketsOpen: service.TicketsOpenTask{Count: 1, HighPriority: 2, OldestWaitSeconds: &wait},
 		WithdrawalsPending: service.WithdrawalsPendingTask{
-			Count: 1, Amounts: []service.CurrencyAmount{{Currency: money.CNY, Amount: decimal.New(999, -2)}},
+			Count: 1, Amount: decimal.New(999, -2),
 		},
 		NodesOffline: service.NodesOfflineTask{
 			Count: 1, Sample: []service.NodeRef{{ID: uuid.New(), Name: "n"}}, LongestOfflineSeconds: &wait,
@@ -323,7 +323,7 @@ func TestShapeTasks(t *testing.T) {
 	}
 	itemKeys := [][]string{
 		{"kind", "count", "high_priority", "oldest_wait_seconds"},
-		{"kind", "count", "amounts"},
+		{"kind", "count", "amount"},
 		{"kind", "count", "sample", "longest_offline_seconds"},
 		{"kind", "count", "threshold_seconds"},
 		{"kind", "queued", "failed_total", "backlog_state"},
@@ -333,9 +333,10 @@ func TestShapeTasks(t *testing.T) {
 		wantKeys(t, kinds[i], items[i].(map[string]any), keys...)
 	}
 	wd := items[1].(map[string]any)
-	amt := wd["amounts"].([]any)[0].(map[string]any)
-	wantKeys(t, "withdraw amount", amt, "currency", "amount")
-	assertInt(t, "withdraw amount", amt["amount"])
+	assertInt(t, "withdraw amount", wd["amount"])
+	if wd["amount"].(float64) != 999 {
+		t.Fatalf("amount %v", wd["amount"])
+	}
 }
 
 func TestShapeStatsTimeseries(t *testing.T) {
@@ -357,15 +358,14 @@ func TestShapeStatsTimeseries(t *testing.T) {
 func fullOverview() service.Overview {
 	d := decimal.New(1, 0)
 	row := service.RevenueRow{
-		Currency: money.CNY,
-		Today:    d, Yesterday: d, Last7Days: d, Last30Days: d, Total: d,
+		Today: d, Yesterday: d, Last7Days: d, Last30Days: d, Total: d,
 		ActualToday: d, ActualYesterday: d, Actual7Days: d, Actual30Days: d, ActualTotal: d,
 		AdjustmentToday: d, Adjustment7Days: d, Adjustment30Days: d, AdjustmentTotal: d,
 	}
 	return service.Overview{
 		Users:               service.UserCounts{Total: 1, Active: 2, Today: 3, Last7Days: 4},
-		Subscriptions:       service.SubscriptionCounts{Active: 1, Trialing: 0, Expiring7Days: 2, Expired: 3, New7Days: 4},
-		Revenue:             []service.RevenueRow{row},
+		Subscriptions:       service.SubscriptionCounts{Active: 1, Expiring7Days: 2, Expired: 3, New7Days: 4},
+		Revenue:             row,
 		Orders:              service.OrderCounts{PaidToday: 1, Pending: 2, FailedToday: 3},
 		LedgerDriftAccounts: 5,
 		Nodes:               service.NodeCounts{Total: 10, Online: 9},

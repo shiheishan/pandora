@@ -1,66 +1,111 @@
 .frame {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
-  height: 100vh;
-  overflow: hidden;
+  grid-template-columns: 232px minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--bg);
 }
 
 .main {
   min-width: 0;
-  height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
+.page {
+  flex: 1;
+  min-width: 0;
+  padding: 28px 32px 72px;
+}
+
+.col {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.bleed {
+  padding: 0;
+}
+
+.bleedCol {
+  height: 100vh;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
+}
+
+.head {
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 52px;
-  flex: none;
-  padding: 0 28px;
-  border-bottom: 1px solid var(--border);
-  background: var(--hdr);
-  backdrop-filter: blur(8px);
+  gap: 10px;
+  min-height: 32px;
 }
 
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
 }
 
-.crumbCurrent {
-  color: var(--text);
-  font-weight: var(--fw-medium);
+.count {
+  display: contents;
 }
 
 .spacer {
   flex: 1;
 }
 
-.pageHead {
+.actions {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 26px 28px 0;
+  align-items: center;
+  gap: 8px;
 }
 
-.title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-h1);
+.actions:empty {
+  display: none;
 }
 
-.content {
-  flex: 1;
-  min-width: 0;
-  padding: 20px 28px 48px;
+.tabs {
+  margin: 18px 0 20px;
 }
+
+.scrim {
+  display: none;
+}
+
+@media (max-width: 959px) {
+  .frame {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 34;
+    background: var(--scrim);
+  }
+
+  .bleedCol {
+    height: calc(100vh - 52px);
+  }
+}
+
+@media (max-width: 639px) {
+  .page {
+    padding: 24px 16px 72px;
+  }
+
+  .bleed {
+    padding: 0;
+  }
+
+  .head {
+    display: none;
+  }
+
+  .tabs {
+    margin-top: 0;
+  }
+}
+

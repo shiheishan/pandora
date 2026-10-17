@@ -17,11 +17,13 @@ interface AccountState {
   others: SessionFixture[]
   /** 令牌第一次出现的时刻，当作当前会话的登录时间 */
   firstSeen: Map<string, string>
-  telegram: { enabled: boolean; username: string | null; pending: { code: string; issued: number; expires: number } | null }
+  /** username 是 omitempty：Telegram 账号没设用户名时已绑定也没有（审计 C2，`empty` 场景演示） */
+  telegram: { enabled: boolean; bound: boolean; username: string | null; pending: { code: string; issued: number; expires: number } | null }
   prefs: Map<string, boolean>
 }
 
 const BOT = 'pandora_notify_bot'
+const DISCUSS_LINK_DEFAULT = 'https://t.me/example_discuss'
 const BIND_TTL_MS = 10 * 60_000
 /** 假装用户在 Telegram 里发送 /start CODE 用的时间 */
 const BIND_AFTER_MS = 8_000
@@ -71,7 +73,7 @@ function build(): AccountState {
             },
           ],
     firstSeen: new Map(),
-    telegram: { enabled: s !== 'legacy', username: s === 'multi' ? 'zhangwei_tg' : null, pending: null },
+    telegram: { enabled: s !== 'legacy', bound: s === 'multi', username: s === 'multi' ? 'zhangwei_tg' : null, pending: null },
     prefs: new Map([['marketing\ntelegram', false]]),
   }
 }
@@ -135,7 +137,8 @@ function settleTelegram(state: AccountState) {
   const now = Date.now()
   if (now >= p.expires) state.telegram.pending = null
   else if (now - p.issued >= BIND_AFTER_MS && state.telegram.enabled) {
-    state.telegram.username = 'zhangwei_tg'
+    state.telegram.bound = true
+    state.telegram.username = scenario() === 'empty' ? null : 'zhangwei_tg'
     state.telegram.pending = null
   }
 }
@@ -195,14 +198,15 @@ export const account: MockModule = {
       const state = stateOf(ctx.user.userId)
       settleTelegram(state)
       const t = state.telegram
-      ctx.send(200, { bound: t.username !== null, ...(t.username ? { username: t.username } : {}), ...(t.enabled ? { bot_username: BOT } : {}), enabled: t.enabled })
+      const discuss_link = scenario() === 'default' ? DISCUSS_LINK_DEFAULT : null
+      ctx.send(200, { bound: t.bound, ...(t.bound && t.username ? { username: t.username } : {}), ...(t.enabled ? { bot_username: BOT } : {}), enabled: t.enabled, discuss_link })
     },
     'POST /v1/me/telegram/bind-code': (ctx) => {
       const state = stateOf(ctx.user.userId)
       settleTelegram(state)
       const t = state.telegram
       if (!t.enabled) return ctx.fail(422, 'validation_failed', '站点还没有启用 Telegram 通知')
-      if (t.username !== null) return ctx.fail(409, 'conflict', '你已经绑定过 Telegram 了')
+      if (t.bound) return ctx.fail(409, 'conflict', '你已经绑定过 Telegram 了')
       const now = Date.now()
       // 再次获取时旧码作废
       t.pending = { code: newBindCode(), issued: now, expires: now + BIND_TTL_MS }
@@ -211,7 +215,8 @@ export const account: MockModule = {
     'DELETE /v1/me/telegram': (ctx) => {
       const state = stateOf(ctx.user.userId)
       settleTelegram(state)
-      if (state.telegram.username === null) return ctx.fail(404, 'not_found', '你还没有绑定 Telegram')
+      if (!state.telegram.bound) return ctx.fail(404, 'not_found', '你还没有绑定 Telegram')
+      state.telegram.bound = false
       state.telegram.username = null
       ctx.send(200, { unbound: true })
     },

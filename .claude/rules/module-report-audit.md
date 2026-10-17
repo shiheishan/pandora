@@ -15,10 +15,10 @@ paths:
 
 ## 行为趋势（activity_daily）
 
-- 表语义见 `panel/db/migrations/00032_report.sql`：按 `(tz, day)` 存派生读数；站点时区一改，旧 `tz` 行自动不用，读路径对未定稿日子现算。
-- **定稿**：`service/activity.go` 的 `finalized`——`computed_at` 不早于该自然日结束后整一天（与迁移注释「算的时刻不早于该日结束后整一天」同口径）。
-- **读路径**：`ActivityTimeseries` 只用已定稿的库行；缺的日子再 `liveActivity`（audit `ActivityByDay` + subscription `ActiveUsersByDay`）。
-- **写路径**：`RefreshActivity` 补历史未定稿日（大前天及更早从新到旧最多 7 天）+ 重算前天、昨天；已定稿跳过。
+- 表语义见 `panel/db/migrations/00032_report.sql`：按 `(tz, day)` 存派生读数；站点时区一改，旧 `tz` 行自动不用，读路径对没有行的日子现算。
+- **定稿**：`service/activity.go` 的 `finalized`——`computed_at` 不早于该自然日结束后整一天（与迁移注释同口径）；只用于写路径判断跳过。
+- **读路径**：`ActivityTimeseries` 用库里当前时区的全部行（定稿与否都用），请求里不现算；只有没有行的日子（刚装好、任务没跑过、站点时区刚改）才 `liveActivity`（audit `ActivityByDay` + subscription `ActiveUsersByDay`）。今天、昨天的数字最多晚一个任务周期（10 分钟）。
+- **写路径**：`RefreshActivity` 补历史未定稿日（大前天及更早从新到旧最多 7 天）+ 重算前天、昨天与今天；已定稿跳过。
 - 定时：`panel/internal/module/report/task/task.go`——`report:activity_daily` 每 10 分钟；`retention:activity_daily` 每天删 `ActivityRetentionDays`（400）以前，`PurgeActivity` 分批。
 - 动作名：`activityActions` 用 `identitysvc.ActionRegistered`、`ordersvc.ActionOrderCreated`，登录成功用本包常量 `LoginAction`（`"user.login"`，与 auth 写入一致）（`service/activity.go`）。
 

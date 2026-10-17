@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  ADMIN_OVERRIDES,
+  ADMIN_RADIUS,
   COLOR_TOKENS,
   RADIUS_SCALE,
   ROLE_TOKENS,
@@ -76,6 +78,26 @@ describe('role tokens', () => {
   })
 })
 
+describe('admin overrides', () => {
+  const lightBlock = merged(roles.get("html[data-app='admin']"))
+  const darkBlock = merged(roles.get("html[data-app='admin'][data-theme='dark']"))
+
+  it.each(ADMIN_OVERRIDES.map((t) => [t.name, t] as const))('%s', (name, token) => {
+    expect(normalizeCssValue(lightBlock.get(name) ?? 'missing')).toBe(normalizeCssValue(token.light))
+    expect(normalizeCssValue(darkBlock.get(name) ?? 'missing')).toBe(normalizeCssValue(token.dark))
+  })
+
+  it('uses the admin radius scale', () => {
+    for (const t of ADMIN_RADIUS) expect(lightBlock.get(t.name), t.name).toBe(t.value)
+  })
+
+  it('declares nothing beyond ADMIN_OVERRIDES and ADMIN_RADIUS', () => {
+    const lightNames = [...ADMIN_OVERRIDES.map((t) => t.name), ...ADMIN_RADIUS.map((t) => t.name)].sort()
+    expect([...lightBlock.keys()].sort()).toEqual(lightNames)
+    expect([...darkBlock.keys()].sort()).toEqual(ADMIN_OVERRIDES.map((t) => t.name).sort())
+  })
+})
+
 describe('stylesheets stay self-contained', () => {
   const files = readdirSync(stylesDir).filter((f) => f.endsWith('.css'))
   const declared = new Set(
@@ -108,5 +130,14 @@ describe('stylesheets stay self-contained', () => {
     expect(urls.length).toBe(4)
     for (const url of urls) expect(existsSync(new URL(url, stylesDir)), url).toBe(true)
     expect(existsSync(new URL('fonts/OFL.txt', stylesDir))).toBe(true)
+  })
+
+  // 门户展示字体：Courier Prime 4 个文件 + Noto Serif SC 900 的 101 片（档位名是任意中文，只能按 unicode-range 分片）
+  it('every display @font-face source is a bundled file', () => {
+    const urls = [...read('display-fonts.css').matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]!)
+    expect(urls.length).toBe(105)
+    for (const url of urls) expect(existsSync(new URL(url, stylesDir)), url).toBe(true)
+    expect(existsSync(new URL('fonts/OFL-courier-prime.txt', stylesDir))).toBe(true)
+    expect(existsSync(new URL('fonts/noto-serif-sc/OFL.txt', stylesDir))).toBe(true)
   })
 })

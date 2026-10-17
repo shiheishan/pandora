@@ -94,18 +94,12 @@ func (r *Repo) DraftVersionIDs(ctx context.Context, planIDs []uuid.UUID) (map[uu
 	return out, nil
 }
 
-// UpdateVersionSemantics 全量覆盖草稿版本的语义列并把 row_version 加一；条件 id = ? AND row_version = expected AND status = 'draft'。
-func (r *Repo) UpdateVersionSemantics(ctx context.Context, versionID uuid.UUID, expected int64, v *model.PlanVersion) (bool, error) {
+// UpdateVersionUsage 改草稿版本的设备数与限速并把 row_version 加一；条件 id = ? AND status = 'draft'（草稿只由本模块在套餐行锁下改，不另验乐观锁）。
+func (r *Repo) UpdateVersionUsage(ctx context.Context, versionID uuid.UUID, maxDevices, throttleKbps *int) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE plan_versions SET
-		quota_reset_strategy = ?, quota_reset_day = ?, grace_period_hours = ?, grace_keeps_service = ?,
-		renewal_extends_period = ?, renewal_resets_quota = ?, renewal_keeps_addons = ?,
-		max_devices = ?, max_concurrent = ?, device_release_hours = ?, throttle_kbps = ?, notes = ?,
-		row_version = row_version + 1
-		WHERE id = ? AND row_version = ? AND status = 'draft'`,
-		v.QuotaResetStrategy, v.QuotaResetDay, v.GracePeriodHours, v.GraceKeepsService,
-		v.RenewalExtendsPeriod, v.RenewalResetsQuota, v.RenewalKeepsAddons,
-		v.MaxDevices, v.MaxConcurrent, v.DeviceReleaseHours, v.ThrottleKbps, v.Notes,
-		versionID, expected,
+		max_devices = ?, throttle_kbps = ?, row_version = row_version + 1
+		WHERE id = ? AND status = 'draft'`,
+		maxDevices, throttleKbps, versionID,
 	)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
@@ -113,12 +107,12 @@ func (r *Repo) UpdateVersionSemantics(ctx context.Context, versionID uuid.UUID, 
 	return res.RowsAffected == 1, nil
 }
 
-// PublishVersion 发布草稿：status='published', frozen_at=now(), row_version+1；条件 id = ? AND row_version = expected AND status = 'draft'。
-func (r *Repo) PublishVersion(ctx context.Context, versionID uuid.UUID, expected int64) (bool, error) {
+// PublishVersion 发布草稿：status='published', frozen_at=now(), row_version+1；条件 id = ? AND status = 'draft'。
+func (r *Repo) PublishVersion(ctx context.Context, versionID uuid.UUID) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE plan_versions SET
 		status = 'published', frozen_at = now(), row_version = row_version + 1
-		WHERE id = ? AND row_version = ? AND status = 'draft'`,
-		versionID, expected,
+		WHERE id = ? AND status = 'draft'`,
+		versionID,
 	)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
@@ -191,6 +185,32 @@ func (r *Repo) Quotas(ctx context.Context, versionIDs []uuid.UUID) (map[uuid.UUI
 	out := make(map[uuid.UUID][]model.QuotaDefinition)
 	for _, row := range rows {
 		out[row.PlanVersionID] = append(out[row.PlanVersionID], row)
+	}
+	return out, nil
+}
+
+// versionIDRow 是 VersionIDsByPlans 查询的一行。
+type versionIDRow struct {
+	PlanID uuid.UUID `gorm:"column:plan_id"`
+	ID     uuid.UUID `gorm:"column:id"`
+}
+
+// VersionIDsByPlans 批量取套餐的全部版本 id（任何状态，一条 SQL）：套餐 id → 版本 id（按版本号升序）。没有版本的套餐不在 map 里。
+func (r *Repo) VersionIDsByPlans(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	if len(planIDs) == 0 {
+		return map[uuid.UUID][]uuid.UUID{}, nil
+	}
+	var rows []versionIDRow
+	err := r.d.Conn(ctx).Raw(
+		"SELECT plan_id, id FROM plan_versions WHERE plan_id IN ? ORDER BY plan_id, version",
+		planIDs,
+	).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID][]uuid.UUID)
+	for _, row := range rows {
+		out[row.PlanID] = append(out[row.PlanID], row.ID)
 	}
 	return out, nil
 }

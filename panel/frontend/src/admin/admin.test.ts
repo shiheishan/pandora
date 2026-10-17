@@ -2,11 +2,20 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
 import { classifyFailure, createIntentKey, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
-import { describeEvent } from './EventsCapsule'
-import { identityLabels } from './me'
-import { MODULES, modulePath, paletteItems, resolveRoute } from './modules'
+import { hasOwnHead, isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
+import { PAGE_HELP, pageHelp } from './page-help'
 import { createReauthController } from './reauth'
-import { taskCount, tasksSchema } from './tasks'
+import { documentSiteName } from './site'
+import { formatWait, navBadges, taskCount, tasksSchema, ticketAlert } from './tasks'
+
+describe('documentSiteName', () => {
+  it('reads the server-written application-name meta and falls back to Pandora', () => {
+    const doc = (content: string | null) => ({ querySelector: () => (content === null ? null : { getAttribute: () => content }) }) as unknown as Pick<Document, 'querySelector'>
+    expect(documentSiteName(doc(' 夜海加速 '))).toBe('夜海加速')
+    expect(documentSiteName(doc('   '))).toBe('Pandora')
+    expect(documentSiteName(doc(null))).toBe('Pandora')
+  })
+})
 
 describe('resolveRoute', () => {
   it('keeps valid module/tab paths', () => {
@@ -52,20 +61,98 @@ describe('resolveRoute', () => {
   })
 })
 
-describe('paletteItems', () => {
-  it('lists 12 entries by default and filters on title + path', () => {
-    expect(paletteItems('')).toHaveLength(12)
-    const gift = paletteItems('礼品')
-    expect(gift.map((i) => [i.module, i.tab])).toEqual([['marketing', 'gifts']])
-    expect(paletteItems('reality').some((i) => i.module === 'nodes')).toBe(true)
-    expect(paletteItems('完全不存在')).toEqual([])
+describe('isDetailRoute', () => {
+  it('详情页：rest 非空且在登记表里', () => {
+    expect(isDetailRoute('users', 'list', ['u1'])).toBe(true)
+    expect(isDetailRoute('billing', 'orders', ['PD1'])).toBe(true)
+    expect(isDetailRoute('nodes', 'nodes', ['n1'])).toBe(true)
+    expect(isDetailRoute('nodes', 'servers', ['s1'])).toBe(true)
+    expect(isDetailRoute('plans', null, ['p1'])).toBe(true)
+    expect(isDetailRoute('plans', null, ['p1', 'prices'])).toBe(true)
   })
 
-  it('lists every module and tab (the admin console has no per-page permissions)', () => {
-    for (const [key, def] of Object.entries(MODULES)) {
-      const pages: Array<readonly [string | null, string]> = def.tabs ? [...def.tabs] : [[null, def.title]]
-      for (const [tab, title] of pages) expect(paletteItems(title).some((i) => i.module === key && i.tab === tab), `${key}/${tab}`).toBe(true)
+  it('列表或筛选：rest 为空或不在登记表', () => {
+    expect(isDetailRoute('users', 'list', [])).toBe(false)
+    expect(isDetailRoute('nodes', 'routing', ['g1'])).toBe(false)
+    expect(isDetailRoute('content', 'kb', ['a'])).toBe(false)
+    expect(isDetailRoute('tickets', null, ['TK1'])).toBe(false)
+    expect(isDetailRoute('users', 'groups', ['g'])).toBe(false)
+  })
+})
+
+describe('nav groups', () => {
+  it('NAV_GROUPS 覆盖全部模块各一次，且分组标题与 MODULES.group 一致', () => {
+    const keys = NAV_GROUPS.flatMap(([, mods]) => mods)
+    expect(new Set(keys)).toEqual(new Set(Object.keys(MODULES) as typeof keys))
+    expect(keys.length).toBe(Object.keys(MODULES).length)
+    expect(NAV_GROUPS[0]![0]).toBe(null)
+    for (const [title, mods] of NAV_GROUPS) {
+      if (title === null) continue
+      for (const k of mods) expect(MODULES[k].group).toBe(title)
     }
+  })
+
+  it('全幅仅工单', () => {
+    expect(isFullBleed('tickets')).toBe(true)
+    expect(isFullBleed('users')).toBe(false)
+  })
+
+  it('自画页头仅仪表盘', () => {
+    const own = (Object.keys(MODULES) as (keyof typeof MODULES)[]).filter(hasOwnHead)
+    expect(own).toEqual(['dash'])
+  })
+})
+
+describe('paletteGroups', () => {
+  const flat = (q: string) => paletteGroups(q).flatMap((g) => g.items)
+
+  it('lists every module under 快速跳转 when the query is empty', () => {
+    const groups = paletteGroups('')
+    expect(groups.map((g) => g.label)).toEqual(['快速跳转'])
+    expect(groups[0]!.items.map((i) => i.module)).toEqual(Object.keys(MODULES))
+    expect(groups[0]!.items.every((i) => i.kind === '模块' && i.tab === null)).toBe(true)
+  })
+
+  it('lists 模块 › 页签 and deep links under 页面 when there is a query', () => {
+    expect(paletteGroups('礼品').map((g) => g.label)).toEqual(['页面'])
+    expect(flat('礼品').map((i) => [i.module, i.tab, i.title])).toEqual([['marketing', 'gifts', '营销 › 礼品卡']])
+    expect(flat('reality').map((i) => [i.module, i.tab, i.title])).toEqual([['nodes', 'nodes', '节点与服务器 › 节点']])
+    expect(flat('设备策略').map((i) => [i.module, i.tab])).toEqual([['security', 'risk']])
+    expect(paletteGroups('完全不存在')).toEqual([])
+  })
+
+  it('reaches every module and tab (the admin console has no per-page permissions)', () => {
+    for (const [key, def] of Object.entries(MODULES)) {
+      const pages: Array<readonly [string | null, string]> = def.tabs ? def.tabs.map(([tab, title]) => [tab, `${def.title} › ${title}`] as const) : [[null, def.title]]
+      for (const [tab, title] of pages) expect(flat(title).some((i) => i.module === key && i.tab === tab), `${key}/${tab}`).toBe(true)
+    }
+  })
+
+  it('drops the tabs the 10-16 redesign removed', () => {
+    expect(resolveRoute('/users/resets').canonical).toBe('/users/list')
+    expect(resolveRoute('/plans/packs')).toMatchObject({ module: 'plans', tab: null, rest: ['packs'] })
+    expect(flat('流量包')).toEqual([])
+    expect(flat('挂账')).toEqual([])
+  })
+})
+
+describe('PAGE_HELP', () => {
+  it('only registers pages that exist', () => {
+    for (const key of Object.keys(PAGE_HELP)) {
+      const [module = '', tab] = key.split(':')
+      const route = resolveRoute(tab ? `/${module}/${tab}` : `/${module}`)
+      expect(route.canonical, key).toBe(tab ? `/${module}/${tab}` : `/${module}`)
+      expect(pageHelp(route.module, route.tab), key).toBe(PAGE_HELP[key])
+    }
+  })
+
+  it('carries the four node sections and the generic entries from the design', () => {
+    expect(pageHelp('nodes', 'nodes')?.sections.map((s) => s.title)).toEqual(['新建节点 · 6 步', '已停用 vs 已退役'])
+    expect(pageHelp('nodes', 'servers')?.label).toBe('服务器页怎么用')
+    expect(pageHelp('nodes', 'pools')?.label).toBe('节点池怎么用')
+    expect(pageHelp('nodes', 'routing')?.label).toBe('路由怎么用')
+    expect(pageHelp('users', 'list')).toBeUndefined()
+    expect(JSON.stringify(PAGE_HELP)).not.toMatch(/专属价|挂账|门户/)
   })
 })
 
@@ -87,38 +174,9 @@ describe('createReauthController', () => {
   })
 })
 
-describe('identityLabels', () => {
-  it('always says 管理员 and takes the avatar from the name', () => {
-    const me = { user_id: 'abcdef12-3456', reauthed: true, email: 'linzhou@pandora.run', display_name: '林舟' }
-    expect(identityLabels(me)).toEqual({ title: '管理员 · 林舟', subtitle: 'linzhou@pandora.run', initial: '林' })
-    expect(identityLabels({ ...me, display_name: null })).toEqual({ title: '管理员 · linzhou', subtitle: 'linzhou@pandora.run', initial: 'l' })
-  })
-
-  it('falls back to 管理员 before v1/me loads', () => {
-    expect(identityLabels(undefined)).toEqual({ title: '管理员', subtitle: '', initial: '管' })
-  })
-})
-
 describe('passwordStrength', () => {
   it('fills one bar per 4 characters, capped at 4', () => {
     expect([0, 3, 4, 11, 12, 16, 40].map((n) => passwordStrength('x'.repeat(n)))).toEqual([0, 0, 1, 2, 3, 4, 4])
-  })
-})
-
-describe('describeEvent', () => {
-  it('turns a table-change event into a generic, navigable item', () => {
-    const item = describeEvent({ event: 'orders.changed', data: '{"table":"orders","op":"INSERT","id":"0192a1b2-c3d4"}' }, 1)
-    expect(item).toMatchObject({ title: '订单变更 · 新建', body: 'orders · 0192a1b2', module: 'billing', tab: 'orders', tone: 'ok' })
-  })
-
-  it('handles ticket replies, unknown topics and bad payloads', () => {
-    expect(describeEvent({ event: 'ticket.updated', data: '{"ticket_id":"t-123456789"}' }, 2)).toMatchObject({ title: '工单回复变更', body: 't-123456', module: 'tickets' })
-    expect(describeEvent({ event: 'data.changed', data: 'not json' }, 3)).toMatchObject({ title: '数据变更', body: '', module: null })
-  })
-
-  it('describes switch toggles by code and direction', () => {
-    expect(describeEvent({ event: 'switches.changed', data: '{"code":"billing.checkout","enabled":false}' }, 4)).toMatchObject({ title: '降级开关变更 · 已暂停', body: 'billing.checkout', module: 'security', tab: 'switches', tone: 'warn' })
-    expect(describeEvent({ event: 'switches.changed', data: '{"code":"admin.writes","enabled":true}' }, 5)).toMatchObject({ title: '降级开关变更 · 已恢复', body: 'admin.writes' })
   })
 })
 
@@ -127,7 +185,7 @@ describe('dashboard/tasks', () => {
     as_of: '2026-09-24T08:00:00Z',
     items: [
       { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: null },
-      { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128000 }] },
+      { kind: 'withdrawals_pending', count: 3, amount: 128000 },
       { kind: 'notifications_backlog', queued: 214, failed_total: 9, backlog_state: 'backlogged' },
     ],
   }
@@ -144,6 +202,45 @@ describe('dashboard/tasks', () => {
     expect(taskCount(items, 'withdrawals_pending')).toBe(3)
     expect(taskCount(items, 'nodes_offline')).toBe(0)
     expect(taskCount(undefined, 'tickets_open')).toBe(0)
+  })
+
+  it('navBadges：侧栏徽标映射与为 0 省略', () => {
+    const badgeItems = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [
+        { kind: 'tickets_open', count: 7, high_priority: 0, oldest_wait_seconds: null },
+        { kind: 'orders_pending_stale', count: 2, threshold_seconds: 3600 },
+        { kind: 'withdrawals_pending', count: 0, amount: 0 },
+        { kind: 'nodes_offline', count: 3, sample: [], longest_offline_seconds: null },
+      ],
+    }).items
+    expect(navBadges(badgeItems)).toEqual({
+      tickets: { count: 7, hot: true },
+      billing: { count: 2 },
+      nodes: { count: 3 },
+    })
+    expect(navBadges(undefined)).toEqual({})
+  })
+
+  it('ticketAlert：无工单为 null，有工单带最久等待', () => {
+    const zero = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'tickets_open', count: 0, high_priority: 0, oldest_wait_seconds: null }],
+    }).items
+    expect(ticketAlert(zero)).toBe(null)
+    expect(ticketAlert(undefined)).toBe(null)
+    const items = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'tickets_open', count: 7, high_priority: 0, oldest_wait_seconds: 10800 }],
+    }).items
+    expect(ticketAlert(items)).toEqual({ count: 7, oldestWaitSeconds: 10800 })
+  })
+
+  it('formatWait 向下取整', () => {
+    expect(formatWait(30)).toBe('不到 1 分钟')
+    expect(formatWait(125)).toBe('2 分钟')
+    expect(formatWait(10800)).toBe('3 小时')
+    expect(formatWait(200000)).toBe('2 天')
   })
 })
 

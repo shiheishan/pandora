@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 删人断线端到端（P5 最后一条完成标准）：用户被移出名单后，节点在几秒内断掉他已建立的连接。
+# 删人断线端到端：用户被移出名单后，节点在几秒内断掉他已建立的连接。
 #
 # 三个真件，全在本机回环上：
 #   - 面板新二进制（pandora serve + worker，由调用方起好）；
@@ -290,6 +290,9 @@ else
 fi
 DB_NAME=$(db 'SELECT current_database()')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] || die "database name must contain a standalone test/e2e segment" "$DB_NAME"
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 TMP=$(mktemp -d)
 chmod 700 "$TMP"
@@ -474,7 +477,6 @@ import json, os, sys
 out, addr, state, ident = sys.argv[1:5]
 cfg = {
     "log_level": "info",
-    "native_only": True,
     "cache_dir": state,
     "panel": {"address": addr, "identity_dir": ident},
     "runtime": {"allow_private_destinations": True},
@@ -506,12 +508,12 @@ done
 ok "pdnd 监听 $KICK_NODE_PORT（配置已下发）"
 
 admin_auth
-expect_http 201 POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 201 POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: kick-plan-$RUN" \
-  -d "{\"code\":\"kick-$RUN\",\"name\":\"Kick $RUN\",\"visibility\":\"public\",\"traffic_gb\":10,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}"
+  -d "{\"kind\":\"subscription\",\"name\":\"Kick $RUN\",\"visibility\":\"public\",\"traffic_bytes\":10737418240,\"pool_ids\":[\"$POOL_ID\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":1000}],\"publish\":true}"
 PLAN=$(json_get "$HTTP_BODY" plan.id)
-PRICE=$(json_get "$HTTP_BODY" price_ids.0)
-is_uuid "$PLAN" && is_uuid "$PRICE" || die "plans/complete returned invalid ids"
+PRICE=$(json_get "$HTTP_BODY" plan.prices.0.id)
+is_uuid "$PLAN" && is_uuid "$PRICE" || die "POST /plans returned invalid ids"
 ok "套餐 kick-$RUN 已发布"
 
 #-------------------------------------------------------------------------------

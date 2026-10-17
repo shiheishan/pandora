@@ -1,6 +1,6 @@
 package handler
 
-// 本文件归 p5-inventory：服务器后台接口的请求与响应 DTO（JSON 形状对齐前端 screens/nodes/schemas.ts）。
+// 服务器后台接口的请求与响应 DTO（JSON 形状对齐前端 screens/nodes/schemas.ts）。
 
 import (
 	"time"
@@ -55,7 +55,7 @@ type serverDeleteRequest struct {
 // 响应
 // ---------------------------------------------------------------------------
 
-// serverResponse 是一台服务器（serverSchema）。control_node_id 恒为 null：新设计一台服务器一条会话，没有「控制节点」。
+// serverResponse 是一台服务器（serverSchema）。
 // 资源指标取最新一个指标点，没有点时为 null。
 type serverResponse struct {
 	ID                 uuid.UUID  `json:"id"`
@@ -78,7 +78,6 @@ type serverResponse struct {
 	DiskGB             *int       `json:"disk_gb"`
 	CapacityNodes      int        `json:"capacity_nodes"`
 	Notes              *string    `json:"notes"`
-	ControlNodeID      *uuid.UUID `json:"control_node_id"`
 	NodeCount          int        `json:"node_count"`
 	ActiveNodeCount    int        `json:"active_node_count"`
 	ServingNodeCount   int        `json:"serving_node_count"`
@@ -102,13 +101,11 @@ type serversResponse struct {
 type serverNodeResponse struct {
 	ID                uuid.UUID  `json:"id"`
 	Name              string     `json:"name"`
-	Status            string     `json:"status"`
 	ServingStatus     string     `json:"serving_status"`
 	NodeType          *string    `json:"node_type"`
 	DisplayName       *string    `json:"display_name"`
 	ServerHost        *string    `json:"server_host"`
 	ServerPort        *int       `json:"server_port"`
-	Kernel            string     `json:"kernel"`
 	TrafficRate       float64    `json:"traffic_rate"`
 	ConfigValidatedAt *time.Time `json:"config_validated_at"`
 	LastHeartbeatAt   *time.Time `json:"last_heartbeat_at"`
@@ -177,13 +174,11 @@ func serverNodeFrom(n service.ServerNode) serverNodeResponse {
 	return serverNodeResponse{
 		ID:                n.ID,
 		Name:              n.Name,
-		Status:            n.ServingStatus,
 		ServingStatus:     n.ServingStatus,
 		NodeType:          n.NodeType,
 		DisplayName:       n.DisplayName,
 		ServerHost:        n.ServerHost,
 		ServerPort:        n.ServerPort,
-		Kernel:            n.Kernel,
 		TrafficRate:       n.TrafficRate.InexactFloat64(),
 		ConfigValidatedAt: n.ConfigValidatedAt,
 		LastHeartbeatAt:   n.LastHeartbeatAt,

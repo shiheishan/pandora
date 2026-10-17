@@ -1,9 +1,10 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, Empty, IconClose, Input, QueryView, Select, TextArea, useToast } from '../../../ui'
-import { MATCH_KINDS, OUTBOUND_TYPES, insertRule, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, sourceLabel, type MatchKind, type OutboundRow, type RuleRow } from './logic'
+import { Button, Empty, IconClose, Input, QueryView, Select, TextArea, useToast } from '../../../ui'
+import { MATCH_KINDS, OUTBOUND_TYPES, insertRule, newRule, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, sourceLabel, type MatchKind, type OutboundRow, type RuleRow } from './logic'
 import { EffectivePreview, NodeGroupMembership } from './NodeRouteGroups'
 import css from './nodes.module.css'
 import { useEffectiveRouting, useFailure, useGlobalRouting, useInvalidateNodes, useNodeRouting } from './queries'
@@ -78,8 +79,11 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
         <div className={css.sectionHead}>
           <h4 className={css.sectionTitle}>分流规则</h4>
           <span className={css.faint}>本节点的规则排在所在路由组与全局规则之前，自上而下匹配，命中即停；这里的兜底规则会遮住组与全局的全部规则</span>
+          <span className={css.sectionHeadEnd}>
+            <AddRuleButton rows={rules} disabled={save.isPending} onChange={setRules} />
+          </span>
         </div>
-        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={save.isPending} onChange={setRules} emptyHint="沿用路由组与全局规则。加一条规则只影响这个节点。" />
+        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={save.isPending} onChange={setRules} emptyHint="沿用路由组与全局规则。加一条规则只影响这个节点。" inlineAdd={false} />
       </section>
 
       <section>
@@ -100,7 +104,7 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
   )
 }
 
-/** 出站行编辑器：标签 + 类型 + settings JSON + 删除（抽屉够宽，逐行平铺；全局路由页右栏窄，改用列表 + 弹窗） */
+/** 出站行编辑器：标签 + 类型 + settings JSON + 删除（编辑弹窗够宽，逐行平铺；全局路由页右栏窄，改用列表 + 弹窗） */
 function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: OutboundRow[]; errors: Record<number, string>; disabled: boolean; onChange: (rows: OutboundRow[]) => void; emptyHint: string }) {
   const update = (i: number, patch: Partial<OutboundRow>) => onChange(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   return (
@@ -120,8 +124,8 @@ function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: O
       ))}
       {!disabled && (
         <div>
-          <Button size="sm" onClick={() => onChange([...rows, { tag: '', type: 'shadowsocks', settings: '{}' }])}>
-            ＋ 添加出站
+          <Button size="sm" icon={PlusSignIcon} onClick={() => onChange([...rows, { tag: '', type: 'shadowsocks', settings: '{}' }])}>
+            添加出站
           </Button>
         </div>
       )}
@@ -129,7 +133,20 @@ function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: O
   )
 }
 
-/** 规则行编辑器：匹配类型 + 值 + 出站 + 启用 + 备注，上下移与删除 */
+/** 「添加规则」：放在规则段头（设计稿）；末尾是兜底时插到兜底之前 */
+export function AddRuleButton({ rows, disabled, onChange }: { rows: RuleRow[]; disabled: boolean; onChange: (rows: RuleRow[]) => void }) {
+  return (
+    <Button size="sm" icon={PlusSignIcon} disabled={disabled} onClick={() => onChange(insertRule(rows, newRule()))}>
+      添加规则
+    </Button>
+  )
+}
+
+/**
+ * 规则行编辑器：匹配类型 + 值 + 出站，上下移与删除。启用与备注不在界面上编辑，保存时原样带回。
+ * 旧匹配类型（域名、端口、网络、来源）的规则只读显示匹配条件、原样保存；出站仍可改，也可移动或删除。
+ * inlineAdd 为 false 时由调用方把 AddRuleButton 放在段头
+ */
 export function RuleRows({
   rows,
   errors,
@@ -137,6 +154,7 @@ export function RuleRows({
   disabled,
   onChange,
   emptyHint,
+  inlineAdd = true,
 }: {
   rows: RuleRow[]
   errors: Record<number, string>
@@ -144,6 +162,7 @@ export function RuleRows({
   disabled: boolean
   onChange: (rows: RuleRow[]) => void
   emptyHint: string
+  inlineAdd?: boolean
 }) {
   const update = (i: number, patch: Partial<RuleRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const move = (i: number, d: -1 | 1) => {
@@ -156,13 +175,32 @@ export function RuleRows({
   return (
     <div className={css.rules}>
       {rows.length === 0 && <Empty bare title="没有规则" description={emptyHint} />}
+      {rows.length > 0 && (
+        <div className={`${css.ruleRow} ${css.ruleHead}`} aria-hidden="true">
+          <span className={css.rNo}>#</span>
+          <span className={css.rKind}>匹配类型</span>
+          <span className={css.rValue}>内容</span>
+          <span className={css.rOut}>出站</span>
+          <span className={css.rNote}>备注</span>
+          <span className={`${css.ruleTools} ${css.rTools}`}>顺序</span>
+        </div>
+      )}
       {rows.map((r, i) => (
         <div key={i} className={css.ruleRow}>
           <span className={`${css.mono} ${css.faint} ${css.rNo}`}>{i + 1}</span>
-          <Select aria-label="匹配类型" size="sm" fieldClassName={css.rKind} value={r.kind} disabled={disabled} onChange={(e) => update(i, { kind: e.target.value as MatchKind, value: e.target.value === 'fallback' ? '' : r.value })} options={MATCH_KINDS.map(([value, label]) => ({ value, label }))} />
-          <Input aria-label="匹配值" size="sm" mono fieldClassName={css.rValue} value={r.value} disabled={disabled || r.kind === 'fallback'} placeholder={r.kind === 'fallback' ? '全部流量' : '多个用逗号分隔'} onChange={(e) => update(i, { value: e.target.value })} />
+          {r.legacy ? (
+            <span className={css.rLegacy} title="旧匹配类型，只读显示，保存时原样保留">
+              <span>{r.legacy.label}</span>
+              <span className={`${css.mono} ${css.breakAll}`}>{r.legacy.value}</span>
+            </span>
+          ) : (
+            <>
+              <Select aria-label="匹配类型" size="sm" fieldClassName={css.rKind} value={r.kind} disabled={disabled} onChange={(e) => update(i, { kind: e.target.value as MatchKind, value: e.target.value === 'fallback' ? '' : r.value })} options={MATCH_KINDS.map(([value, label]) => ({ value, label }))} />
+              <Input aria-label="匹配值" size="sm" mono fieldClassName={css.rValue} value={r.value} disabled={disabled || r.kind === 'fallback'} placeholder={r.kind === 'fallback' ? '全部流量' : '多个用逗号分隔'} onChange={(e) => update(i, { value: e.target.value })} />
+            </>
+          )}
           <Select aria-label="出站" size="sm" fieldClassName={css.rOut} placeholder="选择出站" value={r.outbound} disabled={disabled} onChange={(e) => update(i, { outbound: e.target.value })} options={outbounds.map(([value, label]) => ({ value, label }))} />
-          <Checkbox label="启用" className={css.rOn} checked={r.enabled} disabled={disabled} onChange={(e) => update(i, { enabled: e.target.checked })} />
+          <span className={`${css.rNote} ${css.faint} ${css.ellipsis}`} title={r.note || undefined}>{r.note || '—'}</span>
           <span className={`${css.ruleTools} ${css.rTools}`}>
             <Button size="xs" variant="ghost" aria-label={`第 ${i + 1} 条上移`} disabled={disabled || i === 0} onClick={() => move(i, -1)}>
               ↑
@@ -174,15 +212,12 @@ export function RuleRows({
               <IconClose />
             </Button>
           </span>
-          <Input aria-label="备注" size="sm" value={r.note} disabled={disabled} placeholder="备注（可选）" onChange={(e) => update(i, { note: e.target.value })} fieldClassName={css.rNote} />
           {errors[i] && <span className={`${css.error} ${css.rErr}`}>{errors[i]}</span>}
         </div>
       ))}
-      {!disabled && (
+      {inlineAdd && !disabled && (
         <div>
-          <Button size="sm" onClick={() => onChange(insertRule(rows, { kind: 'domain_suffix', value: '', outbound: 'direct', enabled: true, note: '' }))}>
-            ＋ 添加规则
-          </Button>
+          <AddRuleButton rows={rows} disabled={disabled} onChange={onChange} />
         </div>
       )}
     </div>

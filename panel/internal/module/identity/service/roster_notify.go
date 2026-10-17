@@ -8,7 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
-// RosterNotifier 由 node 模块实现（P5）：用户的账号状态或用户组变了（影响节点名单与线路），在事务提交后调用。
+// RosterNotifier 由 node 模块实现：用户的账号状态或用户组变了（影响节点名单与线路），在事务提交后调用。
 // 实现必须很快返回（推进纪元、排任务），不能回调本模块的写方法。没注册时什么都不做。
 type RosterNotifier interface {
 	UsersChanged(ctx context.Context, userIDs []uuid.UUID)

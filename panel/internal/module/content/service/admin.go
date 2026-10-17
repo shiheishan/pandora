@@ -15,8 +15,9 @@ import (
 
 // ListAdmin 后台列出内容版本。
 func (s *Service) ListAdmin(ctx context.Context, f ListFilter) ([]Page, error) {
-	limit := f.Limit
-	if limit <= 0 || limit > 500 {
+	// handler 已经 pagination.Parse 过（缺省 200、上限 500）；这里只兜底，口径与它一致
+	limit := min(f.Limit, 500)
+	if limit <= 0 {
 		limit = 200
 	}
 	rows, err := s.repo.ListAdmin(ctx, repo.AdminFilter{

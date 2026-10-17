@@ -5,18 +5,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // PaidNoticeRow 是一张已履约订单的通知素材。
 type PaidNoticeRow struct {
-	ID      uuid.UUID `gorm:"column:id"`
-	UserID  uuid.UUID `gorm:"column:user_id"`
-	OrderNo string    `gorm:"column:order_no"`
-	Kind    string    `gorm:"column:kind"`
-	// TrafficBytes 是流量包订单行的流量（其余种类为 nil）
-	TrafficBytes   *int64    `gorm:"column:traffic_bytes"`
+	ID             uuid.UUID `gorm:"column:id"`
+	UserID         uuid.UUID `gorm:"column:user_id"`
+	OrderNo        string    `gorm:"column:order_no"`
+	Kind           string    `gorm:"column:kind"`
 	SubscriptionID uuid.UUID `gorm:"column:subscription_id"`
 	FulfilledAt    time.Time `gorm:"column:fulfilled_at"`
+	// TotalAmount 是订单总额（管理员收款提醒用）
+	TotalAmount decimal.Decimal `gorm:"column:total_amount"`
 }
 
 // PaidForNotify 取 (fulfilled_at, id) 在 (afterAt, afterID) 之后、挂在订阅上的已履约订单（充值单没有订阅，不在内），
@@ -24,8 +25,7 @@ type PaidNoticeRow struct {
 func (r *Repo) PaidForNotify(ctx context.Context, afterAt time.Time, afterID uuid.UUID, limit int) ([]PaidNoticeRow, error) {
 	var out []PaidNoticeRow
 	err := r.d.Conn(ctx).Raw(`
-		SELECT o.id, o.user_id, o.order_no, o.kind, o.subscription_id, o.fulfilled_at,
-		       (SELECT i.snapshot_traffic_bytes FROM order_items i WHERE i.order_id = o.id LIMIT 1) AS traffic_bytes
+		SELECT o.id, o.user_id, o.order_no, o.kind, o.subscription_id, o.fulfilled_at, o.total_amount
 		  FROM orders o
 		 WHERE o.status = 'fulfilled' AND o.subscription_id IS NOT NULL AND (o.fulfilled_at, o.id) > (?, ?)
 		 ORDER BY o.fulfilled_at, o.id

@@ -24,9 +24,9 @@ func policyReality(t *testing.T, extra string) string {
 		`"private_key":"` + priv + `","public_key":"` + pub + `","short_id":"0a1b2c3d"` + extra + `}`
 }
 
-func adminFields(t *testing.T, nodeType, kernel, raw string) map[string]string {
+func adminFields(t *testing.T, nodeType, raw string) map[string]string {
 	t.Helper()
-	version, fields := Validate(nodeType, kernel, 443, json.RawMessage(raw))
+	version, fields := Validate(nodeType, 443, json.RawMessage(raw))
 	if len(fields) == 0 && version != schemaVersion {
 		t.Fatalf("%s %s: accepted with version %d", nodeType, raw, version)
 	}
@@ -35,14 +35,14 @@ func adminFields(t *testing.T, nodeType, kernel, raw string) map[string]string {
 
 func expectAccepted(t *testing.T, nodeType, raw string) {
 	t.Helper()
-	if fields := adminFields(t, nodeType, "pandora-native", raw); len(fields) != 0 {
+	if fields := adminFields(t, nodeType, raw); len(fields) != 0 {
 		t.Errorf("%s %s: rejected %v", nodeType, raw, fields)
 	}
 }
 
 func expectRejected(t *testing.T, nodeType, raw, field, contains string) {
 	t.Helper()
-	fields := adminFields(t, nodeType, "pandora-native", raw)
+	fields := adminFields(t, nodeType, raw)
 	msg, ok := fields[field]
 	if !ok {
 		t.Errorf("%s %s: want error on %s, got %v", nodeType, raw, field, fields)
@@ -61,7 +61,7 @@ func TestFallbackAcceptsPublicHostPort(t *testing.T) {
 	}
 	// REALITY 的 Trojan 也能配：REALITY 层认证过了、Trojan 口令不对时回落
 	expectAccepted(t, "trojan", `{"tls":2,"network":"tcp",`+policyReality(t, "")+`,"fallback":"www.example.com:80"}`)
-	// VLESS REALITY + tcp（w4kernel 起 pdnd 读 fallback）：UUID 不对时回落
+	// VLESS REALITY + tcp（pdnd 读 fallback）：UUID 不对时回落
 	for _, fallback := range []string{"www.example.com:80", "203.0.113.10:8080", "127.0.0.1:80"} {
 		expectAccepted(t, "vless", `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",`+policyReality(t, "")+`,"fallback":"`+fallback+`"}`)
 	}
@@ -127,7 +127,7 @@ func TestFallbackOnlyWhereNodeAgentHonoursIt(t *testing.T) {
 }
 
 func TestFallbackIsDeliveredVerbatim(t *testing.T) {
-	// 回落只下发给节点、不进订阅：翻译成内核字段时原样保留 host:port（节点配置文档由第二波组装）
+	// 回落只下发给节点、不进订阅：翻译成内核字段时原样保留 host:port（节点配置文档由 node/service 的 config_docs.go 组装）
 	cases := []struct{ nodeType, raw, want string }{
 		{"trojan", `{"tls":1,"network":"tcp",` + policyCert + `,"fallback":"www.example.com:80"}`, "www.example.com:80"},
 		// VLESS 同样原样下发给节点（pdnd vless.go 用 parseProbeFallback 读）
@@ -167,7 +167,7 @@ func TestPlaintextTCPIsRejectedButCDNTransportsStay(t *testing.T) {
 
 func TestPlainTLSGivesAReadableMessage(t *testing.T) {
 	for _, nodeType := range []string{"vless", "vmess"} {
-		expectRejected(t, nodeType, `{"tls":1,"network":"tcp"}`, "protocol_config.tls", "证书自动申请上线后开放")
+		expectRejected(t, nodeType, `{"tls":1,"network":"tcp"}`, "protocol_config.tls", "普通 TLS 暂未开放")
 		expectRejected(t, nodeType, `{"tls":7,"network":"ws"}`, "protocol_config.tls", "0（不加密）或 2（REALITY）")
 	}
 }
@@ -282,7 +282,7 @@ func TestCertificatePathsLiveInTheCertificateDirectory(t *testing.T) {
 		"http":      `{"tls":true,"cert_path":"/etc/ssl/c.pem","key_path":"k.pem"}`,
 		"vless":     `{"tls":0,"network":"xhttp-h3","cert_path":"/etc/ssl/c.pem","key_path":"k.pem"}`,
 	} {
-		fields := adminFields(t, nodeType, "pandora-native", raw)
+		fields := adminFields(t, nodeType, raw)
 		if !strings.Contains(fields["protocol_config.cert_path"], nodeCertificateDir) || !strings.Contains(fields["protocol_config.key_path"], "绝对路径") {
 			t.Errorf("%s: fields=%v", nodeType, fields)
 		}
@@ -300,25 +300,6 @@ func TestProtocolConfigWarningsIgnoreCertificatePaths(t *testing.T) {
 	}
 	if got := Warnings("shadowsocks", json.RawMessage(`not json`)); got != nil {
 		t.Fatalf("malformed config produced warnings: %v", got)
-	}
-}
-
-func TestKernelOnlyAcceptsNativeChoices(t *testing.T) {
-	for _, kernel := range []string{"", "auto", "pandora-native"} {
-		if fields := adminFields(t, "shadowsocks", kernel, `{"cipher":"aes-256-gcm"}`); len(fields) != 0 {
-			t.Errorf("kernel %q rejected: %v", kernel, fields)
-		}
-	}
-	for _, kernel := range []string{"sing-box", "xray-core", "native", "whatever"} {
-		fields := adminFields(t, "shadowsocks", kernel, `{"cipher":"aes-256-gcm"}`)
-		if !strings.Contains(fields["kernel"], "NativeCore") {
-			t.Errorf("kernel %q: fields=%v", kernel, fields)
-		}
-	}
-	for in, want := range map[string]string{"": "auto", "auto": "auto", "pandora-native": "pandora-native", "sing-box": "auto", "xray-core": "auto"} {
-		if got := EffectiveKernel(in); got != want {
-			t.Errorf("EffectiveKernel(%q) = %q, want %q", in, got, want)
-		}
 	}
 }
 

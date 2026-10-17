@@ -57,12 +57,15 @@ func (s *Service) SubmitGeneration(ctx context.Context, in GenerateInput) (Gener
 	var job model.UserGenerationJob
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if in.GroupID != nil {
-			ok, err := s.repo.GroupExists(ctx, *in.GroupID)
+			st, ok, err := s.repo.GroupStatus(ctx, *in.GroupID)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				return errs.Invalid(map[string]string{"group_id": "分组不存在"})
+			}
+			if st == GroupDisabled {
+				return errs.Invalid(map[string]string{"group_id": "分组已停用"})
 			}
 		}
 		job = model.UserGenerationJob{
@@ -219,6 +222,10 @@ func normalizeGenerateInput(in GenerateInput) (GenerateInput, error) {
 	if !isSafeDomain(in.EmailDomain) {
 		return in, errs.Invalid(map[string]string{
 			"email_domain": "域名格式不正确"})
+	}
+	if reservedEmail("x@" + in.EmailDomain) {
+		return in, errs.Invalid(map[string]string{
+			"email_domain": "这个域名留给已注销账号，不能用"})
 	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
 		return in, errs.Invalid(map[string]string{

@@ -14,29 +14,27 @@ import (
 
 type poolDeliveryFixture struct {
 	planID uuid.UUID
-	v      uuid.UUID
-	v1     uuid.UUID
-	v2     uuid.UUID
-	v3     uuid.UUID
-	v4     uuid.UUID
-	v5     uuid.UUID
+	p1     uuid.UUID
+	p2     uuid.UUID
+	p3     uuid.UUID
+	p4     uuid.UUID
+	p5     uuid.UUID
 	poolA  uuid.UUID
 	poolB  uuid.UUID
 	poolC  uuid.UUID
 	poolD  uuid.UUID
 }
 
-// seedPoolDeliveryFixture 建池 A–D 与节点夹具（见任务说明）。
+// seedPoolDeliveryFixture 建池 A–D 与节点夹具。
 func seedPoolDeliveryFixture(t *testing.T, ctx context.Context, e *poolEnv) poolDeliveryFixture {
 	t.Helper()
 	fx := poolDeliveryFixture{
 		planID: uuid.New(),
-		v:      uuid.New(),
-		v1:     uuid.New(),
-		v2:     uuid.New(),
-		v3:     uuid.New(),
-		v4:     uuid.New(),
-		v5:     uuid.New(),
+		p1:     uuid.New(),
+		p2:     uuid.New(),
+		p3:     uuid.New(),
+		p4:     uuid.New(),
+		p5:     uuid.New(),
 	}
 	fx.poolA = seedPoolRow(t, ctx, e, PoolActive)
 	fx.poolB = seedPoolRow(t, ctx, e, PoolActive)
@@ -91,23 +89,17 @@ func TestPlanPoolsCountsAndBinding(t *testing.T) {
 	e, ctx := newPoolEnv(t)
 	fx := seedPoolDeliveryFixture(t, ctx, e)
 
-	e.cat.binding = catalogsvc.PoolBindingVersion{
-		VersionID:  &fx.v,
-		Status:     "draft",
-		RowVersion: 3,
-		Editable:   true,
-		PoolIDs:    []uuid.UUID{fx.poolB},
+	// 套餐不在 plans 里应报 NotFound
+	if _, err := e.svc.PlanPools(ctx, fx.planID); poolErrCode(err) != errs.NotFound {
+		t.Fatalf("套餐不存在期望 NotFound，得到 %v", err)
 	}
+
+	e.cat.plans[fx.planID] = catalogsvc.Plan{ID: fx.planID, Name: "测试套餐"}
+	e.cat.planPools[fx.planID] = []uuid.UUID{fx.poolB}
 
 	got, err := e.svc.PlanPools(ctx, fx.planID)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got.VersionID == nil || *got.VersionID != fx.v {
-		t.Fatalf("VersionID 期望 %v，得到 %v", fx.v, got.VersionID)
-	}
-	if got.VersionStatus != "draft" || got.RowVersion != 3 || !got.Editable {
-		t.Fatalf("元数据不符: status=%q rv=%d editable=%v", got.VersionStatus, got.RowVersion, got.Editable)
 	}
 
 	listed := poolIDsInResult(got.Pools)
@@ -133,7 +125,7 @@ func TestPlanPoolsCountsAndBinding(t *testing.T) {
 		t.Fatalf("池 D: %+v", d)
 	}
 
-	e.cat.binding.PoolIDs = []uuid.UUID{fx.poolB, fx.poolC}
+	e.cat.planPools[fx.planID] = []uuid.UUID{fx.poolB, fx.poolC}
 	got2, err := e.svc.PlanPools(ctx, fx.planID)
 	if err != nil {
 		t.Fatal(err)
@@ -151,10 +143,11 @@ func TestDeliverableMatchesServingNodeCounts(t *testing.T) {
 	e, ctx := newPoolEnv(t)
 	fx := seedPoolDeliveryFixture(t, ctx, e)
 
-	e.cat.versionPools = map[uuid.UUID][]uuid.UUID{
-		fx.v1: {fx.poolA, fx.poolB},
-		fx.v2: {fx.poolC},
-		fx.v3: {},
+	e.cat.plans[fx.planID] = catalogsvc.Plan{ID: fx.planID}
+	e.cat.planPools = map[uuid.UUID][]uuid.UUID{
+		fx.p1: {fx.poolA, fx.poolB},
+		fx.p2: {fx.poolC},
+		fx.p3: {},
 	}
 
 	pp, err := e.svc.PlanPools(ctx, fx.planID)
@@ -173,22 +166,22 @@ func TestDeliverableMatchesServingNodeCounts(t *testing.T) {
 		t.Fatalf("A+B deliverable 期望 2，得到 %d", sumAB)
 	}
 
-	counts, err := e.svc.ServingNodeCounts(ctx, []uuid.UUID{fx.v1, fx.v2, fx.v3, fx.v4})
+	counts, err := e.svc.ServingNodeCounts(ctx, []uuid.UUID{fx.p1, fx.p2, fx.p3, fx.p4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if counts[fx.v1] != sumAB {
-		t.Fatalf("v1 期望 %d，得到 %d", sumAB, counts[fx.v1])
+	if counts[fx.p1] != sumAB {
+		t.Fatalf("p1 期望 %d，得到 %d", sumAB, counts[fx.p1])
 	}
-	if counts[fx.v2] != 1 {
-		t.Fatalf("v2 期望 1，得到 %d", counts[fx.v2])
+	if counts[fx.p2] != 1 {
+		t.Fatalf("p2 期望 1，得到 %d", counts[fx.p2])
 	}
-	if counts[fx.v3] != 0 || counts[fx.v4] != 0 {
-		t.Fatalf("v3/v4 期望 0，得到 v3=%d v4=%d", counts[fx.v3], counts[fx.v4])
+	if counts[fx.p3] != 0 || counts[fx.p4] != 0 {
+		t.Fatalf("p3/p4 期望 0，得到 p3=%d p4=%d", counts[fx.p3], counts[fx.p4])
 	}
-	for _, vid := range []uuid.UUID{fx.v1, fx.v2, fx.v3, fx.v4} {
-		if _, ok := counts[vid]; !ok {
-			t.Fatalf("缺少版本 %v 的计数", vid)
+	for _, pid := range []uuid.UUID{fx.p1, fx.p2, fx.p3, fx.p4} {
+		if _, ok := counts[pid]; !ok {
+			t.Fatalf("缺少套餐 %v 的计数", pid)
 		}
 	}
 }
@@ -197,44 +190,44 @@ func TestCheckPublishable(t *testing.T) {
 	e, ctx := newPoolEnv(t)
 	fx := seedPoolDeliveryFixture(t, ctx, e)
 
-	e.cat.versionPools = map[uuid.UUID][]uuid.UUID{
-		fx.v1: {fx.poolA},
-		fx.v2: {},
-		fx.v3: {fx.poolC},
-		fx.v4: {fx.poolD},
-		fx.v5: {fx.poolB},
+	e.cat.planPools = map[uuid.UUID][]uuid.UUID{
+		fx.p1: {fx.poolA},
+		fx.p2: {},
+		fx.p3: {fx.poolC},
+		fx.p4: {fx.poolD},
+		fx.p5: {fx.poolB},
 	}
 
-	if err := e.svc.CheckPublishable(ctx, fx.v1); err != nil {
-		t.Fatalf("v1→[A] 应通过: %v", err)
+	if err := e.svc.CheckPublishable(ctx, fx.p1); err != nil {
+		t.Fatalf("p1→[A] 应通过: %v", err)
 	}
 
-	err := e.svc.CheckPublishable(ctx, fx.v2)
+	err := e.svc.CheckPublishable(ctx, fx.p2)
 	if poolErrCode(err) != errs.ValidationFailed {
-		t.Fatalf("v2 空绑池期望 422，得到 %v", err)
+		t.Fatalf("p2 空绑池期望 422，得到 %v", err)
 	}
-	if poolErrFields(err)["pool_ids"] != "发布前至少绑定一个可用节点池" {
-		t.Fatalf("v2 fields: %v", poolErrFields(err))
-	}
-
-	err = e.svc.CheckPublishable(ctx, fx.v3)
-	if poolErrCode(err) != errs.ValidationFailed {
-		t.Fatalf("v3→[C] 期望 422，得到 %v", err)
-	}
-	if poolErrFields(err)["pool_ids"] != "发布前至少绑定一个可用节点池" {
-		t.Fatalf("v3 fields: %v", poolErrFields(err))
+	if poolErrFields(err)["pool_ids"] != poolNoteUnbound {
+		t.Fatalf("p2 fields: %v", poolErrFields(err))
 	}
 
-	err = e.svc.CheckPublishable(ctx, fx.v4)
+	err = e.svc.CheckPublishable(ctx, fx.p3)
 	if poolErrCode(err) != errs.ValidationFailed {
-		t.Fatalf("v4→[D] 期望 422，得到 %v", err)
+		t.Fatalf("p3→[C] 期望 422，得到 %v", err)
+	}
+	if poolErrFields(err)["pool_ids"] != poolNoteAllDisabled {
+		t.Fatalf("p3 fields: %v", poolErrFields(err))
+	}
+
+	err = e.svc.CheckPublishable(ctx, fx.p4)
+	if poolErrCode(err) != errs.ValidationFailed {
+		t.Fatalf("p4→[D] 期望 422，得到 %v", err)
 	}
 	if poolErrFields(err)["pool_ids"] != "绑定池中至少需要一个可服务节点" {
-		t.Fatalf("v4 fields: %v", poolErrFields(err))
+		t.Fatalf("p4 fields: %v", poolErrFields(err))
 	}
 
-	if err := e.svc.CheckPublishable(ctx, fx.v5); err != nil {
-		t.Fatalf("v5→[B] 应通过: %v", err)
+	if err := e.svc.CheckPublishable(ctx, fx.p5); err != nil {
+		t.Fatalf("p5→[B] 应通过: %v", err)
 	}
 }
 
@@ -262,54 +255,5 @@ func TestLockAssignablePools(t *testing.T) {
 
 	if err := e.svc.LockAssignablePools(ctx, nil); err != nil {
 		t.Fatalf("空列表期望 nil: %v", err)
-	}
-}
-
-func TestSetPlanPools(t *testing.T) {
-	e, ctx := newPoolEnv(t)
-	fx := seedPoolDeliveryFixture(t, ctx, e)
-	e.cat.setCalls = 0
-
-	before := poolEpoch(t, e)
-	next, err := e.svc.SetPlanPools(ctx, fx.planID, fx.v, 3, []uuid.UUID{fx.poolA, fx.poolB})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next != 4 {
-		t.Fatalf("row_version 期望 4，得到 %d", next)
-	}
-	if e.cat.setCalls != 1 {
-		t.Fatalf("SetVersionPools 调用次数期望 1，得到 %d", e.cat.setCalls)
-	}
-	if poolEpoch(t, e) != before {
-		t.Fatal("SetPlanPools 不应推进 users_epoch")
-	}
-
-	e.cat.setCalls = 0
-	_, err = e.svc.SetPlanPools(ctx, fx.planID, fx.v, 3, []uuid.UUID{fx.poolA, fx.poolC})
-	if poolErrCode(err) != errs.ValidationFailed {
-		t.Fatalf("含停用池期望 422，得到 %v", err)
-	}
-	if e.cat.setCalls != 0 {
-		t.Fatalf("校验失败时不应调用 catalog，calls=%d", e.cat.setCalls)
-	}
-
-	e.cat.setErr = errs.Newf(errs.Conflict, "x")
-	e.cat.setCalls = 0
-	_, err = e.svc.SetPlanPools(ctx, fx.planID, fx.v, 3, []uuid.UUID{fx.poolA})
-	if poolErrCode(err) != errs.Conflict {
-		t.Fatalf("catalog 冲突期望 409，得到 %v", err)
-	}
-
-	many := make([]uuid.UUID, MaxPlanPools+1)
-	for i := range many {
-		many[i] = uuid.New()
-	}
-	err = poolSavepoint(t, ctx, e, func() error {
-		_, err := e.svc.SetPlanPools(ctx, fx.planID, fx.v, 3, many)
-		return err
-	})
-	if poolErrCode(err) != errs.ValidationFailed {
-		t.Fatalf("超过 500 个 id 期望 422，得到 %v", err)
 	}
 }

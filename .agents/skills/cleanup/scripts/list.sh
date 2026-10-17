@@ -7,7 +7,7 @@
 # 用法：list.sh [--size]       --size 额外统计每个候选 worktree 的磁盘占用（慢一些）
 # 环境变量：BASE（默认 feat/panel-redesign）、ACTIVE_MIN（默认 120，.claude 下文件这么多分钟内改过就算「近期有改动」）、
 #           KEEP（空格分隔的额外保留短名，如 "p7-users p7-rules"）、
-#           INTEGRATION（空格分隔的集成分支短名，默认 "p7"：分支 feat/panel-redesign-<短名> 与 worktree pandora-<短名> 永不进清单）
+#           INTEGRATION（空格分隔的集成分支短名，默认空：分支 feat/panel-redesign-<短名> 与 worktree pandora-<短名> 永不进清单）
 # 可在主目录或任一 worktree 里跑，结果相同。
 set -euo pipefail
 
@@ -23,7 +23,7 @@ PARENT="$(dirname "$MAIN")"
 TASKS="$MAIN/.claude/TASKS.md"
 G() { git -C "$MAIN" "$@"; }
 
-INTEGRATION="${INTEGRATION:-p7}"
+INTEGRATION="${INTEGRATION:-}"
 
 # 永不进清单的分支：main、基线、集成分支。集成分支的 worktree 在 flush_wt 里按路径再挡一次。
 is_integration() { [[ " $INTEGRATION " == *" $1 "* ]]; }

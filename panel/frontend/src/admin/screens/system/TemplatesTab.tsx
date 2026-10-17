@@ -1,11 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, QueryView, Segmented, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, FilterTabs, Input, Modal, QueryView, Table, Tag, TextArea, useToast } from '../../../ui'
 import { CHANNEL_LABEL, insertVariable, templateKey, templateMeta, templateName, validateTemplate, type Draft } from './logic'
 import { SK, useFailure, useTemplates } from './queries'
 import { CHANNELS, templatePreview, templateReset, templateSaved, templateTested, type Channel, type Template, type TemplateRow } from './schemas'
-import css from './system.module.css'
+import css from './templates.module.css'
+import sysCss from './system.module.css'
+
+interface TableItem {
+  template: Template
+  name: string
+  code: string
+  status: { label: string; tone: 'ok' | 'warn' | 'muted' }
+}
 
 export function TemplatesTab() {
   const templates = useTemplates()
@@ -17,31 +25,49 @@ export function TemplatesTab() {
     <QueryView query={templates} rows={6} empty={<Empty bare title="没有通知模板" description="模板由系统迁移写入，升级后会出现在这里。" />}>
       {(list) => {
         const inChannel = list.filter((t) => t.channel === channel)
-        const current = inChannel.find((t) => templateKey(t) === selected) ?? inChannel[0] ?? null
+        const current = inChannel.find((t) => templateKey(t) === selected) ?? null
+        const rows: TableItem[] = inChannel.map((t) => ({
+          template: t,
+          name: templateName(t.code),
+          code: t.code,
+          status: templateMeta(t, drafts[templateKey(t)]),
+        }))
         return (
-          <div className={css.tplLayout}>
-            <nav className={css.tplList} aria-label="模板列表">
-              <div className={css.tplTools}>
-                <Segmented size="sm" label="渠道" value={channel} options={CHANNELS.map((c) => ({ value: c, label: CHANNEL_LABEL[c] }))} onChange={setChannel} />
-              </div>
-              {inChannel.map((t) => {
-                const key = templateKey(t)
-                const meta = templateMeta(t, drafts[key])
-                const on = current !== null && templateKey(current) === key
-                return (
-                  <button key={key} type="button" className={`${css.tplItem} ${on ? css.tplCurrent : ''}`} aria-current={on || undefined} onClick={() => setSelected(key)}>
-                    <span className={css.tplName}>{templateName(t.code)}</span>
-                    <span className={`${css.tplMeta} ${css[meta.tone]}`}>{meta.label}</span>
-                  </button>
-                )
-              })}
-              {inChannel.length === 0 && (
-                <div className={css.pad}>
-                  <Empty bare title={`没有${CHANNEL_LABEL[channel]}模板`} description="这个渠道目前没有可编辑的模板。" />
-                </div>
-              )}
-            </nav>
-            {current ? (
+          <div className={sysCss.stack}>
+            <FilterTabs
+              label="渠道"
+              value={channel}
+              onChange={setChannel}
+              items={CHANNELS.map((c) => ({ value: c, label: CHANNEL_LABEL[c] }))}
+            />
+            <Table
+              boxed
+              label="通知模板"
+              rows={rows}
+              rowKey={(r) => templateKey(r.template)}
+              onRowClick={(r) => setSelected(templateKey(r.template))}
+              empty={<Empty bare title="这个渠道目前没有可编辑的模板。" />}
+              columns={[
+                { key: 'name', header: '模板', render: (r) => <span className={css.name}>{r.name}</span> },
+                { key: 'code', header: '标识', hideOnMobile: true, render: (r) => <span className={css.code}>{r.code}</span> },
+                {
+                  key: 'status',
+                  header: '状态',
+                  width: '112px',
+                  align: 'right',
+                  render: (r) => {
+                    if (r.status.label === '已自定义') {
+                      return <Tag tone="info">已自定义</Tag>
+                    }
+                    if (r.status.tone === 'warn') {
+                      return <span className={css.statusWarn}>{r.status.label}</span>
+                    }
+                    return <span className={css.statusDefault}>{r.status.label}</span>
+                  },
+                },
+              ]}
+            />
+            {current && (
               <TemplateEditor
                 key={templateKey(current)}
                 template={current}
@@ -52,11 +78,8 @@ export function TemplatesTab() {
                   else delete next[templateKey(current)]
                   return next
                 })}
+                onClose={() => setSelected(null)}
               />
-            ) : (
-              <section className={`${css.panel} ${css.spanRest}`}>
-                <Empty bare title="没有选中的模板" description="左侧选一个模板。" />
-              </section>
             )}
           </div>
         )
@@ -75,7 +98,7 @@ function useDebounced<T>(value: T, delay: number): T {
   return out
 }
 
-function TemplateEditor({ template: t, draft, onDraft }: { template: Template; draft: Draft | undefined; onDraft: (d: Draft | null) => void }) {
+function TemplateEditor({ template: t, draft, onDraft, onClose }: { template: Template; draft: Draft | undefined; onDraft: (d: Draft | null) => void; onClose: () => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -86,6 +109,7 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
   const [to, setTo] = useState('')
   const value: Draft = draft ?? { subject: t.subject, body: t.body }
   const dirty = value.subject !== t.subject || value.body !== t.body
+  const meta = templateMeta(t, draft)
   const edit = (patch: Partial<Draft>) => {
     setErrors({})
     const next = { ...value, ...patch }
@@ -152,68 +176,73 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
     })
   }
 
-  const resetBlock = !t.has_default ? '这个模板没有内置默认内容' : t.is_default && !dirty ? '已经是默认内容' : null
+  // 底部灰字：没自定义且没改 = 已是默认；没有内置默认内容的模板写明；其余提示保存即生效
+  const footerHint = !t.has_default ? '这个模板没有内置默认内容' : t.is_default && !dirty ? '已经是默认内容' : '保存后新通知立即使用这份内容'
+  const canReset = t.has_default && (dirty || !t.is_default)
   const busy = save.isPending || reset.isPending
   return (
-    <>
-      <section className={css.panel} aria-label={`编辑模板 ${templateName(t.code)}`}>
-        <div className={css.tplHead}>
-          <span className={css.cardTitle}>{templateName(t.code)}</span>
-          <span className={`${css.mono} ${css.faint}`}>
-            {t.code} · {CHANNEL_LABEL[t.channel]}
-          </span>
-        </div>
-        {t.description && <div className={css.faint}>{t.description}</div>}
+    <Modal
+      open
+      onClose={onClose}
+      size={720}
+      title={templateName(t.code)}
+      subtitle={
+        <>
+          {t.code} · {CHANNEL_LABEL[t.channel]}
+          {t.description ? ` · ${t.description}` : ''}
+        </>
+      }
+      headExtra={<span className={`${sysCss[meta.tone]} ${sysCss.faint}`}>{meta.label}</span>}
+      divided
+      footerStart={<span className={sysCss.faint}>{footerHint}</span>}
+      actions={
+        <>
+          <Button size="dialog" disabled={busy || !canReset} title={t.has_default ? undefined : '这个模板没有内置默认内容'} busy={reset.isPending} onClick={() => setResetting(true)}>
+            恢复默认
+          </Button>
+          <Button size="dialog" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
+            保存
+          </Button>
+        </>
+      }
+    >
+      <div className={css.body}>
         <Input label="主题" value={value.subject} error={errors.subject} disabled={busy} onChange={(e) => edit({ subject: e.target.value })} />
-        <TextArea ref={body} label="正文" mono rows={11} value={value.body} error={errors.body} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
+        <TextArea ref={body} label="正文" mono rows={10} value={value.body} error={errors.body} disabled={busy} onChange={(e) => edit({ body: e.target.value })} />
         {t.allowed_variables.length > 0 && (
-          <div className={css.chips} aria-label="插入变量">
+          <div className={sysCss.row} aria-label="插入变量">
+            <span className={sysCss.faint}>插入变量</span>
             {t.allowed_variables.map((v) => (
-              <button key={v} type="button" className={css.chip} onClick={() => insert(v)}>
+              <button key={v} type="button" className={sysCss.chip} onClick={() => insert(v)}>
                 {`{{${v}}}`}
               </button>
             ))}
           </div>
         )}
         {shown.unknown_variables.length > 0 && !errors.body && (
-          <div className={css.error} role="alert">
+          <div className={sysCss.error} role="alert">
             用到了这个模板不提供的变量：{shown.unknown_variables.join('、')}，保存会被拒绝。可用变量：{t.allowed_variables.join('、') || '无'}
           </div>
         )}
-        <div className={css.row}>
-          <Button size="sm" disabled={busy || resetBlock !== null} title={resetBlock ?? undefined} busy={reset.isPending} onClick={() => setResetting(true)}>
-            恢复默认
-          </Button>
-          {dirty && (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => onDraft(null)}>
-              放弃修改
-            </Button>
-          )}
-          <span className={css.spacer} />
-          <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={submit}>
-            保存
-          </Button>
-        </div>
-      </section>
-
-      <section className={css.previewCard} aria-label="示例数据预览">
         <div className={css.previewHead}>
-          <span className={css.faint}>以示例数据预览</span>
-          {dirty && preview.isFetching && <span className={css.faint}>渲染中…</span>}
+          <span className={css.previewTitle}>预览</span>
+          <span className={sysCss.faint}>
+            以示例数据预览{dirty && preview.isFetching ? ' · 渲染中…' : ''}
+          </span>
         </div>
         <div className={css.previewBody}>
           <div className={css.previewSubject}>{shown.preview_subject}</div>
           <div className={css.previewText}>{shown.preview_body}</div>
         </div>
         {t.channel === 'email' && (
-          <div className={css.cardFoot}>
-            <Input size="sm" type="email" aria-label="测试收件地址" fieldClassName={css.grow} placeholder="收件地址" value={to} error={errors.to} onChange={(e) => setTo(e.target.value)} />
+          <div className={sysCss.row}>
+            <Input size="sm" type="email" aria-label="测试收件地址" fieldClassName={sysCss.grow} placeholder="收件地址" value={to} error={errors.to} onChange={(e) => setTo(e.target.value)} />
             <Button size="sm" disabled={!to.trim()} busy={test.isPending} title={dirty ? '发送的是当前未保存的草稿' : undefined} onClick={() => test.mutate(to.trim())}>
               实发测试信
             </Button>
           </div>
         )}
-      </section>
+      </div>
 
       <ConfirmModal
         open={resetting}
@@ -227,6 +256,6 @@ function TemplateEditor({ template: t, draft, onDraft }: { template: Template; d
         }}
         onCancel={() => setResetting(false)}
       />
-    </>
+    </Modal>
   )
 }

@@ -1,9 +1,8 @@
 package service
 
-// 本文件归 p5-inventory：节点服务状态与服务器状态的转换表。
+// 节点服务状态与服务器状态的转换表。
 //
-// 节点只有一套服务状态 serving_status（旧的 17 状态接入流水线已删）。
-// 服务器的边 = 旧代码的边去掉 unhealthy / quarantined，再加 ready→maintenance、maintenance→draining。
+// 节点只有一套服务状态 serving_status，边表在 nodeServingTransitions；服务器的边表在 serverStatusTransitions。
 // retired 是终态；同状态不算转换（CanXxx(a, a) 为 false）。
 
 import "slices"

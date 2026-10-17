@@ -70,17 +70,21 @@ func (r *Repo) ReviewWithdrawal(ctx context.Context, id uuid.UUID, to string, re
 }
 
 // MarkWithdrawalPaid 将已批准的提现标为已打款。
-func (r *Repo) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, reference string, payoutTxnID, by uuid.UUID, at time.Time) (bool, error) {
+func (r *Repo) MarkWithdrawalPaid(ctx context.Context, id uuid.UUID, reference string, paidUSDT *decimal.Decimal, payoutTxnID, by uuid.UUID, at time.Time) (bool, error) {
+	cols := map[string]any{
+		"status":           "paid",
+		"payout_reference": reference,
+		"payout_txn_id":    payoutTxnID,
+		"paid_by":          by,
+		"completed_at":     at,
+		"updated_at":       at,
+	}
+	if paidUSDT != nil {
+		cols["paid_usdt_amount"] = *paidUSDT
+	}
 	res := r.d.Conn(ctx).Model(&model.Withdrawal{}).
 		Where("id = ? AND status = ?", id, "approved").
-		Updates(map[string]any{
-			"status":           "paid",
-			"payout_reference": reference,
-			"payout_txn_id":    payoutTxnID,
-			"paid_by":          by,
-			"completed_at":     at,
-			"updated_at":       at,
-		})
+		Updates(cols)
 	if res.Error != nil {
 		return false, mapErr(res.Error)
 	}
@@ -98,52 +102,48 @@ func (r *Repo) WithdrawalsOf(ctx context.Context, userID uuid.UUID, limit int) (
 	return out, mapErr(err)
 }
 
-// ListWithdrawals 后台列表；status 为空则不筛状态。
-func (r *Repo) ListWithdrawals(ctx context.Context, status string, limit int) ([]model.Withdrawal, error) {
+// ListWithdrawals 后台列表；statuses 为空则不筛状态，否则取这些状态的并集。
+func (r *Repo) ListWithdrawals(ctx context.Context, statuses []string, limit int) ([]model.Withdrawal, error) {
 	q := r.d.Conn(ctx).Model(&model.Withdrawal{})
-	if status != "" {
-		q = q.Where("status = ?", status)
+	if len(statuses) > 0 {
+		q = q.Where("status IN ?", statuses)
 	}
 	var out []model.Withdrawal
 	err := q.Order("requested_at DESC, id DESC").Limit(limit).Find(&out).Error
 	return out, mapErr(err)
 }
 
-// WithdrawalTotals 是某用户某币种的提现汇总：InFlight 申请中与已批准，Paid 已打款。
+// WithdrawalTotals 是某用户的提现汇总：InFlight 申请中与已批准，Paid 已打款。
 type WithdrawalTotals struct {
 	InFlight decimal.Decimal `gorm:"column:in_flight"`
 	Paid     decimal.Decimal `gorm:"column:paid"`
 }
 
-// WithdrawalTotalsOf 按用户与币种汇总提现金额。
-func (r *Repo) WithdrawalTotalsOf(ctx context.Context, userID uuid.UUID, currency string) (WithdrawalTotals, error) {
+// WithdrawalTotalsOf 按用户汇总提现金额。
+func (r *Repo) WithdrawalTotalsOf(ctx context.Context, userID uuid.UUID) (WithdrawalTotals, error) {
 	var t WithdrawalTotals
 	err := r.d.Conn(ctx).Raw(`
 SELECT
   COALESCE(sum(amount) FILTER (WHERE status IN ('requested','approved')), 0) AS in_flight,
   COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid
 FROM withdrawals
-WHERE user_id = ? AND currency = ?`, userID, currency).Scan(&t).Error
+WHERE user_id = ?`, userID).Scan(&t).Error
 	return t, mapErr(err)
 }
 
-// WithdrawalOverview 是全站某一币种的提现汇总：PaidOut 已打款总额，Waiting 申请中笔数。
+// WithdrawalOverview 是全站提现汇总：PaidOut 已打款总额，Waiting 申请中笔数。
 type WithdrawalOverview struct {
-	Currency string          `gorm:"column:currency"`
-	PaidOut  decimal.Decimal `gorm:"column:paid_out"`
-	Waiting  int64           `gorm:"column:waiting"`
+	PaidOut decimal.Decimal `gorm:"column:paid_out"`
+	Waiting int64           `gorm:"column:waiting"`
 }
 
-// WithdrawalOverviewByCurrency 按币种分组的全站提现概览，币种升序；没有提现的币种不出现。
-func (r *Repo) WithdrawalOverviewByCurrency(ctx context.Context) ([]WithdrawalOverview, error) {
-	var out []WithdrawalOverview
+// WithdrawalOverview 全站提现概览；没有提现时金额为 0、笔数为 0。
+func (r *Repo) WithdrawalOverview(ctx context.Context) (WithdrawalOverview, error) {
+	var out WithdrawalOverview
 	err := r.d.Conn(ctx).Raw(`
 SELECT
-  currency,
   COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_out,
   count(*) FILTER (WHERE status = 'requested') AS waiting
-FROM withdrawals
-GROUP BY currency
-ORDER BY currency`).Scan(&out).Error
+FROM withdrawals`).Scan(&out).Error
 	return out, mapErr(err)
 }

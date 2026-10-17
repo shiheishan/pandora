@@ -10,15 +10,16 @@ import (
 const nodeDeliveryFreshWindow = 10 * time.Minute
 
 const (
-	nodeNoteNotActive      = "服务状态不是 active，不下发"
-	nodeNoteNoPool         = "未划入节点池，不服务任何用户"
-	nodeNotePoolInactive   = "所在节点池未启用，不下发"
-	nodeNotePoolUnbound    = "所在节点池没有绑定任何套餐，不会出现在任何用户的订阅里"
-	nodeNoteNeverSeen      = "所在服务器从未上报过心跳，不下发 —— 多半是还没在机器上安装节点端。发出去就是一条必然连不上的线路"
-	nodeNoteServerNotReady = "所属服务器未就绪或已删除，不下发"
-	nodeNoteNodeNotReady   = "协议、端口或可连地址不完整，不下发"
-	nodeNoteStale          = "心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟"
-	nodeNoteDegraded       = "节点报告运行异常（端口被占、入站没起来或配置生效失败），只有当套餐里没有其他可用节点时才会下发它"
+	nodeNoteNotActive       = "节点不在服务中（草稿、已停用或已退役）"
+	nodeNoteNoPool          = "未划入节点池，不服务任何用户"
+	nodeNotePoolInactive    = "所在节点池未启用，不下发"
+	nodeNotePoolUnbound     = "所在节点池没有绑定任何套餐，不会出现在任何用户的订阅里"
+	nodeNoteNeverSeen       = "所在服务器从未上报过心跳，不下发 —— 多半是还没在机器上安装节点端。发出去就是一条必然连不上的线路"
+	nodeNoteServerNotReady  = "所属服务器未就绪或已删除，不下发"
+	nodeNoteNodeNotReady    = "协议、端口或可连地址不完整，不下发"
+	nodeNoteTrafficExceeded = "本周期流量已达上限，已停止下发，节点端也停掉了它的入站；到重置日自动恢复，也可以在节点设置里手动重置或调高上限"
+	nodeNoteStale           = "心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟"
+	nodeNoteDegraded        = "节点报告运行异常（端口被占、入站没起来或配置生效失败），只有当套餐里没有其他可用节点时才会下发它"
 )
 
 // nodeDeliveryFacts 是判定「是否下发」时用的输入事实。
@@ -33,9 +34,12 @@ type nodeDeliveryFacts struct {
 	Deliverable bool
 	ServerReady bool
 	Degraded    bool
+	// TrafficExceeded：本周期流量已达上限，traffic_exceeded_at 非空
+	TrafficExceeded bool
 }
 
 // nodeDeliveryVerdict 按顺序判定节点会不会出现在用户订阅里及说明文案。
+// 判定顺序：服务状态 -> 划池 -> 池启用 -> 池绑套餐 -> 见过心跳 -> 流量超限 -> 可下发条件 -> 心跳新鲜度 -> 运行降级。
 // Deliverable 来自 repo.DeliverableNodeCond（订阅、套餐页、后台三处同一口径）；「池没绑套餐」在池未启用之后判。
 func nodeDeliveryVerdict(f nodeDeliveryFacts) (bool, string) {
 	if f.Serving != "active" {
@@ -52,6 +56,9 @@ func nodeDeliveryVerdict(f nodeDeliveryFacts) (bool, string) {
 	}
 	if !f.EverSeen {
 		return false, nodeNoteNeverSeen
+	}
+	if f.TrafficExceeded {
+		return false, nodeNoteTrafficExceeded
 	}
 	if !f.Deliverable {
 		if f.ServerReady {
@@ -113,4 +120,10 @@ func nodeDegraded(r repo.NodeListRow) bool {
 	}
 	st := *r.RuntimeStatus
 	return st == "degraded" || st == "down"
+}
+
+// configSkipState 是面板生成配置文档失败、本次下发不含该节点时的生效状态：一律 failed，
+// 失败详情写明是面板这边的错（节点端没收到这份配置，会停掉其入站），时间取本次读的时刻。
+func configSkipState(sk configSkip, now time.Time) (string, *ApplyFailure) {
+	return "failed", &ApplyFailure{Phase: "failed", Detail: "面板生成配置失败：" + sk.Reason, At: now}
 }

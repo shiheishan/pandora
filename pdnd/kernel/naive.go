@@ -325,9 +325,6 @@ func (a *naiveAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
 func (a *naiveAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
-func (a *naiveAdapter) addTraffic(user core.User, upload, download int64) {
-	a.sessions.add(user.ID, upload, download)
-}
 func (a *naiveAdapter) removeActive(conn net.Conn) {
 	a.mu.Lock()
 	delete(a.active, conn)

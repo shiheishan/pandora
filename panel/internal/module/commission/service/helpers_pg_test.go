@@ -16,6 +16,7 @@ import (
 	auditrepo "github.com/aegispanel/aegis/internal/module/audit/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/commission/repo"
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	ledgerrepo "github.com/aegispanel/aegis/internal/module/ledger/repo"
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
@@ -24,7 +25,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -33,14 +33,28 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// testCurrency 是测试用的币种：站点币种缺省 CNY，测试不改站点设置。
-const testCurrency = money.CNY
-
 // fakeRefs 实现 Referrals：推荐关系与邮箱都在内存里（并发用例会从多个 goroutine 读）。
 type fakeRefs struct {
 	mu       sync.Mutex
 	referrer map[uuid.UUID]uuid.UUID // 被推荐人 → 推荐人
 	emails   map[uuid.UUID]string
+	deleted  map[uuid.UUID]bool // markDeleted 标记的已注销账号
+}
+
+func (f *fakeRefs) AccountDeleted(_ context.Context, userID uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[userID], nil
+}
+
+// markDeleted 把账号标成已注销。
+func (f *fakeRefs) markDeleted(id uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted == nil {
+		f.deleted = map[uuid.UUID]bool{}
+	}
+	f.deleted[id] = true
 }
 
 func (f *fakeRefs) ReferrerOf(_ context.Context, userID uuid.UUID) (*uuid.UUID, error) {
@@ -83,6 +97,19 @@ func (f *fakeRefs) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 	return out, nil
 }
 
+// FindByEmail 按邮箱精确找人（不分大小写、去首尾空白，同 identity 的规范化）；没有时回 errs.NotFound。
+func (f *fakeRefs) FindByEmail(_ context.Context, email string) (identitysvc.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	email = strings.ToLower(strings.TrimSpace(email))
+	for id, e := range f.emails {
+		if strings.ToLower(e) == email {
+			return identitysvc.User{ID: id, Email: e}, nil
+		}
+	}
+	return identitysvc.User{}, errs.New(errs.NotFound)
+}
+
 // fakeSources 实现 SourceMatcher：same 里登记的一对用户算同源；err 非空时查询失败。
 type fakeSources struct {
 	same map[[2]uuid.UUID]bool
@@ -96,11 +123,11 @@ func (f *fakeSources) SharesSource(_ context.Context, a, b uuid.UUID) (bool, err
 	return f.same[[2]uuid.UUID{a, b}], nil
 }
 
-// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的三张表；
+// commitTables 是真提交用例前后要清的表（同 order 包的 orderCommitTables，加上本模块的四张表；
 // CASCADE 带走订单子表、预留、订阅子表等）。不留会被别的包或解冻扫描扫到的数据。
 var commitTables = []string{
-	"commission_transfers", "withdrawals", "commission_entries",
-	"orders", "plan_purchase_counters",
+	"commission_forfeitures", "commission_transfers", "withdrawals", "commission_entries",
+	"orders",
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
 	"balance_holds", "coupon_redemptions", "subscriptions",
 	"ledger_entries", "ledger_transactions", "ledger_accounts",
@@ -148,7 +175,7 @@ func newEnv(t *testing.T) (*env, context.Context) {
 	}
 	txm := tx.NewManager(d)
 	settings := settingssvc.New(settingsrepo.New(d), txm, sealer, rdb, auditSvc)
-	ledger := ledgersvc.New(ledgerrepo.New(d), txm, settings, auditSvc)
+	ledger := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	svc := New(repo.New(d), txm, ledger, settings, sealer, auditSvc)
 	refs := &fakeRefs{referrer: map[uuid.UUID]uuid.UUID{}, emails: map[uuid.UUID]string{}}
 	svc.UseReferrals(refs)
@@ -234,47 +261,34 @@ func setConfig(t *testing.T, e *env, ctx context.Context, admin uuid.UUID, rate,
 	}
 }
 
-// newPaidOrder 给 user 插一张已付的新购订单（金额 total、币种 testCurrency），返回交给 PaidHook 的摘要。
+// newPaidOrder 给 user 插一张已付的新购订单（金额 total），返回交给 PaidHook 的摘要。
 func newPaidOrder(t *testing.T, e *env, ctx context.Context, user uuid.UUID, total string) ordersvc.PaidOrder {
-	t.Helper()
-	return newPaidOrderIn(t, e, ctx, user, total, testCurrency)
-}
-
-// newPaidOrderIn 同 newPaidOrder，币种由调用方给。
-func newPaidOrderIn(t *testing.T, e *env, ctx context.Context, user uuid.UUID, total string, cur money.Currency) ordersvc.PaidOrder {
 	t.Helper()
 	no := "CM-" + strings.ToUpper(randHex(16))
 	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, status, currency, subtotal_amount, total_amount,
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, status, subtotal_amount, total_amount,
 		payable_amount, paid_amount, paid_at, expires_at)
-		VALUES (?, ?, 'new', 'paid', ?, ?, ?, ?, ?, now(), now() + interval '30 minutes') RETURNING id`,
-		no, user, string(cur), total, total, total, total).Scan(&id); err != nil {
+		VALUES (?, ?, 'new', 'paid', ?, ?, ?, ?, now(), now() + interval '30 minutes') RETURNING id`,
+		no, user, total, total, total, total).Scan(&id); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	amt := dec2(total)
 	return ordersvc.PaidOrder{
-		OrderID:  id,
-		OrderNo:  no,
-		UserID:   user,
-		Kind:     ordersvc.KindNew,
-		Currency: cur,
-		Total:    amt,
-		Paid:     amt,
-		PaidAt:   time.Now().UTC(),
+		OrderID: id,
+		OrderNo: no,
+		UserID:  user,
+		Kind:    ordersvc.KindNew,
+		Total:   amt,
+		Paid:    amt,
+		PaidAt:  time.Now().UTC(),
 	}
 }
 
 // accrueAvailable 让 referrer 通过 referee 的一张订单拿到一笔已解冻的佣金（冻结天数须为 0），返回佣金额。
 func accrueAvailable(t *testing.T, e *env, ctx context.Context, referrer, referee uuid.UUID, total string) decimal.Decimal {
 	t.Helper()
-	return accrueAvailableIn(t, e, ctx, referrer, referee, total, testCurrency)
-}
-
-// accrueAvailableIn 同 accrueAvailable，订单币种由调用方给。
-func accrueAvailableIn(t *testing.T, e *env, ctx context.Context, referrer, referee uuid.UUID, total string, cur money.Currency) decimal.Decimal {
-	t.Helper()
 	refer(e, referee, referrer)
-	o := newPaidOrderIn(t, e, ctx, referee, total, cur)
+	o := newPaidOrder(t, e, ctx, referee, total)
 	if err := e.svc.OnOrderPaid(ctx, o); err != nil {
 		t.Fatalf("计提: %v", err)
 	}
@@ -291,18 +305,12 @@ func accrueAvailableIn(t *testing.T, e *env, ctx context.Context, referrer, refe
 	return amt
 }
 
-// accountBalance 读用户某类科目（testCurrency）的余额缓存（没有科目时为 0）。
+// accountBalance 读用户某类科目的余额缓存（没有科目时为 0）。
 func accountBalance(t *testing.T, e *env, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType) decimal.Decimal {
 	t.Helper()
-	return accountBalanceIn(t, e, ctx, user, typ, testCurrency)
-}
-
-// accountBalanceIn 同 accountBalance，币种由调用方给。
-func accountBalanceIn(t *testing.T, e *env, ctx context.Context, user uuid.UUID, typ ledgersvc.AccountType, cur money.Currency) decimal.Decimal {
-	t.Helper()
 	var bal decimal.Decimal
-	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ? AND currency = ?), 0)`,
-		string(typ), user, string(cur)).Scan(&bal); err != nil {
+	if err := e.row(ctx, `SELECT COALESCE((SELECT balance FROM ledger_accounts WHERE account_type = ? AND owner_user_id = ?), 0)`,
+		string(typ), user).Scan(&bal); err != nil {
 		t.Fatal(err)
 	}
 	return bal

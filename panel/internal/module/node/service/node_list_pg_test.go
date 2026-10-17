@@ -136,8 +136,8 @@ func TestQueryNodesDetail(t *testing.T) {
 		t.Fatalf("单取应得一行带 Detail：%d 行", len(rows))
 	}
 	d := rows[0].Detail
-	if strings.Contains(string(d.ProtocolConfig), invHy2Secret) || d.Kernel != "auto" || d.ProtocolSchemaVersion <= 0 {
-		t.Fatalf("详情不对：%s %s %d", d.ProtocolConfig, d.Kernel, d.ProtocolSchemaVersion)
+	if strings.Contains(string(d.ProtocolConfig), invHy2Secret) || d.ProtocolSchemaVersion <= 0 {
+		t.Fatalf("详情不对：%s %d", d.ProtocolConfig, d.ProtocolSchemaVersion)
 	}
 	if !d.TrafficRate.Equal(decimal.NewFromInt(1)) {
 		t.Fatalf("倍率缺省应为 1：%s", d.TrafficRate)

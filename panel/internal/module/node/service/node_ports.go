@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：同机端口门禁与保留端口（同机端口先到先得）。
+// 同机端口门禁与保留端口（同机端口先到先得）。
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func (r nodePortRange) contains(port int) bool { return port >= r.From && port <
 //   - PanelHosts：面板机的地址（域名或 IP，已规整）。服务器或节点任一地址命中，或是回环地址，即判为面板机；
 //     其中只要有 IP 字面量，而服务器报过的 IP 都不在表里，就判为「不是面板机」。
 //
-// 旧代码可经配置改这张表；新栈暂用缺省值（要可配再在 Service 上加注入）。
+// 这张表目前不可配置，用缺省值（要可配再在 Service 上加注入）。
 type nodePortPolicy struct {
 	Reserved      []nodePortRange
 	PanelReserved []nodePortRange
@@ -145,7 +145,7 @@ type nodePortClaim struct {
 	CheckReserved bool
 }
 
-// claimNodePort 在调用方已持服务器行锁时检查端口：先保留表，再同一服务器上未退役节点的 (端口, L4)。
+// claimNodePort 在调用方已持服务器行锁时检查端口：先保留表，再查同一服务器同一端口上 L4 冲突（protocol.L4Conflicts：相等，或一方是 tcp+udp）的未退役节点。
 // 端口未配置（<=0）直接通过。返回只提示、不拒绝的说明（可能为 nil）。
 func (s *Service) claimNodePort(ctx context.Context, srv model.Server, c nodePortClaim) ([]string, error) {
 	if c.Port <= 0 {
@@ -168,7 +168,7 @@ func (s *Service) claimNodePort(ctx context.Context, srv model.Server, c nodePor
 			warnings = append(warnings, warning)
 		}
 	}
-	holder, taken, err := s.repo.NodePortHolder(ctx, c.ServerID, c.Port, c.L4, c.Exclude)
+	holder, taken, err := s.repo.NodePortHolder(ctx, c.ServerID, c.Port, protocol.ConflictingL4s(c.L4), c.Exclude)
 	if err != nil {
 		return nil, err
 	}

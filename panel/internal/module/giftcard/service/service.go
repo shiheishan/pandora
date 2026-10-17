@@ -26,7 +26,7 @@ import (
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
@@ -62,20 +62,22 @@ type Subscriptions interface {
 	Renew(ctx context.Context, in subsvc.Renewal) (subsvc.RenewalResult, error)
 	Extend(ctx context.Context, in subsvc.Extension) (subsvc.ExtensionResult, error)
 	ChangePlan(ctx context.Context, in subsvc.PlanChange) (subsvc.PlanChangeResult, error)
-	GrantTrafficPack(ctx context.Context, in subsvc.PackGrant) (subsvc.Pack, error)
+	Stack(ctx context.Context, in subsvc.Stacking) (subsvc.RenewalResult, error)
+	GrantBonus(ctx context.Context, in subsvc.BonusGrant) (int64, error)
 	ResetTraffic(ctx context.Context, in subsvc.TrafficReset) (int64, error)
 }
 
 // Ledger 是 giftcard 要的记账面；*ledgersvc.Service 直接满足。
 type Ledger interface {
 	Post(ctx context.Context, p ledgersvc.Posting) (uuid.UUID, error)
-	DefaultCurrency(ctx context.Context) (money.Currency, error)
 }
 
 // Users 是 giftcard 要的用户读取面；*identitysvc.Service 直接满足。
 type Users interface {
 	// Emails 批量取用户邮箱（一条 SQL）。
 	Emails(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	// IsDeleted 报告用户是否已注销（不存在回 false），读时给用户行加共享锁并持有到事务提交（兑换事务第一步调）。
+	IsDeleted(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // Hasher 是卡密的 HMAC；*crypto.Keys 直接满足。
@@ -89,13 +91,13 @@ type Sealer interface {
 	Open(sealed, aad []byte) ([]byte, error)
 }
 
-// PlanChangeValuer 由 order 实现（换套餐折算的唯一出处）：一份订阅此刻没用完的已付价值、币种，
+// PlanChangeValuer 由 order 实现（换套餐折算的唯一出处）：一份订阅此刻没用完的已付价值，
 // 以及换掉时不保留的赠送整天数。套餐卡「换掉那一份」时把这笔价值全额退进余额。
 // 没注册时套餐卡不给「换掉」的选项（只能续同款或另开一份），免得用户的已付价值被吞掉。
 // 这份订阅有没完结的续费或换套餐单时回 order 的 ErrOpenChange（errs.Conflict）：兑换原样往上抛、卡不会被用掉，
 // 预览不给这一份的「换掉」。giftcard 在码转 used 之前、锁住订阅之后调它。
 type PlanChangeValuer interface {
-	RemainingValue(ctx context.Context, subscriptionID uuid.UUID, now time.Time) (amount decimal.Decimal, currency money.Currency, giftDaysLost int, err error)
+	RemainingValue(ctx context.Context, subscriptionID uuid.UUID, now time.Time) (amount decimal.Decimal, giftDaysLost int, err error)
 }
 
 // PaidHistory 由 order 实现：用户有没有付过钱（实付大于 0、已支付或已履约）的订单。「仅新用户」「仅付费用户」两个条件用它。
@@ -112,7 +114,7 @@ type Referrals interface {
 type Service struct {
 	repo    *repo.Repo
 	tx      txRunner
-	events  PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events  pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	audit   auditWriter
 	idem    idempotency
 	catalog Catalog
@@ -155,7 +157,7 @@ func (s *Service) UsePaidHistory(p PaidHistory) { s.paid = p }
 // UseReferrals 注册邀请关系查询（identity）；只在启动装配时调用。
 func (s *Service) UseReferrals(r Referrals) { s.refs = r }
 
-// MissingPorts 列出还没注册的可选依赖；app 装配完调用，非空就拒绝启动（缺了它们对应的卡会一直回 503 或少了「换掉」）。
+// MissingPorts 列出还没注册的必需端口（装配完成后由 internal/app 统一检查，非空就拒绝启动；缺了对应的卡会一直回 503、少了「换掉」或不发插件事件）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.valuer == nil {
@@ -167,6 +169,9 @@ func (s *Service) MissingPorts() []string {
 	if s.refs == nil {
 		out = append(out, "Referrals")
 	}
+	if s.events == nil {
+		out = append(out, "PluginEvents")
+	}
 	return out
 }
 
@@ -175,7 +180,7 @@ func (s *Service) clock() time.Time {
 	return s.now().UTC().Truncate(time.Microsecond)
 }
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionTemplateCreated = "gift_card_template.created"
 	ActionTemplateUpdated = "gift_card_template.updated"
@@ -196,11 +201,17 @@ var errSealedMismatch = errors.New("giftcard: 批次密文与码表对不上")
 var (
 	// ErrCodeUnusable 对所有「这个码不能用」的情况回同一句话：不存在、已用、已停用、已过期、模板停用都是它，
 	// 免得爆破的人靠错误文案分辨哪些码真实存在。
-	ErrCodeUnusable = errs.Newf(errs.ValidationFailed, "卡密无效、已被使用或已过期")
+	ErrCodeUnusable = errs.Newf(errs.ValidationFailed, "卡号无效、已被使用或已过期")
+	// ErrAccountDeleted 是已注销的账号兑换礼品卡（与 identity 同码同文案）。
+	ErrAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
 	// ErrTemplateInactive 是码本身可用、但所属活动已暂停或归档（只在兑换时给出，预览一律回 ErrCodeUnusable）。
 	ErrTemplateInactive = errs.Newf(errs.ValidationFailed, "这个礼品卡活动已经停用了")
 	// ErrNoPlacement 是这张卡要落到一份在用的套餐上，而用户一份都没有。
 	ErrNoPlacement = errs.Newf(errs.ValidationFailed, "现在没有在用的套餐，这张卡暂时用不了。先续费再来兑换，卡不会过期")
+	// ErrNoTrafficTarget 是卡要送流量，用户没有生效中的、限流量的订阅。
+	ErrNoTrafficTarget = errs.Newf(errs.ValidationFailed, "没有可加流量的订阅")
+	// ErrRenewArchived 是选了续费但套餐已归档。
+	ErrRenewArchived = errs.Newf(errs.ValidationFailed, "这张卡的套餐已归档，不能再续费")
 	// ErrChoiceStale 是选定的用法不在当前选项里（订阅状态在预览之后变了，或请求被篡改）。
 	ErrChoiceStale = errs.Invalid(map[string]string{"choice": "这个用法现在不能用了，请刷新后再选"})
 	// ErrChoiceRequired 是选项多于一个却没有选。

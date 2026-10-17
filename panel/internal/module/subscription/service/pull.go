@@ -105,7 +105,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return PullResult{}, ErrPullDenied
 	}
 	// 主人账号停用、封禁：按「不在服务」处理（与节点名单不收他的订阅同一口径），过期提示也不给；
-	// 凭据不吊销，恢复后原链接照常可用
+	// 凭据不吊销，恢复后原链接照常可用。线路要的用户组也取自这一次读取，不再另读
 	owner, err := d.Owners.Get(ctx, row.UserID)
 	if err != nil {
 		return PullResult{}, err
@@ -143,7 +143,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	}
 	res := PullResult{
 		Userinfo:           userinfoOf(row),
-		ContentDisposition: render.ContentDisposition(ProfileName(site.Name, label, plans[row.PlanID].Name)),
+		ContentDisposition: render.ContentDisposition(render.ProfileName(site.Name, label, plans[row.PlanID].Name)),
 	}
 
 	if verdict == pullExpired {
@@ -161,18 +161,24 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return res, nil
 	}
 
-	groupID, err := s.users.UserGroupID(ctx, row.UserID)
-	if err != nil {
-		return fail(err)
-	}
 	nodes, err := s.nodes.DeliverableNodes(ctx, NodeQuery{
-		SubscriptionID: subID, UserID: row.UserID, PlanVersionID: row.PlanVersionID, UserGroupID: groupID,
+		SubscriptionID: subID, UserID: row.UserID, PlanID: row.PlanID, PlanVersionID: row.PlanVersionID, UserGroupID: owner.UserGroupID,
 	})
 	if err != nil {
 		return fail(err)
 	}
-	// 按 UA 选客户端内核认得的写法
-	body, contentType, count := render.Render(format, nodes, row.ProxyUUID.String(), ua, d.Render)
+	// 后台模板与订阅附加设置走进程内快照（30 秒过期），不每次拉取都查库
+	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
+	if err != nil {
+		return fail(err)
+	}
+	// 按 UA 选客户端内核认得的写法。nodes 可能来自 node 模块的进程内缓存、被别的请求共享：只读不改（前处理只改副本）
+	body, contentType, count := render.RenderRequest(liveRequest(liveInput{
+		Format: format, Nodes: nodes, Row: row, UA: ua, Options: d.Render, Extras: ex,
+		Types: req.Types, Filter: req.Filter, Loc: siteLocation(site.Timezone),
+		SubscribeURL: subscribeURLFor(ex, owner.UserGroupID, d.PublicBaseURL, req.Prefix, token),
+		Now:          now,
+	}))
 	res.Body, res.ContentType = body, contentType
 	res.UpdateIntervalHours = updateIntervalHours
 	// 读取与渲染都完成后才占限流额度：失败的请求不占
@@ -181,6 +187,11 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	}
 	if err := s.recordFetch(ctx, d, entry.with(FetchOK, count, len(body))); err != nil {
 		return PullResult{}, err
+	}
+	// 经令牌主人所在组的订阅域名到达的成功拉取，是这个域名「能连上」的信号；别组的域名（Host 可伪造）不加分。
+	// 进程内攒批写 Redis，不多一次往返；同一凭据对同一域名每小时只记一次
+	if base, ok := ex.domains.hostBaseURL(req.Host); ok && groupHas(ex.domains.groupFor(owner.UserGroupID), base) {
+		s.scores.NoteSuccess(ctx, base, credID.String(), now)
 	}
 	return res, nil
 }
@@ -200,8 +211,8 @@ func (s *Service) allowFetch(ctx context.Context, d *Delivery, perHour int, e fe
 	return err
 }
 
-// userinfoOf 算 Subscription-Userinfo：总量 = 本期套餐额度（不限或没有配额行按 0）+ 挂在这一份上的流量包剩余；
-// 已用量只算套餐部分，全部计入 download（我们只记总量，编一个上下行比例会让用户看到假数据）；expire 是到期时刻。
+// userinfoOf 算 Subscription-Userinfo：总量 = 本期套餐额度（不限或没有配额行按 0）+ 这一行上送的量；
+// 全部计入 download（我们只记总量，编一个上下行比例会让用户看到假数据）；expire 是到期时刻。
 func userinfoOf(row repo.PullRow) Userinfo {
 	u := Userinfo{Expire: row.PeriodEnd.Unix()}
 	var limit int64
@@ -211,7 +222,10 @@ func userinfoOf(row repo.PullRow) Userinfo {
 	if row.TrafficConsumed != nil {
 		u.Download = *row.TrafficConsumed
 	}
-	u.Total = limit + row.PackRemaining
+	if row.TrafficBonus != nil && row.TrafficLimit != nil {
+		limit += *row.TrafficBonus
+	}
+	u.Total = limit
 	return u
 }
 

@@ -347,7 +347,7 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 
 	// 试错上限：先原子占名额再验口令，并发请求绕不过；验对后清零
 	key := reauthFailureKey(p.UserID)
-	n, ttl, err := s.sessions.claimAttempt(ctx, key, reauthWindow, 0, 0)
+	n, ttl, err := s.sessions.attempts.Incr(ctx, key, reauthWindow, 0, 0)
 	if err != nil {
 		return Tokens{}, errs.Wrap(errs.Unavailable, err)
 	}
@@ -363,12 +363,12 @@ func (s *Service) Reauth(ctx context.Context, password string) (Tokens, error) {
 
 	err = s.users.VerifyPassword(ctx, authn.AudienceAdmin, p.UserID, password)
 	if err == nil {
-		if cerr := s.sessions.clearAttempts(ctx, key); cerr != nil {
+		if cerr := s.sessions.attempts.Reset(ctx, key); cerr != nil {
 			plog.From(ctx).Warn("清除重认证试错计数失败", zap.Error(cerr))
 		}
 	} else if errs.As(err).Code != errs.Unauthorized {
 		// 口令校验没有结论（繁忙、故障）：退回名额
-		if rerr := s.sessions.releaseAttempt(ctx, key); rerr != nil {
+		if rerr := s.sessions.attempts.Release(ctx, key); rerr != nil {
 			plog.From(ctx).Warn("退回重认证试错名额失败", zap.Error(rerr))
 		}
 	}

@@ -7,12 +7,15 @@ package render
 // 用户一眼看到原因，而不是对着伪装 404 以为站点挂了。续费后客户端下次更新订阅
 // （响应头把更新间隔压到 1 小时），真实节点原样回来，链接不变。
 //
-// 三种格式都必须是客户端能加载的合法配置：
+// 各格式都必须是客户端能加载的合法配置：
 //
-//	Clash      一个指向 127.0.0.1 的 socks5 占位代理，代理组只含它，规则全部走这个组
-//	sing-box   一个指向 127.0.0.1 的 socks 占位出站，外加一个只含它的 selector：图形客户端
-//	           只在「组」里显示出站名，没有组用户看不到这句提示；route.final 指向它
-//	URI        一条 ss:// 分享链接，提示写在 remark（#）里
+//	Clash / Stash      一个指向 127.0.0.1 的 socks5 占位代理，代理组只含它，规则全部走这个组
+//	sing-box           一个指向 127.0.0.1 的 socks 占位出站，外加一个只含它的 selector：图形客户端
+//	                   只在「组」里显示出站名，没有组用户看不到这句提示；route.final 指向它
+//	Loon               一行 Shadowsocks 占位配置
+//	Surfboard          最小完整配置（Proxy、Proxy Group、Rule）
+//	SIP008             一条 Shadowsocks 占位条目的 JSON
+//	URI / Shadowrocket 一条 ss:// 分享链接，提示写在 remark（#）里
 //
 // 占位地址是本机 1 号端口：连上去立即被拒，不会把流量送到任何地方。
 // 不用 sing-box 的完整模板，自己出一份最小配置。
@@ -24,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -44,10 +49,16 @@ func ExpiredNotice(periodEnd time.Time, loc *time.Location) string {
 // RenderExpired 按格式渲染只含一条提示节点的订阅。返回内容与 Content-Type。
 func RenderExpired(f Format, notice string) ([]byte, string) {
 	switch f {
-	case FormatClash, FormatClashPremium:
+	case FormatClash, FormatClashPremium, FormatStash:
 		return renderExpiredClash(notice), "text/yaml; charset=utf-8"
 	case FormatSingbox:
 		return renderExpiredSingbox(notice), "application/json; charset=utf-8"
+	case FormatLoon:
+		return renderExpiredLoon(notice), "text/plain; charset=utf-8"
+	case FormatSurfboard:
+		return renderExpiredSurfboard(notice), "text/plain; charset=utf-8"
+	case FormatSIP008:
+		return renderExpiredSIP008(notice), "application/json; charset=utf-8"
 	default:
 		return renderExpiredURI(notice), "text/plain; charset=utf-8"
 	}
@@ -92,4 +103,40 @@ func renderExpiredURI(notice string) []byte {
 	line := "ss://" + userinfo + "@" + expiredPlaceholderHost + ":" +
 		strconv.Itoa(expiredPlaceholderPort) + "#" + url.PathEscape(notice)
 	return []byte(base64.StdEncoding.EncodeToString([]byte(line)))
+}
+
+func renderExpiredLoon(notice string) []byte {
+	line := lineSafeName(notice) + " = Shadowsocks," + expiredPlaceholderHost + "," +
+		strconv.Itoa(expiredPlaceholderPort) + ",aes-128-gcm,\"expired\",udp=false\n"
+	return []byte(line)
+}
+
+func renderExpiredSurfboard(notice string) []byte {
+	name := lineSafeName(notice)
+	text := "[Proxy]\n" + name + " = ss, " + expiredPlaceholderHost + ", " +
+		strconv.Itoa(expiredPlaceholderPort) + ", encrypt-method=aes-128-gcm, password=expired\n\n[Proxy Group]\n" +
+		expiredGroupName + " = select, " + name + "\n\n[Rule]\nFINAL," + expiredGroupName + "\n"
+	return []byte(text)
+}
+
+func renderExpiredSIP008(notice string) []byte {
+	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(expiredPlaceholderHost+":"+strconv.Itoa(expiredPlaceholderPort)+"#"+notice)).String()
+	doc := sip008Doc{
+		Version: 1,
+		Servers: []sip008Server{
+			{
+				ID:         id,
+				Remarks:    notice,
+				Server:     expiredPlaceholderHost,
+				ServerPort: expiredPlaceholderPort,
+				Password:   "expired",
+				Method:     "aes-128-gcm",
+			},
+		},
+	}
+	body, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return []byte("{}")
+	}
+	return body
 }

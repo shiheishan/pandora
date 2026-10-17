@@ -13,8 +13,8 @@
 --
 -- activity_daily：后台行为趋势（注册、登录、下单、独立 IP、活跃用户）的按天汇总，派生读数，丢了可以重算。
 --   - 按站点时区切日，算这一行时的时区记在 tz（主键的一部分）；站点时区一改，旧行自动不用、回到实时算。
---   - report:activity_daily 每 10 分钟重算最近两个已结束日并覆盖写；读路径只用定稿的行
---     （computed_at 不早于该日结束后整一天），其余日子实时算。
+--   - report:activity_daily 每 10 分钟重算前天、昨天与今天并覆盖写（已定稿的跳过）；读路径直接用这张表的行，
+--     只有没有行的日子才实时算（定稿 = computed_at 不早于该日结束后整一天）。
 --   - 保留 400 天，retention:activity_daily 每天普通 DELETE（不是只追加表）。
 --   - 旧的库内函数 activity_daily_compute 不再建：逐天口径在 report service 里拼 audit、subscription 的聚合读。
 

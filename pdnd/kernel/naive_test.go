@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
-	singcore "github.com/aegispanel/nodeagent/core/sing"
 	"golang.org/x/net/http2"
 )
 
@@ -71,7 +70,7 @@ func TestNativeNaiveH2Loopback(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Padding") == "" {
 		t.Fatalf("status=%s padding=%q", resp.Status, resp.Header.Get("Padding"))
 	}
-	naiveConn := singcore.NewNaiveClientConn(resp.Body, pipeWriter, naiveTestFlusher{}, raw.RemoteAddr())
+	naiveConn := newNaiveTestClientConn(resp.Body, pipeWriter, naiveTestFlusher{}, raw.RemoteAddr())
 	defer naiveConn.Close()
 	_ = naiveConn.SetDeadline(time.Now().Add(5 * time.Second))
 	payload := []byte("GET /native-naive HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n")

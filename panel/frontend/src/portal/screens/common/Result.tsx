@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { href } from '../../../core/router'
-import { Card } from '../../../ui'
-import { flowCss } from './Flow'
+import { Btn, IconDisc } from '../../kit'
 import css from './Result.module.css'
 
 // ---------------------------------------------------------------------------
@@ -20,20 +19,18 @@ export interface ResultInfo {
 
 export function ResultView({ info }: { info: ResultInfo }) {
   return (
-    <div className={`${flowCss.stack} ${flowCss.narrow}`} data-screen="result">
+    <div className={css.page} data-screen="result">
       <div className={css.head}>
-        <div className={css.ok} aria-hidden="true">
-          ✓
-        </div>
+        <IconDisc name="check" tone="solid" />
         <h2 className={css.title}>{info.title}</h2>
       </div>
       {info.next && (
-        <Card className={css.next}>
-          <h3 className={css.nextTitle}>下一步</h3>
+        <div className={css.next}>
+          <h3 className={css.label}>下一步</h3>
           {info.next}
-        </Card>
+        </div>
       )}
-      <Card className={css.card}>
+      <div className={css.card}>
         <h3 className={css.label}>发生了什么</h3>
         <ul className={css.list}>
           {info.happened.map((x, i) => (
@@ -56,11 +53,11 @@ export function ResultView({ info }: { info: ResultInfo }) {
             </ul>
           </>
         )}
-        {info.changeable && <p className={flowCss.canChange}>↺ {info.changeable}</p>}
-      </Card>
-      <a className={flowCss.cta} href={href('/subs')} id="btn-done">
+        {info.changeable && <p className={css.again}>↺ {info.changeable}</p>}
+      </div>
+      <Btn href={href('/subs')} full id="btn-done">
         回到我的套餐
-      </a>
+      </Btn>
     </div>
   )
 }

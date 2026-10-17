@@ -77,18 +77,30 @@ func TestSetDevicePolicyValidation(t *testing.T) {
 	ctx := context.Background()
 
 	grace6 := 6
-	err := s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose, Grace: &grace6})
+	changed, err := s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose, Grace: &grace6})
+	if changed {
+		t.Fatal("changed should be false on validation error")
+	}
 	assertFieldValidation(t, err, "grace")
 
 	graceNeg := -1
-	err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose, Grace: &graceNeg})
+	changed, err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose, Grace: &graceNeg})
+	if changed {
+		t.Fatal("changed should be false on validation error")
+	}
 	assertFieldValidation(t, err, "grace")
 
 	win7 := 7
-	err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose, WindowMinutes: &win7})
+	changed, err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose, WindowMinutes: &win7})
+	if changed {
+		t.Fatal("changed should be false on validation error")
+	}
 	assertFieldValidation(t, err, "window_minutes")
 
-	err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: "x"})
+	changed, err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: "x"})
+	if changed {
+		t.Fatal("changed should be false on validation error")
+	}
 	assertFieldValidation(t, err, "mode")
 
 	if len(st.kv) != 0 {
@@ -107,12 +119,16 @@ func TestSetDevicePolicyPersistsAndAudits(t *testing.T) {
 
 	grace2 := 2
 	win30 := 30
-	if err := s.SetDevicePolicy(ctx, DevicePolicyUpdate{
+	changed, err := s.SetDevicePolicy(ctx, DevicePolicyUpdate{
 		Mode:          DeviceModeStrict,
 		Grace:         &grace2,
 		WindowMinutes: &win30,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("set: %v", err)
+	}
+	if !changed {
+		t.Fatal("first set: changed should be true")
 	}
 
 	p, err := s.DevicePolicy(ctx)
@@ -130,19 +146,27 @@ func TestSetDevicePolicyPersistsAndAudits(t *testing.T) {
 		t.Fatalf("audit: %s %s", e.action, e.resourceType)
 	}
 
-	if err := s.SetDevicePolicy(ctx, DevicePolicyUpdate{
+	changed, err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{
 		Mode:          DeviceModeStrict,
 		Grace:         &grace2,
 		WindowMinutes: &win30,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("noop set: %v", err)
+	}
+	if changed {
+		t.Fatal("noop set: changed should be false")
 	}
 	if len(al.entries) != 1 {
 		t.Fatalf("audit after noop set: %d", len(al.entries))
 	}
 
-	if err := s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose}); err != nil {
+	changed, err = s.SetDevicePolicy(ctx, DevicePolicyUpdate{Mode: DeviceModeLoose})
+	if err != nil {
 		t.Fatalf("mode only: %v", err)
+	}
+	if !changed {
+		t.Fatal("mode only: changed should be true")
 	}
 	p, err = s.DevicePolicy(ctx)
 	if err != nil {

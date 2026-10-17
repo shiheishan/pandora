@@ -1,0 +1,210 @@
+/* ===========================================================================
+ * 仪表盘「系统状态」卡与备份抽屉（Ops.module.css，样稿 admin-v4 #p-dash .two .box）
+ * 结构：标题 48 / 表头 34 / 8 行每行 40 / 页脚；两卡等高靠 ui Card 内容区 flex: 1，不再写最小高度
+ * ========================================================================= */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* 表头行（样稿 .lh.sv-g） */
+.headerRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  grid-template-columns: 136px minmax(0, 1fr) auto;
+}
+
+.alignRight {
+  text-align: right;
+}
+
+/* 列表容器 */
+.list {
+  flex: 1;
+}
+
+/* 行（样稿 .ln.sv-g） */
+.row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  text-decoration: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  cursor: default;
+  grid-template-columns: 136px minmax(0, 1fr) auto;
+  box-sizing: border-box;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.rowClickable {
+  cursor: pointer;
+}
+
+.rowClickable:hover {
+  background: var(--surface-2);
+}
+
+.why {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowAttention .why {
+  color: var(--text-2);
+}
+
+.metric {
+  font-size: 12.5px;
+  color: var(--text-3);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 骨架占位 */
+.skeletonWrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* 页脚 */
+.footText {
+  font-size: 13px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.footSpacer {
+  flex: 1;
+}
+
+.footLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.footLink:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.footLink:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 窄屏 ≤639px */
+@media (max-width: 639px) {
+  .headerRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0 14px;
+  }
+
+  .headerRow span:nth-child(2) {
+    display: none;
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    height: auto;
+    min-height: 40px;
+    padding: 9px 14px;
+  }
+
+  .rowOk .why {
+    display: none;
+  }
+
+  .why {
+    grid-column: 1;
+    grid-row: 2;
+    padding-left: 14px;
+    white-space: normal;
+  }
+
+  .metric {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+/* ===========================================================================
+ * 备份抽屉（BackupDrawer.tsx）
+ * ========================================================================= */
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-8) var(--space-16);
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--text-3);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.drawerStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.drawerTitle {
+  margin: 0 0 var(--space-8);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.notice {
+  margin: 0;
+  padding: 10px var(--space-12);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+}

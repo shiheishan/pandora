@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# 新栈工单端到端（support 模块，对照旧 panel/tests/support_e2e.sh）：
+# 工单端到端（support 模块）：
 #   1. 门户建单、分类推导优先级、校验；后台队列与回复；状态流转（open → pending_user → pending_agent → resolved → 重开 → closed）。
 #   2. OPS-001 核心：内部备注对用户不可见（详情、列表 message_count）；客服可见；库 CHECK 拒绝用户写 internal_note。
 #   3. 越权隔离（他人工单 404）；SLA 首次响应超时升级（含 worker 可能抢先扫描的幂等）；未结工单上限 5；指派与审计。
 #
-# 与旧版步骤对照：段号与旧脚本一致（1 账号 → 9 指派与审计）。路由仍为 $PUB/v1/support/* 与 $ADM/v1/tickets/*。
+# 共 9 段（1 账号 → 9 指派与审计）；路由为 $PUB/v1/support/* 与 $ADM/v1/tickets/*。
 #
-# 相对旧版删掉/改的断言：
-#   - 去掉 tenant_id、aegispanel.local、写死管理员口令；管理员在 users 表（00006_auth.sql）。
-#   - 分类 6 个（新栈 categories），旧脚本写 ≥5。
-#   - 建单成功 HTTP 201（非 200）；未知 JSON 字段（如 priority）httpx.BindJSON DisallowUnknownFields → 400（仍断言拒绝，见 panel/internal/pkg/httpx/bind.go）。
+# 断言口径：
+#   - 管理员在 users 表（00006_auth.sql），口令来自环境变量。
+#   - 分类 6 个。
+#   - 建单成功 HTTP 201；未知 JSON 字段（如 priority）httpx.BindJSON DisallowUnknownFields → 400（仍断言拒绝，见 panel/internal/pkg/httpx/bind.go）。
 #   - 第 7 段：worker 周期 SLA 扫描可能先于 POST /v1/tickets/escalate 升级，第一次只断言工单终态 escalated 与优先级抬高，不断言 escalated≥1。
 #   - 第 9 段审计只数本脚本主工单 TID 与 SLA 工单 T2（resource_id 过滤），阈值按实际动作条数。
 #
@@ -17,7 +17,7 @@
 #   - 读 status / first_responded_at / resolved_at / 未结数：比多轮 HTTP 更快、与 service 落库语义一致。
 #   - SLA 把 sla_first_response_due 拨到过去：无对外「改 SLA」接口，仅 e2e 夹具。
 #   - INSERT 违反 ticket_messages_internal_only_from_staff：验证库约束，API 层测不到。
-#   - 审计条数、用户 id：新栈登录响应无 user_id，按邮箱查 users。
+#   - 审计条数、用户 id：登录响应没有 user_id，按邮箱查 users。
 #
 # 会建用户与工单，只许一次性库：SUPPORT_E2E_DISPOSABLE=YES_DELETE_FIXTURES，库名带独立 test/e2e 段。
 set -uo pipefail
@@ -43,6 +43,9 @@ json(){ curl -s -H 'Content-Type: application/json' "$@"; }
 DB_NAME=$("$PSQL" -X -qAtc 'SELECT current_database()' | tr -d '[:space:]')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 STAMP="$(date +%s)$RANDOM"
 SECRET="内部备注禁止外泄标记$STAMP"

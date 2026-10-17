@@ -1,4 +1,4 @@
-// Package model 是 payment 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00012_payment.sql。
+// Package model 是 payment 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00012_payment.sql、00042_payment_fee_crypto.sql。
 package model
 
 import (
@@ -15,7 +15,6 @@ type Provider struct {
 	Adapter           string          `gorm:"column:adapter"`
 	DisplayName       string          `gorm:"column:display_name"`
 	CredentialsSealed []byte          `gorm:"column:credentials_sealed"`
-	Currencies        []string        `gorm:"column:currencies;type:jsonb;serializer:json"`
 	BaseURL           string          `gorm:"column:base_url"`
 	SubmitPath        string          `gorm:"column:submit_path"`
 	APIPath           string          `gorm:"column:api_path"`
@@ -23,6 +22,8 @@ type Provider struct {
 	DefaultMethod     string          `gorm:"column:default_method"`
 	AllowPrivateHost  bool            `gorm:"column:allow_private_host"`
 	MinAmount         decimal.Decimal `gorm:"column:min_amount;type:numeric(20,2)"`
+	FeeFixed          decimal.Decimal `gorm:"column:fee_fixed;type:numeric(20,2)"`
+	FeePercent        decimal.Decimal `gorm:"column:fee_percent;type:numeric(5,2)"`
 	Enabled           bool            `gorm:"column:enabled"`
 	AcceptingNew      bool            `gorm:"column:accepting_new"`
 	CreatedAt         time.Time       `gorm:"column:created_at;autoCreateTime"`
@@ -34,25 +35,25 @@ func (Provider) TableName() string { return "payment_providers" }
 
 // Intent 是 payment_intents 表的一行。
 type Intent struct {
-	ID            uuid.UUID         `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	OrderID       uuid.UUID         `gorm:"column:order_id;type:uuid"`
-	OrderNo       string            `gorm:"column:order_no"`
-	UserID        uuid.UUID         `gorm:"column:user_id;type:uuid"`
-	ProviderID    uuid.UUID         `gorm:"column:provider_id;type:uuid"`
-	OutTradeNo    string            `gorm:"column:out_trade_no"`
-	ProviderRef   *string           `gorm:"column:provider_ref"`
-	Method        string            `gorm:"column:method"`
-	Currency      string            `gorm:"column:currency"`
-	Amount        decimal.Decimal   `gorm:"column:amount;type:numeric(20,2)"`
-	Status        string            `gorm:"column:status"`
-	HTTPMethod    string            `gorm:"column:http_method"`
-	RedirectURL   string            `gorm:"column:redirect_url"`
-	FormFields    map[string]string `gorm:"column:form_fields;type:jsonb;serializer:json"`
-	ExpiresAt     *time.Time        `gorm:"column:expires_at"`
-	QueryAttempts int               `gorm:"column:query_attempts"`
-	NextQueryAt   *time.Time        `gorm:"column:next_query_at"`
-	CreatedAt     time.Time         `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt     time.Time         `gorm:"column:updated_at;autoUpdateTime"`
+	ID              uuid.UUID         `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
+	OrderID         uuid.UUID         `gorm:"column:order_id;type:uuid"`
+	OrderNo         string            `gorm:"column:order_no"`
+	UserID          uuid.UUID         `gorm:"column:user_id;type:uuid"`
+	ProviderID      uuid.UUID         `gorm:"column:provider_id;type:uuid"`
+	OutTradeNo      string            `gorm:"column:out_trade_no"`
+	ProviderRef     *string           `gorm:"column:provider_ref"`
+	Method          string            `gorm:"column:method"`
+	Amount          decimal.Decimal   `gorm:"column:amount;type:numeric(20,2)"`
+	SurchargeAmount decimal.Decimal   `gorm:"column:surcharge_amount;type:numeric(20,2)"`
+	Status          string            `gorm:"column:status"`
+	HTTPMethod      string            `gorm:"column:http_method"`
+	RedirectURL     string            `gorm:"column:redirect_url"`
+	FormFields      map[string]string `gorm:"column:form_fields;type:jsonb;serializer:json"`
+	ExpiresAt       *time.Time        `gorm:"column:expires_at"`
+	QueryAttempts   int               `gorm:"column:query_attempts"`
+	NextQueryAt     *time.Time        `gorm:"column:next_query_at"`
+	CreatedAt       time.Time         `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt       time.Time         `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName 固定表名。
@@ -66,9 +67,9 @@ type Payment struct {
 	PaymentIntentID   *uuid.UUID      `gorm:"column:payment_intent_id;type:uuid"`
 	ProviderID        uuid.UUID       `gorm:"column:provider_id;type:uuid"`
 	ProviderPaymentID string          `gorm:"column:provider_payment_id"`
-	Currency          string          `gorm:"column:currency"`
 	Amount            decimal.Decimal `gorm:"column:amount;type:numeric(20,2)"`
 	FeeAmount         decimal.Decimal `gorm:"column:fee_amount;type:numeric(20,2)"`
+	SurchargeAmount   decimal.Decimal `gorm:"column:surcharge_amount;type:numeric(20,2)"`
 	Status            string          `gorm:"column:status"`
 	Method            *string         `gorm:"column:method"`
 	PaidAt            time.Time       `gorm:"column:paid_at;default:now()"`
@@ -106,7 +107,6 @@ type LateCase struct {
 	PaymentID        uuid.UUID       `gorm:"column:payment_id;type:uuid"`
 	PaymentEventID   *uuid.UUID      `gorm:"column:payment_event_id;type:uuid"`
 	CaseKind         string          `gorm:"column:case_kind"`
-	Currency         string          `gorm:"column:currency"`
 	Amount           decimal.Decimal `gorm:"column:amount;type:numeric(20,2)"`
 	Status           string          `gorm:"column:status"`
 	SuspenseTxnID    uuid.UUID       `gorm:"column:suspense_txn_id;type:uuid"`

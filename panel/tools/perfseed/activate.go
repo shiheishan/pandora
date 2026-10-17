@@ -11,8 +11,6 @@ type perfPrice struct {
 	BillingInterval string `json:"billing_interval"`
 	IntervalCount   int    `json:"interval_count"`
 	UnitAmount      int64  `json:"unit_amount"`
-	Currency        string `json:"currency"`
-	TrialDays       int    `json:"trial_days"`
 }
 
 // perfPlan 是 activate 建的一个套餐；TrafficGB 为空 = 不限量。
@@ -29,14 +27,14 @@ var perfActivatePlans = []perfPlan{
 		Code:      "perf-basic",
 		Name:      "Perf 基础月付",
 		TrafficGB: int64Ptr(200),
-		Prices:    []perfPrice{{BillingInterval: "month", IntervalCount: 1, UnitAmount: 1500, Currency: "CNY"}},
+		Prices:    []perfPrice{{BillingInterval: "month", IntervalCount: 1, UnitAmount: 1500}},
 	},
 	{
 		Code: "perf-unlimited",
 		Name: "Perf 不限量",
 		Prices: []perfPrice{
-			{BillingInterval: "month", IntervalCount: 1, UnitAmount: 3000, Currency: "CNY"},
-			{BillingInterval: "year", IntervalCount: 1, UnitAmount: 30000, Currency: "CNY"},
+			{BillingInterval: "month", IntervalCount: 1, UnitAmount: 3000},
+			{BillingInterval: "year", IntervalCount: 1, UnitAmount: 30000},
 		},
 	},
 }
@@ -162,7 +160,6 @@ func createCompletePlan(ctx context.Context, cli *adminClient, poolID string, sp
 			PriceID:         out.PriceIDs[i],
 			BillingInterval: p.BillingInterval,
 			IntervalCount:   p.IntervalCount,
-			Currency:        p.Currency,
 			UnitAmountCents: p.UnitAmount,
 		})
 	}

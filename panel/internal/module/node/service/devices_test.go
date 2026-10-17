@@ -22,10 +22,11 @@ func (devFakeTx) Do(ctx context.Context, fn func(context.Context) error) error {
 }
 
 type devFakeSettings struct {
-	policy   settingssvc.DevicePolicy
-	readErr  error
-	writeErr error
-	updates  []settingssvc.DevicePolicyUpdate
+	policy    settingssvc.DevicePolicy
+	readErr   error
+	writeErr  error
+	unchanged bool
+	updates   []settingssvc.DevicePolicyUpdate
 }
 
 func (f *devFakeSettings) DevicePolicy(context.Context) (settingssvc.DevicePolicy, error) {
@@ -35,12 +36,12 @@ func (f *devFakeSettings) DevicePolicy(context.Context) (settingssvc.DevicePolic
 	return f.policy, nil
 }
 
-func (f *devFakeSettings) SetDevicePolicy(_ context.Context, u settingssvc.DevicePolicyUpdate) error {
+func (f *devFakeSettings) SetDevicePolicy(_ context.Context, u settingssvc.DevicePolicyUpdate) (bool, error) {
 	if f.writeErr != nil {
-		return f.writeErr
+		return false, f.writeErr
 	}
 	f.updates = append(f.updates, u)
-	return nil
+	return !f.unchanged, nil
 }
 
 type devFakeSubs struct{}
@@ -114,6 +115,27 @@ func TestSetDevicePolicyBumpsUsersEpoch(t *testing.T) {
 	}
 	if v, err := mr.Get(UsersEpochKey); err != nil || v != "1" {
 		t.Fatalf("名单纪元 %q %v，期望 1", v, err)
+	}
+}
+
+func TestSetDevicePolicyUnchangedNoBump(t *testing.T) {
+	mr, rdb := testkit.Redis(t)
+	svc := New(nil, nil, nil, rdb)
+	svc.tx = devFakeTx{}
+	fake := &devFakeSettings{policy: settingssvc.DefaultDevicePolicy(), unchanged: true}
+	svc.UseDevices(fake, devFakeSubs{}, nil, nil)
+	two := 2
+	if err := svc.SetDevicePolicy(context.Background(), DevicePolicyInput{Mode: settingssvc.DeviceModeStrict, Grace: &two}); err != nil {
+		t.Fatalf("SetDevicePolicy: %v", err)
+	}
+	if len(fake.updates) != 1 {
+		t.Fatalf("期望 1 个 update，得 %d", len(fake.updates))
+	}
+	if fake.updates[0].Mode != settingssvc.DeviceModeStrict || fake.updates[0].Grace == nil || *fake.updates[0].Grace != 2 {
+		t.Fatalf("update 内容不对: %+v", fake.updates[0])
+	}
+	if mr.Exists(UsersEpochKey) {
+		t.Fatal("未发生变化的策略更新不应推进名单纪元")
 	}
 }
 

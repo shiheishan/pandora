@@ -125,7 +125,7 @@ func TestNodeTrafficRanking(t *testing.T) {
 	if out.Returned != 1300 || out.Other != 0 {
 		t.Fatalf("returned/other %d %d", out.Returned, out.Other)
 	}
-	if out.Quality.DuplicateReports != 0 || out.Quality.InvalidReports != 2 {
+	if out.Quality.InvalidReports != 2 {
 		t.Fatalf("quality %+v", out.Quality)
 	}
 	if len(e.ports.trafficCalls) == 0 || !e.ports.trafficCalls[0][0].Equal(out.Window.From) || !e.ports.trafficCalls[0][1].Equal(out.Window.To) {

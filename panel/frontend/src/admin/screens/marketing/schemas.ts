@@ -9,16 +9,17 @@ const ids = z
   .transform((v) => v ?? [])
 
 // ---------------------------------------------------------------------------
-// 套餐目录子集（GET v1/plans）：只收营销页要的名字与价格
+// 套餐目录子集（GET v1/plans）：只收营销页要的名字、类型与价格（10-16 起只有人民币，没有币种）
 // ---------------------------------------------------------------------------
-export const planSchema = z.object({
+const planSchema = z.object({
   id: uuid,
   name: z.string(),
+  /** subscription 订阅套餐按时间（月 / 季 / 半年 / 年四档价）；one_time 一次性套餐只有一个价 */
+  kind: z.enum(['subscription', 'one_time']),
   status: z.enum(['draft', 'active', 'archived']),
   prices: z.array(
     z.object({
       id: uuid,
-      currency: z.string(),
       unit_amount: z.number(),
       billing_interval: z.string(),
       interval_count: z.number(),
@@ -38,7 +39,6 @@ export const couponSchema = z.object({
   name: z.string(),
   discount_type: z.enum(['percent', 'fixed']),
   discount_value: z.number(),
-  currency: z.string(),
   max_discount: z.number().nullable(),
   min_order_amount: z.number(),
   max_redemptions: z.number().nullable(),
@@ -56,11 +56,10 @@ export type Coupon = z.output<typeof couponSchema>
 
 export const redemptionsResponse = z.object({
   redemptions: z
-    .array(z.object({ email: z.string(), order_no: z.string(), discount: z.number(), currency: z.string(), at: iso, reverted: z.boolean() }))
+    .array(z.object({ email: z.string(), order_no: z.string(), discount: z.number(), at: iso, reverted: z.boolean() }))
     .nullable()
     .transform((v) => v ?? []),
 })
-export type Redemption = z.output<typeof redemptionsResponse>['redemptions'][number]
 
 export const couponCreated = z.object({ id: uuid, code: z.string() })
 export const couponBatchCreated = z.object({ count: z.number(), codes: z.array(z.string()), name: z.string() })
@@ -87,7 +86,7 @@ const rewardsSchema = z.object({
 })
 export type Rewards = z.output<typeof rewardsSchema>
 
-export const templateSchema = z.object({
+const templateSchema = z.object({
   id: uuid,
   name: z.string(),
   description: z.string(),
@@ -104,6 +103,8 @@ export const templateSchema = z.object({
   theme_color: z.string(),
   code_total: z.number(),
   code_used: z.number(),
+  /** 套餐卡的价格档已下架：兑换会被拒，模板行标出来 */
+  price_archived: z.boolean(),
   created_at: iso,
 })
 export const templatesResponse = z.object({
@@ -127,7 +128,7 @@ export const giftStatsSchema = z.object({
 })
 export type GiftStats = z.output<typeof giftStatsSchema>
 
-export const batchSchema = z.object({
+const batchSchema = z.object({
   id: uuid,
   template_id: uuid,
   template_name: z.string(),
@@ -151,7 +152,7 @@ export const batchesResponse = z.object({
 export type Batch = z.output<typeof batchSchema>
 
 /** R17：只有 code_masked，没有明文 */
-export const codeSchema = z.object({
+const codeSchema = z.object({
   id: uuid,
   code_masked: z.string(),
   status: z.enum(['unused', 'used', 'disabled', 'expired']),
@@ -171,7 +172,7 @@ export const codesResponse = z.object({
 })
 export type GiftCode = z.output<typeof codeSchema>
 
-export const usageSchema = z.object({
+const usageSchema = z.object({
   template_name: z.string(),
   code_masked: z.string(),
   user_email: z.string(),
@@ -215,21 +216,27 @@ export const overviewSchema = z.object({
   total_earned: z.number(),
   invited_users: z.number(),
   scope: z.enum(['first_order', 'every_order']),
+  distribution_enabled: z.boolean(),
+  distribution_levels: z.tuple([z.number(), z.number(), z.number()]),
+  withdraw_enabled: z.boolean(),
+  withdraw_methods: z.array(z.string()),
 })
 export type CommissionOverview = z.output<typeof overviewSchema>
 
-export const withdrawalSchema = z.object({
+const withdrawalSchema = z.object({
   id: uuid,
   email: z.string(),
   user_id: uuid,
   amount: z.number(),
-  currency: z.string(),
-  status: z.string(),
+  status: z.enum(['requested', 'approved', 'rejected', 'paid']),
   payout_detail: z.string(),
   reject_reason: z.string(),
   requested_at: iso,
   completed_at: iso.nullable(),
   earned_total: z.number(),
+  method: z.string(),
+  payout_reference: z.string(),
+  paid_usdt_amount: z.string().nullable(),
 })
 export const withdrawalsResponse = z.object({
   withdrawals: z
@@ -242,19 +249,29 @@ export type Withdrawal = z.output<typeof withdrawalSchema>
 export const reviewResponse = z.object({ status: z.enum(['approved', 'rejected']) })
 export const paidResponse = z.object({ status: z.literal('paid') })
 
-export const reviewEntrySchema = z.object({
+const reviewEntrySchema = z.object({
   id: uuid,
   order_no: z.string(),
   referrer_email: z.string(),
   referee_email: z.string(),
   amount: z.number().int(),
-  currency: z.string(),
   review_reason: z.string(),
-  /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败 */
-  review_source: z.enum(['same_source', 'source_check', 'underfunded', 'other']),
+  /** 由原因归类：underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败；account_deleted（受益人已注销）只能作废 */
+  review_source: z.enum(['same_source', 'source_check', 'underfunded', 'account_deleted', 'other']),
   created_at: iso,
   frozen_until: iso,
 })
 export type ReviewEntry = z.output<typeof reviewEntrySchema>
 export const reviewEntriesResponse = z.object({ entries: z.array(reviewEntrySchema), next_cursor: z.string() })
 export const entryReviewResponse = z.object({ status: z.enum(['pending', 'voided']) })
+
+const overrideSchema = z.object({
+  user_id: uuid,
+  email: z.string(),
+  rate_percent: z.number().int().nullable(),
+  scope: z.enum(['first_order', 'every_order']).nullable(),
+  updated_at: iso,
+})
+export type CommissionOverride = z.output<typeof overrideSchema>
+export const overridesResponse = z.object({ overrides: z.array(overrideSchema) })
+export const overrideSetResponse = z.object({ override: overrideSchema })

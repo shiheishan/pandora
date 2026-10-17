@@ -1,30 +1,48 @@
 import { href } from '../../../core/router'
-import { Empty, Skeleton, Tag } from '../../../ui'
+import { Empty, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
+import { Btn } from '../../kit'
 import { LoadError } from '../common/Blocks'
-import { usePlans, type Plan } from '../common/catalog'
+import { devicesText, headlinePrice, usePlans, type Plan } from '../common/catalog'
 import { Callout, flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
-import { headlinePrice, PlanCard } from '../common/PlanCard'
-import { addPeriod, day, devicesText } from '../common/purchase'
+import { PlanCard } from '../common/PlanCard'
+import { addPeriod, day, endAfter } from '../common/purchase'
 import { isLive, type Subscription } from '../common/subscriptions'
+import css from './Pages.module.css'
 import { useSheets } from './sheets'
 
-/** 「买这个」的卡：同款已有时标「你已有一份」，按钮下写「新链接 · 今天起到 …」 */
-export function NewPlanCard({ plan, held }: { plan: Plan; held: readonly Subscription[] }) {
+/** 「买这个」的卡：同款已有时标「你已有一份」，推荐的标「多数人选这个」，按钮下写「新链接 · 今天起到 …」 */
+function NewPlanCard({ plan, held, site }: { plan: Plan; held: readonly Subscription[]; site: string }) {
   const holders = held.filter((s) => s.plan_id === plan.id)
   const price = headlinePrice(plan)
-  const tag = holders.length ? <Tag>你已有{holders.length > 1 ? ` ${holders.length} 份` : '一份'}</Tag> : plan.recommended ? <Tag tone="brand">多数人选这个</Tag> : null
+  const badge = holders.length
+    ? ({ text: `你已有${holders.length > 1 ? ` ${holders.length} 份` : '一份'}`, tone: 'soft' } as const)
+    : plan.recommended
+      ? ({ text: '多数人选这个', tone: 'solid' } as const)
+      : null
+  const note =
+    price && plan.kind === 'one_time'
+      ? price.validity_days === null
+        ? '新链接 · 永久有效'
+        : (() => {
+            const end = endAfter(new Date(), price)
+            return end ? `新链接 · 今天起到 ${day(end)}` : '新链接 · 永久有效'
+          })()
+      : price
+        ? `新链接 · 今天起到 ${day(addPeriod(new Date(), price.billing_interval, price.interval_count))}`
+        : undefined
   return (
     <PlanCard
       plan={plan}
-      tag={tag}
+      site={site}
+      badge={badge}
       action={
-        <a className={plan.recommended ? flowCss.cta : flowCss.ctaQuiet} href={href('/checkout', { new: plan.id })} id={`btn-new-${plan.id}`}>
+        <Btn href={href('/checkout', { new: plan.id })} tone={plan.recommended ? 'primary' : 'soft'} full id={`btn-new-${plan.id}`}>
           买这个
-        </a>
+        </Btn>
       }
-      note={price ? `新链接 · 今天起到 ${day(addPeriod(new Date(), price.billing_interval, price.interval_count))}` : undefined}
+      note={note}
     />
   )
 }
@@ -42,8 +60,9 @@ export function NewPick() {
   const failed = h.subs.isError ? h.subs : plans.isError ? plans : null
   if (failed) return <LoadError error={failed.error} onRetry={() => void failed.refetch()} what="套餐" />
   const first = h.held.find(isLive)
+  const buyable = plans.data!.filter((p) => p.allow_new_purchase)
   return (
-    <div className={flowCss.stack}>
+    <div className={css.page}>
       <Callout>会得到一个新链接，和现在的分开用：各自的流量、各自到期。</Callout>
       {first && (
         <div className={flowCss.tip}>
@@ -57,12 +76,12 @@ export function NewPick() {
           </div>
         </div>
       )}
-      {plans.data!.length === 0 ? (
+      {buyable.length === 0 ? (
         <Empty title="暂时没有可买的套餐" description="新套餐上架后会出现在这里。" />
       ) : (
-        <div className={flowCss.cards}>
-          {plans.data!.map((p) => (
-            <NewPlanCard key={p.id} plan={p} held={h.held} />
+        <div className={css.plans}>
+          {buyable.map((p) => (
+            <NewPlanCard key={p.id} plan={p} held={h.held} site={h.site} />
           ))}
         </div>
       )}

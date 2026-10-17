@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serverSchema, serversResponse } from './schemas'
+import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serversResponse } from './schemas'
 
 export { endsIntent, useFailure, useIntentKey } from '../../actions'
 
-export const NK = ['admin', 'nodes'] as const
+const NK = ['admin', 'nodes'] as const
 
 /** 一页的节点数：后端上限。节点总数不超过它时整页在本地筛选与搜索 */
 export const NODE_PAGE = 1000
@@ -15,11 +15,11 @@ export const NODE_PAGE = 1000
  * 指标靠定时重拉；名称、状态、池这类真正的变更仍由 nodes.changed 立刻失效。
  * 页面不可见时 react-query 自动暂停定时重拉
  */
-export const NODE_METRICS_REFRESH_MS = 30_000
+const NODE_METRICS_REFRESH_MS = 30_000
 
 /**
  * 节点列表：一次取到后端上限 1000 条，并且总带 include_retired=1——
- * 「全部」里藏掉已退役是前端筛选的事；刚退役的节点抽屉还开着，要能继续删除它。
+ * 「全部」里藏掉已退役是前端筛选的事；刚退役的节点详情页还要能继续显示。
  * 服务器卡片与路由组成员也用这一份（超过 1000 个节点时只覆盖前 1000 个）
  */
 export function useNodes() {
@@ -37,11 +37,21 @@ export function useNodes() {
  * 节点超过一页时改由服务端筛选、搜索、分页（state 与前端 nodeState 同一映射，q 与 filterNodes 同一组字段）。
  * enabled=false 时不发请求
  */
-export function useNodePage(p: { state: string; q: string; offset: number }, enabled: boolean) {
+export function useNodePage(p: { state: string; q: string; tag: string; offset: number }, enabled: boolean) {
   const api = useApi()
   return useQuery({
-    queryKey: [...NK, 'page', p.state, p.q, p.offset],
-    queryFn: ({ signal }) => api.get('v1/nodes', nodesResponse, { signal, query: { limit: NODE_PAGE, offset: p.offset, state: p.state, ...(p.q ? { q: p.q } : {}) } }),
+    queryKey: [...NK, 'page', p.state, p.q, p.tag, p.offset],
+    queryFn: ({ signal }) =>
+      api.get('v1/nodes', nodesResponse, {
+        signal,
+        query: {
+          limit: NODE_PAGE,
+          offset: p.offset,
+          state: p.state,
+          ...(p.q ? { q: p.q } : {}),
+          ...(p.tag ? { tag: p.tag } : {}),
+        },
+      }),
     meta: { topics: ['nodes.changed'] },
     placeholderData: (prev) => prev,
     refetchInterval: NODE_METRICS_REFRESH_MS,
@@ -50,7 +60,7 @@ export function useNodePage(p: { state: string; q: string; offset: number }, ena
 }
 
 /**
- * 单个节点连同编辑字段（protocol_config 等，GET v1/nodes?id=）：抽屉的协议表单用它，
+ * 单个节点连同编辑字段（protocol_config 等，GET v1/nodes?id=）：详情页以它为准、协议表单用它，
  * 也兜住列表里没加载到的节点（地址直接指到第 1001 个以后）。不存在时为 null
  */
 export function useNodeDetail(id: string | null) {
@@ -85,11 +95,6 @@ export function useServers() {
     meta: { topics: ['nodes.changed'] },
     staleTime: 30_000,
   })
-}
-
-export function useServer(id: string) {
-  const api = useApi()
-  return useQuery({ queryKey: [...NK, 'server', id], queryFn: ({ signal }) => api.get(`v1/servers/${id}`, serverSchema, { signal }), meta: { topics: ['nodes.changed'] } })
 }
 
 export function useServerNodes(id: string) {
@@ -137,7 +142,7 @@ export function useGlobalRouting() {
   return useQuery({ queryKey: [...NK, 'global-routing'], queryFn: ({ signal }) => api.get('v1/nodes/routing', globalRoutingSchema, { signal }) })
 }
 
-/** 路由组列表（00096）：路由标签的组切换条与节点抽屉的「所属路由组」都用它；成员名跟着节点变，挂 nodes.changed */
+/** 路由组列表（00096）：路由标签的组切换条与节点详情的「所属路由组」都用它；成员名跟着节点变，挂 nodes.changed */
 export function useRouteGroups() {
   const api = useApi()
   return useQuery({

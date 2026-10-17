@@ -68,7 +68,7 @@ func (f *opsFake) ExportUsers(_ context.Context, fl service.BulkFilter, limit in
 	f.lastExportLim = limit
 	return []service.ExportRow{{
 		Email: "=cmd@example.test", Status: "active", GroupName: "+grp",
-		ActiveSubs: 1, Orders: 3, Paid: "CNY 12.30", CreatedAt: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC), LastLoginAt: nil,
+		ActiveSubs: 1, Orders: 3, Paid: "12.30", CreatedAt: time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC), LastLoginAt: nil,
 	}}, nil
 }
 
@@ -320,7 +320,7 @@ func TestOpsBulkExportCSV(t *testing.T) {
 	if strings.Join(recs[0], ",") != "邮箱,状态,分组,生效订阅,订单数,累计实付,注册时间,最近登录" {
 		t.Fatalf("表头 %v", recs[0])
 	}
-	if recs[1][0] != "'=cmd@example.test" || recs[1][2] != "'+grp" || recs[1][3] != "1" || recs[1][4] != "3" || recs[1][5] != "CNY 12.30" || recs[1][7] != "" {
+	if recs[1][0] != "'=cmd@example.test" || recs[1][2] != "'+grp" || recs[1][3] != "1" || recs[1][4] != "3" || recs[1][5] != "12.30" || recs[1][7] != "" {
 		t.Fatalf("行 %v", recs[1])
 	}
 	if f.lastExportLim != 5 || f.lastBulk.HasActiveSub == nil || !*f.lastBulk.HasActiveSub || f.lastBulk.ExpiresWithinDays != -1 {
@@ -464,6 +464,14 @@ func TestOpsAccessLogShape(t *testing.T) {
 	f := &opsFake{}
 	e, _ := opsEngine(f)
 	w := do(e, http.MethodGet, "/v1/access-log?category=login&limit=abc&offset=-3&user=u@example.test", "")
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid limit/offset status %d want 422", w.Code)
+	}
+	if f.lastAccess.Category != "" {
+		t.Fatalf("service should not be called on 422, query %+v", f.lastAccess)
+	}
+
+	w = do(e, http.MethodGet, "/v1/access-log?category=login&user=u@example.test", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}

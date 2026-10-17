@@ -11,13 +11,20 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text);
-  font-weight: var(--fw-regular);
+  font-weight: var(--button-weight);
+  font-size: var(--button-font-size);
   white-space: nowrap;
   cursor: pointer;
   transition:
     background-color 0.12s,
     border-color 0.12s,
-    color 0.12s;
+    color 0.12s,
+    filter 0.2s,
+    transform 0.15s;
+}
+
+.button svg {
+  flex: none;
 }
 
 .button:disabled {
@@ -40,12 +47,14 @@
 
 .sm {
   --h: var(--h-control-sm);
-  --pad: calc(var(--pad-button) - 2px);
+  --pad: var(--pad-button-sm);
+  font-size: var(--button-font-size-sm);
 }
 
 .xs {
   --h: var(--h-control-xs);
   --pad: calc(var(--pad-button) - 4px);
+  font-size: var(--button-font-size-sm);
 }
 
 .dialog {
@@ -53,26 +62,22 @@
   --pad: calc(var(--pad-button) - 2px);
 }
 
-/* 后台工具栏（28）与紧凑按钮（24）用 12px 字 */
-:root[data-app='admin'] .sm,
-:root[data-app='admin'] .xs {
-  font-size: var(--fs-caption);
-}
-
 /* --- 变体 ---------------------------------------------------------------- */
 .primary,
 .danger {
   padding: 0 calc(var(--pad) + 2px);
-  font-weight: var(--fw-medium);
+  font-weight: var(--button-strong-weight);
 }
 
 .primary {
-  background: var(--accent);
+  background: var(--button-primary-bg);
+  border-color: var(--button-primary-border);
+  box-shadow: var(--button-primary-shadow);
   color: var(--on-accent);
 }
 
 .primary:not(:disabled):hover {
-  background: var(--accent-hover);
+  background: var(--button-primary-hover-bg);
 }
 
 .outline {
@@ -86,12 +91,13 @@
 }
 
 .secondary {
-  border-color: var(--border-strong);
+  border-color: var(--button-secondary-border);
+  box-shadow: var(--button-secondary-shadow);
   background: var(--surface);
 }
 
 .secondary:not(:disabled):hover {
-  background: var(--surface-3);
+  background: var(--button-secondary-hover-bg);
 }
 
 .ghost {
@@ -104,8 +110,13 @@
 }
 
 .danger {
-  background: var(--danger);
-  color: var(--on-danger);
+  background: var(--button-danger-bg);
+  border-color: var(--button-danger-border);
+  color: var(--button-danger-color);
+}
+
+.danger:not(:disabled):hover {
+  background: var(--button-danger-hover-bg);
 }
 
 .link {
@@ -113,6 +124,7 @@
   padding: 0;
   border: 0;
   color: var(--link);
+  font-size: inherit;
   text-decoration: var(--link-decoration);
   text-decoration-color: var(--link-underline);
   text-underline-offset: 3px;
@@ -120,6 +132,31 @@
 
 .link:not(:disabled):hover {
   color: var(--link-hover);
+}
+
+/* 只有图标的按钮（样稿 .ib）：方形、无底无框，悬停浅底 */
+.icon {
+  width: var(--h);
+  padding: 0;
+  color: var(--text-2);
+}
+
+.icon:not(:disabled):hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* 实心与次按钮悬停提亮、按下位移（角色令牌：后台 none，外观不变） */
+.primary:not(:disabled):hover,
+.secondary:not(:disabled):hover,
+.danger:not(:disabled):hover {
+  filter: var(--button-hover-filter);
+}
+
+.primary:not(:disabled):active,
+.secondary:not(:disabled):active,
+.danger:not(:disabled):active {
+  transform: var(--button-press);
 }
 
 .block {

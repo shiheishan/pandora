@@ -74,6 +74,9 @@ func (r *Repo) ExportBulk(ctx context.Context, q BulkQuery, limit int) ([]Export
 func applyBulkWhere(tx *gorm.DB, q BulkQuery) *gorm.DB {
 	if q.Status != "" {
 		tx = tx.Where("u.status = ?", q.Status)
+	} else {
+		// 批量运营一律不圈已注销的账号（占位邮箱不可投递）
+		tx = tx.Where("u.status <> 'deleted'")
 	}
 	if q.GroupID != nil {
 		tx = tx.Where("u.user_group_id = ?", *q.GroupID)

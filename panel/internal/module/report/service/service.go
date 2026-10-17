@@ -4,7 +4,7 @@
 // report 只拥有两张表（revenue_report_adjustments、activity_daily）；其余数字一律经属主模块 service 的聚合读（端口见下），
 // 不读别人的表。切日一律按站点时区（settings 的 site.timezone）。
 //
-// 营收口径：实际收入 = 平台收入科目（platform_revenue）全部分录的净额（贷 − 借），与旧口径相同；
+// 营收口径：实际收入 = 平台收入科目（platform_revenue）全部分录的净额（贷 − 借）；
 // 报表调整来自本模块的只追加表，只影响展示值（displayed = actual + adjustment），不回写账本。
 package service
 
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
@@ -52,12 +53,12 @@ type store interface {
 	LockAdjustment(ctx context.Context, id uuid.UUID) error
 	// HasReversal 报告这一行是否已被冲正。
 	HasReversal(ctx context.Context, id uuid.UUID) (bool, error)
-	// ListAdjustments 按 created_at、id 倒序取至多 limit 行；currency 为空取全部币种。Reversed 表示该行已被冲正。
-	ListAdjustments(ctx context.Context, currency string, limit int) ([]repo.AdjustmentRow, error)
-	// AdjustmentSumsByDay 按（币种, 生效日）汇总生效日在 [fromDay, toDay) 的调整金额（含冲正行）。
+	// ListAdjustments 按 created_at、id 倒序取至多 limit 行；Reversed 表示该行已被冲正。
+	ListAdjustments(ctx context.Context, limit int) ([]repo.AdjustmentRow, error)
+	// AdjustmentSumsByDay 按生效日汇总生效日在 [fromDay, toDay) 的调整金额（含冲正行）。
 	AdjustmentSumsByDay(ctx context.Context, fromDay, toDay string) ([]repo.AdjustmentDayRow, error)
-	// AdjustmentTotals 按币种汇总全部调整金额（含冲正行）。
-	AdjustmentTotals(ctx context.Context) ([]repo.AdjustmentTotalRow, error)
+	// AdjustmentTotals 汇总全部调整金额（含冲正行）。
+	AdjustmentTotals(ctx context.Context) (decimal.Decimal, error)
 	// UpsertActivity 按 (tz, day) 覆盖写一批按天汇总。
 	UpsertActivity(ctx context.Context, rows []model.ActivityDaily) error
 	// ActivityRows 读 tz 下日子在 [fromDay, toDay) 的汇总行，按日子升序。
@@ -104,7 +105,7 @@ type Nodes interface {
 // Ledger 是 ledger 的聚合读；*ledgersvc.Service 直接满足。
 type Ledger interface {
 	RevenueByDay(ctx context.Context, from, to time.Time) ([]ledgersvc.RevenueDay, error)
-	RevenueTotals(ctx context.Context) ([]ledgersvc.RevenueTotal, error)
+	RevenueTotals(ctx context.Context) (ledgersvc.RevenueTotal, error)
 	DriftAccounts(ctx context.Context) (int64, error)
 }
 
@@ -121,7 +122,7 @@ type Payments interface {
 
 // Commissions 是 commission 的聚合读；*commissionsvc.Service 直接满足。
 type Commissions interface {
-	PendingWithdrawalSums(ctx context.Context) ([]commissionsvc.PendingWithdrawalSum, error)
+	PendingWithdrawalSums(ctx context.Context) (commissionsvc.PendingWithdrawalSum, error)
 }
 
 // Tickets 是 support 的聚合读；*supportsvc.Service 直接满足。
@@ -140,7 +141,7 @@ type Activity interface {
 	ActivityByDay(ctx context.Context, from, to time.Time, a auditsvc.ActivityActions) ([]auditsvc.ActivityDay, error)
 }
 
-// Pinger 探测 Redis 是否可达（系统状态页的 valkey 组件），由 app 装配适配器实现。
+// Pinger 探测 Redis 是否可达（系统状态页的 redis 组件），由 app 装配适配器实现。
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
@@ -202,7 +203,8 @@ func newService(r store, txm txRunner, audit auditWriter, deps Deps, opt Options
 	}
 }
 
-// MissingPorts 返回没装配的端口名（app 启动时检查）。
+// MissingPorts 返回没装配的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：streams（UseStreams 只在 serve 里注入 SSE hub，worker 与 admin 子命令没有）。
 func (s *Service) MissingPorts() []string {
 	d := s.deps
 	var out []string
@@ -222,6 +224,7 @@ func (s *Service) MissingPorts() []string {
 		{"Notices", d.Notices != nil},
 		{"Activity", d.Activity != nil},
 		{"Redis", d.Redis != nil},
+		{"Cache", s.rdb != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)

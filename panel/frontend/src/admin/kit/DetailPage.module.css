@@ -1,0 +1,106 @@
+/* 对应样稿 .dpage：返回、页头、页签、主栏与右栏 */
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  margin: -4px 0 10px -4px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-decoration: none;
+}
+
+.back:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.lead {
+  flex: none;
+}
+
+.headText {
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.nav {
+  margin: 20px 0 24px;
+}
+
+.contentNoTabs {
+  margin-top: 24px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 40px;
+  align-items: start;
+}
+
+.main > * + * {
+  margin-top: 28px;
+}
+
+.side {
+  position: sticky;
+  top: 28px;
+}
+
+@media (max-width: 959px) {
+  .grid {
+    /* minmax(0, …)：单栏时不让表格这类宽内容把栏撑出视口 */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .side {
+    position: static;
+  }
+}
+
+@media (max-width: 639px) {
+  .title {
+    font-size: 18px;
+  }
+
+  .actions {
+    width: 100%;
+  }
+}

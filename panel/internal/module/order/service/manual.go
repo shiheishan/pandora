@@ -1,16 +1,16 @@
 package service
 
-// 后台人工开单（对照旧 manual_order.go、plan_change_manual.go）：
+// 后台人工开单：
 //
-//	落点   由管理员选（预览给出的选项之一）：renew 在那一份上开续费单，change 在那一份上开换套餐单（剩余价值与门户同口径，
-//	       赠送单新价算 0 元、剩余价值全额退进余额），new 另开一份
+//	落点   由管理员选（预览给出的选项之一）：renew 在那一份上开续费单，stack 在那一份上开叠加单，
+//	       change 在那一份上开换套餐单（剩余价值与门户同口径，赠送单新价算 0 元、剩余价值全额退进余额），new 另开一份
 //	结算   grant 赠送（缺省，全额减免当场履约）、pending 待用户支付（低于最低额回 422）、
 //	       offline 线下已收款（建单后在同一事务里经 payment.RecordOffline 结清）
 //	审计   order.manual_created，与订单同一事务：没有审计的人工单等于没人负责
 //
-// 人工单不用券、不用余额；不受门户「同套餐只续不新开」与「同套餐只能有一张待付新购单」限制，限购与库存照常。
-// 另开一份照门户的可见性校验（隐藏、不在上架窗口、别组的组价回 404，旧 loadNewPurchasePlanTx 同口径）；
-// 续一期与换套餐不看可见性（续的是自己的套餐；换套餐只看目标套餐允许变更，旧代码同）。
+// 人工单不用券、不用余额；不受门户「同套餐只续不新开」与「同套餐只能有一张待付新购单」限制。
+// 另开一份照门户的可见性校验（隐藏回 404）；
+// 续一期、叠加与换套餐不看可见性（续/叠加的是自己的套餐；换套餐只看目标套餐允许变更）。
 
 import (
 	"context"
@@ -26,7 +26,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // checkManualReason 校验开单原因：去掉首尾空白后 5 到 500 个字（库里 CHECK 只按字节兜底）。
@@ -61,8 +60,27 @@ func checkSettlement(settlement, reference string) (string, string, error) {
 	}
 }
 
-// requireUser 确认用户存在；不存在回 404。
+// errAccountDeleted 是给已注销的账号下单、开单（与 identity 同码同文案）。
+var errAccountDeleted = errs.Newf(errs.Conflict, "账号已注销")
+
+// rejectDeleted 拒绝给已注销账号写订单。在事务里第一个调（先于锁订单、订阅等行）：identity 读时给用户行加共享锁，
+// 锁序与注销（用户行 → 订单 → 订阅）一致；注销提交前进来的要等，提交后读到 deleted 回 409，不会在注销之后又冒出待付单。
+func (s *Service) rejectDeleted(ctx context.Context, userID uuid.UUID) error {
+	deleted, err := s.users.IsDeleted(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if deleted {
+		return errAccountDeleted
+	}
+	return nil
+}
+
+// requireUser 确认用户存在且没注销；不存在回 404，已注销回 409。
 func (s *Service) requireUser(ctx context.Context, userID uuid.UUID) error {
+	if err := s.rejectDeleted(ctx, userID); err != nil {
+		return err
+	}
 	emails, err := s.users.Emails(ctx, []uuid.UUID{userID})
 	if err != nil {
 		return err
@@ -100,11 +118,19 @@ func (s *Service) CreateManualOrder(ctx context.Context, in ManualOrderInput) (C
 		if err := s.requireUser(ctx, in.UserID); err != nil {
 			return err
 		}
+		plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{in.PlanID})
+		if err != nil {
+			return err
+		}
+		plan, ok := plans[in.PlanID]
+		if !ok {
+			return catalogsvc.ErrNotFound
+		}
 		us, err := s.subs.ByUser(ctx, in.UserID)
 		if err != nil {
 			return err
 		}
-		opts, _ := planPlacements(in.PlanID, candidatesFrom(us), nil)
+		opts, _ := planPlacements(in.PlanID, plan.Kind, candidatesFrom(us), nil)
 		op, err := resolvePlacement(in.Target, opts)
 		if err != nil {
 			return err
@@ -148,7 +174,7 @@ func (s *Service) CreateManualOrder(ctx context.Context, in ManualOrderInput) (C
 	return created, nil
 }
 
-// placeManual 按选中的落点建单。renew、change 先锁那份订阅，锁后再核一次它的套餐（预览之后可能已被换掉）。
+// placeManual 按选中的落点建单。renew、stack、change 先锁那份订阅，锁后再核一次它的套餐（预览之后可能已被换掉）。
 func (s *Service) placeManual(ctx context.Context, in ManualOrderInput, op Placement, md *manualDraft, actor Actor) (Created, model.Order, error) {
 	if op.Kind == PlacementNew {
 		return s.placeManualNew(ctx, in, md, actor)
@@ -159,12 +185,21 @@ func (s *Service) placeManual(ctx context.Context, in ManualOrderInput, op Place
 		return Created{}, model.Order{}, err
 	}
 	samePlan := sub.PlanID == in.PlanID
-	if samePlan != (op.Kind == PlacementRenew) {
+	if samePlan != (op.Kind == PlacementRenew || op.Kind == PlacementStack) {
 		return Created{}, model.Order{}, errChoiceStale
 	}
+	priceID := in.PriceID
 	if op.Kind == PlacementRenew {
-		priceID := in.PriceID
 		return s.placeRenewal(ctx, renewalDraft{
+			Sub:     sub,
+			PriceID: &priceID,
+			UserID:  in.UserID,
+			Manual:  md,
+			Actor:   actor,
+		})
+	}
+	if op.Kind == PlacementStack {
+		return s.placeStack(ctx, stackDraft{
 			Sub:     sub,
 			PriceID: &priceID,
 			UserID:  in.UserID,
@@ -183,8 +218,7 @@ func (s *Service) placeManual(ctx context.Context, in ManualOrderInput, op Place
 	})
 }
 
-// placeManualNew 另开一份：锁套餐行（与门户新购同序），限购与库存照常；可见性、上架窗口与用户组价按这个用户看
-// （Manual: false，与门户新购同一道目录校验）。
+// placeManualNew 另开一份：锁套餐行（与门户新购同序）；可见性按这个用户看（Manual: false，与门户新购同一道目录校验）。
 func (s *Service) placeManualNew(ctx context.Context, in ManualOrderInput, md *manualDraft, actor Actor) (Created, model.Order, error) {
 	uid := in.UserID
 	planID := in.PlanID
@@ -199,10 +233,6 @@ func (s *Service) placeManualNew(ctx context.Context, in ManualOrderInput, md *m
 	if err != nil {
 		return Created{}, model.Order{}, err
 	}
-	limit := offer.Plan.PurchaseLimitPerUser
-	if err := s.checkPurchaseLimit(ctx, planID, uid, limit); err != nil {
-		return Created{}, model.Order{}, err
-	}
 	item, err := newOrderItemFromOffer(offer, offer.Price)
 	if err != nil {
 		return Created{}, model.Order{}, err
@@ -210,11 +240,9 @@ func (s *Service) placeManualNew(ctx context.Context, in ManualOrderInput, md *m
 	return s.place(ctx, draft{
 		Kind:         KindNew,
 		UserID:       uid,
-		Currency:     offer.Price.Currency,
 		Subtotal:     offer.Price.UnitAmount,
 		CouponPlanID: &planID,
 		Item:         item,
-		NewPurchase:  &newPurchase{PlanID: planID, Limited: limit != nil},
 		Manual:       md,
 		Actor:        actor,
 	})
@@ -228,7 +256,6 @@ func (s *Service) settleManualOffline(ctx context.Context, o model.Order, refere
 		OrderNo:   o.OrderNo,
 		UserID:    o.UserID,
 		Amount:    o.PayableAmount,
-		Currency:  money.Currency(o.Currency),
 		Reference: reference,
 		Reason:    reason,
 	})
@@ -244,7 +271,7 @@ func (s *Service) settleManualOffline(ctx context.Context, o model.Order, refere
 	return rec, nil
 }
 
-// manualDigest 是 order.manual_created 的审计内容（字段对照旧 manual_order 与 manualPlanChangeAudit）。
+// manualDigest 是 order.manual_created 的审计内容。
 func manualDigest(in ManualOrderInput, op Placement, settlement, reason, reference string,
 	o model.Order, c Created, rec *paymentsvc.RecordResult) map[string]any {
 	d := map[string]any{
@@ -256,7 +283,6 @@ func manualDigest(in ManualOrderInput, op Placement, settlement, reason, referen
 		"reason":     reason,
 		"status":     c.Status,
 		"settlement": settlement,
-		"currency":   o.Currency,
 		"subtotal":   o.SubtotalAmount.StringFixed(2),
 		"granted":    o.DiscountAmount.StringFixed(2),
 		"total":      o.TotalAmount.StringFixed(2),

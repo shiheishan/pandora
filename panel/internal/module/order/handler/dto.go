@@ -15,7 +15,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 金额一律整数分；JSON 形状对照旧接口与前端 zod（portal/screens/common/orders.ts、quote-schema.ts）。
+// 金额一律整数分；JSON 形状对照前端 zod（portal/screens/common/orders.ts、quote-schema.ts）。
 
 // cents 把元换成分，记下第一处换算错误（金额超出 2 位小数是程序错误，对外 500）。
 type cents struct{ err error }
@@ -107,7 +107,7 @@ type expectReq struct {
 	Payable        int64 `json:"payable"`
 }
 
-// checkoutReq 是三种建单请求共有的部分（旧 quoteConfirmReq 加余额与优惠码）。
+// checkoutReq 是三种建单请求共有的部分（用多少余额、优惠码、报价时刻与期望金额）。
 type checkoutReq struct {
 	UseBalance int64      `json:"use_balance"`
 	CouponCode string     `json:"coupon_code"`
@@ -115,7 +115,7 @@ type checkoutReq struct {
 	Expect     *expectReq `json:"expect,omitempty"`
 }
 
-// checkout 转成 service 的 Checkout；没带 expect 时 as_of 也不用（旧代码同口径）。
+// checkout 转成 service 的 Checkout；没带 expect 时 as_of 也不用。
 func (r checkoutReq) checkout() service.Checkout {
 	out := service.Checkout{
 		UseBalance: money.FromCents(r.UseBalance),
@@ -150,17 +150,12 @@ type createRenewalRequest struct {
 	checkoutReq
 }
 
-// createPackOrderRequest 是 POST /me/traffic-pack-orders。
-type createPackOrderRequest struct {
-	PackID         string `json:"pack_id"`
-	SubscriptionID string `json:"subscription_id"`
-	checkoutReq
-}
+// createStackRequest 是 POST /me/subscriptions/:id/stack；price_id 为空取套餐当前在售价。
+type createStackRequest = createRenewalRequest
 
-// createTopupRequest 是 POST /me/topups：金额是分，币种为空取 CNY。
+// createTopupRequest 是 POST /me/topups：金额是分。
 type createTopupRequest struct {
-	Amount   int64  `json:"amount"`
-	Currency string `json:"currency"`
+	Amount int64 `json:"amount"`
 }
 
 // createPlanChangeRequest 是 POST /me/subscriptions/:id/change-plan：换成 plan_id 的 price_id 档。
@@ -170,14 +165,12 @@ type createPlanChangeRequest struct {
 	checkoutReq
 }
 
-// orderCreatedResponse 是建单的 201 响应（旧 billing.CreateOrderOutput）。discount_amount 照旧含免掉的零头（旧 waiveIntoDiscount），
-// 前端按「小计 − 折扣 − 剩余价值 = 总额」核对；库里零头单独记在 waived_amount。换套餐单另有 proration_credit 与
-// balance_refund 两项（旧 PlanChangeOrderOutput），其余种类不出现。
+// orderCreatedResponse 是建单的 201 响应。discount_amount 含免掉的零头；库里零头单独记在 waived_amount。
+// 换套餐单另有 proration_credit 与 balance_refund 两项，其余种类不出现。
 type orderCreatedResponse struct {
 	DiscountAmount  int64  `json:"discount_amount"`
 	OrderID         string `json:"order_id"`
 	OrderNo         string `json:"order_no"`
-	Currency        string `json:"currency"`
 	TotalAmount     int64  `json:"total_amount"`
 	BalanceApplied  int64  `json:"balance_applied"`
 	PayableAmount   int64  `json:"payable_amount"`
@@ -193,7 +186,6 @@ func orderCreatedFrom(c service.Created) (orderCreatedResponse, error) {
 		DiscountAmount: cc.of(c.Discount.Add(c.Waived)),
 		OrderID:        c.OrderID.String(),
 		OrderNo:        c.OrderNo,
-		Currency:       string(c.Currency),
 		TotalAmount:    cc.of(c.Total),
 		BalanceApplied: cc.of(c.BalanceApplied),
 		PayableAmount:  cc.of(c.Payable),
@@ -215,27 +207,25 @@ func createdReply(c service.Created) (idemsvc.Response, error) {
 	return idemsvc.JSON(http.StatusCreated, out)
 }
 
-// topupCreatedResponse 是充值建单的 200 响应（旧 billing.CreateTopupOutput）。
+// topupCreatedResponse 是充值建单的 200 响应。
 type topupCreatedResponse struct {
-	OrderID  string `json:"order_id"`
-	OrderNo  string `json:"order_no"`
-	Amount   int64  `json:"amount"`
-	Currency string `json:"currency"`
+	OrderID string `json:"order_id"`
+	OrderNo string `json:"order_no"`
+	Amount  int64  `json:"amount"`
 }
 
 // topupCreatedFrom 是充值首发与幂等重放共用的唯一转换。
 func topupCreatedFrom(t service.TopupCreated) (topupCreatedResponse, error) {
 	var cc cents
 	out := topupCreatedResponse{
-		OrderID:  t.OrderID.String(),
-		OrderNo:  t.OrderNo,
-		Amount:   cc.of(t.Amount),
-		Currency: string(t.Currency),
+		OrderID: t.OrderID.String(),
+		OrderNo: t.OrderNo,
+		Amount:  cc.of(t.Amount),
 	}
 	return out, cc.err
 }
 
-// topupReply 是充值的幂等重放响应（旧代码 200）。
+// topupReply 是充值的幂等重放响应（200）。
 func topupReply(t service.TopupCreated) (idemsvc.Response, error) {
 	out, err := topupCreatedFrom(t)
 	if err != nil {
@@ -253,12 +243,11 @@ type quoteRequest struct {
 	Action         string `json:"action"`
 	SubscriptionID string `json:"subscription_id"`
 	PlanID         string `json:"plan_id"`
-	PackID         string `json:"pack_id"`
 	CouponCode     string `json:"coupon_code"`
 	NewCopy        bool   `json:"new_copy"`
 }
 
-// balanceSplitResponse 是一种付法（旧 purchase.Balance）。
+// balanceSplitResponse 是一种付法。
 type balanceSplitResponse struct {
 	Applied      int64 `json:"applied"`
 	Payable      int64 `json:"payable"`
@@ -284,14 +273,14 @@ type creditDetailResponse struct {
 	RatioPPM     int64 `json:"ratio_ppm"`
 }
 
-// quoteRowResponse 是一条报价。
+// quoteRowResponse 是一条报价：subtotal − discount − credit = total（不低于 0）。
 type quoteRowResponse struct {
 	SubscriptionID *string               `json:"subscription_id"`
 	PlanID         *string               `json:"plan_id"`
-	PackID         *string               `json:"pack_id"`
 	PriceID        *string               `json:"price_id"`
 	Interval       string                `json:"interval"`
 	IntervalCount  int                   `json:"interval_count"`
+	ValidityDays   *int                  `json:"validity_days"`
 	Subtotal       int64                 `json:"subtotal"`
 	Discount       int64                 `json:"discount"`
 	Coupon         *quoteCouponResponse  `json:"coupon"`
@@ -307,10 +296,9 @@ type quoteRowResponse struct {
 	PreviousEnd    *time.Time            `json:"previous_end"`
 }
 
-// quoteResponse 是报价响应（旧 billing.QuoteOutput）。
+// quoteResponse 是报价响应。
 type quoteResponse struct {
 	AsOf       time.Time          `json:"as_of"`
-	Currency   string             `json:"currency"`
 	Balance    int64              `json:"balance"`
 	MinPayment int64              `json:"min_payment"`
 	Quotes     []quoteRowResponse `json:"quotes"`
@@ -332,7 +320,6 @@ func quoteFrom(q service.QuoteResult) (quoteResponse, error) {
 	var cc cents
 	out := quoteResponse{
 		AsOf:       q.AsOf,
-		Currency:   string(q.Currency),
 		Balance:    cc.of(q.Balance),
 		MinPayment: cc.of(q.MinPayment),
 		Quotes:     make([]quoteRowResponse, 0, len(q.Quotes)),
@@ -341,10 +328,10 @@ func quoteFrom(q service.QuoteResult) (quoteResponse, error) {
 		row := quoteRowResponse{
 			SubscriptionID: idStr(r.SubscriptionID),
 			PlanID:         idStr(r.PlanID),
-			PackID:         idStr(r.PackID),
 			PriceID:        idStr(r.PriceID),
 			Interval:       r.Interval,
 			IntervalCount:  r.IntervalCount,
+			ValidityDays:   r.ValidityDays,
 			Subtotal:       cc.of(r.Subtotal),
 			Discount:       cc.of(r.Discount),
 			CouponError:    r.CouponError,
@@ -375,6 +362,28 @@ func quoteFrom(q service.QuoteResult) (quoteResponse, error) {
 	return out, cc.err
 }
 
+// landingResponse 是买套餐时的一个落点选项。
+type landingResponse struct {
+	Mode           string  `json:"mode"`
+	SubscriptionID *string `json:"subscription_id,omitempty"`
+}
+
+// landingsResponse 是 GET /me/checkout/landings 的响应。
+type landingsResponse struct {
+	Options []landingResponse `json:"options"`
+}
+
+func landingsFrom(l service.Landings) landingsResponse {
+	opts := make([]landingResponse, 0, len(l.Options))
+	for _, o := range l.Options {
+		opts = append(opts, landingResponse{
+			Mode:           o.Mode,
+			SubscriptionID: idStr(o.SubscriptionID),
+		})
+	}
+	return landingsResponse{Options: opts}
+}
+
 // ---------------------------------------------------------------------------
 // 门户：支付、取消、查单
 // ---------------------------------------------------------------------------
@@ -392,8 +401,8 @@ type payResponse struct {
 	HTTPMethod  string            `json:"http_method"`
 	RedirectURL string            `json:"redirect_url"`
 	FormFields  map[string]string `json:"form_fields"`
-	Amount      int64             `json:"amount"`
-	Currency    string            `json:"currency"`
+	Amount      int64             `json:"amount"`    // 这次要付的总额（含手续费），分
+	Surcharge   int64             `json:"surcharge"` // amount 里包含的支付手续费，分
 	Reused      bool              `json:"reused"`
 }
 
@@ -409,13 +418,13 @@ func payFrom(r paymentsvc.IntentResult) (payResponse, error) {
 		RedirectURL: r.RedirectURL,
 		FormFields:  fields,
 		Amount:      cc.of(r.Amount),
-		Currency:    string(r.Currency),
+		Surcharge:   cc.of(r.Surcharge),
 		Reused:      r.Reused,
 	}
 	return out, cc.err
 }
 
-// releasedOrderResponse 是取消的结果（旧 billing.ReleaseOrderOutput；cancelled_at、cancel_reason 带 omitempty）。
+// releasedOrderResponse 是取消的结果（cancelled_at、cancel_reason 带 omitempty）。
 type releasedOrderResponse struct {
 	OrderID         string     `json:"order_id"`
 	Status          string     `json:"status"`
@@ -436,7 +445,7 @@ func releasedFrom(r service.CancelResult) releasedOrderResponse {
 	}
 }
 
-// queryResponse 是主动查单的结果（旧 billing.OrderPaymentQuery；quarantine_kind 带 omitempty）。
+// queryResponse 是主动查单的结果（quarantine_kind 带 omitempty）。
 type queryResponse struct {
 	OrderID         string `json:"order_id"`
 	OrderNo         string `json:"order_no"`
@@ -465,19 +474,17 @@ func queryFrom(q service.QueryResult) queryResponse {
 // 门户：我的订单
 // ---------------------------------------------------------------------------
 
-// myOrderRowResponse 是「我的订单」的一行（旧 billing.MyOrderRow）：前端 zod 里 optional 的字段一律 omitempty。
+// myOrderRowResponse 是「我的订单」的一行：前端 zod 里 optional 的字段一律 omitempty。
 type myOrderRowResponse struct {
 	ID               string     `json:"id"`
 	OrderNo          string     `json:"order_no"`
 	Kind             string     `json:"kind"`
 	Status           string     `json:"status"`
-	Currency         string     `json:"currency"`
 	TotalAmount      int64      `json:"total_amount"`
 	DiscountAmount   int64      `json:"discount_amount"`
 	BalanceApplied   int64      `json:"balance_applied"`
 	PayableAmount    int64      `json:"payable_amount"`
 	PaidAmount       int64      `json:"paid_amount"`
-	RefundedAmount   int64      `json:"refunded_amount"`
 	PlanName         string     `json:"plan_name,omitempty"`
 	Interval         string     `json:"interval,omitempty"`
 	IntervalCount    int        `json:"interval_count,omitempty"`
@@ -493,10 +500,9 @@ type myOrderRowResponse struct {
 
 // myOrderCountsResponse 是分组计数。
 type myOrderCountsResponse struct {
-	Open     int64 `json:"open"`
-	Paid     int64 `json:"paid"`
-	Closed   int64 `json:"closed"`
-	Refunded int64 `json:"refunded"`
+	Open   int64 `json:"open"`
+	Paid   int64 `json:"paid"`
+	Closed int64 `json:"closed"`
 }
 
 // myOrdersResponse 是 GET /orders。
@@ -506,19 +512,20 @@ type myOrdersResponse struct {
 	Counts myOrderCountsResponse `json:"counts"`
 }
 
-// myOrderItemResponse 是详情里的一条订单行。
+// myOrderItemResponse 是详情里的一条订单行。PlanID、PriceID 让门户「改用余额付」时按同样的套餐与价格档重新下单；充值单为 null。
 type myOrderItemResponse struct {
-	Name       string `json:"name"`
-	Quantity   int    `json:"quantity"`
-	UnitAmount int64  `json:"unit_amount"`
-	LineAmount int64  `json:"line_amount"`
+	Name       string  `json:"name"`
+	Quantity   int     `json:"quantity"`
+	UnitAmount int64   `json:"unit_amount"`
+	LineAmount int64   `json:"line_amount"`
+	PlanID     *string `json:"plan_id"`
+	PriceID    *string `json:"price_id"`
 }
 
 // myOrderPaymentResponse 是详情里的一笔收款（不回渠道单号）。
 type myOrderPaymentResponse struct {
 	Status       string    `json:"status"`
 	Amount       int64     `json:"amount"`
-	Currency     string    `json:"currency"`
 	Method       *string   `json:"method,omitempty"`
 	ProviderName string    `json:"provider_name"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -532,6 +539,8 @@ type myOrderDetailBody struct {
 	SubscriptionID        *string                  `json:"subscription_id"`
 	Items                 []myOrderItemResponse    `json:"items"`
 	Payments              []myOrderPaymentResponse `json:"payments"`
+	// SurchargeKept 是套餐归档转余额时扣下不退的支付手续费（分），其余订单为 0
+	SurchargeKept int64 `json:"surcharge_kept"`
 }
 
 // myOrderDetailResponse 是 GET /orders/:id。
@@ -546,13 +555,11 @@ func myOrderRowFrom(cc *cents, v service.MyOrderView) myOrderRowResponse {
 		OrderNo:          v.OrderNo,
 		Kind:             v.Kind,
 		Status:           v.Status,
-		Currency:         string(v.Currency),
 		TotalAmount:      cc.of(v.Total),
 		DiscountAmount:   cc.of(v.Discount.Add(v.Waived)),
 		BalanceApplied:   cc.of(v.BalanceApplied),
 		PayableAmount:    cc.of(v.Payable),
 		PaidAmount:       cc.of(v.Paid),
-		RefundedAmount:   0,
 		PlanName:         strOrEmpty(v.PlanName),
 		Interval:         strOrEmpty(v.Interval),
 		IntervalCount:    intOrZero(v.IntervalCount),
@@ -573,10 +580,9 @@ func myOrdersFrom(l service.MyOrderList) (myOrdersResponse, error) {
 		Orders: make([]myOrderRowResponse, 0, len(l.Orders)),
 		Total:  l.Total,
 		Counts: myOrderCountsResponse{
-			Open:     l.Counts.Open,
-			Paid:     l.Counts.Paid,
-			Closed:   l.Counts.Closed,
-			Refunded: l.Counts.Refunded,
+			Open:   l.Counts.Open,
+			Paid:   l.Counts.Paid,
+			Closed: l.Counts.Closed,
 		},
 	}
 	for _, v := range l.Orders {
@@ -594,6 +600,7 @@ func myOrderDetailFrom(d service.MyOrderDetail) (myOrderDetailResponse, error) {
 		SubscriptionID:        idStr(d.Order.SubscriptionID),
 		Items:                 make([]myOrderItemResponse, 0, len(d.Items)),
 		Payments:              make([]myOrderPaymentResponse, 0, len(d.Payments)),
+		SurchargeKept:         cc.of(d.SurchargeKept),
 	}
 	for _, it := range d.Items {
 		body.Items = append(body.Items, myOrderItemResponse{
@@ -601,13 +608,14 @@ func myOrderDetailFrom(d service.MyOrderDetail) (myOrderDetailResponse, error) {
 			Quantity:   it.Quantity,
 			UnitAmount: cc.of(it.UnitAmount),
 			LineAmount: cc.of(it.LineAmount),
+			PlanID:     idStr(it.PlanID),
+			PriceID:    idStr(it.PriceID),
 		})
 	}
 	for _, p := range d.Payments {
 		body.Payments = append(body.Payments, myOrderPaymentResponse{
 			Status:       p.Status,
 			Amount:       cc.of(p.Amount),
-			Currency:     string(p.Currency),
 			Method:       p.Method,
 			ProviderName: p.ProviderName,
 			CreatedAt:    p.CreatedAt,

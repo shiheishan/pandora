@@ -18,11 +18,20 @@ func (s *Service) PasswordResetAvailable(ctx context.Context) (bool, error) {
 }
 
 // StartPasswordReset 是找回密码第 1 步。账号存不存在，调用方拿到的结果一样（DevCode 只在非生产环境出现）。
-func (s *Service) StartPasswordReset(ctx context.Context, email string) (PasswordResetStart, error) {
+func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken string) (PasswordResetStart, error) {
 	start := time.Now()
 	email = normalizeEmail(email)
 	if !looksLikeEmail(email) {
 		return PasswordResetStart{}, errEmailInvalid()
+	}
+	cfg, err := s.settings.Signup(ctx)
+	if err != nil {
+		return PasswordResetStart{}, err
+	}
+	// 先过人机验证、再按邮箱限频：额度按受害者邮箱计，没过人机验证的请求不能占用，
+	// 否则攻击者换 IP 发垃圾令牌就能一直锁住别人的找回（IP 维度在路由层 pwreset_start，本就在这之前）
+	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionPasswordReset); err != nil {
+		return PasswordResetStart{}, err
 	}
 	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
 		return PasswordResetStart{}, err
@@ -47,7 +56,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (Passwor
 		if err != nil {
 			return err
 		}
-		if !found || u.Status != model.UserActive {
+		if !found || u.Status != StatusActive {
 			return nil
 		}
 		staff, err := s.isStaff(ctx, u.ID)
@@ -58,11 +67,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (Passwor
 			return nil
 		}
 
-		if err := s.repo.ExpireCodes(ctx, model.PurposePasswordReset, target); err != nil {
+		if err := s.repo.ExpireCodes(ctx, PurposePasswordReset, target); err != nil {
 			return err
 		}
 		vc := model.VerificationCode{
-			Purpose:     model.PurposePasswordReset,
+			Purpose:     PurposePasswordReset,
 			TargetHash:  target,
 			CodeHash:    s.codeHash(code),
 			UserID:      &u.ID,
@@ -140,7 +149,7 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 	target := s.targetHash(email)
 	var rejected bool
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		c, found, err := s.repo.LockLatestCode(ctx, model.PurposePasswordReset, target)
+		c, found, err := s.repo.LockLatestCode(ctx, PurposePasswordReset, target)
 		if err != nil {
 			return err
 		}
@@ -160,7 +169,8 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 		if err != nil {
 			return err
 		}
-		if !ok || u.Status != model.UserActive {
+		// 码是发给某个邮箱的：用户现在的邮箱换了（后台改邮箱），旧邮箱收到的码就不能再用来改口令
+		if !ok || u.Status != StatusActive || normalizeEmail(u.Email) != email {
 			rejected = true
 			return nil
 		}
@@ -179,7 +189,7 @@ func (s *Service) CompletePasswordReset(ctx context.Context, email, code, newPas
 		if err := s.repo.ConsumeCode(ctx, c.ID); err != nil {
 			return err
 		}
-		if err := s.repo.ExpireCodes(ctx, model.PurposePasswordReset, target); err != nil {
+		if err := s.repo.ExpireCodes(ctx, PurposePasswordReset, target); err != nil {
 			return err
 		}
 		revoker, err := s.needRevoker()

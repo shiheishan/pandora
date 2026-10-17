@@ -70,6 +70,7 @@ export const telegramSchema = z.object({
   username: z.string().optional(),
   bot_username: z.string().optional(),
   enabled: z.boolean(),
+  discuss_link: z.string().nullable(),
 })
 export type Telegram = z.output<typeof telegramSchema>
 
@@ -103,7 +104,6 @@ export const preferenceSchema = z.object({
   enabled: z.boolean(),
   locked: z.boolean(),
 })
-export type Preference = z.output<typeof preferenceSchema>
 export const preferencesSchema = z.object({ preferences: z.array(preferenceSchema) })
 type Preferences = z.output<typeof preferencesSchema>
 

@@ -98,3 +98,9 @@ func Redis(t testing.TB) (*miniredis.Miniredis, *redis.Client) {
 	t.Cleanup(func() { _ = c.Close() })
 	return mr, c
 }
+
+// SQLState 取错误链里 PG 约束违例的 SQLSTATE，取不到返回空串（service 包的测试不能 import pkg/db）。
+func SQLState(err error) string {
+	v, _ := db.AsViolation(err)
+	return v.Code
+}

@@ -1,0 +1,135 @@
+/* ===========================================================================
+ * 用户详情整页（kit DetailPage）：主栏各块与右栏共用的样式
+ * ========================================================================= */
+
+/* 等宽 / 数字：订单号、IP、短 ID、金额 */
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.amt {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 灰字 / 警示 */
+.muted {
+  color: var(--text-3);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.link {
+  color: var(--info);
+  text-decoration: var(--link-decoration);
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 3px;
+}
+
+/* --- 资料页：当前套餐卡（样稿 .plan） ------------------------------------- */
+.plan {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.planTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.planSpacer {
+  flex: 1;
+}
+
+.planMeta {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* 流量细条（样稿 .traf / .bar）：底 --surface-3，填充墨色，接近上限转警示色 */
+.traf {
+  min-width: 140px;
+  margin-top: 12px;
+}
+
+.traf .mono {
+  color: var(--text-2);
+}
+
+.bar {
+  height: 3px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--text-2);
+}
+
+.barWarn {
+  background: var(--warn);
+}
+
+.barDanger {
+  background: var(--danger);
+}
+
+.planEmpty {
+  margin: 0;
+  color: var(--text-3);
+}
+
+/* 订单号 + 人工标签 */
+.oid {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+/* --- 处置区：两项之间隔 12px ---------------------------------------------- */
+.disposal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* --- 风控页：共享 IP 聚类的关联账号列表 ------------------------------------ */
+.sharedWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.sharedList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+/* --- 右栏：用户组下拉 ------------------------------------------------------- */
+.groupSelect {
+  width: 160px;
+}
+
+.dim {
+  color: var(--text-3);
+}

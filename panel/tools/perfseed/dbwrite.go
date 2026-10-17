@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -157,7 +156,6 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		{name: "status", typ: "text", val: func(r SubscriptionRow) *string { return strp(r.Status) }},
 		{name: "current_period_start", typ: "timestamptz", val: func(r SubscriptionRow) *string { return tsp(r.PeriodStart) }},
 		{name: "current_period_end", typ: "timestamptz", val: func(r SubscriptionRow) *string { return tsp(r.PeriodEnd) }},
-		{name: "snapshot_currency", typ: "text", val: func(r SubscriptionRow) *string { return strp(r.Currency) }},
 		{name: "snapshot_amount", typ: "numeric", val: func(r SubscriptionRow) *string { return strp(r.Amount) }},
 		{name: "snapshot_interval", typ: "text", val: func(r SubscriptionRow) *string { return strp(r.Interval) }},
 		{name: "snapshot_interval_count", typ: "smallint", val: func(r SubscriptionRow) *string { return strp(fmt.Sprintf("%d", r.IntervalCount)) }},
@@ -205,7 +203,6 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		{name: "user_id", typ: "uuid", val: func(r OrderRow) *string { return strp(r.UserID) }},
 		{name: "kind", typ: "text", val: func(r OrderRow) *string { return strp(r.Kind) }},
 		{name: "status", typ: "text", val: func(r OrderRow) *string { return strp("fulfilled") }},
-		{name: "currency", typ: "text", val: func(r OrderRow) *string { return strp(r.Currency) }},
 		{name: "subtotal_amount", typ: "numeric", val: func(r OrderRow) *string { return strp(r.Amount) }},
 		{name: "total_amount", typ: "numeric", val: func(r OrderRow) *string { return strp(r.Amount) }},
 		{name: "payable_amount", typ: "numeric", val: func(r OrderRow) *string { return strp(r.Amount) }},
@@ -259,7 +256,6 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		{name: "quantity", typ: "int", val: func(r OrderItemRow) *string { return strp("1") }},
 		{name: "unit_amount", typ: "numeric", val: func(r OrderItemRow) *string { return strp(r.Amount) }},
 		{name: "line_amount", typ: "numeric", val: func(r OrderItemRow) *string { return strp(r.Amount) }},
-		{name: "currency", typ: "text", val: func(r OrderItemRow) *string { return strp(r.Currency) }},
 		{name: "created_at", typ: "timestamptz", val: func(r OrderItemRow) *string { return tsp(r.CreatedAt) }},
 	}, s.OrderItems); err != nil {
 		return err
@@ -318,7 +314,6 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		{name: "user_id", typ: "uuid", val: func(r PaymentRow) *string { return strp(r.UserID) }},
 		{name: "provider_id", typ: "uuid", val: func(r PaymentRow) *string { return strp(offlineProviderID) }},
 		{name: "provider_payment_id", typ: "text", val: func(r PaymentRow) *string { return strp(r.ProviderPaymentID) }},
-		{name: "currency", typ: "text", val: func(r PaymentRow) *string { return strp(r.Currency) }},
 		{name: "amount", typ: "numeric", val: func(r PaymentRow) *string { return strp(r.Amount) }},
 		{name: "fee_amount", typ: "numeric", val: zeroNum[PaymentRow]},
 		{name: "status", typ: "text", val: func(r PaymentRow) *string { return strp("succeeded") }},
@@ -345,14 +340,13 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 	}
 	fmt.Printf("  payment_events %d\n", len(s.PaymentEvents))
 
-	if err := ensureLedgerAccounts(ctx, tx, s.LedgerTxns); err != nil {
+	if err := ensureLedgerAccounts(ctx, tx); err != nil {
 		return err
 	}
 
 	if err := insertRows(ctx, tx, "ledger_transactions", []col[LedgerTxnRow]{
 		{name: "id", typ: "uuid", val: func(r LedgerTxnRow) *string { return strp(r.ID) }},
 		{name: "kind", typ: "text", val: func(r LedgerTxnRow) *string { return strp("order_paid") }},
-		{name: "currency", typ: "text", val: func(r LedgerTxnRow) *string { return strp(r.Currency) }},
 		{name: "source_type", typ: "text", val: func(r LedgerTxnRow) *string { return strp("order") }},
 		{name: "source_id", typ: "uuid", val: func(r LedgerTxnRow) *string { return strp(r.OrderID) }},
 		{name: "memo", typ: "text", val: func(r LedgerTxnRow) *string { return strp("") }},
@@ -363,7 +357,7 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 	}
 	fmt.Printf("  ledger_transactions %d\n", len(s.LedgerTxns))
 
-	acctByCur, err := ledgerAccountIDs(ctx, tx, s.LedgerTxns)
+	acct, err := ledgerAccountIDs(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -371,23 +365,20 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 	type ledgerEntryRow struct {
 		transactionID string
 		accountID     string
-		currency      string
 		direction     string
 		amount        string
 		createdAt     time.Time
 	}
 	var ledgerEntries []ledgerEntryRow
 	for _, t := range s.LedgerTxns {
-		ids := acctByCur[t.Currency]
 		ledgerEntries = append(ledgerEntries,
-			ledgerEntryRow{t.ID, ids.channelCash, t.Currency, "debit", t.Amount, t.OccurredAt},
-			ledgerEntryRow{t.ID, ids.platformRevenue, t.Currency, "credit", t.Amount, t.OccurredAt},
+			ledgerEntryRow{t.ID, acct.channelCash, "debit", t.Amount, t.OccurredAt},
+			ledgerEntryRow{t.ID, acct.platformRevenue, "credit", t.Amount, t.OccurredAt},
 		)
 	}
 	if err := insertRows(ctx, tx, "ledger_entries", []col[ledgerEntryRow]{
 		{name: "transaction_id", typ: "uuid", val: func(r ledgerEntryRow) *string { return strp(r.transactionID) }},
 		{name: "account_id", typ: "uuid", val: func(r ledgerEntryRow) *string { return strp(r.accountID) }},
-		{name: "currency", typ: "text", val: func(r ledgerEntryRow) *string { return strp(r.currency) }},
 		{name: "direction", typ: "text", val: func(r ledgerEntryRow) *string { return strp(r.direction) }},
 		{name: "amount", typ: "numeric", val: func(r ledgerEntryRow) *string { return strp(r.amount) }},
 		{name: "created_at", typ: "timestamptz", val: func(r ledgerEntryRow) *string { return tsp(r.createdAt) }},
@@ -409,7 +400,7 @@ func writeSeed(ctx context.Context, tx pgx.Tx, s *Seed, offlineProviderID string
 		 WHERE a.id = d.account_id`); err != nil {
 		return fmt.Errorf("更新 ledger_accounts 余额: %w", err)
 	}
-	fmt.Printf("  ledger_accounts 余额 %d 币种\n", len(acctByCur))
+	fmt.Printf("  ledger_accounts 余额已更新\n")
 
 	if err := insertRows(ctx, tx, "subscription_events", []col[SubEventRow]{
 		{name: "id", typ: "uuid", val: func(r SubEventRow) *string { return strp(r.ID) }},
@@ -476,57 +467,26 @@ type ledgerAcctIDs struct {
 	platformRevenue string
 }
 
-func ledgerCurrencies(txns []LedgerTxnRow) []string {
-	seen := make(map[string]struct{})
-	for _, t := range txns {
-		seen[t.Currency] = struct{}{}
-	}
-	out := make([]string, 0, len(seen))
-	for c := range seen {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func ensureLedgerAccounts(ctx context.Context, tx pgx.Tx, txns []LedgerTxnRow) error {
-	for _, cur := range ledgerCurrencies(txns) {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO ledger_accounts (account_type, currency, owner_ref) VALUES
-			  ('channel_cash', $1, 'offline'),
-			  ('platform_revenue', $1, 'main')
-			ON CONFLICT ON CONSTRAINT ledger_accounts_owner_key DO NOTHING`, cur); err != nil {
-			return fmt.Errorf("确保账本科目 %s: %w", cur, err)
-		}
-	}
-	for _, cur := range ledgerCurrencies(txns) {
-		if _, err := ledgerAccountIDsForCurrency(ctx, tx, cur); err != nil {
-			return err
-		}
-		fmt.Printf("  ledger_accounts %s\n", cur)
+// ensureLedgerAccounts 建好 offline 渠道现金与平台收入两个科目（已存在就跳过）。
+func ensureLedgerAccounts(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ledger_accounts (account_type, owner_ref) VALUES
+		  ('channel_cash', 'offline'),
+		  ('platform_revenue', 'main')
+		ON CONFLICT ON CONSTRAINT ledger_accounts_owner_key DO NOTHING`); err != nil {
+		return fmt.Errorf("确保账本科目: %w", err)
 	}
 	return nil
 }
 
-func ledgerAccountIDs(ctx context.Context, tx pgx.Tx, txns []LedgerTxnRow) (map[string]ledgerAcctIDs, error) {
-	out := make(map[string]ledgerAcctIDs)
-	for _, cur := range ledgerCurrencies(txns) {
-		ids, err := ledgerAccountIDsForCurrency(ctx, tx, cur)
-		if err != nil {
-			return nil, err
-		}
-		out[cur] = ids
-	}
-	return out, nil
-}
-
-func ledgerAccountIDsForCurrency(ctx context.Context, tx pgx.Tx, currency string) (ledgerAcctIDs, error) {
+// ledgerAccountIDs 锁定并返回 offline 渠道现金与平台收入两个科目的 id。
+func ledgerAccountIDs(ctx context.Context, tx pgx.Tx) (ledgerAcctIDs, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id::text, account_type FROM ledger_accounts
-		 WHERE currency = $1 AND owner_user_id IS NULL
+		 WHERE owner_user_id IS NULL
 		   AND ((account_type = 'channel_cash' AND owner_ref = 'offline')
 		     OR (account_type = 'platform_revenue' AND owner_ref = 'main'))
-		 ORDER BY id FOR UPDATE`, currency)
+		 ORDER BY id FOR UPDATE`)
 	if err != nil {
 		return ledgerAcctIDs{}, err
 	}
@@ -551,7 +511,7 @@ func ledgerAccountIDsForCurrency(ctx context.Context, tx pgx.Tx, currency string
 		return ledgerAcctIDs{}, err
 	}
 	if n != 2 || ids.channelCash == "" || ids.platformRevenue == "" {
-		return ledgerAcctIDs{}, fmt.Errorf("账本科目 %s: 期望锁定 2 行，实际 %d", currency, n)
+		return ledgerAcctIDs{}, fmt.Errorf("账本科目: 期望锁定 2 行，实际 %d", n)
 	}
 	return ids, nil
 }

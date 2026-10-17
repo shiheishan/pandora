@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/shopspring/decimal"
 )
 
@@ -24,14 +23,16 @@ const (
 	StatusRefunded  Status = "refunded"
 )
 
-// ErrNotSupported 表示渠道不支持这个操作（如 demo 不能查单）。
+// FiatCurrency 是调第三方支付渠道时用的法币代码：系统只有人民币（用户 2026-10-16 定），建单传它，回调与查单里渠道回传的法币必须等于它。
+const FiatCurrency = "CNY"
+
+// ErrNotSupported 表示渠道不支持这个操作（如不能主动查单）。
 var ErrNotSupported = errors.New("payment provider: 不支持的操作")
 
 // CreateRequest 是发起一次支付的请求。
 type CreateRequest struct {
 	OutTradeNo string // 商户单号，回调与查单时原样带回
 	Amount     decimal.Decimal
-	Currency   money.Currency
 	Subject    string // 商品名称
 	Method     string // 渠道内的支付方式，如 alipay / wxpay；空串交给渠道默认
 	NotifyURL  string
@@ -67,7 +68,6 @@ type Notification struct {
 	OutTradeNo string
 	Amount     decimal.Decimal
 	Fee        decimal.Decimal // 渠道手续费；没有就是 0
-	Currency   money.Currency
 	Status     Status
 	Method     string
 	// Raw 是报文原文（去掉签名值），留作证据。
@@ -81,7 +81,6 @@ type QueryResult struct {
 	Found      bool
 	PaymentRef string
 	Amount     decimal.Decimal
-	Currency   money.Currency
 	Status     Status
 	Method     string
 }

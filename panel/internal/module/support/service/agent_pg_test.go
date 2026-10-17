@@ -293,9 +293,9 @@ func TestQueueFiltersAndShape(t *testing.T) {
 	if rows[0].UserEmail == "" || rows[0].UserActivePlan == nil || *rows[0].UserActivePlan != plan {
 		t.Fatal("UserEmail / UserActivePlan")
 	}
-	// 最后一条非内部消息是改状态的系统消息（与旧实现一致：系统消息也算）
-	if rows[0].LastMessageAuthorKind != AuthorSystem {
-		t.Fatalf("最后非内部消息应为系统，得到 %q", rows[0].LastMessageAuthorKind)
+	// 最后一条是改状态的系统消息，但未读只看人发的消息（用户 2026-10-14 定）：取到的是用户追问
+	if rows[0].LastMessageAuthorKind != AuthorUser {
+		t.Fatalf("最后非内部、非系统消息应为用户，得到 %q", rows[0].LastMessageAuthorKind)
 	}
 	// 用户首帖、内部备注、用户追问、改状态系统消息
 	if rows[0].MessageCount != 4 {

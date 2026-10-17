@@ -211,7 +211,7 @@ func TestVerifyEmptySidRejected(t *testing.T) {
 	}
 }
 
-// exp 边界：golang-jwt v5 在 now 等于 exp 时已判过期（与旧令牌 now>=exp 即拒的口径一致），早 1 纳秒仍有效。
+// exp 边界：golang-jwt v5 在 now 等于 exp 时已判过期，早 1 纳秒仍有效。
 func TestVerifyExp边界_exp等于now即过期(t *testing.T) {
 	ttl := time.Hour
 	start := time.Unix(1_700_000_000, 0).UTC()

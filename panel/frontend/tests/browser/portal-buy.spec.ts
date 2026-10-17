@@ -1,19 +1,19 @@
 import { expireOrderSql, newUser, setBalance, sql } from './api.ts'
-import { backToSubs, card, expect, go, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, setSwitch, step, tailOf, test, text, submit } from './fixtures.ts'
+import { backToSubs, card, expect, go, openCard, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, step, tailOf, test, text, submit } from './fixtures.ts'
 
 // ============================================================================
-//  门户 A 组（w8walk A0–A5）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
-//  续费余额够、流量包挂到指定那份。一个用户从头走到尾，和真人一样一步接一步
+//  门户 A 组（A0–A4）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
+//  续费余额够。一个用户从头走到尾，和真人一样一步接一步（10-16 起没有流量包，一次性套餐见 portal-once.spec.ts）
 // ============================================================================
 
-test('A：新购、另买一份、续费、加流量', async ({ browser, world }) => {
+test('A：新购、另买一份、续费', async ({ browser, world }) => {
   const { std } = world.plans
   const u = await newUser('a')
   const page = await openPortal(browser, u)
 
   await step(page, 'A1', async () => {
     await nav(page, '选购')
-    await planCard(page, std.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, std.name).getByRole('link', { name: `买${std.name}` }).click()
     await expect(page.getByRole('heading', { level: 1, name: `买${std.name}` })).toBeVisible()
     await expect(page.getByRole('radio', { name: /^1 个月/ })).toHaveAttribute('aria-checked', 'true')
     await expect(page.getByText('要付 ¥30.00', { exact: true })).toBeVisible()
@@ -69,16 +69,20 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     const lines = await happened(page)
     expect(lines[0]).toContain(`妈妈的 · ${std.name}`)
     await backToSubs(page)
+    // 两份：顶部切换条各一个，同一时间只显示选中的那份
     await expect(page.locator('article')).toHaveCount(2)
-    await expect(card(page, '妈妈的')).toBeVisible()
-    await expect(card(page, std.name)).toBeVisible()
-    return `「${shownText}」；${paid}；完成页「${lines[0]}」；我的套餐两张卡「${std.name}」「妈妈的」`
+    await expect(page.getByRole('tablist', { name: '你的几份' }).getByRole('tab')).toHaveCount(2)
+    await openCard(page, '妈妈的')
+    await expect(card(page, std.name)).toBeHidden()
+    await openCard(page, std.name)
+    await expect(card(page, '妈妈的')).toBeHidden()
+    return `「${shownText}」；${paid}；完成页「${lines[0]}」；我的套餐两份「${std.name}」「妈妈的」，切换条点哪份显示哪份`
   })
 
   await step(page, 'A4', async () => {
     await setBalance(u, 5000, 'A4 续费余额够')
     await page.reload()
-    await card(page, std.name).getByRole('link', { name: /^续费/ }).click()
+    await (await openCard(page, std.name)).getByRole('link', { name: /^续费/ }).click()
     await expect(page.getByRole('heading', { level: 1, name: '续费' })).toBeVisible()
     const callout = await text(page.getByText(/^到期日 .+ → .+。链接不变/))
     const [, from = '', to = ''] = /到期日 (.+?) → (.+?)。/.exec(callout) ?? []
@@ -89,30 +93,10 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
     // 余额读数在下单后才重新拉取：等页面写出扣过之后的余额再读；全用余额付，没有「在线付了」
     await expect(page.getByText(/^余额付了 ¥30\.00；余额还剩 ¥20\.00$/)).toBeVisible()
-    // 到期日会自动重试：页面先渲染、数据随后到齐时不读早（w9audit 报告）
+    // 到期日会自动重试：页面先渲染、数据随后到齐时不读早
     await expect(page.getByRole('heading', { name: '发生了什么' }).locator('xpath=following-sibling::ul[1]').getByRole('listitem').first()).toContainText(`用到 ${to}（原来 ${from}）`)
     const lines = await happened(page)
     return `确认页「${callout}」「余额够付，¥30.00 全部用余额」；完成页「${lines[0]}」「${lines[1]}」`
-  })
-
-  await step(page, 'A5', async () => {
-    await backToSubs(page)
-    await card(page, '妈妈的').getByRole('link', { name: /^加流量/ }).click()
-    await expect(page.getByRole('heading', { level: 1, name: '加流量' })).toBeVisible()
-    await expect(page.getByText(`给 妈妈的 · ${std.name} 加流量`)).toBeVisible()
-    await page.getByRole('radio', { name: /^12G/ }).click()
-    await page.getByRole('link', { name: /^加 12G · ¥5\.00/ }).click()
-    const callout = page.getByText(`12G 马上加到「妈妈的 · ${std.name}」，只给这份用，用完为止`)
-    const calloutText = await text(callout)
-    await setSwitch(page, '用余额', false)
-    await expect(page.getByText('要付 ¥5.00', { exact: true })).toBeVisible()
-    await submit(page, page.getByRole('button', { name: '加 12G，付 ¥5.00' }))
-    const paid = await payByCashier(page, world, '5.00')
-    await expect(page.getByRole('heading', { name: '已加 12G' })).toBeVisible({ timeout: 20_000 })
-    await backToSubs(page)
-    await expect(card(page, '妈妈的')).toContainText('含流量包 12G')
-    await expect(card(page, std.name)).not.toContainText('含流量包')
-    return `从「妈妈的」卡片加流量：「${calloutText}」，关掉余额后付 ¥5.00；${paid}；完成页「已加 12G」；只有「妈妈的」写含流量包 12G`
   })
 })
 
@@ -153,7 +137,7 @@ test('A0：同款已有待付款单', async ({ browser, world }) => {
   await step(page, 'A0', async () => {
     await leavePending(page, std.id, `买${std.name}，付 ¥30.00`)
     await nav(page, '选购')
-    await planCard(page, std.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, std.name).getByRole('link', { name: `买${std.name}` }).click()
     await clickBuyIfQuoted(page, `买${std.name}，付 ¥30.00`)
     const seen = await pendingNotice(page)
     await expect(page.getByRole('button', { name: '取消它' }), `页面上看到的：${seen}`).toBeVisible()
@@ -170,11 +154,11 @@ test('A0b：那张待付款单已超过付款期限', async ({ browser, world })
 
   await step(page, 'A0b', async () => {
     const orderId = await leavePending(page, std.id, `买${std.name}，付 ¥30.00`)
-    // SQL 夹具（时间流逝）：把这张单的付款期限拨到一分钟前，订单仍是待支付——与 w8walk C5 同一做法。
+    // SQL 夹具（时间流逝）：把这张单的付款期限拨到一分钟前，订单仍是待支付——与 C5 同一做法。
     // 只改 orders.expires_at，不动预留：释放任务按预留的到期找单，不会在测试中途把它关掉
     sql('付款期限拨到过去', expireOrderSql(orderId))
     await nav(page, '选购')
-    await planCard(page, std.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, std.name).getByRole('link', { name: `买${std.name}` }).click()
     await clickBuyIfQuoted(page, `买${std.name}，付 ¥30.00`)
     const seen = await pendingNotice(page)
     await expect(page.getByRole('button', { name: '取消它' }), `页面上看到的：${seen}`).toBeVisible()

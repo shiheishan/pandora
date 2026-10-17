@@ -1,16 +1,16 @@
 package repo
 
-// 流量上报入账（p5-traffic）：留档、节点倍率、两张小时汇总。只给 service 的 IngestTraffic 用，都在它的事务里执行。
+// 流量上报入账：留档、节点倍率、两张小时汇总。只给 service 的 IngestTraffic 用，都在它的事务里执行。
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
+
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // TrafficReportRow 是一份要留档的流量上报。
@@ -44,23 +44,33 @@ type UserHourAdd struct {
 	Billed         int64     `json:"billed"`
 }
 
-// ServerNodeRates 取这台服务器上给定节点的流量倍率；不属于这台服务器的节点不在结果里（不看删除与在役状态，名单另判）。
-func (r *Repo) ServerNodeRates(ctx context.Context, serverID uuid.UUID, nodeIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
-	out := make(map[uuid.UUID]decimal.Decimal, len(nodeIDs))
+// NodeRateRule 是一个节点的计费倍率规则：基础倍率与时段倍率（traffic_rate_schedule 的 JSON 文本）。
+type NodeRateRule struct {
+	Rate     decimal.Decimal
+	Schedule string
+}
+
+// ServerNodeRateRules 取这台服务器上给定节点的倍率规则；不属于这台服务器的节点不在结果里（不看删除与在役状态，名单另判）。
+func (r *Repo) ServerNodeRateRules(ctx context.Context, serverID uuid.UUID, nodeIDs []uuid.UUID) (map[uuid.UUID]NodeRateRule, error) {
+	out := make(map[uuid.UUID]NodeRateRule, len(nodeIDs))
 	if len(nodeIDs) == 0 {
 		return out, nil
 	}
 	var rows []struct {
-		ID          uuid.UUID       `gorm:"column:id"`
-		TrafficRate decimal.Decimal `gorm:"column:traffic_rate"`
+		ID                  uuid.UUID       `gorm:"column:id"`
+		TrafficRate         decimal.Decimal `gorm:"column:traffic_rate"`
+		TrafficRateSchedule string          `gorm:"column:traffic_rate_schedule"`
 	}
-	err := r.d.Conn(ctx).Raw(`SELECT id, traffic_rate FROM nodes WHERE server_id = ? AND id IN ?`, serverID, nodeIDs).
+	err := r.d.Conn(ctx).Raw(`SELECT id, traffic_rate, traffic_rate_schedule::text AS traffic_rate_schedule FROM nodes WHERE server_id = ? AND id IN ?`, serverID, nodeIDs).
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		out[row.ID] = row.TrafficRate
+		out[row.ID] = NodeRateRule{
+			Rate:     row.TrafficRate,
+			Schedule: row.TrafficRateSchedule,
+		}
 	}
 	return out, nil
 }
@@ -154,7 +164,4 @@ func jsonArray[T any](rows []T) (string, error) {
 }
 
 // IsRetryable 判断是不是死锁（40P01）或序列化失败（40001）：整个事务已回滚，整笔重来是安全的。
-func IsRetryable(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
-}
+func IsRetryable(err error) bool { return db.IsRetryable(err) }

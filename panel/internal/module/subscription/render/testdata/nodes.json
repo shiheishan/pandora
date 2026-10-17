@@ -23,6 +23,30 @@
   },
   {
     "group": "form",
+    "name": "ss2022-aes128",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 8390,
+    "traffic_rate": 1,
+    "config": {
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "EREREREREREREREREREREQ=="
+    }
+  },
+  {
+    "group": "form",
+    "name": "ss2022-aes256",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 8391,
+    "traffic_rate": 1,
+    "config": {
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI="
+    }
+  },
+  {
+    "group": "form",
     "name": "hy2-obfs",
     "type": "hysteria2",
     "host": "node.example.com",
@@ -721,6 +745,17 @@
       "network": "tcp",
       "security": "none",
       "tls": true
+    }
+  },
+  {
+    "group": "legacy",
+    "name": "ss2022-chacha",
+    "type": "shadowsocks",
+    "host": "node.example.com",
+    "port": 8392,
+    "traffic_rate": 1,
+    "config": {
+      "method": "2022-blake3-chacha20-poly1305"
     }
   },
   {

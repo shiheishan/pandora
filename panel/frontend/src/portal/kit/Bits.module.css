@@ -1,0 +1,64 @@
+/* 门户小件：图标、展示字体数字、档位名胶囊、首字头像 */
+.icon {
+  flex: none;
+}
+
+.num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.chip {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 99px;
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+
+.soft {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+}
+
+.solid {
+  background: var(--brand-deep);
+  color: var(--on-brand);
+}
+
+.avatar {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex: none;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+}
+
+.avatarSolid {
+  background: var(--brand-deep);
+  color: var(--on-brand);
+}
+
+.sm {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+
+.md {
+  width: 48px;
+  height: 48px;
+  font-size: 19px;
+}
+
+.lg {
+  width: 52px;
+  height: 52px;
+  font-size: 20px;
+}

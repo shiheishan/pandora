@@ -10,7 +10,6 @@ import (
 type subscriptionLinkResponse struct {
 	SubscriptionID  string     `json:"subscription_id"`
 	URL             string     `json:"url"`
-	ExpiresAt       *time.Time `json:"expires_at"` // 凭据不再单独过期，恒为 null（前端 schema 仍要这个键）
 	FetchCount      int64      `json:"fetch_count"`
 	LastFetchedAt   *time.Time `json:"last_fetched_at"`
 	DistinctSources int        `json:"distinct_sources_24h"`

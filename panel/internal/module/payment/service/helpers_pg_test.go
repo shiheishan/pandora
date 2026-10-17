@@ -21,12 +21,10 @@ import (
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/model"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	settingsrepo "github.com/aegispanel/aegis/internal/module/settings/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/reqid"
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
@@ -34,8 +32,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
-
-const demoSecret = "payment-pg-test-secret"
 
 var paymentCommitTables = []string{
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
@@ -61,7 +57,9 @@ type stubSettler struct {
 	users      map[uuid.UUID]uuid.UUID
 	notPayable map[uuid.UUID]error
 	calls      atomic.Int64
+	closeCalls atomic.Int64 // CloseArchivedOrder 的调用次数
 	ledger     *ledgersvc.Service
+	last       SettleInput // 最近一次 SettlePayment 入参（测试断言用）
 	// before 非空时在结算最前面调用（并发用例在这里拿订单锁）；返回错误即结算失败。
 	before func(ctx context.Context, in SettleInput) error
 }
@@ -69,6 +67,7 @@ type stubSettler struct {
 func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 	s.calls.Add(1)
 	s.mu.Lock()
+	s.last = in
 	before := s.before
 	npErr, notPayable := s.notPayable[in.OrderID]
 	userID := s.users[in.OrderID]
@@ -82,13 +81,13 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 		return fmt.Errorf("payment test: 未登记订单 %s", in.OrderID)
 	}
 	_, err := s.ledger.PostOrderPaid(ctx, ledgersvc.OrderPaid{
-		OrderID:  in.OrderID,
-		UserID:   userID,
-		Currency: in.Currency,
-		Total:    in.Amount,
-		Paid:     in.Amount,
-		Fee:      in.Fee,
-		Provider: in.ProviderCode,
+		OrderID:   in.OrderID,
+		UserID:    userID,
+		Total:     in.Amount,
+		Paid:      in.Amount,
+		Fee:       in.Fee,
+		Surcharge: in.Surcharge,
+		Provider:  in.ProviderCode,
 	})
 	if err != nil {
 		return err
@@ -97,6 +96,12 @@ func (s *stubSettler) SettlePayment(ctx context.Context, in SettleInput) error {
 		return npErr
 	}
 	return nil
+}
+
+// CloseArchivedOrder 桩：没有订单表要动，直接调 settle（记挂账、转余额），并记下调用次数。
+func (s *stubSettler) CloseArchivedOrder(ctx context.Context, orderID uuid.UUID, settle func(ctx context.Context, orderStatus string) error) error {
+	s.closeCalls.Add(1)
+	return settle(ctx, "")
 }
 
 type env struct {
@@ -202,8 +207,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// settings 也要一份：payment 的回调地址读它；ledger service 不再依赖 settings。
 	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), tx.NewManager(d), settings, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), tx.NewManager(d), auditSvc)
 	svc := New(paymentrepo.New(d), tx.NewManager(d), ledgerSvc, nil, settings, auditSvc, sealer, Config{
 		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
@@ -237,6 +243,8 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 			return d.Conn(ctx).Exec(q, args...).Error
 		},
 	}
+	// 测试渠道走替身，其余照常构造。
+	e.svc.adapter = e.adapterWithFake
 	return e, ctx
 }
 
@@ -250,21 +258,24 @@ func (e *env) mkUser(t *testing.T, ctx context.Context) uuid.UUID {
 	return id
 }
 
-func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) providerRecord {
+func (e *env) mkFakeProvider(t *testing.T, ctx context.Context, code string) providerRecord {
 	t.Helper()
+	if !strings.HasPrefix(code, fakeCodePrefix) {
+		t.Fatalf("mkFakeProvider: 渠道代码须以 %q 开头，得 %q", fakeCodePrefix, code)
+	}
 	id := uuid.Must(uuid.NewV7())
-	sealed, err := e.svc.sealCredentials(id, credentials{Key: demoSecret})
+	sealed, err := e.svc.sealCredentials(id, credentials{Key: fakeSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := &model.Provider{
 		ID:                id,
 		Code:              code,
-		Adapter:           AdapterDemo,
-		DisplayName:       "Demo",
+		Adapter:           AdapterEpay,
+		DisplayName:       "Fake",
 		CredentialsSealed: sealed,
-		Currencies:        []string{"CNY"},
 		BaseURL:           "https://checkout.example.test",
+		Methods:           []string{"alipay"},
 		Enabled:           true,
 		AcceptingNew:      true,
 		MinAmount:         decimal.Zero,
@@ -279,7 +290,7 @@ func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) pro
 	return rec
 }
 
-// mkOrder 插一张待付的充值单（9.90 CNY）并登记给 stubSettler，返回 ID 与订单号：
+// mkOrder 插一张待付的充值单（9.90 元）并登记给 stubSettler，返回 ID 与订单号：
 // 意图、收款、挂账的 order_id 都有指向 orders 的外键。订单号满足 ^[A-Z0-9-]{1,64}$，随机取，全局唯一。
 func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.UUID, string) {
 	t.Helper()
@@ -289,8 +300,8 @@ func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.U
 	}
 	orderNo := fmt.Sprintf("T%012d", n.Int64())
 	var orderID uuid.UUID
-	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
-		VALUES (?, ?, 'topup', 'CNY', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, orderNo, user).Scan(&orderID); err != nil {
+	if err := e.row(ctx, `INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'topup', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, orderNo, user).Scan(&orderID); err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
 	e.orders.add(orderID)
@@ -298,6 +309,19 @@ func (e *env) mkOrder(t *testing.T, ctx context.Context, user uuid.UUID) (uuid.U
 	e.settler.users[orderID] = user
 	e.settler.mu.Unlock()
 	return orderID, orderNo
+}
+
+// CreateIntent 是测试用的一步建单：BeginIntent（自己的事务）+ CompleteIntent。产品代码走 order.Pay 的两段式。
+func (s *Service) CreateIntent(ctx context.Context, in CreateIntentInput) (IntentResult, error) {
+	var d IntentDraft
+	if err := s.tx.Do(ctx, func(ctx context.Context) error {
+		var err error
+		d, err = s.BeginIntent(ctx, in)
+		return err
+	}); err != nil {
+		return IntentResult{}, err
+	}
+	return s.CompleteIntent(ctx, d)
 }
 
 func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode string, orderID uuid.UUID, orderNo string, user uuid.UUID, amount string) IntentResult {
@@ -308,7 +332,6 @@ func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode strin
 		OrderNo:      orderNo,
 		UserID:       user,
 		Amount:       amt,
-		Currency:     money.CNY,
 		ProviderCode: providerCode,
 		Title:        "测试订单",
 		ClientIP:     "203.0.113.1",
@@ -319,24 +342,29 @@ func (e *env) createIntent(t *testing.T, ctx context.Context, providerCode strin
 	return res
 }
 
-func demoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
+// fakeInbound 构造带 HMAC 签名的替身渠道 JSON 回调（不报手续费）。
+func fakeInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
+	return fakeInboundFee(eventID, eventType, paymentRef, orderNo, cents, 0)
+}
+
+// fakeInboundFee 同 fakeInbound，另带渠道手续费 feeCents（分），手续费一并签进签名。
+func fakeInboundFee(eventID, eventType, paymentRef, orderNo string, cents, feeCents int64) provider.Inbound {
 	body, _ := json.Marshal(map[string]any{
 		"event_id":   eventID,
 		"event_type": eventType,
 		"payment_id": paymentRef,
 		"order_no":   orderNo,
 		"amount":     cents,
-		"currency":   "CNY",
-		"fee":        0,
+		"fee":        feeCents,
 		"method":     "alipay",
 	})
 	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
+	h.Set("X-Aegis-Signature", fakeSign([]byte(fakeSecret), eventID, eventType, paymentRef, orderNo, cents, feeCents))
 	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
 }
 
 func unsignedInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
-	in := demoInbound(eventID, eventType, paymentRef, orderNo, cents)
+	in := fakeInbound(eventID, eventType, paymentRef, orderNo, cents)
 	in.Header.Set("X-Aegis-Signature", strings.Repeat("0", 64))
 	return in
 }
@@ -382,7 +410,7 @@ SELECT string_agg(d.id, ',') FROM (
 	}
 }
 
-func (e *env) accountBalance(t *testing.T, ctx context.Context, ref ledgersvc.AccountRef, cur money.Currency) decimal.Decimal {
+func (e *env) accountBalance(t *testing.T, ctx context.Context, ref ledgersvc.AccountRef) decimal.Decimal {
 	t.Helper()
 	var owner *uuid.UUID
 	if ref.Type.UserOwned() {
@@ -392,9 +420,9 @@ func (e *env) accountBalance(t *testing.T, ctx context.Context, ref ledgersvc.Ac
 	var bal sql.NullString
 	err := e.row(ctx, `
 SELECT balance FROM ledger_accounts
-WHERE account_type = ? AND currency = ?
+WHERE account_type = ?
   AND owner_user_id IS NOT DISTINCT FROM ? AND owner_ref = ?`,
-		string(ref.Type), string(cur), owner, ref.Ref,
+		string(ref.Type), owner, ref.Ref,
 	).Scan(&bal)
 	if err == sql.ErrNoRows {
 		return decimal.Zero

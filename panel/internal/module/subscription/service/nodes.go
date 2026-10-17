@@ -14,11 +14,13 @@ import (
 // NodeQuery 是「这份订阅能拿哪些线路」的查询条件。
 type NodeQuery struct {
 	SubscriptionID, UserID, PlanVersionID uuid.UUID
+	// PlanID 是订阅所属套餐；线路池按套餐绑定（catalog.PlanPools）
+	PlanID uuid.UUID
 	// UserGroupID 是订阅主人所在的用户组（节点池可以限定用户组）；没有分组为 nil
 	UserGroupID *uuid.UUID
 }
 
-// NodeSource 由 node 模块实现（P5 装配）：返回可下发的线路，协议配置已是内核字段名，已按新鲜度分层排好序。
+// NodeSource 由 node 模块实现：返回可下发的线路，协议配置已是内核字段名，已按新鲜度分层排好序。
 // 实现只读，不回调本模块的写方法。
 type NodeSource interface {
 	DeliverableNodes(ctx context.Context, q NodeQuery) ([]render.Node, error)
@@ -57,6 +59,8 @@ type Delivery struct {
 	PublicBaseURL string
 	// Render 是渲染的可配项（配置 subscription.singbox），启动时定一次
 	Render render.Options
+	// Extras 是订阅附加设置（信息节点、协议前缀）的读取面；nil 时全部按缺省（关）
+	Extras ExtrasSettings
 }
 
 // UseDelivery 只在启动装配时调用（不并发安全）。没装配时拉取、链接列表、换链接回 ErrDeliveryUnavailable。

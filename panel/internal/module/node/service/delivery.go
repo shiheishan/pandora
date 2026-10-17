@@ -1,15 +1,15 @@
 package service
 
-// 下发资格（p5-delivery）：名单（roster.go）与订阅线路（node_source.go）共用的依赖与规则。
+// 下发资格：名单（roster.go）与订阅线路（node_source.go）共用的依赖与规则。
 //
 // 资格由几块拼成，每块只有一个口径：
 //   - 订阅侧可服务（生效中、流量没耗尽）：subscription 的 ServingSubscriptions；线路由拉取路径先判过；
 //   - 账号 active：identity 的 ActiveUserGroups（封禁即断，解封恢复）；线路由拉取路径先判过；
-//   - 套餐版本绑定了节点所在的池：catalog 的 VersionPools；没划池的节点不服务任何人（fail closed）；
+//   - 套餐绑定了节点所在的池：catalog 的 PlanPools（订阅按版本找到套餐）；没划池的节点不服务任何人（fail closed）；
 //   - 池的用户组限定：poolAdmits（本文件，名单与线路都只经它判）；
 //   - 节点自身：名单按 repo.ServedOnServerCond，线路按 repo.DeliverableNodeCond，再按 preferFresh 分层。
 //
-// 节点池的状态（active / draining / disabled）不影响名单与线路：与旧实现一致，池状态只管「能不能再被绑进套餐版本」，
+// 节点池的状态（active / draining / disabled）不影响名单与线路，池状态只管「能不能再被绑进套餐」，
 // 已有绑定照常服务。要停一个池的服务，停用池里的节点或从套餐解绑。
 
 import (

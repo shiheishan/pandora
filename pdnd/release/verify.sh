@@ -15,8 +15,6 @@ version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".
 [[ -n "${version}" ]] || { echo "manifest version missing" >&2; exit 1; }
 runtime="$(sed -n 's/^[[:space:]]*"runtime"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${MANIFEST}")"
 [[ "${runtime}" == "pandora-native" ]] || { echo "manifest runtime must be pandora-native" >&2; exit 1; }
-native_only="$(sed -n 's/^[[:space:]]*"native_only"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "${MANIFEST}")"
-[[ "${native_only}" == "true" ]] || { echo "manifest native_only must be true" >&2; exit 1; }
 # 构建用的 Go 工具链：manifest 里的 go_toolchain 必须与 "go version" 记的一致，
 # 并等于本仓库 pdnd/go.mod 的 go 指令（找得到 go.mod 时）。本脚本没有 go.mod 可对照时只做前一项。
 go_toolchain="$(sed -n 's/^[[:space:]]*"go_toolchain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${MANIFEST}")"

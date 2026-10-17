@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>门户新样稿 v3</title>
+<!-- 样稿专用：正式实现时字体自托管（CSP font-src 'self'），中文衬线按 unicode-range 分片 -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Noto+Serif+SC:wght@700;900&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #f4f5f2;
+    --dot: rgba(30, 50, 40, 0.075);
+    --ink: #141715;
+    --text-2: #6d736e;
+    --text-3: #959a95;
+    --sage: #dfe8e1;
+    --sage-line: #b4c8ba;
+    --green-950: #17301f;
+    --green-900: #1f3d2b;
+    --green-700: #2c5a3f;
+    --green-400: #4cbb72;
+    --tw: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+    --serif-zh: 'Courier Prime', 'Noto Serif SC', 'Songti SC', serif;
+    --sans: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    /* 卡片不靠描边分界，靠大而淡的阴影 + 顶部一道高光 */
+    --lift: 0 0 0 1px rgba(20, 40, 30, 0.035), 0 30px 60px -30px rgba(20, 45, 32, 0.22), 0 6px 16px -8px rgba(20, 45, 32, 0.1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(1200px 500px at 50% -120px, rgba(255, 255, 255, 0.95), transparent 70%),
+      radial-gradient(var(--dot) 1px, transparent 1.3px) 0 0 / 16px 16px,
+      var(--bg);
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px 140px; }
+  header { display: flex; align-items: center; gap: 36px; height: 72px; }
+  .logo { font-family: var(--tw); font-weight: 700; font-size: 24px; letter-spacing: -0.03em; }
+  nav { display: flex; gap: 28px; font-size: 15px; color: var(--text-2); }
+  nav b { color: var(--ink); font-weight: 600; }
+
+  .eyebrow { font-family: var(--tw); font-size: 21px; color: #2a2e2b; line-height: 1; }
+  /* 档位名：中文衬线粗体压在白色小标签上，轻微晕墨 */
+  .tag {
+    display: inline-block; margin: 10px 0 0 -10px; padding: 6px 12px 7px;
+    background: #fff; border-radius: 10px;
+    font-family: var(--serif-zh); font-weight: 900; font-size: 34px; line-height: 1.1; letter-spacing: 0.01em;
+    text-shadow: 0 0 1px rgba(20, 23, 21, 0.35), 0 1px 2px rgba(20, 23, 21, 0.18);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 1) inset, 0 10px 20px -12px rgba(20, 40, 30, 0.45);
+  }
+  .num { font-family: var(--tw); font-weight: 700; letter-spacing: -0.02em; }
+
+  /* ---------- 我的套餐 ---------- */
+  .page-h { display: flex; align-items: baseline; justify-content: space-between; margin: 36px 0 22px; }
+  h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .page-h a { color: var(--text-2); font-size: 14px; text-decoration: none; }
+  .hero {
+    position: relative; border-radius: 28px; padding: 34px 38px 32px;
+    background:
+      radial-gradient(700px 320px at 0% 0%, var(--sage), transparent 70%),
+      linear-gradient(180deg, #f6f8f6, #fff);
+    box-shadow: var(--lift), 0 0 0 1.5px var(--sage-line);
+    display: grid; grid-template-columns: 1fr 360px; gap: 48px; align-items: end;
+  }
+  .days { position: absolute; top: 30px; right: 32px; font-size: 13px; padding: 5px 12px; border-radius: 99px; background: #fff; box-shadow: 0 4px 10px -6px rgba(20, 40, 30, 0.35); }
+  .big { font-size: 76px; line-height: 0.9; }
+  .unit { font-family: var(--tw); font-size: 24px; margin-left: 6px; }
+  .meta { font-size: 15px; color: var(--text-2); }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .bar { height: 12px; border-radius: 99px; background: rgba(23, 48, 31, 0.08); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06); overflow: hidden; margin: 22px 0 12px; }
+  .bar i { display: block; height: 100%; width: 40%; border-radius: 99px; background: linear-gradient(90deg, var(--green-900), var(--green-400)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+  .linkrow { display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: var(--text-2); padding: 0 4px; }
+  .linkrow code { font-family: var(--tw); font-size: 16px; color: var(--ink); }
+  .linkrow button { all: unset; cursor: pointer; color: var(--green-700); font-weight: 600; }
+  .actions { display: flex; justify-content: center; gap: 22px; font-size: 14px; color: var(--text-2); }
+  .actions span { cursor: pointer; }
+  .actions span:hover { color: var(--ink); }
+
+  .btn {
+    display: flex; align-items: center; justify-content: center; width: 100%; height: 52px; border-radius: 14px; cursor: pointer;
+    font: 600 16px var(--sans); color: #fff; white-space: nowrap; border: 1px solid #10251a;
+    background: linear-gradient(180deg, var(--green-700), var(--green-900));
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 10px 22px -12px rgba(16, 37, 26, 0.9);
+    transition: transform 0.15s ease, filter 0.2s ease;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:active { transform: translateY(1px); }
+  .btn.hot { background: linear-gradient(90deg, var(--green-900) 0%, var(--green-700) 45%, var(--green-400) 100%); }
+
+  /* ---------- 选购 ---------- */
+  .section-h { display: flex; align-items: center; justify-content: space-between; margin: 64px 0 24px; }
+  h2 { font-size: 22px; font-weight: 600; margin: 0; }
+  .seg { display: inline-flex; padding: 4px; border-radius: 14px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 0 1px rgba(20, 40, 30, 0.06); }
+  .seg span { padding: 8px 18px; border-radius: 10px; font-size: 14px; color: var(--text-2); cursor: pointer; }
+  .seg .on { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 2px 6px -2px rgba(20, 40, 30, 0.25); }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+  .plan {
+    position: relative; border-radius: 28px; padding: 34px 32px 30px; display: flex; flex-direction: column; min-height: 620px;
+    background: linear-gradient(180deg, #fff 0%, #fbfcfb 50%, #f5f7f5 100%);
+    box-shadow: var(--lift);
+  }
+  .plan.pop {
+    background: radial-gradient(520px 360px at 0% 0%, var(--sage), transparent 75%), linear-gradient(180deg, #f3f6f4, #fbfcfb);
+    box-shadow: var(--lift), 0 0 0 1.5px var(--sage-line);
+  }
+  .badge { position: absolute; top: 30px; right: 28px; font-size: 13px; padding: 5px 12px; border-radius: 99px; background: #fff; box-shadow: 0 4px 10px -6px rgba(20, 40, 30, 0.35); }
+  .desc { color: var(--text-2); font-size: 14px; margin: 14px 0 26px; }
+  .price { display: flex; align-items: baseline; gap: 6px; }
+  .price .cur { font-family: var(--tw); font-weight: 700; font-size: 30px; }
+  .price .num { font-size: 50px; line-height: 1; }
+  .price small { font-size: 15px; color: var(--text-2); }
+  .alt { font-size: 13px; color: var(--text-3); margin-top: 10px; }
+  .alt b { color: var(--text-2); font-weight: 600; }
+  .rule { height: 1px; background: linear-gradient(90deg, rgba(20, 40, 30, 0.1), transparent); margin: 28px 0 8px; }
+  ul { list-style: none; padding: 0; margin: 0 0 32px; flex: 1; }
+  li { display: flex; gap: 12px; font-size: 15.5px; color: var(--text-2); line-height: 1.5; padding: 11px 0; }
+  li::before {
+    content: ''; flex: none; width: 15px; height: 15px; margin-top: 4px;
+    background: no-repeat center/15px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23141715' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E");
+  }
+  li b { color: var(--ink); font-weight: 600; }
+
+  /* 底部状态条 */
+  .status {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 18px; padding: 12px 22px; border-radius: 99px; white-space: nowrap;
+    background: rgba(255, 255, 255, 0.82); backdrop-filter: blur(14px) saturate(1.4);
+    box-shadow: 0 0 0 1px rgba(20, 40, 30, 0.06), 0 16px 36px -18px rgba(20, 40, 30, 0.45);
+    font-size: 14px; color: var(--text-2);
+  }
+  .status b { color: var(--ink); font-weight: 600; }
+  .status .sep { width: 1px; height: 14px; background: rgba(20, 40, 30, 0.12); }
+  .status .n { font-family: var(--tw); font-weight: 700; font-size: 16px; color: var(--ink); }
+
+  @media (max-width: 760px) {
+    .wrap { padding: 0 16px 120px; }
+    nav { display: none; }
+    .hero { grid-template-columns: 1fr; gap: 26px; padding: 28px 22px 24px; border-radius: 24px; }
+    .days { top: 26px; right: 20px; }
+    .big { font-size: 64px; }
+    .plans { grid-template-columns: 1fr; gap: 20px; }
+    .plan { min-height: 0; padding: 28px 24px 24px; border-radius: 24px; }
+    .section-h { flex-direction: column; align-items: flex-start; gap: 14px; margin-top: 48px; }
+    .status .wide { display: none; }
+    .status { gap: 12px; padding: 10px 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo">pandora</span>
+    <nav><b>我的套餐</b><span>选购</span><span>钱包</span></nav>
+  </header>
+
+  <div class="page-h"><h1>我的套餐</h1><a href="#">有卡？去兑换 →</a></div>
+
+  <section class="hero">
+    <span class="days">还剩 <b>42</b> 天</span>
+    <div>
+      <div class="eyebrow">Pandora</div>
+      <div><span class="tag">专业版</span></div>
+      <div style="margin-top:40px"><span class="num big">208</span><span class="unit">GB</span></div>
+      <div class="meta" style="margin-top:10px">本期剩余 · 共 <b>520 GB</b>，含送的 <b>20 GB</b></div>
+      <div class="bar"><i></i></div>
+      <div class="meta" style="font-size:14px">11 月 27 日 16:03 到期 · <span style="color:var(--green-700)">节点和每天用量 ›</span></div>
+    </div>
+    <div class="side">
+      <div class="linkrow"><span>链接 <code>····PQsM</code></span><button>复制</button></div>
+      <button class="btn hot">添加到 App</button>
+      <div class="actions"><span>续费</span><span>换套餐</span><span>改名</span><span>换新链接</span></div>
+    </div>
+  </section>
+
+  <div class="section-h">
+    <h2>选购</h2>
+    <div class="seg"><span class="on">按时间</span><span>一次性</span></div>
+  </div>
+
+  <section class="plans">
+    <article class="plan">
+      <div class="eyebrow">Pandora</div><div><span class="tag">标准版</span></div>
+      <p class="desc">日常浏览与社交</p>
+      <div class="price"><span class="cur">¥</span><span class="num">29</span><small>/ 月</small></div>
+      <div class="alt">季付 <b>¥79</b> · 半年 <b>¥149</b> · 年付 <b>¥299</b></div>
+      <div class="rule"></div>
+      <ul>
+        <li><span>每期 <b>200 GB</b> 流量</span></li>
+        <li><span><b>3 台</b>设备同时用</span></li>
+        <li><span><b>常规</b>线路</span></li>
+        <li><span>不限速</span></li>
+        <li><span>流量重置 <b>¥10</b> / 次，每期 <b>2 次</b></span></li>
+      </ul>
+      <button class="btn">买标准版</button>
+    </article>
+
+    <article class="plan pop">
+      <span class="badge">你在用</span>
+      <div class="eyebrow">Pandora</div><div><span class="tag">专业版</span></div>
+      <p class="desc">亚太精选与欧美线路</p>
+      <div class="price"><span class="cur">¥</span><span class="num">59</span><small>/ 月</small></div>
+      <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
+      <div class="rule"></div>
+      <ul>
+        <li><span>每期 <b>500 GB</b> 流量</span></li>
+        <li><span><b>5 台</b>设备同时用</span></li>
+        <li><span><b>亚太精选 + 欧美</b>线路</span></li>
+        <li><span><b>流媒体</b>解锁</span></li>
+        <li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li>
+      </ul>
+      <button class="btn hot">续费专业版</button>
+    </article>
+
+    <article class="plan">
+      <div class="eyebrow">Pandora</div><div><span class="tag">家庭版</span></div>
+      <p class="desc">一家人一起用</p>
+      <div class="price"><span class="cur">¥</span><span class="num">49</span><small>/ 月</small></div>
+      <div class="alt">季付 <b>¥139</b> · 年付 <b>¥499</b></div>
+      <div class="rule"></div>
+      <ul>
+        <li><span>每期 <b>300 GB</b> 流量</span></li>
+        <li><span><b>6 台</b>设备同时用</span></li>
+        <li><span><b>常规</b>线路</span></li>
+        <li><span>限速 <b>100 Mbps</b></span></li>
+        <li><span>流量重置 <b>¥15</b> / 次，<b>不限</b>次数</span></li>
+      </ul>
+      <button class="btn">买家庭版</button>
+    </article>
+  </section>
+</div>
+
+<div class="status">
+  <b>张伟</b><span class="wide">专业版</span><span class="sep wide"></span>
+  <span>余额 <span class="n">¥26.50</span></span><span class="sep wide"></span>
+  <span class="wide">可提佣金 <span class="n">¥135.60</span></span><span class="sep"></span>
+  <b>＋ 充值</b>
+</div>
+</body>
+</html>

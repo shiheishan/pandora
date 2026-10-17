@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
@@ -23,8 +24,10 @@ func TestMyNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("线路预览: %v", err)
 	}
-	if len(got) != 2 || got[0] != (NodePreview{Name: "香港 01", Protocol: "vless", TrafficRate: 1}) ||
-		got[1] != (NodePreview{Name: "日本 02", Protocol: "trojan", TrafficRate: 1.5}) {
+	if !reflect.DeepEqual(got, []NodePreview{
+		{Name: "香港 01", Protocol: "vless", TrafficRate: 1},
+		{Name: "日本 02", Protocol: "trojan", TrafficRate: 1.5},
+	}) {
 		t.Fatalf("预览: %+v", got)
 	}
 	qs := de.nodes.queries

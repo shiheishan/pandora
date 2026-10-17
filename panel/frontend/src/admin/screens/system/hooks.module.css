@@ -1,0 +1,251 @@
+/* Webhook 钩子页（tab=hooks）：统计行、Row 行内样式、投递记录与弹窗样式 */
+
+/* ---- 顶部统计行（样稿 .tsum：13px --text-2，高 32） ---- */
+.tsum {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* 视觉隐藏仅给屏幕阅读器读取 */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 行内健康字样：400 字重 12.5px */
+.health {
+  font-weight: 400;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.healthOk {
+  color: var(--ok);
+}
+
+.healthWarn {
+  color: var(--warn);
+}
+
+.healthMuted {
+  color: var(--text-3);
+}
+
+.url {
+  display: block;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.events {
+  display: block;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* 右侧操作列 */
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+/* 蓝色文字按钮（样稿 .link-b：all: unset，13px --info） */
+.linkBtn {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--info);
+}
+
+.linkBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.linkBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 灰字悬停红按钮（样稿 .link-d：all: unset，13px --text-2，hover --danger） */
+.linkDanger {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.linkDanger:hover {
+  color: var(--danger);
+}
+
+.linkDanger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.linkDanger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 639px) {
+  .hideM {
+    display: none !important;
+  }
+}
+
+/* ---- 投递记录展开块（样稿 .dl：--surface-2 底、底线、左 37 右 16） ---- */
+.dl {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px 0 37px;
+}
+
+.dl:last-child {
+  border-bottom: 0;
+}
+
+.delivTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.delivTable th {
+  height: 38px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-3);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.delivTable td {
+  height: 38px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: transparent !important;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.delivTable tbody tr {
+  cursor: default;
+}
+
+.delivTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.eventMono {
+  font-family: var(--font-mono);
+}
+
+.num {
+  text-align: right;
+}
+
+.dim {
+  color: var(--text-2);
+}
+
+.at,
+.code {
+  font-family: var(--font-mono);
+}
+
+/* 状态码按 tone 上色 */
+.toneOk {
+  color: var(--text);
+}
+
+.toneWarn {
+  color: var(--danger);
+}
+
+.toneMuted {
+  color: var(--text-3);
+}
+
+.delivEmpty {
+  padding: 12px 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* ---- 新建弹窗：订阅事件小按钮（保留给 HookDialogs.tsx 使用） ---- */
+.eventChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--border-hover);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.chipOn,
+.chipOn:hover {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--on-ink);
+}
+
+/* ---- 编辑弹窗：三个小节标题（保留给 HookDialogs.tsx 使用） ---- */
+.section {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+/* 订阅事件一节的 Switch 列表（保留给 HookDialogs.tsx 使用） */
+.eventSwitches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  font-size: var(--fs-caption);
+}
+
+/* ---- 密钥块：深底等宽（保留给 HookDialogs.tsx 使用） ---- */
+.secret {
+  display: block;
+  padding: 12px 14px;
+  background: var(--text);
+  color: var(--on-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

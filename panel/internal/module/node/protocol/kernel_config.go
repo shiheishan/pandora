@@ -1,7 +1,9 @@
 package protocol
 
 import (
+	"maps"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -167,11 +169,14 @@ func toKernelConfig(nodeType string, cfg map[string]any) map[string]any {
 
 	rename := xboardRename[nodeType]
 	out := make(map[string]any, len(flat))
-	for k, v := range flat {
+	for _, k := range slices.Sorted(maps.Keys(flat)) {
+		v := flat[k]
 		if to, ok := rename[k]; ok {
-			// 已经有值就不覆盖：network_settings.host 和
-			// network_settings.headers.Host 都映射到 host，
-			// 两个都填时以先到的为准而不是随机覆盖。
+			// 已经有值就不覆盖：按 xboard 展平键的字典序遍历，多个 xboard 字段
+			// 映射到同一内核字段时，字典序最小的胜出（与 validate.go 里
+			// kernelToXboardField 逆表同一规则）。host 上即
+			// network_settings.headers.Host（后台表单字段）优先于
+			// network_settings.host（只可能经 API 写入）。
 			if _, taken := out[to]; !taken {
 				out[to] = v
 			}
@@ -194,13 +199,10 @@ func applyKernelShapeFixups(nodeType string, cfg map[string]any) {
 		// xboard 的 tls 是三态整数：0 不加密、1 普通 TLS、2 REALITY。
 		// 我们内核这边由 security 枚举表达，tls 是个独立的布尔。
 		//
-		// 关键约束：校验器目前**明确禁止** tls=true——
-		//
-		//	"证书生命周期完成前仅允许 tls=false，请改用 security=reality"
-		//
-		// 证书签发轮换那套还没做完，全站只允许走 REALITY。所以 2 映射出来
-		// 的是 security=reality 而**不是** tls=true，映射反了会被自己的
-		// 校验器拒掉。
+		// 关键约束：vless / vmess 的普通 TLS 还没开放，校验器拒绝 tls=1
+		// （plainTLSNotYetMessage）；面板不签发节点证书，要开得先让它们收 file 模式的
+		// cert_path / key_path。所以 2 映射出来的是 security=reality 而**不是** tls=true，
+		// 映射反了会被自己的校验器拒掉。
 		//
 		// vless/vmess 映射完把 tls 键删掉，不留一个 tls:false。现网 4 个在役
 		// vless 节点存的就是「只有 security、没有 tls」，补一个 false 会改变

@@ -47,7 +47,7 @@ export function smokePoolId(): string {
 export const OUT = resolve(process.env.BROWSER_OUT || join(STATE, 'browser'))
 export const SHOTS = join(OUT, 'shots')
 export const STEPS_FILE = join(OUT, 'steps.jsonl')
-/** 本测试自己的种子：套餐、流量包、礼品卡模板、渠道测试密钥。0600，只活在 runner 上 */
+/** 本测试自己的种子：两类套餐、礼品卡模板、渠道测试密钥。0600，只活在 runner 上 */
 export const WORLD_FILE = join(STATE, 'browser-world.json')
 
 export function ensureOut(): void {

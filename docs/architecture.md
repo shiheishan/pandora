@@ -83,7 +83,7 @@ panel/
         render/                  （仅 subscription）订阅格式渲染：纯函数，不依赖任何模块、不碰数据库；node 模块用它的 Node 类型交线路
         protocol/                （仅 node）协议 schema、校验、抹敏感值、端口 L4、内核字段翻译：纯函数，规则同 render
         grpc/                    （仅 node）节点通道的 gRPC 服务（接入与会话），地位同 handler：只调本模块 service
-        provider/                （仅 payment）渠道适配（易支付等）
+        provider/                （仅 payment）渠道适配（易支付、BTCPay Server、CoinPayments；safehttp 是共用的外部 HTTP 客户端）
   db/migrations/                 新基线（goose，embed 进二进制）
   tools/depguardgen/             从 internal/module/ 生成 .golangci.yml 的 depguard 规则
 proto/                           节点协议源文件（buf）
@@ -136,20 +136,19 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 
 | 模块 | 拥有的表 | 说明 |
 |---|---|---|
-| identity | users、user_passwords、user_groups、registration_sessions、verification_codes、invite_codes、referrals、user_generation_jobs | 注册、口令、用户资料、批量建用户。user_groups 从 adminops 收回来；referrals 在注册时写入，佣金模块调 identity 读 |
+| identity | users、user_passwords、user_groups、registration_sessions、verification_codes、invite_codes、referrals、referral_changes（视图 effective_referrals）、user_generation_jobs | 注册、口令、用户资料、批量建用户、注销。user_groups 从 adminops 收回来；referrals 在注册时写入、只追加，后台改邀请人追加到 referral_changes，「当前邀请人」一律读 effective_referrals（每人取最新一条改动，没有改动取注册时的），佣金模块调 identity 读 |
 | auth | admins（管理员名单）；Redis 里的会话、refresh、快捷登录 | 登录、刷新、登出、重认证、管理员授予与取消、最后一个管理员保护。原 sessions、refresh_tokens、quick_login_tokens 三张表不再建 |
 | settings | settings（键值加类型化访问器）、feature_switches | 原 system_settings 和 tenants.settings 合到这里。各模块通过 settings service 的类型化方法读写自己那组键（如 `settings.Commission()`） |
-| catalog | plans（含库存三列）、plan_visible_groups、plan_versions、prices、entitlements、quota_definitions、plan_node_pools、traffic_packs | 库存由 catalog service 暴露 `ReserveStock / ReleaseStock / CaptureStock`，order 模块调用，不再直接写 plans |
-| order | orders、order_items、order_reservations、order_reservation_events、order_stock_reservations、order_purchase_limit_reservations、plan_purchase_counters | 下单、报价、结算编排、预留与释放 |
+| catalog | plans（含类型 kind、流量重置价与次数上限）、plan_visible_groups、plan_versions、prices（含一次性的有效天数）、entitlements、quota_definitions、plan_node_pools（按套餐绑定线路，改动立即生效） | 套餐只分订阅（按时间）与一次性（按流量）两类（00056）；没有库存、限购、流量包 |
+| order | orders、order_items、order_reservations、order_reservation_events | 下单、报价、结算编排、预留与释放（预留只管券占用与余额冻结）；订单种类含一次性叠加 stack（00052） |
 | payment | payment_providers、payment_intents、payments、payment_events、late_payment_cases | 渠道适配、回调、查单、挂账。adminops 那套渠道写法删掉 |
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
-| promo | coupons、coupon_plans、coupon_redemptions | 优惠券 |
-| commission | commission_entries、withdrawals、commission_transfers | 佣金计提（订单结算时经 order 的 PaidHook）、解冻、提现审核与打款、转余额。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额） |
+| promo | coupons、coupon_plans、coupon_redemptions | 优惠券（会员折扣与券的限定周期已在 00054 删除） |
+| commission | commission_entries、withdrawals、commission_transfers、commission_user_overrides、commission_forfeitures | 佣金计提（订单结算时经 order 的 PaidHook；可开三级分销，每级一条条目）、解冻、提现审核与打款、转余额（提现关闭时解冻后自动转）、按用户单独的比例与计佣范围。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应，自动转的带 entry_id；账号注销时（identity 经端口在同一事务里调）作废名下冻结、待复核的条目，驳回在途提现，剩下的可提现佣金作废并记进 commission_forfeitures；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额 − 注销作废） |
 | giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
-| subscription | subscriptions、subscription_events、subscription_credentials、quota_balances、traffic_pack_grants、traffic_pack_transfers、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
-| node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
-| certs | dns_credentials、acme_accounts、certificates、certificate_versions、certificate_orders、certificate_issuances | ACME 签发入站 TLS 证书 |
-| notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes | 站内信、邮件、Telegram |
+| subscription | subscriptions、subscription_events、subscription_credentials、quota_balances（含本期赠送 bonus_value，00053）、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log、subscription_trials、subscription_templates、subscription_domain_groups、subscription_domains、subscription_domain_group_user_groups（订阅域名分组，00048） | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
+| node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips、node_relays（中转节点，00045）、node_ech_keys（ECH 密钥，00045） | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
+| notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes、telegram_ticket_messages | 站内信、邮件、Telegram（含管理员群组提醒与工单提醒消息映射） |
 | support | tickets、ticket_messages、ticket_macros | 工单 |
 | content | content_pages、content_page_feedback | 内容页 |
 | appearance | site_themes、site_slots | 主题和槽位 |
@@ -170,7 +169,7 @@ giftcard ─► order ─► catalog
            │  └────► subscription ─► catalog
 commission ─► order（PaidHook 与 PaidOrder 类型）, ledger, identity, settings, audit
              （order 只经 PaidHook 接口回调 commission，不 import 它，不成环）
-node ─► subscription, catalog, settings, certs
+node ─► subscription, catalog, settings
 notify, support, content, appearance, plugin ─► identity, settings
 identity, auth ─► settings, audit
 所有模块 ─► audit, idempotency, settings（三者不依赖任何业务模块）
@@ -191,7 +190,7 @@ identity, auth ─► settings, audit
 | 项 | 做法 |
 |---|---|
 | tenant_id 列、复合外键、`UNIQUE(tenant_id, id)` | 全部去掉，外键改为单列；唯一约束去掉 tenant 前缀（例如 `UNIQUE(email)`） |
-| tenants 表 | 删除。时区、币种、站点名进 settings；`settings jsonb` 拆成普通键 |
+| tenants 表 | 删除。时区、站点名进 settings（10-16 起全系统只有人民币，不再有币种设置）；`settings jsonb` 拆成普通键。站点名只认 settings 的 `site.name`（10-14 起主题 branding 不再有站点名，入口页 `<title>` 由服务端按它写） |
 | RLS、`current_tenant_id`、`set_config`、`db.Scope` | 全部删除 |
 | 每租户种子触发器 | 改成基线迁移里的普通 INSERT：降级开关、通知模板、线下收款渠道 |
 | 最后一个管理员的锁锚 | 改为 `pg_advisory_xact_lock(常量)` |
@@ -209,10 +208,10 @@ identity, auth ─► settings, audit
 
 | 类 | 内容 |
 |---|---|
-| 行级约束 | NOT NULL、CHECK（状态枚举、金额非负、订单恒等式 `payable = total − balance_applied`、`total = greatest(subtotal − discount − proration_credit, 0)`、`proration_credit` 只许 upgrade、人工单原因 ≥5 字、paid/fulfilled ⇒ paid_amount = total 且 paid_at 非空、cancelled ⇒ cancel_reason 非空、券容量、`stock_sold + stock_reserved ≤ stock_total`、`consumed_bytes ≤ granted_bytes`、佣金 `commission = trunc(base × rate_bp / 10000)`、`rate_bp` 在 (0, 5000]） |
-| 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，每人一笔在途提现的部分唯一索引，`nodes` 端口占用唯一索引等；balance_holds 与佣金三张表引用账本交易用 `(txn_id, currency) → ledger_transactions(id, currency)` 复合外键，钉住币种 |
-| 追加写触发器 | 一个通用的 `deny_mutation()`，挂在 ledger_transactions、ledger_entries、subscription_events、order_reservation_events、各类预留流水、traffic_reset_logs、traffic_pack_transfers、gift_card_redemptions、referrals、commission_transfers、audit_events、node_config_applications、node_traffic_reports、node_metrics、revenue_report_adjustments、certificate_issuances、order_items；另有 `deny_delete()`，挂在 payment_events、commission_entries、withdrawals、late_payment_cases。运行角色同时收回这些表的 UPDATE/DELETE/TRUNCATE |
-| 账本配平 | `assert_ledger_balanced` 保留为唯一的提交时（DEFERRABLE）检查：每笔交易借贷和为 0、只有一个币种。这是钱的底线，跨行检查写不成 CHECK |
+| 行级约束 | NOT NULL、CHECK（状态枚举、金额非负、订单恒等式 `payable = total − balance_applied`、`total = greatest(subtotal − discount − proration_credit, 0)`、`proration_credit` 只许 upgrade、人工单原因 ≥5 字、paid/fulfilled ⇒ paid_amount = total 且 paid_at 非空、cancelled ⇒ cancel_reason 非空、券容量、`stock_sold + stock_reserved ≤ stock_total`、`consumed_bytes ≤ granted_bytes`、佣金 `commission = trunc(trunc(base × rate_bp / 10000) × share_percent / 100)`（分级份额，未开多级时 100）、`rate_bp` 在 (0, 5000]、提现方式封闭目录、USDT 打款的流水号是交易哈希形状） |
+| 唯一与外键 | 每单一笔 order_paid / balance_hold / balance_release 的部分唯一索引，late_payment、plan_change_refund 的唯一，`UNIQUE(provider, provider_payment_id)`，`UNIQUE(provider, provider_event_id)`，`UNIQUE(order, referrer)`，每人一笔在途提现的部分唯一索引，`nodes` 端口占用唯一索引等；balance_holds 与佣金三张表引用账本交易用普通外键 `txn_id → ledger_transactions(id)` |
+| 追加写触发器 | 一个通用的 `deny_mutation()`，挂在 ledger_transactions、ledger_entries、subscription_events、order_reservation_events、各类预留流水、traffic_reset_logs、traffic_pack_transfers、gift_card_redemptions、referrals、referral_changes、subscription_trials、commission_transfers、commission_forfeitures、audit_events、node_config_applications、node_traffic_reports、node_metrics、revenue_report_adjustments、order_items；另有 `deny_delete()`，挂在 payment_events、commission_entries、withdrawals、late_payment_cases。运行角色同时收回这些表的 UPDATE/DELETE/TRUNCATE |
+| 账本配平 | `assert_ledger_balanced` 保留为唯一的提交时（DEFERRABLE）检查：每笔交易借贷和为 0。这是钱的底线，跨行检查写不成 CHECK |
 | 余额不透支 | 新增 CHECK：用户类科目的余额缓存不得为负（现在只靠 Go 判断） |
 | 认证材料守卫 | server_identities 的密钥字段不可改，吊销只能 active → revoked 且不可逆 |
 | 目录冻结 | 已发布的 plan_version 及其子表不可改，价格不可改（订单快照依赖它） |
@@ -222,16 +221,20 @@ identity, auth ─► settings, audit
 
 ### 5.4 状态机
 
-每个状态机在 service 里写成一张转换表，加一个纯函数 `CanTransition(from, to)`；repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突。库里只保留 `CHECK (status IN (…))`。
+守卫以 SQL 条件更新为准：repo 的状态更新带上 `WHERE status = 旧状态`，影响 0 行就当并发冲突；库里只保留 `CHECK (status IN (…))`。只有代码里确实要按状态分支时（先判断当前状态能不能转、不能转回不同的错误），才在 service 里写一张转换表加纯函数 `CanTransition(from, to)`（现有：catalog 的套餐与价格、node 的节点与服务器、payment 的支付意图与挂账案、subscription、support、giftcard、promo、commission）；没有调用方的转换表不写。
 
 佣金的两个状态机比旧代码简化：
 - 佣金条目：pending → available（解冻）、pending → voided（复核作废，终态）。没有 reversed。需要人工复核的条目（同源、同源检查失败或未装配、解冻时待结科目余额不足）标 `review_required`，停在 pending、不参与自动解冻；后台在「待复核佣金」里处理（`POST /commission/entries/:id/review`，RequireAuth → RecentReauth，不挂幂等，只对 `status = 'pending' AND review_required` 的条目有效，否则 409）：
   - 通过：清 `review_required`、记 `reviewed_by` / `reviewed_at`，状态仍是 pending，`review_reason` 留作历史；之后由 `commission:settle` 照常解冻（冻结期已过的下一轮就解冻）。审计 `commission.entry_approved`，原因可选。
   - 作废：同一事务里记 `commission_voided`（借 推荐人待结佣金 / 贷 平台收入 main，按来源即这条佣金唯一），条目转 voided，写 `void_txn_id`、`void_reason`（≥5 字）与复核人、复核时间。审计 `commission.entry_voided`。作废的条目不计入任何佣金汇总与概览金额。
-  - 「只计首单」口径下，作废的佣金也算「已有首单」（用户 10-13 定）：被推荐人的首单佣金作废后，他的第二单不再计佣（`RefereeHasOtherEntry` 不过滤 voided）。同一单的重放防重（`EntryExists`）同样把 voided 算在内。
+  - 「只计首单」口径下，作废的佣金也算「已有首单」（用户 10-13 定）：被推荐人的首单佣金作废后，他的第二单不再计佣（`RefereeHasOtherEntry` 不过滤 voided）。同一单的重放防重（`OrderHasEntries`，任何一级记过就整单不再记）同样把 voided 算在内。
   - 列表里的 `review_source` 由原因归类（same_source / source_check / underfunded / other）。underfunded（解冻时待结科目余额不足）的条目通过后仍会解冻失败、回到列表，作废也会因余额不足回 409，只能先人工核对账本。
   - 形状由 00016 的 CHECK 钉住：复核人与复核时间成对；有原因而不再待复核的必须复核过；voided 必须有冲回交易、作废原因与复核时间。
-- 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。
+- 多级分销（后台开关，缺省关）：先按直接邀请人的比例（含单独设置）算这一单的佣金总额，再按三级份额（百分比，合计 ≤ 100，剩余不发、站点留下）逐级向零截断到分；缺的级不分，上溯防环、最多 3 级。单独比例设成 0 的人在哪一级都不拿，跳过他继续往上。每级一条条目（`UNIQUE (order_id, level)`），各自冻结、同源复核（受益人对购买人）、作废，互不影响。
+- 提现：requested → approved / rejected，approved → paid。没有 reviewing、processing、failed、returned；只有打款这一步记账（commission_paid）。提现方式 `method` 是封闭目录（alipay / wechat / bank / paypal / usdt_trc20 / usdt_erc20 / usdt_bep20；迁移前的旧申请是 other，只显示），后台设白名单（缺省只开 alipay）。USDT 打款时流水号是链上交易哈希，可选记实付 USDT 数量（只记录）；面板不发起任何链上转账。
+- 提现关闭（后台开关，缺省开）：
+  - 门户不显示提现，申请提现回 `ErrWithdrawDisabled`。`commission:settle` 解冻时给条目挂 `auto_transfer_due`，解冻提交后再逐条在单独的事务里转入余额（先拿用户咨询锁，一笔分录同时锁可提现与余额；同手动转余额的记账路径），转失败的下一轮重试，提现重新打开后只清标记不转；`commission_transfers.entry_id` 唯一保证只转一次，审计 `commission.auto_transferred_to_balance`。关闭前已解冻的部分不自动转，由用户自己转。
+  - 白名单照旧管着，所以关着提现时后台也不能把方式全部取消。
 
 ---
 
@@ -239,18 +242,20 @@ identity, auth ─► settings, audit
 
 | # | 规则 |
 |---|---|
-| R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元；币种列加 `CHECK (currency IN ('CNY','USD'))`，两种都是 2 位小数 |
+| R1 | 库里的金额列一律 `NUMERIC(20,2)`，单位是元。全系统只有人民币（用户 2026-10-16 定，迁移 00051 删掉了所有币种列），库里与 Go 里都没有币种这一维；只有调第三方支付接口时传固定的 CNY（`payment/provider.FiatCurrency`） |
 | R2 | repo 写入前断言 `d.Equal(d.Truncate(2))`（`money.Check`），不满足就报错。PostgreSQL 遇到多余小数会静默四舍五入，必须在写入前拦住；库里拦不住：`NUMERIC(20,2)` 列先舍入再查 CHECK，`CHECK (amount = round(amount, 2))` 永远成立，不要加这种假兜底 |
-| R3 | 所有按比例得出的金额（百分比券、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致 |
+| R3 | 所有按比例得出的金额（百分比券、会员折扣、换套餐折算、待开始周期额度、佣金）一律**向零截断**，与现状逐分一致。唯一的例外是向用户加收的支付手续费（`payment/service/surcharge.go`，2026-10-14 定）：向上取整到分，平台不少收 |
 | R4 | 只在 service 的领域计算函数里舍入，每个公式只在最后一步舍入一次；handler 只做单位换算，repo 只存不算，SQL 里不做金额算术 |
 | R5 | 比值与取最小（换套餐的 min(时间比, 流量比)）用 `big.Rat` 或交叉相乘比较，不先 `Div` 出小数再比 |
 | R6 | /v1 的 JSON 仍是整数分（int64）。DTO 输出 `d.Shift(2).IntPart()`，换算前断言它是整数；输入读 int64 分后用 `decimal.New(n, -2)` |
 | R7 | 渠道边界：易支付的金额字符串用 `decimal.NewFromString` 解析，超过 2 位小数直接拒绝；输出用 `StringFixed(2)` |
-| R8 | 非钱的数量（流量字节、配额、bp、百分比）仍用 int64 和 BIGINT。流量计费倍率从 float64 改为整数千分比 `rate_milli`，计费字节 = bytes × rate_milli / 1000，向零截断 |
+| R8 | 非钱的数量（流量字节、配额、bp、百分比）仍用 int64 和 BIGINT。流量计费倍率从 float64 改为整数千分比 `rate_milli`，计费字节 = bytes × rate_milli / 1000，向零截断。例外：渠道手续费比例 `payment_providers.fee_percent` 是 `NUMERIC(5,2)` 的百分比（后台照 Xboard 填「2.5%」这种两位小数），Go 里是 decimal，与金额一起算，不经浮点 |
 | R9 | jsonb 里不放钱：礼品卡余额奖励、奖池、兑换记录、渠道 `min_amount`、`commission.min_withdraw` 改为带类型的列或类型化设置 |
 | R10 | 券面值拆成 `amount_off NUMERIC(20,2)` 和 `percent_off_bp INT` 两列，加 CHECK 恰好一个非空 |
-| R11 | 账本：分录金额 > 0，配平与单币种在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |
-| R12 | 币种小数位只在 `pkg/money` 一处定义；去掉写死的 `/100` |
+| R11 | 账本：分录金额 > 0，配平在库里检查（5.3）；余额缓存在 Go 里同事务更新；交易 kind 加 CHECK 枚举；礼品卡赠送改记新科目 `platform_promo_expense`，不再和渠道手续费混用一个科目 |
+| R12 | 金额小数位只在 `pkg/money` 一处定义；去掉写死的 `/100` |
+
+订单减免的先后（xb-order，照 Xboard）：小计是 catalog 取到的价格档单价；减优惠券（不超过小计），再减换套餐剩余价值，得到总额；最后余额抵扣与零头免除。`discount_amount` 记券（10-16 起没有用户组专属价与会员折扣）。流量重置单例外：永远按原价收，不收券（用户 10-14 定，库约束 `orders_traffic_reset_no_discount`）。
 
 计费周期加月用 Go 的 `AddDate`（1 月 31 日加一个月得到 3 月 3 日）。周期计算只在 Go 里做，不挪进 SQL，以免两边口径不一致。
 
@@ -346,7 +351,7 @@ identity, auth ─► settings, audit
 - 登录：后台登录只接受管理员；不是管理员与口令错完全一样（401，计失败次数，IAM-006）。管理员用正确口令登门户回 403。
 - 路由：后台所有业务路由只挂 `RequireAuth`（后台引擎上有效的后台会话就是管理员），不再有缺权限回 404 这一层，也不每请求查库。`app` 的 `TestAdminRoutesRequireLogin` 匿名打遍后台路由（登录、续期、登出、探活除外），漏挂即红。
 - 续期兜底：后台 refresh 时再查一次「在名单里且 active」，不是就删会话回 401。吊销万一漏了（如提交后补扫失败），最坏窗口也只是一个 access 寿命（15 分钟）。
-- 授予与取消只有 `pandora admin create / grant / revoke`（幂等：已是 / 已不是管理员时直接成功、不写审计），审计动作 `adminctl.admin_granted` / `adminctl.admin_revoked`。授予时同事务吊销门户会话并推进纪元；取消时同事务吊销后台会话，提交后再补扫一遍，所以取消在下一个请求就生效。
+- 授予与取消只有 `pandora admin create / grant / revoke`（幂等：已是 / 已不是管理员时直接成功、不写审计），审计动作 `admin.admin_granted` / `admin.admin_revoked`（10-14 起；之前叫 `adminctl.*`，开发库里的旧行在访问记录里归「其他」，没有生产数据，不做数据迁移）。授予时同事务吊销门户会话并推进纪元；取消时同事务吊销后台会话，提交后再补扫一遍，所以取消在下一个请求就生效。
 - 管理员集合的所有变动（授予、取消、停用或封禁管理员）先取同一把事务级咨询锁；取消或停用后没有可登录的管理员时拒绝（409）：取消是先查后删，被拒时什么都没改。
 - identity 经 `StaffGuard.IsStaff`（在名单里，不看状态）给管理员定 12 位口令、拦门户自助找回密码；后台替人改状态、重置口令不做越级检查，只保留「不能对自己」与最后一个管理员保护。
 - `pandora admin reset-password` 成功后清掉该账号的登录失败计数，运维重置口令后立刻能登。
@@ -360,7 +365,7 @@ identity, auth ─► settings, audit
 | 框架 | gin。public 和 admin 各一个 `gin.Engine`；中间件链：reqid → 访问日志 → 恢复 → 安全头 → 超时 → 鉴权 → 域守卫 → 限流 → 路由级（登录要求、重认证、开关、幂等） |
 | req_id | 接受合法 UUID 形式的 `X-Request-ID`，否则生成 UUIDv7；写进 ctx、响应头、zap 字段、错误信封、gRPC metadata（`x-request-id`）、asynq 任务载荷（`req_id`）、审计行 |
 | 成功响应 | 直接返回 DTO（与现在相同，不包信封） |
-| 错误 | 一个 `errs.Error{Code, Status, Message, Fields}`。service 返回它或领域错误，handler 用 `c.Error(err)` 交给错误中间件统一写 `{"error":{code,message,fields?,request_id?}}`。未知错误一律回 500 `internal_error`，原因只写日志。15 个错误码不变；加一个测试，对齐 Go 的码表和前端的 `SERVER_ERROR_CODES` |
+| 错误 | 一个 `errs.Error{Code, Status, Message, Fields}`。service 返回它或领域错误，handler 用 `c.Error(err)` 交给错误中间件统一写 `{"error":{code,message,fields?,request_id?}}`。未知错误一律回 500 `internal_error`，原因只写日志。Go 的码表与前端的 `SERVER_ERROR_CODES` 由 `errs` 包的 `TestServerErrorCodesMatchFrontend` 对齐 |
 | DTO | 每个接口单独定义 `XxxRequest` / `XxxResponse`，放在 handler 包里；不把 model 或 service 结构直接序列化出去，也不把请求体直接解码进 service 的输入类型。JSON 字段名和形状与现在一致 |
 | 校验 | gin binding（go-playground/validator v10）做格式校验，失败回 422 `validation_failed`，`fields` 写中文提示；业务校验在 service 里做 |
 | 请求体 | 上限 1 MiB；`DisallowUnknownFields` |
@@ -399,7 +404,7 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 - `EnrollmentService.Enroll(EnrollRequest) → EnrollResponse`：服务端 TLS，令牌 + CSR（DER）+ request_id + 主机信息，回 server_id、客户端证书链、CA。
 - `ControlService.Session(stream SessionRequest) → stream SessionResponse`：mTLS 双向流。
   - 节点发：Hello（版本、二进制摘要、能力、主机信息、各节点已应用的配置摘要与名单版本）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest。
-  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 5000 人分块）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
+  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 500 人分块，一块编码后不到 32 KB）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
 - 名单里的用户号 `uid` 是 `subscriptions.node_uid`（bigint），代理身份是 `proxy_uuid`。
 - 节点配置是 JSON 文档而不是逐协议的消息：协议种类多、字段各异，文档形状由面板 node 模块的配置组装与 pdnd `node/config_apply.go` 共同约定。
 
@@ -411,7 +416,7 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 |---|---|
 | 建流 | 拦截器从客户端证书取 server_id，查库确认身份有效；同一身份的新流一到，就关闭旧流（supersede） |
 | 对齐 | Hello 报告已应用的配置版本和各节点的名单版本；面板比较后，相同就不发，不同就发全量（xDS 的 initial_resource_versions 思路） |
-| 名单版本 | 沿用内容哈希 `u1-<hex>`。增量只在面板确知节点处于 from 版本时发送，否则发全量。全量按 5000 个用户一块分块发送，单条消息不会超过 gRPC 缺省的 4 MB 上限 |
+| 名单版本 | 沿用内容哈希 `u1-<hex>`。增量只在面板确知节点处于 from 版本时发送，否则发全量。全量按 500 个用户一块分块发送（一块编码后不到 32 KB，不占 gRPC 1 MB 一档的发送缓冲），发一块才转一块 |
 | 背压 | 每个会话一个有界发送队列；配置和全量名单只保留最新一份；队列满了就断流，让节点重连后重新对齐 |
 | 流量 | report_id 必填（一份报告含这台服务器各节点的条目）；面板在 `UNIQUE(server_id, report_id)` 下落库，提交后发 TrafficAck；同一个 id 内容不同就报错。节点在收到 ack 之前保留这一批，重连后按原 id 重发。缓冲只在内存里，进程崩溃最多丢一个节拍（60 秒），落盘放到换栈之后再评估 |
 | 在线 IP | 只接受该服务器所服务用户的条目（现在不过滤） |
@@ -448,16 +453,16 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `notify:dispatch` | `@every 30s`，业务提交后也入队（TaskID 按秒分桶去重） | 4m | default |
 | `plugin:dispatch` | `@every 1m`，emit 后也入队 | 4m | low |
 | `support:escalate_sla` | `*/5 * * * *` | 30s | default |
+| `support:auto_close` | `2-59/10 * * * *`（后台开了自动关闭才做事） | 30s | default |
 | `notify:publish_announcements` | `@every 1m` | 20s | default |
 | `report:activity_daily` | `*/10 * * * *` | 2m | low |
 | `devices:strict` | `@every 1m`（strict 设备数限制：周期重判在线设备超限的订阅，从名单里摘掉或放回） | 30s | low |
 | `identity:generate_users` | 建 job 的事务提交后入队，TaskID = `gen_users:<job_id>` | 10m | default |
-| `certs:patrol` / `certs:issue` | `@every 1m` / patrol 入队，TaskID = `cert:<order_id>` | 30s / 15m | default |
-| `retention:<模块>` | 每天一次（03:40 起各模块错开几分钟），分批删到删完或到批数上限 | 5–10m | low |
+| `retention:<模块>` | 每天一次，UTC 03:40–03:59 各占一分钟（分钟表见 `.claude/rules/panel-app.md`「每日任务分钟表」），分批删到删完或到批数上限 | 5–10m | low |
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
 
 - 节点流量的小时汇总在入账时同事务写入（`node_traffic_hourly`、`node_user_traffic_hourly`），不设设计里的 `node:traffic_rollup` 任务。
-- 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries。各表的保留期按第 18 节 Q5。
+- 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries、telegram_ticket_messages（与投递记录同保留期）。各表的保留期按第 18 节 Q5。
 - 「支付开通后发通知」改为在开通的事务里直接写 delivery，不再靠 `ScanPaidOrders` 回看 2 小时（扫描器停机超过 2 小时会漏发）。
 - 留在 serve 里、不进 asynq 的：心跳合并、节点会话、SSE hub。删除的：nonce 清理、epoch LISTEN、节点存活巡检（会话在不在就是在线状态）。
 
@@ -472,7 +477,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 门户与后台实时推送 | Redis pub/sub `rt:*`，事件带 user_id，由 hub 路由。serve 和 worker 都直接发布，不再经过 PG NOTIFY |
 | 节点下发 | 改了名单相关数据（订阅、配额、流量包、用户状态、节点池、用户组、节点配置、服务器）的属主 service，调 `node.Service.MarkUsersChanged(ctx, scope)` 或 `MarkConfigChanged`；提交后 `INCR node:users_epoch` 再 PUBLISH。会话管理器收到通知就重算；另外每 5 秒读一次纪元值，与上次不同也重算。所以丢一条 pub/sub 最多晚 5 秒，Redis 断开时同样退回 5 秒比对（读不到纪元就每 15 秒全量比对一次） |
 | 名单重算的成本 | 按「服务器 × 名单内容哈希」共享编码，一次变更每个版本只编码一次 |
-| 进程内缓存 | `hashicorp/golang-lru/v2/expirable` 加 `golang.org/x/sync/singleflight`，统一替换四处自写缓存 |
+| 进程内缓存 | 键会随输入增长的多键缓存用 `hashicorp/golang-lru/v2/expirable`（有上限、按最近最少使用淘汰）：IP 归属地（`internal/pkg/geoip`，不过期）、订阅线路微缓存（node `delivery_cache.go`，5 秒，加 `golang.org/x/sync/singleflight` 合并同键未命中）。键固定且很少的缓存保留手写的「值 + 锁 / 原子指针」：settings 降级开关、订阅路径前缀、pdnd 产物摘要 |
 | 手工改库 | 不再有触发器兜底。手工 SQL 改了名单相关的表，要等下一次纪元变化或 15 秒全量比对；运维文档写明这一点 |
 
 ---
@@ -484,7 +489,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 - viper：先读 `/etc/pandora/config.yaml`（root:pandora，0640），再用 `PANDORA_` 前缀的环境变量覆盖（`SetEnvKeyReplacer(".", "_")`）。
 - 秘密只能来自环境变量（systemd `EnvironmentFile=`，0600），或者 `*_FILE` 指向的 0600 文件；放在配置文件里会启动失败。
 - 启动时 Unmarshal 进结构体，再统一 `Validate()`。现有的校验规则（长度、两个 JWT 密钥不同、生产环境禁用某些项、pprof 只能回环）原样搬过去。
-- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做：ACME 设置存在 settings 里由后台改。
+- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做（面板不签发节点入站证书，见 `docs/node-certificates.md`）。
 - `env` 缺省为 `production`（失败即关闭）：注册、找回回显 `dev_code`，以及开发格式的日志，只在显式设成 `development` 或 `test` 时打开；CI 与本地开发显式设 `PANDORA_ENV=development`。
 - 只有部署脚本用的变量（POSTGRES_*、后台路径前缀、告警 Telegram、备份钩子、迁移连接串）放在 `/etc/pandora/deploy.env`（root 0600）给脚本读，不进应用配置；服务的秘密放 `/etc/pandora/secrets.env`。
 
@@ -505,9 +510,10 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 幂等请求指纹（落库的 method、target、请求体摘要） | `pandora/hmac/idempotency/v1` |
 | 节点设备标识的 HMAC | `pandora/hmac/node-device/v1` |
 | 面板 CA 私钥封存 | `pandora/node-ca/key/v1`（node 模块） |
+| Shadowsocks 2022 节点的服务端身份密钥（不存库，按节点派生） | `pandora/ss2022/server-psk/v1`，info 后接 0x00、方法名、0x00、节点 id 的 16 字节（node 模块 `service/ss2022.go`） |
 | 插件钩子签名 | 每个钩子自己的密钥（不变） |
 
-被封存的数据：渠道凭据、DNS 凭据、ACME 账户私钥、证书私钥、面板 CA 私钥、批量建用户的结果、提现收款信息。原来的 `Envelope` 没有 DEK，名不副实，改名为 `Sealer`。
+被封存的数据：渠道凭据、面板 CA 私钥、批量建用户的结果、提现收款信息。原来的 `Envelope` 没有 DEK，名不副实，改名为 `Sealer`。
 
 ---
 
@@ -516,7 +522,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 项 | 改法 |
 |---|---|
 | 二进制 | 6 个 `aegis-*` 合成 `/opt/pandora/bin/pandora` |
-| systemd | `pandora-serve.service`、`pandora-worker.service`，各自设 MemoryMax 和 GOMEMLIMIT；以专用用户 `pandora` 运行（服务本身不需要 root；入站证书存库，不写文件）。备份和面板自身的 TLS 续期仍由 root 的 timer 执行 |
+| systemd | `pandora-serve.service`、`pandora-worker.service`，各自设 MemoryMax 和 GOMEMLIMIT；以专用用户 `pandora` 运行（服务本身不需要 root）。备份和面板自身的 TLS 续期仍由 root 的 timer 执行 |
 | Redis | 装发行版的 redis-server（要求 6.0 以上）；`maxmemory-policy noeviction`、`appendonly yes`、`appendfsync everysec`、不做 RDB 快照；maxmemory 起步 256 MB；FLUSHALL 和 FLUSHDB 继续禁用；VALKEY_* 改名为 REDIS_* |
 | 迁移 | 安装和升级时以属主角色 `pandora_owner` 执行 `pandora migrate up`，之后由 `configure-app-role.sql` 收窄运行角色 `pandora_app` 的权限；迁移失败不起服务 |
 | nginx | public 和 admin 部分基本不变；新增 refresh 接口的独立限流 zone；删除节点相关的 HTTP location；admin cookie 的 `proxy_cookie_path` |
@@ -552,7 +558,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | P3 交易 | catalog、order、payment、ledger、promo、commission、giftcard，以及 subscription 的核心（表、开通、续期、换套餐、加流量、状态口径；结算离不开它）；decimal。分四波：catalog、ledger、promo → subscription 核心、payment → order → commission、giftcard。`plan_node_pools` 推到 P5 与 node 一起建 | 下单、结算、释放、换套餐、佣金、挂账、查单各条 PG 集成测试改写后通过；e2e 回调重放只记一笔账；易支付「990 分 ↔ 9.90」与篡改用例通过；账本配平检查在库里生效 |
 | P4 订阅 | 订阅链接渲染与拉取、链接列表与重置、用量、到期与配额滚动任务（订阅的表与开通等核心已在 P3）。可下发的线路经 subscription 定义的 `NodeSource` 接口取，由 node 模块在 P5 实现并装配；P4 用替身测 | 订阅格式 UA 分支全覆盖；渲染结果与旧实现逐字节对比一致（用固定种子数据做 golden）；拉取（正常、过期、吊销、宽限、限流、伪装 404）、重置、到期、配额滚动的 PG 集成测试通过 |
 | P5 节点 | node 模块后台编排；proto 与 nodeapi；Enroll 与 Session；pdnd 客户端改造；nodesim 与 acceptancepanel；实现并装配 subscription 的 `NodeSource`（可下发资格、内核字段翻译、线路缓存与纪元） | expiry_e2e 在新二进制上全绿（要真实节点夹具，随 P5 做）；冒烟：200 用户、5 节点、60 秒零 5xx；删人后节点秒级断线（node-e2e 真机）；证书续期、吊销断流、supersede 都有集成测试 |
-| P6 其余 | certs、notify、support、content、appearance、plugin、report；看板改为调属主 service | 后台各页面 flow-walk 通过；admin_e2e 全绿 |
+| P6 其余 | certs（10-14 下线，迁移 00048）、notify、support、content、appearance、plugin、report；看板改为调属主 service | 后台各页面 flow-walk 通过；admin_e2e 全绿 |
 | P7 切换与删旧（进行中） | 安装脚本（Redis、单二进制、systemd、nginx）；删除旧代码、旧迁移、旧守卫（行数豁免表、RESERVED-TABLES、routebudget）；更新 README 和 `.claude/rules` | 全新测试机上安装成功；全部 e2e、Playwright、节点验收在新二进制上通过；仓库里不再有 `aegis-*` 命令和 `internal/domain` |
 | P8 换栈后 | 用旧成绩单作基线复测，再做性能与占用优化 | 第一轮测试范围见 [perf-test-plan.md](perf-test-plan.md) |
 
@@ -598,5 +604,5 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 审计被当作业务数据源（改密失败限流、登录失败去重、同源 IP 判断） | 前两项改用 Redis 限流；同源 IP 改为 audit service 带时间窗的查询 |
 | 审计哈希链造成全局串行和 40001 | 删除哈希链 |
 | CSV 导出里用浮点表示钱 | decimal |
-| 门户余额接口写死 "CNY" | 用账户的币种 |
+| 门户余额接口写死 "CNY" | 10-16 起全系统只有人民币，接口不再带币种 |
 | 证书相关 15 条路由没有登记在 routes.txt | routebudget 随旧代码删除；新路由表由 gin 导出，测试检查 |

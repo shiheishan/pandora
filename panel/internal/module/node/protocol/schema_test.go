@@ -9,7 +9,7 @@ import (
 
 func TestValidateProtocolConfigShadowsocksV1(t *testing.T) {
 	version, fields := validateKernelShape(
-		"shadowsocks", "auto", 443, json.RawMessage(`{"method":"aes-256-gcm"}`))
+		"shadowsocks", 443, json.RawMessage(`{"method":"aes-256-gcm"}`))
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("version=%d fields=%#v, want v1 valid", version, fields)
 	}
@@ -26,7 +26,7 @@ func TestValidateProtocolConfigAcceptsNativeProxyInbounds(t *testing.T) {
 		{"shadowtls", `{"network":"tcp","version":3,"password":"outer-secret","server":"www.example.com:443","method":"aes-256-gcm","strict":true}`},
 	}
 	for _, test := range tests {
-		if version, fields := validateKernelShape(test.nodeType, "pandora-native", 443, json.RawMessage(test.raw)); version != 1 || len(fields) != 0 {
+		if version, fields := validateKernelShape(test.nodeType, 443, json.RawMessage(test.raw)); version != 1 || len(fields) != 0 {
 			t.Fatalf("%s version=%d fields=%#v", test.nodeType, version, fields)
 		}
 	}
@@ -46,7 +46,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeProxyInbounds(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, fields := validateKernelShape(test.nodeType, "pandora-native", 443, json.RawMessage(test.raw))
+			_, fields := validateKernelShape(test.nodeType, 443, json.RawMessage(test.raw))
 			if _, ok := fields[test.field]; !ok {
 				t.Fatalf("fields=%#v, want %s", fields, test.field)
 			}
@@ -54,9 +54,9 @@ func TestValidateProtocolConfigRejectsInvalidNativeProxyInbounds(t *testing.T) {
 	}
 }
 
-func TestValidateProtocolConfigAcceptsPandoraNativeKernel(t *testing.T) {
+func TestValidateProtocolConfigAcceptsVLESSWSPlaintext(t *testing.T) {
 	version, fields := validateKernelShape(
-		"vless", "pandora-native", 443, json.RawMessage(`{"network":"ws","tls":false}`))
+		"vless", 443, json.RawMessage(`{"network":"ws","tls":false}`))
 	if version != schemaVersion || len(fields) != 0 {
 		t.Fatalf("version=%d fields=%#v, want NativeCore v1 valid", version, fields)
 	}
@@ -82,25 +82,25 @@ func TestProtocolSchemasAdvertiseNativeXHTTPTransports(t *testing.T) {
 
 func TestValidateProtocolConfigAcceptsNativeXHTTPAndVMessGRPC(t *testing.T) {
 	vless := json.RawMessage(`{"network":"xhttp","mode":"stream-one","path":"/native/","headers":{"x-pandora":"ok"},"sc_max_each_post_bytes":{"from":1024,"to":2048},"sc_min_posts_interval_ms":{"from":10,"to":30},"sc_stream_up_server_secs":{"from":20,"to":80},"uplink_chunk_size":{"from":1024,"to":4096}}`)
-	if version, fields := validateKernelShape("vless", "pandora-native", 443, vless); version != 1 || len(fields) != 0 {
+	if version, fields := validateKernelShape("vless", 443, vless); version != 1 || len(fields) != 0 {
 		t.Fatalf("vless xhttp version=%d fields=%#v", version, fields)
 	}
 	vmess := json.RawMessage(`{"network":"grpc","grpc_service_name":"PandoraService","security":"auto"}`)
-	if version, fields := validateKernelShape("vmess", "pandora-native", 443, vmess); version != 1 || len(fields) != 0 {
+	if version, fields := validateKernelShape("vmess", 443, vmess); version != 1 || len(fields) != 0 {
 		t.Fatalf("vmess grpc version=%d fields=%#v", version, fields)
 	}
 }
 
 func TestValidateProtocolConfigAcceptsNativeHysteria2(t *testing.T) {
 	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","obfs":{"type":"salamander","password":"secret"},"up_mbps":100,"down_mbps":"200","udp_timeout":"5m"}`)
-	if version, fields := validateKernelShape("hysteria2", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
+	if version, fields := validateKernelShape("hysteria2", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("hysteria2 version=%d fields=%#v", version, fields)
 	}
 }
 
 func TestValidateProtocolConfigAcceptsNativeJuicity(t *testing.T) {
 	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","congestion_control":"bbr"}`)
-	if version, fields := validateKernelShape("juicity", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
+	if version, fields := validateKernelShape("juicity", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("juicity version=%d fields=%#v", version, fields)
 	}
 }
@@ -115,7 +115,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeJuicity(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, fields := validateKernelShape("juicity", "pandora-native", 443, json.RawMessage(test.raw))
+			_, fields := validateKernelShape("juicity", 443, json.RawMessage(test.raw))
 			if _, ok := fields[test.field]; !ok {
 				t.Fatalf("fields=%#v, want %s", fields, test.field)
 			}
@@ -125,14 +125,14 @@ func TestValidateProtocolConfigRejectsInvalidNativeJuicity(t *testing.T) {
 
 func TestValidateProtocolConfigAcceptsNativeTUIC(t *testing.T) {
 	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","congestion_control":"bbr","auth_timeout":"3s","heartbeat":10,"udp_timeout":"5m","zero_rtt":false}`)
-	if version, fields := validateKernelShape("tuic", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
+	if version, fields := validateKernelShape("tuic", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("tuic version=%d fields=%#v", version, fields)
 	}
 }
 
 func TestValidateProtocolConfigAcceptsNativeAnyTLS(t *testing.T) {
 	raw := json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","padding_scheme":["64-128","256-512"]}`)
-	if version, fields := validateKernelShape("anytls", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
+	if version, fields := validateKernelShape("anytls", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("anytls version=%d fields=%#v", version, fields)
 	}
 }
@@ -143,7 +143,7 @@ func TestValidateProtocolConfigAcceptsNativeTrojanTLSAndReality(t *testing.T) {
 		`{"network":"tcp","tls":false,"security":"reality","dest":"www.example.com:443","server_names":["www.example.com"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","public_key":"L-V9o0fNYkMVKNqsX7spBzD_9oSvxM_C7ZCZX1jLO3Q","short_ids":["0123456789abcdef"]}`,
 	}
 	for _, raw := range tests {
-		if version, fields := validateKernelShape("trojan", "pandora-native", 443, json.RawMessage(raw)); version != 1 || len(fields) != 0 {
+		if version, fields := validateKernelShape("trojan", 443, json.RawMessage(raw)); version != 1 || len(fields) != 0 {
 			t.Fatalf("trojan version=%d fields=%#v raw=%s", version, fields, raw)
 		}
 	}
@@ -160,7 +160,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeTrojan(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, fields := validateKernelShape("trojan", "pandora-native", 443, json.RawMessage(test.raw))
+			_, fields := validateKernelShape("trojan", 443, json.RawMessage(test.raw))
 			if _, ok := fields[test.field]; !ok {
 				t.Fatalf("fields=%#v, want %s", fields, test.field)
 			}
@@ -178,7 +178,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeAnyTLS(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, fields := validateKernelShape("anytls", "pandora-native", 443, json.RawMessage(test.raw))
+			_, fields := validateKernelShape("anytls", 443, json.RawMessage(test.raw))
 			if _, ok := fields[test.field]; !ok {
 				t.Fatalf("fields=%#v, want %s", fields, test.field)
 			}
@@ -197,7 +197,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeTUIC(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, fields := validateKernelShape("tuic", "pandora-native", 443, json.RawMessage(test.raw))
+			_, fields := validateKernelShape("tuic", 443, json.RawMessage(test.raw))
 			if _, ok := fields[test.field]; !ok {
 				t.Fatalf("fields=%#v, want %s", fields, test.field)
 			}
@@ -216,7 +216,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeHysteria2(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, fields := validateKernelShape("hysteria2", "pandora-native", 443, json.RawMessage(test.raw))
+			_, fields := validateKernelShape("hysteria2", 443, json.RawMessage(test.raw))
 			if _, ok := fields[test.field]; !ok {
 				t.Fatalf("fields=%#v, want %s", fields, test.field)
 			}
@@ -225,14 +225,14 @@ func TestValidateProtocolConfigRejectsInvalidNativeHysteria2(t *testing.T) {
 }
 
 func TestValidateProtocolConfigRequiresNativeXHTTPH3CertificateOrReality(t *testing.T) {
-	_, fields := validateKernelShape("vless", "pandora-native", 443, json.RawMessage(`{"network":"xhttp-h3"}`))
+	_, fields := validateKernelShape("vless", 443, json.RawMessage(`{"network":"xhttp-h3"}`))
 	if _, ok := fields["protocol_config.cert_path"]; !ok {
 		t.Fatalf("xhttp-h3 without certificate was accepted: %#v", fields)
 	}
 }
 
 func TestValidateProtocolConfigRejectsMalformedNativeXHTTPRange(t *testing.T) {
-	_, fields := validateKernelShape("vless", "pandora-native", 443, json.RawMessage(`{"network":"xhttp","sc_max_each_post_bytes":1024}`))
+	_, fields := validateKernelShape("vless", 443, json.RawMessage(`{"network":"xhttp","sc_max_each_post_bytes":1024}`))
 	if _, ok := fields["protocol_config.sc_max_each_post_bytes"]; !ok {
 		t.Fatalf("malformed XHTTP range was accepted: %#v", fields)
 	}
@@ -253,7 +253,7 @@ func TestValidateProtocolConfigRejectsUnknownAndUnsafeValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, fields := validateKernelShape(tt.typeName, "auto", tt.port, json.RawMessage(tt.raw))
+			_, fields := validateKernelShape(tt.typeName, tt.port, json.RawMessage(tt.raw))
 			if _, ok := fields[tt.field]; !ok {
 				t.Fatalf("fields=%#v, want %q", fields, tt.field)
 			}
@@ -282,7 +282,7 @@ func TestLegacyReadCompatibleProtocolsAreGone(t *testing.T) {
 		}
 	}
 	for _, nodeType := range []string{"v2ray", "hysteria"} {
-		version, fields := validateKernelShape(nodeType, "auto", 443, json.RawMessage(`{"legacy_option":true}`))
+		version, fields := validateKernelShape(nodeType, 443, json.RawMessage(`{"legacy_option":true}`))
 		if version != 0 || fields["node_type"] != "不支持的协议类型" {
 			t.Fatalf("%s version=%d fields=%#v, want unsupported", nodeType, version, fields)
 		}
@@ -302,7 +302,7 @@ func TestCanonicalNodeType(t *testing.T) {
 		t.Fatalf("canonical=%q, want shadowsocks", got)
 	}
 	version, fields := validateKernelShape(
-		"  ShadowSocks \t", "auto", 443, json.RawMessage(`{"method":"aes-256-gcm"}`))
+		"  ShadowSocks \t", 443, json.RawMessage(`{"method":"aes-256-gcm"}`))
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("version=%d fields=%#v, want canonical v1 valid", version, fields)
 	}
@@ -314,7 +314,7 @@ func TestValidateProtocolConfigRejectsDuplicateKeys(t *testing.T) {
 		`{"method":"aes-256-gcm","nested":{"enabled":true,"enabled":false}}`,
 	}
 	for _, raw := range tests {
-		_, fields := validateKernelShape("shadowsocks", "auto", 443, json.RawMessage(raw))
+		_, fields := validateKernelShape("shadowsocks", 443, json.RawMessage(raw))
 		if _, ok := fields["protocol_config"]; !ok {
 			t.Fatalf("raw=%s fields=%#v, want duplicate-key rejection", raw, fields)
 		}
@@ -323,7 +323,7 @@ func TestValidateProtocolConfigRejectsDuplicateKeys(t *testing.T) {
 
 func TestValidateProtocolConfigReportsMalformedJSONSeparately(t *testing.T) {
 	_, fields := validateKernelShape(
-		"shadowsocks", "auto", 443, json.RawMessage(`{"method":`))
+		"shadowsocks", 443, json.RawMessage(`{"method":`))
 	if got := fields["protocol_config"]; got != "必须是仅包含 method 的 JSON 对象" {
 		t.Fatalf("message=%q, want malformed JSON message", got)
 	}
@@ -334,16 +334,16 @@ func TestValidateProtocolConfigReportsMalformedJSONSeparately(t *testing.T) {
 
 func TestValidateProtocolConfigStableRenderSubset(t *testing.T) {
 	tests := []struct {
-		name, nodeType, kernel, raw string
+		name, nodeType, raw string
 	}{
-		{"shadowsocks", "shadowsocks", "auto", `{"method":"aes-256-gcm"}`},
+		{"shadowsocks", "shadowsocks", `{"method":"aes-256-gcm"}`},
 		// 不加密只剩挂 CDN 的 HTTP 类传输；裸 tcp 明文见 protocol_policy_test.go
-		{"vless ws plaintext", "vless", "pandora-native", `{"network":"ws","tls":false}`},
-		{"vmess grpc", "vmess", "pandora-native", `{"network":"grpc","tls":false}`},
+		{"vless ws plaintext", "vless", `{"network":"ws","tls":false}`},
+		{"vmess grpc", "vmess", `{"network":"grpc","tls":false}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			version, fields := validateKernelShape(tt.nodeType, tt.kernel, 443, json.RawMessage(tt.raw))
+			version, fields := validateKernelShape(tt.nodeType, 443, json.RawMessage(tt.raw))
 			if version != 1 || len(fields) != 0 {
 				t.Fatalf("version=%d fields=%#v", version, fields)
 			}
@@ -352,15 +352,15 @@ func TestValidateProtocolConfigStableRenderSubset(t *testing.T) {
 }
 
 func TestValidateProtocolConfigStableSubsetFailsClosed(t *testing.T) {
-	tests := []struct{ nodeType, kernel, raw, field string }{
-		{"shadowsocks", "auto", `{"method":"2022-blake3-aes-128-gcm"}`, "protocol_config.method"},
-		{"vless", "pandora-native", `{"network":"quic","tls":false}`, "protocol_config.network"},
-		{"vmess", "pandora-native", `{"network":"tcp","tls":"true"}`, "protocol_config"},
-		{"vless", "pandora-native", `{"network":"tcp","tls":true}`, "protocol_config.tls"},
-		{"vless", "pandora-native", `{"network":"tcp","server_name":"edge.example.com"}`, "protocol_config"},
+	tests := []struct{ nodeType, raw, field string }{
+		{"shadowsocks", `{"method":"2022-blake3-chacha20-poly1305"}`, "protocol_config.method"},
+		{"vless", `{"network":"quic","tls":false}`, "protocol_config.network"},
+		{"vmess", `{"network":"tcp","tls":"true"}`, "protocol_config"},
+		{"vless", `{"network":"tcp","tls":true}`, "protocol_config.tls"},
+		{"vless", `{"network":"tcp","server_name":"edge.example.com"}`, "protocol_config"},
 	}
 	for _, tt := range tests {
-		_, fields := validateKernelShape(tt.nodeType, tt.kernel, 443, json.RawMessage(tt.raw))
+		_, fields := validateKernelShape(tt.nodeType, 443, json.RawMessage(tt.raw))
 		if _, ok := fields[tt.field]; !ok {
 			t.Errorf("%s fields=%#v, want %s", tt.nodeType, fields, tt.field)
 		}
@@ -405,7 +405,7 @@ func TestValidateProtocolConfigAcceptsMKCPTuning(t *testing.T) {
 	raw := json.RawMessage(`{"network":"mkcp","security":"none","mtu":1350,"tti":50,
 		"uplink_capacity":50,"downlink_capacity":100,"congestion":true,
 		"read_buffer_size":4,"write_buffer_size":4}`)
-	_, fields := validateKernelShape("vless", "pandora-native", 28444, raw)
+	_, fields := validateKernelShape("vless", 28444, raw)
 	if len(fields) != 0 {
 		t.Fatalf("合法的 mKCP 配置被拒：%v", fields)
 	}
@@ -423,7 +423,7 @@ func TestValidateProtocolConfigRejectsOutOfRangeMKCP(t *testing.T) {
 		"downlink 过大": `{"network":"mkcp","downlink_capacity":99999}`,
 		"缓冲区过大":       `{"network":"mkcp","read_buffer_size":9999}`,
 	} {
-		_, fields := validateKernelShape("vless", "pandora-native", 28444, json.RawMessage(raw))
+		_, fields := validateKernelShape("vless", 28444, json.RawMessage(raw))
 		if len(fields) == 0 {
 			t.Errorf("%s：越界值被放行了", name)
 		}
@@ -433,7 +433,7 @@ func TestValidateProtocolConfigRejectsOutOfRangeMKCP(t *testing.T) {
 // 传输不是 mKCP 却带着这些参数，多半是从别的配置复制粘贴带过来的。
 // 留着会让人以为它们生效了。
 func TestValidateProtocolConfigRejectsMKCPParamsOnOtherTransports(t *testing.T) {
-	_, fields := validateKernelShape("vless", "pandora-native", 443,
+	_, fields := validateKernelShape("vless", 443,
 		json.RawMessage(`{"network":"ws","path":"/x","mtu":1350}`))
 	if len(fields) == 0 {
 		t.Error("ws 传输带 mtu 参数应当被拒")
@@ -453,7 +453,7 @@ func TestValidateProtocolConfigAcceptsMKCPMask(t *testing.T) {
 				"cert_path":"/etc/pandora-native/certs/example.com/a.crt","key_path":"/etc/pandora-native/certs/example.com/a.key",
 				"mask":"mkcp-aes128gcm","mask_password":"hunter2","mtu":1350}`)
 		}
-		_, fields := validateKernelShape(nodeType, "pandora-native", 28444, cfg)
+		_, fields := validateKernelShape(nodeType, 28444, cfg)
 		if len(fields) != 0 {
 			t.Errorf("%s 的合法掩码配置被拒：%v", nodeType, fields)
 		}
@@ -470,7 +470,7 @@ func TestValidateProtocolConfigRejectsBadMKCPMask(t *testing.T) {
 		// 顶着 MTU 上限再套掩码，加密后的包会被 IP 分片
 		"掩码开销撑爆 MTU": `{"network":"mkcp","mask":"mkcp-aes128gcm","mask_password":"p","mtu":1460}`,
 	} {
-		_, fields := validateKernelShape("vless", "pandora-native", 28444, json.RawMessage(raw))
+		_, fields := validateKernelShape("vless", 28444, json.RawMessage(raw))
 		if len(fields) == 0 {
 			t.Errorf("%s：应当被拒却通过了", name)
 		}
@@ -497,13 +497,13 @@ func TestMKCPMTUBoundsMatchNodeAgent(t *testing.T) {
 // 都收。原先面板允许配、节点端只校验类型从不读取，管理员勾上、保存成功、
 // 什么都没发生——配了没用比配不了更误导。
 func TestTUICRejectsUDPOverStream(t *testing.T) {
-	_, fields := validateKernelShape("tuic", "pandora-native", 443,
+	_, fields := validateKernelShape("tuic", 443,
 		json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/a.crt","key_path":"/etc/pandora-native/certs/example.com/a.key","udp_over_stream":true}`))
 	if len(fields) == 0 {
 		t.Error("udp_over_stream 应当被拒")
 	}
 	// zero_rtt 是真实现了的，不能连它一起拒
-	_, fields = validateKernelShape("tuic", "pandora-native", 443,
+	_, fields = validateKernelShape("tuic", 443,
 		json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/a.crt","key_path":"/etc/pandora-native/certs/example.com/a.key","zero_rtt":true}`))
 	if len(fields) != 0 {
 		t.Errorf("zero_rtt 被误拒：%v", fields)

@@ -26,7 +26,7 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 )
 
-// ssChunkLimit 是 AEAD 分块负载上限 0x3FFF（SIP004，与 ss2022MaxChunk 同值），读写两侧共用。
+// ssChunkLimit 是 AEAD 分块负载上限 0x3FFF（SIP004，与 ss2022WriteChunk 同值），读写两侧共用。
 // 曾写成 16*1024：上游一次读满 16384 字节（TLS 记录常见）就发出超长块，规范客户端判非法断开，
 // Vultr 实测表现为 HTTPS 大响应在 16KB 整数倍处截断。
 const ssChunkLimit = 16*1024 - 1
@@ -78,13 +78,17 @@ type shadowsocksAdapter struct {
 	limiters core.SpeedLimiters
 	listener net.Listener
 	packet   net.PacketConn
-	ctx      context.Context
-	cancel   context.CancelFunc
-	closed   bool
-	active   map[net.Conn]struct{}
+	// UDP 会话表与生命周期，见 shadowsocks_udp_hub.go
+	ssUDPHub
+	ctx    context.Context
+	cancel context.CancelFunc
+	closed bool
+	active map[net.Conn]struct{}
 	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），全进程共用一张，
 	// 见 replay_filter_bloom.go。
 	salts *saltBloom
+	// udpSalts 是 UDP 包 salt 的防重放表（认证通过才记），全进程 SS UDP 共用一张，见 shadowsocks_udp_replay.go。
+	udpSalts *saltBloom
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	wg            sync.WaitGroup
@@ -101,9 +105,11 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	}
 	return &shadowsocksAdapter{
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
-		users:  make(map[string]*ssUser),
-		active: make(map[net.Conn]struct{}),
-		salts:  sharedSSSaltBloom(),
+		users:    make(map[string]*ssUser),
+		active:   make(map[net.Conn]struct{}),
+		ssUDPHub: ssUDPHub{udp: make(map[ssUDPKey][]*ssUDPSession)},
+		salts:    sharedSSSaltBloom(),
+		udpSalts: sharedSSUDPSaltBloom(),
 	}, nil
 }
 
@@ -121,8 +127,8 @@ func (a *shadowsocksAdapter) Validate(spec InboundSpec) error {
 	if spec.Config.Port < 1 || spec.Config.Port > 65535 {
 		return fmt.Errorf("shadowsocks port is invalid")
 	}
-	if network, _ := spec.Config.Raw["network"].(string); network != "" && !strings.EqualFold(network, "tcp") && !strings.EqualFold(network, "udp") {
-		return fmt.Errorf("native shadowsocks currently accepts tcp and udp only")
+	if _, hasNetwork := spec.Config.Raw["network"]; hasNetwork {
+		return fmt.Errorf("shadowsocks 入站不再接受 network 字段：TCP 与 UDP 总是同端口一起开")
 	}
 	if _, err := parseNativeSSMethod(spec.Config.Raw); err != nil {
 		return err
@@ -138,10 +144,7 @@ func parseNativeSSMethod(raw map[string]any) (ssMethodSpec, error) {
 	method = strings.ToLower(strings.TrimSpace(method))
 	spec, ok := nativeSSMethods[method]
 	if !ok {
-		return ssMethodSpec{}, fmt.Errorf("native shadowsocks method %q is unsupported; classic AEAD TCP/UDP is enabled", method)
-	}
-	if password, _ := raw["password"].(string); strings.TrimSpace(password) != "" {
-		return spec, nil
+		return ssMethodSpec{}, fmt.Errorf("不支持的加密方式 %q（shadowsocks 只支持经典 AEAD）", method)
 	}
 	return spec, nil
 }
@@ -151,7 +154,7 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 		return fmt.Errorf("shadowsocks start requires context and data plane")
 	}
 	a.mu.Lock()
-	if a.listener != nil || a.closed {
+	if a.listener != nil || a.packet != nil || a.closed {
 		a.mu.Unlock()
 		return fmt.Errorf("shadowsocks adapter already started or closed")
 	}
@@ -161,30 +164,44 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 	if listenAddress == "" {
 		listenAddress = "0.0.0.0"
 	}
-	network, _ := spec.Config.Raw["network"].(string)
-	if strings.EqualFold(network, "udp") {
-		packet, packetErr := net.ListenPacket("udp", net.JoinHostPort(listenAddress, fmt.Sprintf("%d", spec.Config.Port)))
-		if packetErr != nil {
-			a.cancel()
-			a.mu.Unlock()
-			return packetErr
-		}
-		a.packet = packet
-		a.mu.Unlock()
-		a.wg.Add(1)
-		go a.packetLoop()
-		return nil
-	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(listenAddress, fmt.Sprintf("%d", spec.Config.Port)))
+	addr := net.JoinHostPort(listenAddress, fmt.Sprintf("%d", spec.Config.Port))
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		a.cancel()
 		a.mu.Unlock()
-		return err
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "tcp"}}, err)
 	}
-	a.listener = listener
+	packet, packetErr := net.ListenPacket("udp", addr)
+	if packetErr != nil {
+		_ = listener.Close()
+		a.cancel()
+		a.mu.Unlock()
+		// 单边 bind 撞上本机其他进程时，报的是撞上的那一种（如 443/UDP），不是 TCP+UDP；
+		// NativeCore 那层的 asExternalPortInUse 见到已经是 PortInUseError 就原样透传。
+		return asExternalPortInUse([]portKey{{port: spec.Config.Port, l4: "udp"}}, packetErr)
+	}
+	udpConn, ok := packet.(*net.UDPConn)
+	if !ok {
+		_ = packet.Close()
+		_ = listener.Close()
+		a.cancel()
+		a.mu.Unlock()
+		return fmt.Errorf("shadowsocks UDP listen: unexpected PacketConn type %T", packet)
+	}
+	a.listener, a.packet = listener, packet
+	a.bindUDP(udpConn, ssUDPHubBinding{
+		proto: "shadowsocks", ctx: a.ctx, wg: &a.wg, plane: a.plane, connErr: &a.connErr,
+		online: &a.online, limiters: &a.limiters, sessions: &a.sessions, encode: a.encodeUDPSession,
+	})
 	a.mu.Unlock()
-	a.wg.Add(1)
+	workers := ssUDPSlowWorkers()
+	a.wg.Add(3 + workers)
 	go a.acceptLoop()
+	go a.packetLoop()
+	go a.udpJanitor()
+	for i := 0; i < workers; i++ {
+		go a.udpWorker(a.slowPathUDP)
+	}
 	return nil
 }
 
@@ -311,7 +328,17 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	return core.User{ID: selected.ID, DeviceLimit: selected.DeviceLimit, SpeedLimit: selected.SpeedLimit}, stream, destination, nil
 }
 
+// parseSSDestination 解 SOCKS 地址并填好 Host（TCP 按 Host 拨号用）。
 func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) {
+	n, err := parseSSAddr(buf, destination)
+	if err == nil && destination.IP.IsValid() {
+		destination.Host = destination.IP.String()
+	}
+	return n, err
+}
+
+// parseSSAddr 解 SOCKS 地址；IP 目标不填 Host（UDP 每包省一次 IP.String() 分配，UDP 路径经 ssUDPTarget 取目标）。
+func parseSSAddr(buf []byte, destination *vlessDestination) (int, error) {
 	if len(buf) < 1 {
 		return 0, io.ErrUnexpectedEOF
 	}
@@ -324,7 +351,6 @@ func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) 
 		var ip [4]byte
 		copy(ip[:], buf[offset:offset+4])
 		destination.IP = netip.AddrFrom4(ip)
-		destination.Host = destination.IP.String()
 		offset += 4
 	case 3:
 		if len(buf) < offset+1 {
@@ -344,7 +370,6 @@ func parseSSDestination(buf []byte, destination *vlessDestination) (int, error) 
 		var ip [16]byte
 		copy(ip[:], buf[offset:offset+16])
 		destination.IP = netip.AddrFrom16(ip)
-		destination.Host = destination.IP.String()
 		offset += 16
 	default:
 		return 0, fmt.Errorf("shadowsocks address type unsupported")
@@ -646,6 +671,7 @@ func (a *shadowsocksAdapter) Close() error {
 	for _, conn := range active {
 		_ = conn.Close()
 	}
+	a.closeUDPSessions()
 	a.wg.Wait()
 	return nil
 }

@@ -2,10 +2,11 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/module/ledger/repo"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -13,8 +14,7 @@ import (
 func validTwoLegPosting() Posting {
 	uid := uuid.MustParse("018f1234-5678-7abc-8def-0123456789ab")
 	return Posting{
-		Kind:     KindBalanceTopup,
-		Currency: money.CNY,
+		Kind: KindBalanceTopup,
 		Legs: []Leg{
 			{Account: PlatformAccount(ChannelCash, "alipay"), Direction: Debit, Amount: decimal.NewFromInt(10)},
 			{Account: UserAccount(UserBalance, uid), Direction: Credit, Amount: decimal.NewFromInt(10)},
@@ -43,7 +43,6 @@ func TestValidatePosting_errors(t *testing.T) {
 		mut  func(*Posting)
 	}{
 		{"kind 非法", func(p *Posting) { p.Kind = Kind("nope") }},
-		{"币种非法", func(p *Posting) { p.Currency = money.Currency("EUR") }},
 		{"只有一条分录", func(p *Posting) { p.Legs = p.Legs[:1] }},
 		{"金额为 0", func(p *Posting) {
 			p.Legs[0].Amount = decimal.Zero
@@ -326,5 +325,34 @@ func TestSortedRefs(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("[%d] got %+v want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// 写余额撞库里不透支 CHECK：包装成 ErrBalanceConstraint 与 ErrInsufficientBalance（调用方 errors.Is 仍认得），同时保留库错误并注明事务已作废；其它错误原样返回。
+func TestSetBalancesErrWrapsCheck(t *testing.T) {
+	dbErr := fmt.Errorf("%w: 违反 CHECK", repo.ErrCheck)
+	got := setBalancesErr(dbErr)
+	if !errors.Is(got, ErrBalanceConstraint) {
+		t.Fatalf("应能按 ErrBalanceConstraint 识别：%v", got)
+	}
+	if !errors.Is(got, ErrInsufficientBalance) {
+		t.Fatalf("应能按 ErrInsufficientBalance 识别：%v", got)
+	}
+	if !errors.Is(got, repo.ErrCheck) {
+		t.Fatalf("应保留库约束错误：%v", got)
+	}
+	if got == ErrInsufficientBalance {
+		t.Fatal("库约束兜底不能与写库前查出的余额不足是同一个值")
+	}
+	if !strings.Contains(got.Error(), "事务已作废") {
+		t.Fatalf("错误应注明事务已作废：%q", got.Error())
+	}
+
+	other := errors.New("连接断了")
+	if setBalancesErr(other) != other {
+		t.Fatal("非约束错误应原样返回")
+	}
+	if errors.Is(setBalancesErr(other), ErrBalanceConstraint) {
+		t.Fatal("非约束错误不应包含 ErrBalanceConstraint")
 	}
 }

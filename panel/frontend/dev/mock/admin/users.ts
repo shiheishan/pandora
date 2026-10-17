@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule } from '../types.ts'
+import { editRoutes } from './users-edit.ts'
 import { opsRoutes } from './users-ops.ts'
+import { subEditRoutes } from './users-sub-edit.ts'
 
 // ---------------------------------------------------------------------------
 // 数据：确定性生成，vite 重启即复原。前 6 个用户的 id 与仪表盘流量排行里的一致，
@@ -10,7 +12,7 @@ const DAY = 86_400_000
 const GiB = 1024 ** 3
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
 
-type SubStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'grace' | 'paused' | 'cancelled' | 'expired'
+type SubStatus = 'active' | 'expired'
 
 export interface Sub {
   id: string
@@ -20,18 +22,20 @@ export interface Sub {
   plan_name: string
   plan_version: number
   status: SubStatus
+  kind?: 'subscription' | 'one_time'
   current_period_start: string | null
   current_period_end: string | null
   amount: number
+  /** 订单与收款假后端还在读，那边改完后删 */
   currency: string
-  auto_renew: boolean
   traffic_limit: number | null
   traffic_used: number
   device_limit_override: number | null
   plan_max_devices: number | null
   online_devices: number
-  /** 挂在这一份上的流量包余量（字节）：流量包按订阅挂 */
-  pack_bytes: number
+  /** 订单与收款假后端还在读，那边改完后删 */
+  /** 本期送的量，缺省 0 */
+  bonus_bytes?: number
   created_at: string
   /** 只用于 q 反查，永不出现在响应里（保留规则 2） */
   token: string
@@ -41,21 +45,25 @@ export interface User {
   id: string
   email: string
   display_name: string | null
-  status: 'pending' | 'active' | 'suspended' | 'banned' | 'deletion_scheduled' | 'anonymized'
+  status: 'pending' | 'active' | 'suspended' | 'banned' | 'deletion_scheduled' | 'anonymized' | 'deleted'
   risk_level: 'trusted' | 'normal' | 'elevated' | 'high'
   group_id: string | null
   created_at: string
   last_login_at: string | null
   email_verified: boolean
   balance: number
+  /** 订单与收款假后端还在读，那边改完后删 */
   currency: string
   subs: Sub[]
-  /** 还没加到任何一份的流量包余量（字节）：无订阅时兑的送流量卡 */
-  unattached_bytes: number
+  /** 还没加到任何一份的流量包余量（字节）：订单与收款假后端还在读，那边改完后删 */
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
   /** 后台不分角色：是不是管理员 */
   is_admin: boolean
+  /** 后台备注（只在后台详情出现）；缺省视为 null */
+  admin_note?: string | null
+  /** 注销时间；缺省视为 null（没注销） */
+  deleted_at?: string | null
 }
 
 export interface Group {
@@ -63,9 +71,10 @@ export interface Group {
   code: string
   name: string
   description: string
+  /** 停用的组不能再加新成员，已有成员不受影响 */
+  status: 'active' | 'disabled'
   /** 引用计数：套餐可见性、专属价格、优惠券限定（后端按表实时数，这里是固定种子） */
   plans: number
-  prices: number
   coupons: number
 }
 
@@ -79,9 +88,9 @@ export function setPoolSource(fn: (groupId: string) => PoolRef[]): void {
 export const exclusivePoolsOf = (groupId: string) => poolSource(groupId)
 
 export const GROUPS: Group[] = [
-  { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', plans: 2, prices: 3, coupons: 1 },
-  { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', plans: 1, prices: 1, coupons: 0 },
-  { id: '9c0e1a2b-2222-4b00-8000-000000000003', code: 'trial', name: '体验用户', description: '', plans: 0, prices: 0, coupons: 2 },
+  { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', status: 'active', plans: 2, coupons: 1 },
+  { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', status: 'active', plans: 1, coupons: 0 },
+  { id: '9c0e1a2b-2222-4b00-8000-000000000003', code: 'trial', name: '体验用户', description: '', status: 'active', plans: 0, coupons: 2 },
 ]
 
 const PLANS: Array<[string, number, number | null, number | null]> = [
@@ -102,7 +111,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
   const planId = PLAN_IDS[(i + j) % PLANS.length]!
   const start = Date.now() - ((i * 3 + j * 11) % 28) * DAY - (state === 'expired' ? 40 * DAY : 0)
   const end = start + 30 * DAY
-  const status: SubStatus = state === 'expired' ? (j % 2 ? 'cancelled' : 'expired') : i % 9 === 4 ? 'trialing' : i % 13 === 7 ? 'grace' : 'active'
+  const status: SubStatus = state === 'expired' ? 'expired' : 'active'
   const limit = gib === null ? null : gib * GiB
   const used = limit === null ? (i * 7 + 3) * GiB : Math.round(limit * (((i * 37 + j * 11) % 100) / 100))
   return {
@@ -116,13 +125,11 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
     current_period_end: new Date(end).toISOString(),
     amount: price,
     currency: 'CNY',
-    auto_renew: i % 3 !== 0,
     traffic_limit: limit,
     traffic_used: used,
     device_limit_override: i % 11 === 5 ? 10 : null,
     plan_max_devices: devices,
     online_devices: state === 'live' ? (i * 5 + j) % ((devices ?? 3) + 2) : 0,
-    pack_bytes: 0,
     created_at: new Date(start - DAY).toISOString(),
     token: `tk${String(i).padStart(3, '0')}${j}`,
   }
@@ -149,7 +156,6 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     balance: (i * 1375) % 26500,
     currency: 'CNY',
     subs,
-    unattached_bytes: 0,
     referrer: null,
     telegram: i % 3 === 0 ? { username: NAMES[i % NAMES.length]!.replace(/[._]/g, ''), bound_at: iso((i + 1) * DAY) } : null,
     is_admin: i === 0,
@@ -160,19 +166,67 @@ for (let i = 2; i < users.length; i += 4) users[i]!.referrer = users[0]!.id
 
 // ---------------------------------------------------------------------------
 // 落点演示数据（购买模型统一）：固定 id 的种子用户里布置「多份订阅」，后台开单的落点、
-// 订阅行上的按份操作才有东西可点。只改备注名、流量包与一条同款订阅，其余沿用上面的确定性生成
+// 订阅行上的按份操作才有东西可点。只改备注名与一条同款订阅，其余沿用上面的确定性生成
 // ---------------------------------------------------------------------------
 // 第 2 位（…02）：专业版 + 体验版，两份都在用、不同款。开别的套餐时没有默认落点
 const duo = users[1]!.subs
 if (duo.length === 2) {
   duo[0]!.label = '我的手机'
-  duo[0]!.pack_bytes = 30 * GiB
   duo[1]!.label = '妈妈的 iPad'
 }
-// 两份不同款都在用时兑的送流量卡不会自动挂：第 2 位还有 5 GiB 未分配，要用户在门户里选一份
-users[1]!.unattached_bytes = 5 * GiB
-// 第 7 位（没有订阅）：兑过一张送流量卡，20 GiB 未分配；人工开第一份订阅时自动挂上
-users[6]!.unattached_bytes = 20 * GiB
+// 第 3 位（…03）：加一份一次性套餐（流量畅用 500G，永久）
+const user3 = users[2]!
+const user3Start = Date.now() - 20 * DAY
+const user3End = new Date(user3Start)
+user3End.setFullYear(user3End.getFullYear() + 100)
+user3.subs.push({
+  id: randomUUID(),
+  label: null,
+  plan_id: PLAN_IDS[0]!,
+  plan_name: '流量畅用 500G',
+  plan_version: 1,
+  status: 'active',
+  kind: 'one_time',
+  current_period_start: new Date(user3Start).toISOString(),
+  current_period_end: user3End.toISOString(),
+  amount: 9900,
+  currency: 'CNY',
+  traffic_limit: 500 * GiB,
+  traffic_used: 120 * GiB,
+  device_limit_override: null,
+  plan_max_devices: 3,
+  online_devices: 1,
+  bonus_bytes: 0,
+  created_at: new Date(user3Start - DAY).toISOString(),
+  token: 'tk002ot',
+})
+
+// 第 4 位（…04）：加一份一次性套餐（短期 100G，有效 30 天）
+const user4 = users[3]!
+const user4Start = Date.now() - 5 * DAY
+const user4End = user4Start + 30 * DAY
+user4.subs.push({
+  id: randomUUID(),
+  label: null,
+  plan_id: PLAN_IDS[0]!,
+  plan_name: '短期 100G',
+  plan_version: 1,
+  status: 'active',
+  kind: 'one_time',
+  current_period_start: new Date(user4Start).toISOString(),
+  current_period_end: new Date(user4End).toISOString(),
+  amount: 1900,
+  currency: 'CNY',
+  traffic_limit: 100 * GiB,
+  traffic_used: 30 * GiB,
+  device_limit_override: null,
+  plan_max_devices: 3,
+  online_devices: 0,
+  bonus_bytes: 0,
+  created_at: new Date(user4Start - DAY).toISOString(),
+  token: 'tk003ot',
+})
+
 // 第 6 位（…06）：再加一份同款（专业版）订阅，两份同款都在用。开专业版时默认续到期更早的那份
 const twin = users[5]!
 const twinFirst = twin.subs[0]
@@ -185,27 +239,26 @@ if (twinFirst) {
     current_period_start: new Date(Date.parse(twinFirst.current_period_start ?? '') + 12 * DAY).toISOString(),
     current_period_end: new Date(Date.parse(twinFirst.current_period_end ?? '') + 12 * DAY).toISOString(),
     traffic_used: Math.round((twinFirst.traffic_limit ?? 100 * GiB) * 0.82),
-    pack_bytes: 0,
     online_devices: 0,
     token: 'tk005b',
     created_at: new Date(Date.parse(twinFirst.created_at) + 12 * DAY).toISOString(),
   }
   twinFirst.label = '常用'
   twinFirst.status = 'active'
-  twinFirst.pack_bytes = 10 * GiB
   twin.subs.push(second)
 }
 
 // ---------------------------------------------------------------------------
 // 视图：列表行与详情，字段与 Go 的 json tag 一一对应
 // ---------------------------------------------------------------------------
-const LIVE = new Set<SubStatus>(['active', 'trialing', 'grace', 'past_due'])
+/** 还在用 = 订阅状态 active，库里只有 active / expired */
+const isLiveSub = (s: Pick<Sub, 'status'>) => s.status === 'active'
 
 /** 与后端 currentSubscriptionSQL 同一挑法：还在用的优先，其次到期最晚、最近创建 */
 function current(u: User): Sub | undefined {
   return [...u.subs].sort(
     (a, b) =>
-      Number(LIVE.has(b.status)) - Number(LIVE.has(a.status)) ||
+      Number(isLiveSub(b)) - Number(isLiveSub(a)) ||
       Date.parse(b.current_period_end ?? '') - Date.parse(a.current_period_end ?? '') ||
       b.created_at.localeCompare(a.created_at),
   )[0]
@@ -216,7 +269,7 @@ const effectiveLimit = (s: Sub) => s.device_limit_override ?? s.plan_max_devices
 
 function row(u: User) {
   const cs = current(u)
-  const activePlan = [...u.subs].filter((s) => s.status === 'active' || s.status === 'trialing').sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+  const activePlan = [...u.subs].filter(isLiveSub).sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
   return {
     id: u.id,
     email: u.email,
@@ -230,7 +283,6 @@ function row(u: User) {
     subscription_count: u.subs.length,
     active_plan: activePlan?.plan_name ?? null,
     balance: u.balance,
-    currency: u.currency,
     current_subscription: cs
       ? {
           id: cs.id,
@@ -263,7 +315,6 @@ export function seedOrders(u: User) {
     total_amount: s.amount,
     payable_amount: s.amount,
     paid_amount: k % 3 === 2 ? 0 : s.amount,
-    refunded_amount: 0,
     balance_applied: 0,
     created_at: s.created_at,
     paid_at: (k % 3 === 2 ? null : s.created_at) as string | null,
@@ -294,12 +345,6 @@ export function setOrderSource(source: (userId: string) => OrderView[]): void {
   orderSource = source
 }
 
-function paidTotals(orders: readonly OrderView[]): Array<{ currency: string; amount: number }> {
-  const sums = new Map<string, number>()
-  for (const o of orders) if (o.status === 'paid' || o.status === 'fulfilled') sums.set(o.currency, (sums.get(o.currency) ?? 0) + o.paid_amount)
-  return [...sums].filter(([, amount]) => amount > 0).sort(([a], [b]) => a.localeCompare(b)).map(([currency, amount]) => ({ currency, amount }))
-}
-
 function detail(u: User) {
   const orders: OrderView[] = orderSource ? orderSource(u.id) : seedOrders(u).map(listView)
   const referrer = users.find((r) => r.id === u.referrer)
@@ -321,26 +366,30 @@ function detail(u: User) {
         current_period_start: s.current_period_start,
         current_period_end: s.current_period_end,
         amount: s.amount,
-        currency: s.currency,
-        auto_renew: s.auto_renew,
-        quotas: [{ metric: 'traffic.bytes', limit: s.traffic_limit, consumed: s.traffic_used, remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used) }],
+        quotas: [
+          {
+            metric: 'traffic.bytes',
+            period: s.kind === 'one_time' ? 'total' : 'cycle',
+            limit: s.traffic_limit,
+            consumed: s.traffic_used,
+            remaining: s.traffic_limit === null ? null : Math.max(0, s.traffic_limit - s.traffic_used),
+          },
+        ],
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
-        pack_remaining_bytes: s.pack_bytes,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
     is_admin: u.is_admin,
     stats: {
-      // R114：paid_total 已弃用但 Go 仍回（跨币种直接相加）；paid_totals 按币种分组、币种升序、只列大于 0 的
       paid_total: orders.filter((o) => o.status === 'paid' || o.status === 'fulfilled').reduce((sum, o) => sum + o.paid_amount, 0),
-      paid_totals: paidTotals(orders),
       order_count: orders.length,
       referral_count: users.filter((r) => r.referrer === u.id).length,
     },
     referrer: referrer ? { id: referrer.id, email: referrer.email } : null,
     telegram: u.telegram,
-    unattached_pack_bytes: u.unattached_bytes,
+    admin_note: u.admin_note ?? null,
+    deleted_at: u.deleted_at ?? null,
   }
 }
 
@@ -356,7 +405,7 @@ function randomUUIDFor(seed: string): string {
 }
 
 function hasSubState(u: User, state: string): boolean {
-  const live = u.subs.some((s) => LIVE.has(s.status))
+  const live = u.subs.some(isLiveSub)
   if (state === 'active') return live
   if (state === 'expired') return u.subs.length > 0 && !live
   return u.subs.length === 0
@@ -376,9 +425,9 @@ function passwordProblem(p: string): string | null {
   return null
 }
 
-/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 adminops.ListPlans 同口径，status 为 active 或 trialing */
+/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 catalog/service ListPlans 同口径，status 为 active */
 export function activeSubscriptions(planId: string): number {
-  return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && (s.status === 'active' || s.status === 'trialing')).length, 0)
+  return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && isLiveSub(s)).length, 0)
 }
 
 /** 同一份用户数组：billing.ts 开单开订阅、挂账转入余额时直接改这里 */
@@ -409,7 +458,7 @@ export const users_: MockModule = {
             u.email.toLowerCase().includes(q) ||
             (u.display_name ?? '').toLowerCase().includes(q) ||
             u.id === q ||
-            u.subs.some((s) => s.token === token && s.status !== 'cancelled'),
+            u.subs.some((s) => s.token === token),
         )
         .filter((u) => statuses.length === 0 || statuses.includes(u.status))
         .filter((u) => !group || (group === 'none' ? u.group_id === null : u.group_id === group))
@@ -504,13 +553,18 @@ export const users_: MockModule = {
       })
     },
 
-    // 分配用户组：无 reauth、无幂等；空串移出分组；不存在 422 无 fields
+    // 分配用户组：无 reauth、无幂等；空串移出分组；不存在 422 无 fields；
+    // 目标组停用且用户不在其中回 409，已在组内再提交幂等 200
     'POST /v1/users/:id/group': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const groupId = typeof body.group_id === 'string' ? body.group_id : ''
       const u = findUser(ctx)
-      if (!u || (groupId && !GROUPS.some((g) => g.id === groupId))) return ctx.fail(422, 'validation_failed', '用户或分组不存在')
+      const target = groupId ? GROUPS.find((g) => g.id === groupId) : undefined
+      if (!u || (groupId && !target)) return ctx.fail(422, 'validation_failed', '用户或分组不存在')
+      if (target && target.status === 'disabled' && u.group_id !== groupId) {
+        return ctx.fail(409, 'conflict', '这个分组已停用，不能再加入新成员')
+      }
       u.group_id = groupId || null
       ctx.send(200, { ok: true })
     },
@@ -529,6 +583,9 @@ export const users_: MockModule = {
 
     // 运营类：用户组增删改、批量运营、设备策略、流量重置（users-ops.ts）
     ...opsRoutes({ users, groups: GROUPS, current, hasSubState, effectiveLimit, exclusivePools: exclusivePoolsOf }),
+    // 后台改邮箱 / 显示名与备注 / 邀请人、注销（users-edit.ts）；改单份订阅的到期与流量上限（users-sub-edit.ts）
+    ...editRoutes({ users }),
+    ...subEditRoutes({ users }),
   },
 }
 

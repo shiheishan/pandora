@@ -5,12 +5,14 @@ import { gate, portalState, scenario, type PortalState } from './fixtures.ts'
 
 const DAY_MS = 86_400_000
 const ZERO_TIME = '0001-01-01T00:00:00Z'
+/** 后台「须等客服回复」开关：multi 场景当作开着，页面上能看到回复框换成那句话；其余场景关着 */
+const waitForReply = () => scenario() === 'multi'
 
-// domain/support.Categories 的固定顺序
+// support/service Categories 的固定顺序
 const CATEGORIES: ReadonlyArray<[string, string]> = [
   ['general', '一般咨询'],
   ['technical', '连接与技术'],
-  ['subscription', '订阅与套餐'],
+  ['subscription', '套餐与链接'],
   ['billing', '账单与支付'],
   ['account', '账号与安全'],
   ['abuse', '举报与投诉'],
@@ -18,7 +20,7 @@ const CATEGORIES: ReadonlyArray<[string, string]> = [
 const CATEGORY_CODES = new Set(CATEGORIES.map(([c]) => c))
 
 type Status = 'open' | 'pending_user' | 'pending_agent' | 'escalated' | 'resolved' | 'closed'
-type ClosedReason = 'user_closed' | 'withdrawn' | 'agent_closed'
+type ClosedReason = 'user_closed' | 'withdrawn' | 'agent_closed' | 'auto_closed'
 
 interface MessageFixture {
   id: string
@@ -82,15 +84,40 @@ function build(portal: PortalState): TicketFixture[] {
       messages: [msg('user', '每天 9 点到 11 点，香港 01 丢包大概 15%，看视频卡顿。换到香港 02 也一样。', ago(3 * H))],
     }),
     seed({
-      subject: '订阅链接导入 Clash 失败',
+      subject: '链接添加到 Clash Verge 失败',
       category: 'technical',
       status: 'pending_user',
       created_at: ago(2 * DAY_MS),
       closed_reason: null,
       order: null,
       messages: [
-        msg('user', 'Clash Verge 导入订阅时提示解析失败，已经更新到最新版本。', ago(2 * DAY_MS)),
-        msg('agent', '请在「我的订阅」点击 Clash Verge 一键导入；如果仍然失败，把客户端日志截图发上来，我们帮你看。', ago(2 * DAY_MS - 20 * 60_000)),
+        msg('user', 'Clash Verge 添加链接时提示解析失败，已经更新到最新版本。', ago(2 * DAY_MS)),
+        msg('agent', '请在「我的套餐」点「添加到 App」选 Clash Verge；如果仍然失败，把 App 日志截图发上来，我们帮你看。', ago(2 * DAY_MS - 20 * 60_000)),
+      ],
+    }),
+    // 关联了订单、客服还没回复：会话头部有「关联订单 …」，按钮是「撤回」
+    seed({
+      subject: '续费后到期日没有顺延',
+      category: 'billing',
+      status: 'pending_agent',
+      created_at: ago(20 * H),
+      closed_reason: null,
+      order: paid ? { id: paid.id, order_no: paid.order_no } : null,
+      messages: [msg('user', '昨天用支付宝续了一个月，订单显示已支付，但我的套餐里到期日还是原来的日期，没有顺延。', ago(20 * H))],
+    }),
+    // 已解决：还能回复（回复后重开），按钮是「问题已解决」
+    seed({
+      subject: 'iPhone 上怎么添加',
+      category: 'subscription',
+      status: 'resolved',
+      created_at: ago(6 * DAY_MS),
+      resolved_at: ago(6 * DAY_MS - 2 * H),
+      closed_reason: null,
+      order: null,
+      messages: [
+        msg('user', '买好了，但是不知道 iPhone 上怎么添加，App Store 里搜不到你们的 App。', ago(6 * DAY_MS)),
+        msg('agent', '我们没有自己的 App，用 Shadowrocket 就行。在「我的套餐」点「添加到 App」，选 Shadowrocket 会自动打开并添加好。\n帮助中心也有一篇图文说明。', ago(6 * DAY_MS - H)),
+        msg('user', '好了，可以用了，谢谢！', ago(6 * DAY_MS - 2 * H)),
       ],
     }),
     seed({
@@ -116,6 +143,20 @@ function build(portal: PortalState): TicketFixture[] {
       order: null,
       messages: [msg('user', '续费成功了，但是本期已用流量还是上个周期的数字。', ago(34 * DAY_MS)), msg('system', '用户已撤回此工单', ago(34 * DAY_MS - 30 * 60_000))],
     }),
+    seed({
+      subject: '账号登录异常需要核实',
+      category: 'account',
+      status: 'closed',
+      created_at: ago(40 * DAY_MS),
+      resolved_at: ago(39 * DAY_MS),
+      closed_reason: 'auto_closed',
+      order: null,
+      messages: [
+        msg('user', '昨天突然提示密码错误，我确定没有改密码，麻烦帮忙看一下账号状态。', ago(40 * DAY_MS)),
+        msg('agent', '已核实你的账号正常，建议先退出后重新登录；若仍失败请回复具体报错截图。', ago(39 * DAY_MS)),
+        msg('system', '客服回复后 24 小时内没有新的回复，工单已自动关闭；如还有问题请新建工单', ago(38 * DAY_MS)),
+      ],
+    }),
   ]
   // multi：未结工单凑满 5 个，新建回 409
   if (s === 'multi') {
@@ -134,12 +175,26 @@ function rowView(t: TicketFixture) {
   return { id: t.id, ticket_no: t.ticket_no, subject: t.subject, category: t.category, priority: t.priority, status: t.status, created_at: t.created_at, updated_at: t.updated_at, resolved_at: t.resolved_at, message_count: t.messages.length, last_reply_at: last, closed_reason: t.closed_reason, related_order: null }
 }
 
+/** 最后一条非 system 消息的作者 */
+function lastPublicAuthorKind(messages: MessageFixture[]): MessageFixture['author_kind'] | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m && m.author_kind !== 'system') return m.author_kind
+  }
+  return null
+}
+
+function replyBlocked(t: TicketFixture): boolean {
+  return waitForReply() && t.status !== 'closed' && lastPublicAuthorKind(t.messages) === 'user'
+}
+
 function detailView(t: TicketFixture, displayName: string | null) {
   return {
     ...rowView(t),
     message_count: 0,
     last_reply_at: ZERO_TIME,
     related_order: t.order,
+    reply_blocked: replyBlocked(t),
     messages: t.messages.map((m) => ({ ...m, author_name: m.author_kind === 'user' ? displayName : null })),
   }
 }
@@ -210,6 +265,7 @@ export const tickets: MockModule = {
         const t = find(ctx)
         if (!t) return notFound()
         if (t.status === 'closed') return new BillingError(409, 'conflict', '工单已关闭，如需继续请新建工单').result()
+        if (replyBlocked(t)) return new BillingError(409, 'conflict', '请等客服回复后再继续发送').result()
         t.messages.push(msg('user', text, new Date().toISOString()))
         // 球回到客服；已解决的被追问即重开（修订 R25：重开清空关闭原因）
         t.status = 'pending_agent'

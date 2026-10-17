@@ -50,7 +50,8 @@ type SimOptions struct {
 	Logger          *slog.Logger     // nil 用 slog.Default()
 	Now             func() time.Time // nil 用 time.Now
 	OmitStatusUsers bool             // 为真时 publish 不写 NodeStatus.Users
-	// Spread 为真时按真实节点的形态错开：首轮上报在一个间隔内随机，之后每轮 ±10% 抖动；
+	// Spread 为真时按真实节点的形态错开：首轮上报在一个间隔内随机，之后上报与心跳每轮 ±10% 抖动
+	// （同 pdnd node/server.go 的 Run：同一批接入的节点几轮之后就不再踩同一秒打面板）；
 	// 每个节点从按服务器名散列出的位置开始轮报用户，不让所有服务器同时报同一批人。
 	Spread bool
 }
@@ -139,7 +140,7 @@ func (s *Sim) Applied() ([]*nodev1.AppliedConfig, []*nodev1.AppliedUsers) {
 
 // Run 是主循环，一直跑到 ctx 结束。
 func (s *Sim) Run(ctx context.Context, link Link) {
-	heartbeat := time.NewTimer(s.heartbeatEvery)
+	heartbeat := time.NewTimer(s.nextHeartbeat())
 	first := s.reportInterval
 	if s.spread {
 		first = time.Duration(rand.Int64N(int64(s.reportInterval))) + time.Millisecond
@@ -156,7 +157,7 @@ func (s *Sim) Run(ctx context.Context, link Link) {
 			s.handleEvent(link, ev, heartbeat)
 		case <-heartbeat.C:
 			s.tickHeartbeat(link)
-			heartbeat.Reset(s.heartbeatEvery)
+			heartbeat.Reset(s.nextHeartbeat())
 		case <-report.C:
 			s.tickReport(link)
 			report.Reset(s.nextReport())
@@ -202,7 +203,7 @@ func (s *Sim) onWelcome(link Link, w *nodev1.Welcome, heartbeat *time.Timer) {
 		})
 		if v := w.GetHeartbeatIntervalSec(); v > 0 {
 			s.heartbeatEvery = time.Duration(v) * time.Second
-			heartbeat.Reset(s.heartbeatEvery)
+			heartbeat.Reset(s.nextHeartbeat())
 		}
 	}
 	s.sendHeartbeat(link)
@@ -487,6 +488,14 @@ func (s *Sim) nextReport() time.Duration {
 		return panel.Jitter(s.reportInterval)
 	}
 	return s.reportInterval
+}
+
+// nextHeartbeat 是下一次心跳的等待：Spread 时与真实节点一样 ±10% 抖动。
+func (s *Sim) nextHeartbeat() time.Duration {
+	if s.spread {
+		return panel.Jitter(s.heartbeatEvery)
+	}
+	return s.heartbeatEvery
 }
 
 // startCursor 是全量名单后从第几个用户开始轮报：Spread 时按服务器名与节点散列，否则从 0。

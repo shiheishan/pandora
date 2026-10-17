@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { AnonContext } from '../types.ts'
-import { findPlan, findPrice, GIB, PACKS, PLANS, type CatalogPrice } from './catalog.ts'
+import { findPlan, findPrice, GIB, PLANS, type CatalogPrice } from './catalog.ts'
 import { buildProto } from './proto.ts'
 import { profileName } from './purchase.ts'
 import { isProto, onScenarioChange, scenario, SCENARIOS, switchScenario, type Scenario } from './scenario.ts'
@@ -10,14 +10,14 @@ export { GIB, scenario, SCENARIOS, type Scenario }
 const DAY_MS = 86_400_000
 /** 假后端的「站点时区」（修订 R50 默认值），按日用量按它切日 */
 export const MOCK_TIMEZONE = 'Asia/Shanghai'
-/** 配置名里的站点名（假后端外观默认的 site_name） */
+/** 配置名里的站点名（假后端系统设置的缺省站点名，门户外观的 site_name 缺省也是它） */
 export const MOCK_SITE = 'Pandora'
 
 // ---------------------------------------------------------------------------
 // 场景：POST /v1/__mock/portal-scenario {"name": "..."} 切换，切换即重建全部用户状态
-//   default  一条生效订阅、一张待支付单、流量包、公告（含 critical）
-//   empty    无订阅、无订单、无公告、无流量包
-//   multi    两条生效订阅（第二条 past_due，节点 404、近 24 小时来源超设备上限、流量将尽）
+//   default  一条生效订阅、一张待支付单、公告（含 critical）
+//   empty    无订阅、无订单、无公告
+//   multi    两条生效订阅（第二条旧价续费不可用）+ 流量版一次性
 //   legacy   同 default，但 Go 带 omitempty 的可缺席字段全部缺席（订单周期、支付方式、优惠码、有效期至），Telegram 站点未启用
 //   error    页面读接口一律 500
 //   slow     页面读接口延迟 2.5 秒（看骨架）
@@ -52,19 +52,22 @@ export interface SubFixture {
   price_id: string
   plan_name: string
   plan_version: number
-  status: 'active' | 'past_due' | 'grace' | 'expired' | 'cancelled'
+  status: 'active' | 'expired'
   /** 过期且续费窗口已关（renewal_closed_at 非空）：彻底停用 */
   renewalClosed?: boolean
   /** 用户起的备注名，没起为 null（订阅 label 列） */
   label: string | null
-  /** 挂在这一份上的流量包余量（traffic_pack_grants.subscription_id） */
-  packBytes: number
+  /** 本期送的流量（礼品卡等），周期结束作废；一次性加在总量上 */
+  bonusBytes: number
+  /** 本周期（一次性为有效期内）已付费流量重置次数 */
+  resetsUsed: number
   /** 门户换新链接的时刻（毫秒），按份限频用 */
   rotations: number[]
   current_period_start: string
   current_period_end: string
   amount: number
-  limitBytes: number
+  /** null = 不限流量 */
+  limitBytes: number | null
   deviceLimit: number | null
   online: number
   /** null = 没有可用凭据 */
@@ -75,23 +78,24 @@ export interface SubFixture {
   nodes: NodeFixture[]
   /** 每日用量，最后一个是今天；日期为 MOCK_TIMEZONE 的 YYYY-MM-DD */
   days: Array<{ date: string; bytes: number }>
+  /** 订阅套餐本期流量清零时刻；一次性套餐不参与 next_reset_at */
   resetAt: string
 }
 
-/** 履约效果：支付完成（或 0 元当场）时对订阅 / 流量包做的事 */
+/** 履约效果：支付完成（或 0 元当场）时对订阅 / 余额做的事 */
 export type OrderEffect =
   | { type: 'new'; planId: string; priceId: string; label: string | null }
   | { type: 'renewal'; subId: string; priceId: string }
   | { type: 'upgrade'; subId: string; planId: string; priceId: string; credit: number; refund: number }
-  /** 差价不到支付最低额而免掉（SmallDue，设计稿 2.6 推荐 A） */
-  | { type: 'addon'; bytes: number; subId: string }
+  | { type: 'stack'; subId: string; priceId: string }
+  | { type: 'reset'; subId: string }
   | { type: 'topup'; amount: number }
   | { type: 'none' }
 
 export interface OrderFixture {
   id: string
   order_no: string
-  kind: 'new' | 'renewal' | 'topup' | 'addon' | 'upgrade'
+  kind: 'new' | 'renewal' | 'topup' | 'stack' | 'upgrade' | 'traffic_reset'
   status: string
   plan_name?: string
   item_name?: string
@@ -105,7 +109,6 @@ export interface OrderFixture {
   balance_applied: number
   payable_amount: number
   paid_amount: number
-  refunded_amount?: number
   coupon_code?: string
   subscription_id?: string
   created_at: string
@@ -131,10 +134,6 @@ export interface AnnouncementFixture {
 
 export interface PortalState {
   subs: SubFixture[]
-  /** 还没加到任何一份的流量包余量（traffic_pack_grants.subscription_id 为空） */
-  unattachedBytes: number
-  /** 流量包转移流水（traffic_pack_transfers，追加写） */
-  transfers: Array<{ from: string | null; to: string; bytes: number; at: string }>
   /** 余额（分）；下单抵扣当场扣，订单过期或取消时退回 */
   balance: number
   /** 余额流水（契约门户-05 history），新的在前 */
@@ -177,7 +176,7 @@ export function portalState(userId: string): PortalState {
 }
 
 export const newToken = (tail = '') => randomBytes(18).toString('base64url').slice(0, 24 - tail.length) + tail
-export const linkUrl = (token: string) => `https://sub.pandora.dev/s/${token}`
+export const linkUrl = (token: string) => `https://sub.example.test/s/${token}`
 
 function ymdInZone(t: number): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: MOCK_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t))
@@ -193,7 +192,6 @@ export function usageDays(count: number, total: number, now = Date.now()): Array
   })
   const sum = raw.reduce((s, d) => s + d.weight, 0)
   const days = raw.map((d) => ({ date: d.date, bytes: Math.round((d.weight / sum) * total) }))
-  // 四舍五入的零头补到今天，合计正好等于 total（原型场景的「已用 20G」与按流量折的钱才对得上）
   const drift = total - days.reduce((n, d) => n + d.bytes, 0)
   days[days.length - 1]!.bytes += drift
   return days
@@ -223,15 +221,27 @@ export function makeSub(init: {
   online: number
   sources: number
   label?: string | null
-  packBytes?: number
+  bonusGiB?: number
+  resetsUsed?: number
   /** 链接尾号（原型的 ····a3f9） */
   tail?: string
 }): SubFixture {
   const plan = findPlan(init.planId)!
   const price = findPrice(plan, init.priceId)
   const now = Date.now()
+  const periodStart = new Date(now - init.elapsedDays * DAY_MS)
   const days = usageDays(Math.max(1, init.elapsedDays), init.usedGiB * GIB, now)
   const resetDay = ymdInZone(now + init.resetInDays * DAY_MS)
+  // 一次性：到期按价格 validity_days；null 为永久（+100 年哨兵）。订阅仍用 expiresInDays。
+  let periodEnd: Date
+  if (plan.kind === 'one_time') {
+    const vd = price?.validity_days
+    if (vd === null) periodEnd = new Date(addInterval(periodStart.getTime(), { billing_interval: 'one_time', interval_count: 1 }))
+    else if (vd != null) periodEnd = new Date(periodStart.getTime() + vd * DAY_MS)
+    else periodEnd = new Date(now + init.expiresInDays * DAY_MS)
+  } else {
+    periodEnd = new Date(now + init.expiresInDays * DAY_MS)
+  }
   return {
     id: randomUUID(),
     plan_id: plan.id,
@@ -240,13 +250,13 @@ export function makeSub(init: {
     plan_version: 2,
     status: init.status,
     label: init.label ?? null,
-    packBytes: init.packBytes ?? 0,
+    bonusBytes: (init.bonusGiB ?? 0) * GIB,
+    resetsUsed: init.resetsUsed ?? 0,
     rotations: [],
-    current_period_start: new Date(now - init.elapsedDays * DAY_MS).toISOString(),
-    current_period_end: new Date(now + init.expiresInDays * DAY_MS).toISOString(),
-    // 订阅上的 amount 是下单时的快照价；原价格已下架时目录里找不到它
+    current_period_start: periodStart.toISOString(),
+    current_period_end: periodEnd.toISOString(),
     amount: price?.unit_amount ?? 2500,
-    limitBytes: plan.trafficBytes ?? 0,
+    limitBytes: plan.trafficBytes,
     deviceLimit: plan.max_devices,
     online: init.online,
     token: newToken(init.tail),
@@ -264,21 +274,57 @@ export const ARCHIVED_PRICE_ID = '6f1c2a10-0000-4000-8000-0000000000aa'
 
 function build(s: Scenario): PortalState {
   if (isProto(s)) return buildProto(s)
-  if (s === 'empty') return { subs: [], unattachedBytes: 0, transfers: [], balance: 2650, ledger: [], orders: [], announcements: [], redemptions: [], usedCodes: new Set() }
+  if (s === 'empty') return { subs: [], balance: 2650, ledger: [], orders: [], announcements: [], redemptions: [], usedCodes: new Set() }
   const now = Date.now()
-  const [std, pro] = [PLANS[0]!, PLANS[1]!]
-  // 流量包 30 GB 挂在第一份上
-  const subs = [makeSub({ planId: pro.id, priceId: pro.prices[0]!.id, status: 'active', usedGiB: 312, elapsedDays: 28, resetInDays: 3, expiresInDays: 42, online: 3, sources: 3, packBytes: 30 * GIB })]
+  const [std, pro, , traffic] = [PLANS[0]!, PLANS[1]!, PLANS[2]!, PLANS[3]!]
+  const subs = [
+    makeSub({
+      planId: pro.id,
+      priceId: pro.prices[0]!.id,
+      status: 'active',
+      usedGiB: 312,
+      elapsedDays: 28,
+      resetInDays: 3,
+      expiresInDays: 42,
+      online: 3,
+      sources: 3,
+      bonusGiB: 20,
+      resetsUsed: 0,
+    }),
+  ]
   if (s === 'multi') {
-    const second = makeSub({ planId: std.id, priceId: ARCHIVED_PRICE_ID, status: 'past_due', usedGiB: 180, elapsedDays: 20, resetInDays: 10, expiresInDays: 5, online: 1, sources: 7 })
+    const second = makeSub({
+      planId: std.id,
+      priceId: ARCHIVED_PRICE_ID,
+      status: 'active',
+      usedGiB: 180,
+      elapsedDays: 20,
+      resetInDays: 10,
+      expiresInDays: 5,
+      online: 1,
+      sources: 7,
+    })
     second.nodes = []
     subs.push(second)
+    subs.push(
+      makeSub({
+        planId: traffic.id,
+        priceId: traffic.prices[0]!.id,
+        status: 'active',
+        usedGiB: 30,
+        elapsedDays: 10,
+        resetInDays: 80,
+        expiresInDays: 80,
+        online: 1,
+        sources: 1,
+        label: '备用',
+      }),
+    )
   }
-  const pack = PACKS[0]!
+  // 待付的续费单：续第一份（专业版）一个月
+  const monthPro = pro.prices[0]!
   return {
     subs,
-    unattachedBytes: 0,
-    transfers: [],
     balance: 2650,
     ledger: seedLedger(now),
     redemptions: seedRedemptions(now),
@@ -287,20 +333,20 @@ function build(s: Scenario): PortalState {
       {
         id: randomUUID(),
         order_no: 'PD-2609-3397',
-        kind: 'addon',
+        kind: 'renewal',
         status: 'pending_payment',
-        plan_name: pack.name,
-        item_name: pack.name,
-        subtotal: pack.unit_amount,
-        total_amount: pack.unit_amount,
+        plan_name: pro.name,
+        item_name: pro.name,
+        subtotal: monthPro.unit_amount,
+        total_amount: monthPro.unit_amount,
         discount_amount: 0,
         balance_applied: 0,
-        payable_amount: pack.unit_amount,
+        payable_amount: monthPro.unit_amount,
         paid_amount: 0,
         created_at: new Date(now - 12 * 60_000).toISOString(),
         expires_at: new Date(now + 18 * 60_000).toISOString(),
         subscription_id: subs[0]!.id,
-        effect: { type: 'addon', bytes: pack.traffic_bytes, subId: subs[0]!.id },
+        effect: { type: 'renewal', subId: subs[0]!.id, priceId: monthPro.id },
       },
       ...pastOrders(now, subs[0]!),
     ],
@@ -313,21 +359,17 @@ function build(s: Scenario): PortalState {
 }
 
 // ---------------------------------------------------------------------------
-// 周期：period.AddInterval（AddDate 语义：月按日历月加，溢出顺延，与 JS setUTCMonth 一致）
+// 周期：与 Go period.AddInterval 一致（one_time = +100 年）
 // ---------------------------------------------------------------------------
 export function addInterval(from: number, p: Pick<CatalogPrice, 'billing_interval' | 'interval_count'>): number {
   const d = new Date(from)
   const n = p.interval_count
   switch (p.billing_interval) {
-    case 'day':
-      return from + n * DAY_MS
-    case 'week':
-      return from + 7 * n * DAY_MS
-    case 'quarter':
-      d.setUTCMonth(d.getUTCMonth() + 3 * n)
-      return d.getTime()
     case 'year':
       d.setUTCFullYear(d.getUTCFullYear() + n)
+      return d.getTime()
+    case 'one_time':
+      d.setUTCFullYear(d.getUTCFullYear() + 100 * n)
       return d.getTime()
     default:
       d.setUTCMonth(d.getUTCMonth() + n)
@@ -335,70 +377,110 @@ export function addInterval(from: number, p: Pick<CatalogPrice, 'billing_interva
   }
 }
 
-const LIVE = new Set(['active', 'trialing', 'grace', 'past_due'])
-export const isLiveSub = (s: Pick<SubFixture, 'status'>) => LIVE.has(s.status)
-/** 过期 30 天内、窗口没关：还能原地续费或换套餐（billing.subscriptionAcceptsPaidChange，w5expiry） */
+export const isLiveSub = (s: Pick<SubFixture, 'status'>) => s.status === 'active'
 export const isRevivable = (s: SubFixture, now = Date.now()) => s.status === 'expired' && !s.renewalClosed && now - new Date(s.current_period_end).getTime() < 30 * DAY_MS
-/** 彻底停用：cancelled，或过期且窗口已关 */
 export const isDead = (s: SubFixture, now = Date.now()) => !isLiveSub(s) && !isRevivable(s, now)
 export const usedBytes = (s: SubFixture) => s.days.reduce((n, d) => n + d.bytes, 0)
 
-/** 订阅当前计价：目录里还有就用目录价，下架了就是订阅上的快照价（renewal_price.available=false） */
+/** 一次性且 current_period_end 离现在超过 50 年 */
+export function subPermanent(sub: SubFixture): boolean {
+  const plan = findPlan(sub.plan_id)
+  if (plan?.kind !== 'one_time') return false
+  return new Date(sub.current_period_end).getTime() - Date.now() > 50 * 365 * DAY_MS
+}
+
 export function subPrice(sub: SubFixture): CatalogPrice & { available: boolean } {
   const plan = findPlan(sub.plan_id)
   const listed = plan ? findPrice(plan, sub.price_id) : undefined
-  return listed ? { ...listed, available: true } : { id: sub.price_id, currency: 'CNY', unit_amount: sub.amount, billing_interval: 'month', interval_count: 1, trial_days: 0, available: false }
+  return listed
+    ? { ...listed, available: true }
+    : {
+        id: sub.price_id,
+        unit_amount: sub.amount,
+        billing_interval: 'month',
+        interval_count: 1,
+        validity_days: null,
+        available: false,
+      }
 }
 
 export const clientName = (sub: Pick<SubFixture, 'label' | 'plan_name'>) => profileName(MOCK_SITE, sub.label, sub.plan_name)
 
-// ---------------------------------------------------------------------------
-// 契约门户-02 GET v1/me/subscriptions 的一行（含设计稿 2.9 的 label / client_name / changeable / renew_until，
-// pack_remaining_bytes 改成这一份自己的余量）；Go 的 mySubscriptionView 无 omitempty，各场景字段恒在
-// ---------------------------------------------------------------------------
+function subscriptionState(sub: SubFixture, now = Date.now()): 'live' | 'revivable' | 'ended' {
+  if (isLiveSub(sub)) return 'live'
+  if (isRevivable(sub, now)) return 'revivable'
+  return 'ended'
+}
+
+/** 契约 GET v1/me/subscriptions 的一行（与 Go mySubscriptionResponse 一致，无 omitempty） */
 export function subscriptionView(sub: SubFixture) {
   const consumed = usedBytes(sub)
   const plan = findPlan(sub.plan_id)
-  const quota = {
-    metric: 'traffic.bytes',
-    limit: sub.limitBytes,
-    consumed,
-    remaining: Math.max(0, sub.limitBytes - consumed),
-    period: plan?.quotaPeriod ?? 'cycle',
-    period_start: zoneMidnight(sub.days[0]!.date),
-    period_end: sub.resetAt,
-    granted_addon: 0,
-    adjusted: 0,
-  }
   const price = subPrice(sub)
   const now = Date.now()
-  // 与 renewable 同一口径，但不看 allow_renewal
-  const changeable = isLiveSub(sub) || isRevivable(sub, now)
-  const renewable = changeable && (plan?.allow_renewal ?? false)
+  const state = subscriptionState(sub, now)
+  const changeable = state === 'live' || state === 'revivable'
+  const renewable = changeable && plan?.kind === 'subscription' && (plan.allowRenewal ?? false)
+  const stackable = changeable && plan?.kind === 'one_time' && (plan.allowNew ?? false)
+  const limit = sub.limitBytes
+  const bonus = sub.bonusBytes
+  const remaining = limit === null ? null : Math.max(0, limit + bonus - consumed)
+  const quotaPeriod = plan?.kind === 'one_time' ? 'total' : 'cycle'
+  const quotaEnd = plan?.kind === 'one_time' ? sub.current_period_end : sub.resetAt
+  const validityDays = plan?.kind === 'one_time' ? (price.validity_days ?? null) : null
   const base = isLiveSub(sub) ? new Date(sub.current_period_end).getTime() : now
+  const renewUntil = renewable && price.available ? new Date(addInterval(base, price)).toISOString() : null
   return {
     id: sub.id,
     plan_id: sub.plan_id,
     price_id: sub.price_id,
     plan_name: sub.plan_name,
+    plan_kind: plan?.kind ?? 'subscription',
     plan_version: sub.plan_version,
     status: sub.status,
+    state,
     current_period_start: sub.current_period_start,
     current_period_end: sub.current_period_end,
-    currency: 'CNY',
     amount: sub.amount,
-    quotas: [quota],
+    validity_days: validityDays,
+    quotas: [
+      {
+        metric: 'traffic.bytes',
+        limit,
+        bonus_bytes: bonus,
+        consumed,
+        remaining,
+        period: quotaPeriod,
+        period_start: zoneMidnight(sub.days[0]!.date),
+        period_end: quotaEnd,
+      },
+    ],
     device_limit: sub.deviceLimit,
     online_devices: sub.online,
-    quota_reset_strategy: plan?.quota_reset_strategy ?? 'billing_cycle',
-    next_reset_at: sub.resetAt,
+    traffic_limit: limit,
+    bonus_bytes: bonus,
+    traffic_used: consumed,
+    permanent: subPermanent(sub),
+    resets_used: sub.resetsUsed,
+    reset_limit: plan?.reset?.limit ?? null,
+    reset_price: plan?.reset?.price ?? null,
+    next_reset_at: plan?.kind === 'subscription' ? sub.resetAt : null,
     renewable,
-    renewal_price: { id: price.id, currency: price.currency, unit_amount: price.unit_amount, billing_interval: price.billing_interval, interval_count: price.interval_count, available: price.available },
-    pack_remaining_bytes: sub.packBytes,
+    stackable,
+    renewal_price:
+      plan?.kind === 'subscription'
+        ? {
+            id: price.id,
+            unit_amount: price.unit_amount,
+            billing_interval: price.billing_interval,
+            interval_count: price.interval_count,
+            available: price.available,
+          }
+        : null,
     label: sub.label,
     client_name: clientName(sub),
     changeable,
-    renew_until: renewable ? new Date(addInterval(base, price)).toISOString() : null,
+    renew_until: renewUntil,
   }
 }
 

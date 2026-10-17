@@ -1,6 +1,6 @@
 package protocol
 
-// 协议配置里「安全与可连通」层面的收紧规则（2026-10 w4proto）。
+// 协议配置里「安全与可连通」层面的收紧规则。
 //
 // 这些规则不关心字段形状（那是 validate_kernel.go 的严格解码），只回答
 // 两个问题：存进去的配置节点能不能真起来、客户端能不能真连上；以及这份
@@ -15,42 +15,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-// 内核选择：只剩 NativeCore。
-//
-// 面板曾允许把 kernel 设成 sing-box 或 xray-core，但生产的 pdnd 只链接
-// NativeCore（pdnd/runtime_native.go），根本不读这个字段；只有带 -tags compat
-// 单独构建的迁移版本才按它分派。新写入因此只接受 auto / pandora-native，
-// 存量的 sing-box / xray-core 读时忽略（见 EffectiveKernel），不强制改写。
-var acceptedKernels = []string{"auto", "pandora-native"}
-
-// legacyKernels 是曾经开放、现在只读兼容的内核值。
-var legacyKernels = []string{"sing-box", "xray-core"}
-
-const kernelFieldMessage = "只能是 auto 或 pandora-native：节点端只有 NativeCore，sing-box / xray-core 已不再生效"
-
-// validateKernelChoice 校验一次写入里的 kernel。空串等同 auto。
-func validateKernelChoice(fields map[string]string, kernel string) {
-	kernel = strings.TrimSpace(kernel)
-	if kernel == "" || containsString(acceptedKernels, kernel) {
-		return
-	}
-	fields["kernel"] = kernelFieldMessage
-}
-
-// effectiveKernel 是下发与展示时实际生效的内核值。
-//
-// 存量节点里还留着 sing-box / xray-core：NativeCore 不读它，下发时一律按 auto
-// 给出（也不再带 kernel_type），免得兼容构建按旧值把数据面切到别的内核，
-// 或在 native-only 模式下拒绝起入站。库里的值不改写，管理员下次改协议时
-// 表单会把它换成 auto。
-func effectiveKernel(kernel string) string {
-	kernel = strings.TrimSpace(kernel)
-	if kernel == "" || containsString(legacyKernels, kernel) {
-		return "auto"
-	}
-	return kernel
-}
 
 // utlsFingerprints 是 uTLS 客户端指纹的可选值：mihomo 的 client-fingerprint
 // 与 sing-box 的 utls.fingerprint 都认的那一组（xray 的 fp 是它们的超集）。
@@ -144,7 +108,7 @@ func numericTLSValue(raw json.RawMessage) (int, bool) {
 const vmessRawTCPWarning = "VMess 裸 tcp 特征明显、容易被识别封锁：建议改用 VLESS REALITY，或换 ws / grpc 等传输套 CDN" //nolint:gosec // G101 误报：提示文案，不是凭据
 
 // plainTLSNotYetMessage 是 vless / vmess 选普通 TLS（tls=1）时的报错。
-const plainTLSNotYetMessage = "普通 TLS 需要证书，证书自动申请上线后开放；现在请选 REALITY（vless），或不加密并套 CDN"
+const plainTLSNotYetMessage = "普通 TLS 暂未开放；现在请选 REALITY（vless），或不加密并套 CDN"
 
 // ---------------------------------------------------------------------------
 // 地址：REALITY dest 与回落目标都只许指向公网

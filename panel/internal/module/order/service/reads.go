@@ -11,7 +11,6 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
 // 列表分页口径。
@@ -33,7 +32,6 @@ func toRow(o model.Order) OrderRow {
 		UserID:            o.UserID,
 		Kind:              o.Kind,
 		Status:            o.Status,
-		Currency:          money.Currency(o.Currency),
 		Subtotal:          o.SubtotalAmount,
 		Discount:          o.DiscountAmount,
 		ProrationCredit:   o.ProrationCreditAmount,
@@ -66,18 +64,15 @@ func toItem(it model.Item) ItemRow {
 		PriceID:       it.PriceID,
 		PlanID:        it.PlanID,
 		PlanVersionID: it.PlanVersionID,
-		TrafficPackID: it.TrafficPackID,
 		Name:          it.SnapshotName,
 		PlanVersion:   it.SnapshotPlanVersion,
 		Interval:      it.SnapshotInterval,
 		IntervalCount: it.SnapshotIntervalCount,
-		TrafficBytes:  it.SnapshotTrafficBytes,
 		Entitlements:  it.SnapshotEntitlements,
 		Quotas:        it.SnapshotQuotas,
 		Quantity:      it.Quantity,
 		UnitAmount:    it.UnitAmount,
 		LineAmount:    it.LineAmount,
-		Currency:      money.Currency(it.Currency),
 		CreatedAt:     it.CreatedAt,
 	}
 }
@@ -193,7 +188,7 @@ func (e enriched) myView(o model.Order) MyOrderView {
 		v.ItemName = first.SnapshotName
 		v.Interval = first.SnapshotInterval
 		v.IntervalCount = first.SnapshotIntervalCount
-		// 旧接口的 plan_name 是首项快照名（流量包订单即流量包名）
+		// plan_name 取首项快照名
 		name := first.SnapshotName
 		v.PlanName = &name
 	}
@@ -212,6 +207,7 @@ func (e enriched) adminView(o model.Order) AdminOrderView {
 		Manual:       o.CreatedBy != nil,
 		ProviderCode: sum.ProviderCode,
 		ProviderName: sum.ProviderName,
+		Method:       sum.Method,
 	}
 	items := e.items[o.ID]
 	v.ItemCount = len(items)
@@ -299,11 +295,17 @@ func (s *Service) MyOrder(ctx context.Context, id uuid.UUID) (MyOrderDetail, err
 	if err != nil {
 		return MyOrderDetail{}, err
 	}
+	if o.CancelReason != nil && *o.CancelReason == ReasonPlanArchived {
+		for _, it := range hist.Intents {
+			if it.Status == paymentsvc.IntentSucceeded {
+				out.SurchargeKept = out.SurchargeKept.Add(it.Surcharge)
+			}
+		}
+	}
 	for _, p := range hist.Payments {
 		out.Payments = append(out.Payments, PaymentLine{
 			Status:       p.Status,
 			Amount:       p.Amount,
-			Currency:     p.Currency,
 			CreatedAt:    p.PaidAt,
 			Method:       p.Method,
 			ProviderName: p.ProviderName,

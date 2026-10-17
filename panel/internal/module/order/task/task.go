@@ -14,7 +14,7 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
-// TypeExpireReservations 是超时释放任务类型：过了付款期限的待付订单转 expired，并退回库存、限购、优惠券与余额冻结。
+// TypeExpireReservations 是超时释放任务类型：过了付款期限的待付订单转 expired，并退回优惠券与余额冻结。
 const TypeExpireReservations = "order:expire_reservations"
 
 // expireTimeout 是一轮释放的上限（周期 30 秒，留出余量）。

@@ -1,4 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react'
+import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
 import { cx } from './cx'
 import css from './Button.module.css'
 
@@ -8,7 +9,7 @@ import css from './Button.module.css'
 //   outline   强调色描边，门户需要第二个强调时用
 //   secondary 白底描边，最常见的次按钮
 //   ghost     无底无框的弱操作（「稍后支付」）
-//   danger    实心危险色（「吊销身份」「退出」）
+//   danger 危险操作（门户实心红；后台红描边白底，悬停浅红，见角色令牌 --button-danger-*）
 //   link      文字链接样式的按钮（后台「查看详情」）
 // size 对应角色令牌的三档高度：md = --h-control，sm = --h-control-sm，xs = --h-control-xs；
 // dialog 是弹窗底部按钮（门户 36、后台 32），由 Modal / Drawer 的操作区使用。
@@ -23,10 +24,12 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   busy?: boolean
   /** 窄屏弹窗里的按钮通栏 */
   block?: boolean
+  /** 文字前的图标（样稿里「新建」的加号、详情页头操作的图标），15px */
+  icon?: IconSvgElement
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'secondary', size = 'md', busy = false, block = false, disabled, type = 'button', className, children, ...rest },
+  { variant = 'secondary', size = 'md', busy = false, block = false, icon, disabled, type = 'button', className, children, ...rest },
   ref,
 ) {
   return (
@@ -39,7 +42,36 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...rest}
     >
       {busy && <span className={css.spinner} aria-hidden="true" />}
+      {icon && !busy && <HugeiconsIcon icon={icon} size={15} strokeWidth={1.6} aria-hidden="true" />}
       {children}
+    </button>
+  )
+})
+
+export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'aria-label'> {
+  /** 无障碍名称，同时作为悬停提示（title） */
+  label: string
+  icon: IconSvgElement
+  /** md 32（默认）/ sm 28 / xs 24，与 Button 的高度档一致 */
+  size?: 'md' | 'sm' | 'xs'
+  /** 图标像素，默认 16 */
+  iconSize?: number
+}
+
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
+  { label, icon, size = 'md', iconSize = 16, type = 'button', className, title, ...rest },
+  ref,
+) {
+  return (
+    <button
+      ref={ref}
+      type={type}
+      aria-label={label}
+      title={title ?? label}
+      className={cx(css.button, css[size], css.icon, className)}
+      {...rest}
+    >
+      <HugeiconsIcon icon={icon} size={iconSize} strokeWidth={1.6} aria-hidden="true" />
     </button>
   )
 })

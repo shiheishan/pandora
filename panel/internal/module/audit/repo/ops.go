@@ -2,12 +2,12 @@ package repo
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // AccessFilter 是访问明细审计侧的筛选。
@@ -66,22 +66,21 @@ type ClusterRow struct {
 
 // RegisteredIPEnc 取用户注册那条审计（本人为操作者）的来源 IP 密文；没有为 nil。
 func (r *Repo) RegisteredIPEnc(ctx context.Context, userID uuid.UUID) ([]byte, error) {
-	var enc []byte
-	// 单列 bytea 用 Row().Scan：GORM 的 Scan 不认 *[]byte，会当成字节切片逐行填
-	err := r.d.Conn(ctx).Raw(`
+	// bytea 单列扫进结构体字段；没有行时 RowsAffected 为 0
+	var row struct {
+		IPEnc []byte `gorm:"column:ip_enc"`
+	}
+	res := r.d.Conn(ctx).Raw(`
 		SELECT ip_enc FROM audit_events
 		 WHERE action = 'user.registered' AND actor_id = ? AND ip_enc IS NOT NULL
-		 ORDER BY occurred_at, id LIMIT 1`, userID).Row().Scan(&enc)
-	if errors.Is(err, sql.ErrNoRows) {
+		 ORDER BY occurred_at, id LIMIT 1`, userID).Scan(&row)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 || len(row.IPEnc) == 0 {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	if len(enc) == 0 {
-		return nil, nil
-	}
-	return enc, nil
+	return row.IPEnc, nil
 }
 
 // ActorEvents 取用户作为操作者的最近审计。
@@ -152,7 +151,7 @@ func (r *Repo) AccessEvents(ctx context.Context, f AccessFilter) ([]AccessRow, e
 		args := make([]any, len(f.Include))
 		for i, p := range f.Include {
 			parts[i] = "action LIKE ? ESCAPE '\\'"
-			args[i] = escapeLike(p) + "%"
+			args[i] = db.EscapeLike(p) + "%"
 		}
 		tx = tx.Where("("+strings.Join(parts, " OR ")+")", args...)
 	}
@@ -161,7 +160,7 @@ func (r *Repo) AccessEvents(ctx context.Context, f AccessFilter) ([]AccessRow, e
 		args := make([]any, len(f.Exclude))
 		for i, p := range f.Exclude {
 			parts[i] = "action LIKE ? ESCAPE '\\'"
-			args[i] = escapeLike(p) + "%"
+			args[i] = db.EscapeLike(p) + "%"
 		}
 		tx = tx.Where("NOT ("+strings.Join(parts, " OR ")+")", args...)
 	}

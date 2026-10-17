@@ -274,6 +274,42 @@ func TestContentSearchPG(t *testing.T) {
 	}
 }
 
+// 没有在用套餐的用户搜不到 access 区块里的文字（防逐段试探）；有套餐的照常能搜到；列表都不带正文。
+func TestContentSearchHidesAccessBlockPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	admin := newUser(t, e, ctx)
+	plain := newUser(t, e, ctx)
+	member := newUser(t, e, ctx)
+	e.subs.byUser[member] = []uuid.UUID{uuid.New()}
+	actx := adminCtx(ctx, admin)
+
+	open := "openneedle" + randHex(4)
+	secret := "secretneedle" + randHex(4)
+	if _, err := e.svc.PublishVersion(actx, PublishInput{
+		Slug: "gated-" + randHex(8), Title: "区块搜索", Status: StatusPublished, ExpectedLatestVersion: 0,
+		Body: "公开部分 " + open + "\n<!-- access start -->\n节点口令 " + secret + "\n<!-- access end -->\n结尾",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f := func(q string) VisibleFilter {
+		return VisibleFilter{Query: q, Platform: "web", ClientVersion: "1.0.0", Locale: "zh-CN"}
+	}
+
+	hit, err := e.svc.ListVisible(userCtx(ctx, plain), plain, f(secret))
+	if err != nil || len(hit) != 0 {
+		t.Fatalf("没有套餐不应搜到区块内文字: %+v err=%v", hit, err)
+	}
+	hit, err = e.svc.ListVisible(userCtx(ctx, plain), plain, f(open))
+	if err != nil || len(hit) != 1 || hit[0].Body != "" {
+		t.Fatalf("没有套餐应能搜到公开部分且不带正文: %+v err=%v", hit, err)
+	}
+	hit, err = e.svc.ListVisible(userCtx(ctx, member), member, f(secret))
+	if err != nil || len(hit) != 1 || hit[0].Body != "" {
+		t.Fatalf("有套餐应能搜到区块内文字且不带正文: %+v err=%v", hit, err)
+	}
+}
+
 func TestContentAdminAuthorPG(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()

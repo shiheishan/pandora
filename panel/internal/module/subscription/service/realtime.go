@@ -8,12 +8,11 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
-// 实时事件里的表名，与前端 EventsCapsule 认的一致；三张表都走 subscriptions.changed。
+// 实时事件里的表名，与前端 EventsCapsule 认的一致；两张表都走 subscriptions.changed。
 // 扣量、配额余额、按日用量、拉取日志与最近拉取时间是高频写，不推。
 const (
 	tableSubscriptions = "subscriptions"
 	tableCredentials   = "subscription_credentials"
-	tablePackGrants    = "traffic_pack_grants"
 )
 
 // UseRealtime 注入实时推送；只在启动装配时调用（不并发安全）。

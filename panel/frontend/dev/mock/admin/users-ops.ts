@@ -90,7 +90,7 @@ function matcher(store: UsersStore, f: Filter) {
   const now = Date.now()
   const q = f.query.trim().toLowerCase()
   return (u: User) => {
-    if (u.status === 'anonymized') return false
+    if (u.status === 'anonymized' || u.status === 'deleted') return false
     if (f.status && u.status !== f.status) return false
     if (f.group_id && u.group_id !== f.group_id) return false
     if (q && !u.email.toLowerCase().includes(q)) return false
@@ -115,64 +115,9 @@ function csvLine(cells: readonly string[]): string {
 const goTime = (iso: string) => iso.slice(0, 16).replace('T', ' ')
 
 // ---------------------------------------------------------------------------
-// 流量重置日志：确定性种子，user_id 只在内部用来按人筛
-// ---------------------------------------------------------------------------
-const REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change'] as const
-type Reason = (typeof REASONS)[number]
-
-interface ResetLog {
-  id: string
-  user_id: string
-  user_email: string
-  plan_name: string
-  reason: Reason
-  consumed_before: number
-  actor_email: string
-  note: string
-  created_at: string
-}
-
-/** 响应形状：plan_name / actor_email / note 是 omitempty，空时整键省略 */
-function logView(l: ResetLog) {
-  return {
-    id: l.id,
-    user_email: l.user_email,
-    ...(l.plan_name ? { plan_name: l.plan_name } : {}),
-    metric: 'traffic.bytes',
-    reason: l.reason,
-    consumed_before: l.consumed_before,
-    ...(l.actor_email ? { actor_email: l.actor_email } : {}),
-    ...(l.note ? { note: l.note } : {}),
-    created_at: l.created_at,
-  }
-}
-
-function seedLogs(users: readonly User[]): ResetLog[] {
-  const order: Reason[] = ['renewal', 'cycle_roll', 'renewal', 'manual', 'gift_card', 'cycle_roll', 'plan_change']
-  const out: ResetLog[] = []
-  for (let i = 0; i < 72; i++) {
-    const u = users[(i * 7) % users.length]!
-    const sub = u.subs[0]
-    const reason = order[i % order.length]!
-    out.push({
-      id: randomUUID(),
-      user_id: u.id,
-      user_email: u.email,
-      plan_name: sub?.plan_name ?? '',
-      reason,
-      consumed_before: (((i * 37) % 480) + 12) * GiB + ((i * 7919) % 1000) * 1024 ** 2,
-      actor_email: reason === 'manual' ? (i % 2 ? 'admin@pandora.dev' : 'zhou.min@pandora.dev') : '',
-      note: reason === 'manual' ? `工单 #${4700 + i} 用户申诉，补偿断线时长` : '',
-      created_at: new Date(Date.now() - i * 0.85 * DAY - ((i * 13) % 24) * 3_600_000).toISOString(),
-    })
-  }
-  return out
-}
-
-// ---------------------------------------------------------------------------
 // 路由
 // ---------------------------------------------------------------------------
-// 批量生成任务（adminops.UserGenerationJob）：进度按时间往前走，结果 24 小时后清除
+// 批量生成任务（identity/model UserGenerationJob）：进度按时间往前走，结果 24 小时后清除
 interface GenerationJob {
   id: string
   actor_id: string
@@ -216,7 +161,6 @@ function jobView(j: GenerationJob) {
 export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
   const { users, groups } = store
   const generationJobs: GenerationJob[] = []
-  const logs = seedLogs(users)
   // window_minutes：R103 设备识别窗口（5 / 10 / 30 / 60，缺省 5）
   const device = { mode: 'loose' as 'loose' | 'strict', grace: 1, window_minutes: 5 }
 
@@ -241,7 +185,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       const code = (typeof body.code === 'string' ? body.code.trim() : '') || slug(name)
       if (groups.some((g) => g.code === code)) return ctx.fail(409, 'conflict', '这个分组标识已存在')
       const id = randomUUID()
-      groups.push({ id, code, name, description: typeof body.description === 'string' ? body.description : '', plans: 0, prices: 0, coupons: 0 })
+      groups.push({ id, code, name, description: typeof body.description === 'string' ? body.description : '', status: 'active', plans: 0, coupons: 0 })
       ctx.send(200, { id })
     },
 
@@ -260,7 +204,20 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.send(200, { id: g.id })
     },
 
-    // 删除：成员、套餐可见性、专属价格、优惠券限定任一不为 0 都回 409，message 写明是哪一种
+    // 启停：无 reauth、无幂等；停用只挡新成员
+    'POST /v1/user-groups/:id/status': async (ctx) => {
+      const body = await ctx.body()
+      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      const extra = unknownField(body, ['disabled'])
+      if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+      if (typeof body.disabled !== 'boolean') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { disabled: '必填' })
+      const g = groups.find((x) => x.id === ctx.params.id)
+      if (!g) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
+      g.status = body.disabled ? 'disabled' : 'active'
+      ctx.send(200, { ok: true })
+    },
+
+    // 删除：节点池名单、成员、套餐可见性、优惠券限定任一不为 0 回 409；专属价没卖过的随组删除，卖过的回 409（提示改用停用）
     'DELETE /v1/user-groups/:id': (ctx) => {
       const k = groups.findIndex((x) => x.id === ctx.params.id)
       if (k < 0) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
@@ -270,7 +227,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       if (pool) return ctx.fail(409, 'conflict', `节点池「${pool.name}」限定了这个分组，先在节点池里把它移出名单再删`)
       if (users.some((u) => u.group_id === g.id)) return ctx.fail(409, 'conflict', '这个分组下还有用户，先把他们移出去')
       if (g.plans > 0) return ctx.fail(409, 'conflict', '还有套餐按这个分组控制可见性，先解除')
-      if (g.prices > 0) return ctx.fail(409, 'conflict', '还有分组专属价格挂在这里，先删掉那些价格')
       if (g.coupons > 0) return ctx.fail(409, 'conflict', '还有优惠券限定了这个分组，先解除')
       groups.splice(k, 1)
       ctx.send(200, { ok: true })
@@ -327,8 +283,8 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text, headers: { 'Content-Disposition': 'attachment; filename="users.csv"' } })
     },
 
-    // 批量生成：reauth（R9）+ 幂等 user_bulk_generate。是后台任务（adminops
-    // SubmitGenerateUsers）：回 202 与任务；账号在这里一次建好，进度按时间往前走（每 60ms 一个）
+    // 批量生成：reauth（R9）+ 幂等 user_bulk_generate。是后台任务（identity/service
+    // SubmitGeneration）：回 202 与任务；账号在这里一次建好，进度按时间往前走（每 60ms 一个）
     'POST /v1/users/bulk/generate': async (ctx) => {
       if (!ctx.requireReauth()) return
       const body = await ctx.body()
@@ -348,6 +304,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         if (runes(reason) < 5 || runes(reason) > 500) return invalid({ reason: '请写清生成原因，5 到 500 个字' })
         if (groupId && !UUID.test(groupId)) return invalid({ group_id: '分组标识格式不正确' })
         if (groupId && !groups.some((g) => g.id === groupId)) return invalid({ group_id: '分组不存在' })
+        if (groupId && groups.find((g) => g.id === groupId)!.status === 'disabled') return invalid({ group_id: '分组已停用' })
         const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789'
         const pick = (n: number, from: string) => Array.from({ length: n }, () => from[randomInt(from.length)]).join('')
         const made: Array<{ email: string; password: string }> = []
@@ -368,7 +325,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
             balance: 0,
             currency: 'CNY',
             subs: [],
-            unattached_bytes: 0,
             referrer: null,
             telegram: null,
             is_admin: false,
@@ -432,10 +388,68 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       })
     },
 
+    // 批量封禁：reauth + 幂等 user_bulk_ban
+    'POST /v1/users/bulk/ban': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      await ctx.idempotent('user_bulk_ban', () => {
+        if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
+        const extra = unknownField(body, [...FILTER_KEYS, 'expected_total', 'reason'])
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        const f = filterFromBody(body)
+        const bad = filterProblem(f)
+        if (bad) return bad
+
+        // 没有任何筛选条件 422 fields.filter
+        const hasCondition = Boolean(f.status || f.group_id || f.query || f.has_active_sub !== null || f.plan_id || f.expires_within_days > 0 || f.sub_state)
+        if (!hasCondition) {
+          return err(422, 'validation_failed', '请求参数校验未通过', { filter: '批量封禁至少要选一个筛选条件' })
+        }
+
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+        if (runes(reason) < 5 || runes(reason) > 500) {
+          return err(422, 'validation_failed', '请求参数校验未通过', { reason: '请写清原因，5 到 500 个字' })
+        }
+
+        const expectedTotal = typeof body.expected_total === 'number' ? body.expected_total : null
+        const hits = users.filter(matcher(store, f))
+
+        if (expectedTotal === null || hits.length !== expectedTotal) {
+          return err(409, 'conflict', `命中人数变了（预览时 ${expectedTotal ?? 0} 人，现在 ${hits.length} 人），请重新预览`)
+        }
+        if (expectedTotal > 500) {
+          return err(422, 'validation_failed', '请求参数校验未通过', { expected_total: '一次最多封禁 500 人，请收窄条件' })
+        }
+
+        let banned = 0
+        const skipped: Record<string, number> = {}
+        const inc = (key: string) => {
+          skipped[key] = (skipped[key] ?? 0) + 1
+        }
+
+        for (const u of hits) {
+          if (u.id === ctx.user.userId) {
+            inc('self')
+          } else if (u.is_admin) {
+            inc('admin')
+          } else if (u.status === 'banned') {
+            inc('already_banned')
+          } else if (u.status === 'deleted') {
+            inc('deleted')
+          } else {
+            u.status = 'banned'
+            banned++
+          }
+        }
+
+        return { status: 200, body: { banned, skipped } }
+      })
+    },
+
     // ---- 设备策略 -----------------------------------------------------------
     'GET /v1/devices': (ctx) => {
       const rows = users
-        .flatMap((u) => u.subs.filter((s) => s.status === 'active' || s.status === 'trialing' || s.status === 'grace').map((s) => ({ u, s })))
+        .flatMap((u) => u.subs.filter((s) => s.status === 'active').map((s) => ({ u, s })))
         .sort((a, b) => b.s.online_devices - a.s.online_devices || b.s.created_at.localeCompare(a.s.created_at))
         .slice(0, 200)
         .map(({ u, s }, k) => {
@@ -474,39 +488,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.send(200, { ok: true })
     },
 
-    // ---- 流量重置 -----------------------------------------------------------
-    'GET /v1/traffic-resets': (ctx) => {
-      const reason = ctx.query.get('reason') ?? ''
-      const userId = ctx.query.get('user_id') ?? ''
-      if (reason && !REASONS.includes(reason as Reason)) return ctx.fail(400, 'bad_request', '不支持的重置原因')
-      if (userId && !UUID.test(userId)) return ctx.fail(400, 'bad_request', '用户标识格式不正确')
-      let limit = Number.parseInt(ctx.query.get('limit') ?? '', 10)
-      if (!(limit > 0 && limit <= 200)) limit = 50
-      const offset = Math.max(0, Number.parseInt(ctx.query.get('offset') ?? '', 10) || 0)
-      const hits = logs.filter((l) => (!reason || l.reason === reason) && (!userId || l.user_id === userId))
-      ctx.send(200, { logs: hits.slice(offset, offset + limit).map(logView), total: hits.length })
-    },
-
-    'GET /v1/traffic-resets/stats': (ctx) => {
-      const since = Date.now() - 30 * DAY
-      const recent = logs.filter((l) => Date.parse(l.created_at) > since)
-      const byReason: Partial<Record<Reason, number>> = {}
-      for (const l of recent) byReason[l.reason] = (byReason[l.reason] ?? 0) + 1
-      ctx.send(200, {
-        last_30_days: recent.length,
-        by_reason: byReason,
-        freed_bytes: recent.reduce((sum, l) => sum + l.consumed_before, 0),
-        manual_count: byReason.manual ?? 0,
-      })
-    },
-
-    // 单用户历史：固定最近 50 条，不接受分页
-    'GET /v1/users/:id/traffic-resets': (ctx) => {
-      if (!UUID.test(ctx.params.id!)) return ctx.fail(400, 'bad_request', '用户标识格式不正确')
-      const hits = logs.filter((l) => l.user_id === ctx.params.id)
-      ctx.send(200, { logs: hits.slice(0, 50).map(logView), total: hits.length })
-    },
-
     // 手动重置（按份）：reauth + 幂等 traffic_manual_reset；
     // path 是订阅 id，只清这一份的本期已用，且这一份必须 status=active（试用不行）
     'POST /v1/subscriptions/:id/traffic-reset': async (ctx) => {
@@ -525,17 +506,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         if (sub.status !== 'active') return err(422, 'validation_failed', '这份订阅没有在生效中，不能重置流量')
         const freed = sub.traffic_used
         sub.traffic_used = 0
-        logs.unshift({
-          id: randomUUID(),
-          user_id: u.id,
-          user_email: u.email,
-          plan_name: sub.plan_name,
-          reason: 'manual',
-          consumed_before: freed,
-          actor_email: ctx.user.email,
-          note,
-          created_at: new Date().toISOString(),
-        })
         return { status: 200, body: { reset: true, freed_bytes: freed } }
       })
     },
@@ -566,8 +536,8 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         return { status: 200, body: { subscription_id: sub.id, user_email: owner.email, days, previous_end: previous, period_end: end } }
       })
     },
-    // 加流量包：reauth + 幂等 subscription_admin_traffic_grant；
-    // 流量包挂在这一份订阅上（billing.GrantTrafficPackAsAdmin），回执里的剩余量是这一份的余量
+    // 加流量：reauth + 幂等 subscription_admin_traffic_grant；
+    // 送的量订阅套餐加到本周期上限、一次性加到总量上；回执里的 bonus_bytes 是加完后这一份本期送的量合计
     'POST /v1/subscriptions/:id/traffic-pack': async (ctx) => {
       if (!ctx.requireReauth()) return
       const body = await ctx.body()
@@ -584,10 +554,20 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         const owner = UUID.test(ctx.params.id!) ? users.find((u) => u.subs.some((s) => s.id === ctx.params.id)) : undefined
         const sub = owner?.subs.find((s) => s.id === ctx.params.id)
         if (!owner || !sub) return err(404, 'not_found', '资源不存在或无权访问')
-        sub.pack_bytes += bytes
+        if (sub.status !== 'active') return err(422, 'validation_failed', '这一份订阅不在生效中')
+        if (sub.traffic_limit !== null) {
+          sub.traffic_limit += bytes
+        }
+        sub.bonus_bytes = (sub.bonus_bytes ?? 0) + bytes
         return {
           status: 200,
-          body: { subscription_id: sub.id, user_id: owner.id, user_email: owner.email, grant_id: randomUUID(), granted_bytes: bytes, remaining_bytes_total: sub.pack_bytes },
+          body: {
+            subscription_id: sub.id,
+            user_id: owner.id,
+            user_email: owner.email,
+            granted_bytes: bytes,
+            bonus_bytes: sub.bonus_bytes,
+          },
         }
       })
     },

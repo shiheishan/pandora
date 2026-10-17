@@ -35,7 +35,7 @@ interface Row {
   sla_resolution_due: string
   first_responded_at: string | null
   escalated_at: string | null
-  closed_reason: 'user_closed' | 'withdrawn' | 'agent_closed' | null
+  closed_reason: 'user_closed' | 'withdrawn' | 'agent_closed' | 'auto_closed' | null
   /** 用户建单时关联的订单（related_order_id）；详情联表出 { id, order_no } */
   related_order_id: string | null
   messages: Msg[]
@@ -50,9 +50,9 @@ const AGENT_SETTABLE = new Set(['resolved', 'closed', 'escalated', 'pending_agen
 
 /** 固定的另外三位客服；当前登录的管理员也会出现在可指派目录里 */
 const STAFF = [
-  { id: '0b6f1c2a-1111-4a00-8000-000000000001', email: 'zhoumin@pandora.dev', display_name: '周敏' },
-  { id: '0b6f1c2a-1111-4a00-8000-000000000002', email: 'tangyiming@pandora.dev', display_name: '唐一鸣' },
-  { id: '0b6f1c2a-1111-4a00-8000-000000000003', email: 'night-shift@pandora.dev' },
+  { id: '0b6f1c2a-1111-4a00-8000-000000000001', email: 'zhoumin@example.test', display_name: '周敏' },
+  { id: '0b6f1c2a-1111-4a00-8000-000000000002', email: 'tangyiming@example.test', display_name: '唐一鸣' },
+  { id: '0b6f1c2a-1111-4a00-8000-000000000003', email: 'night-shift@example.test' },
 ] as const
 
 function msg(kind: Msg['author_kind'], name: string | null, body: string, minutesAgo: number, internal = false): Msg {
@@ -155,6 +155,23 @@ const rows: Row[] = [
   seed(4801, '误提交，已自己解决', 'mira@gmail.com', '标准版', 'general', 'low', 'closed', 50 * 60, [msg('user', null, '不好意思，已经可以用了。', 50 * 60), msg('system', null, '用户撤回了工单', 49 * 60)], {
     closed_reason: 'withdrawn',
   }),
+  // support:auto_close：客服回复后用户 24 小时没动静，系统自动关闭
+  seed(
+    4800,
+    '换设备后如何迁移订阅',
+    'kai@example.com',
+    '标准版',
+    'subscription',
+    'low',
+    'closed',
+    55 * 60,
+    [
+      msg('user', null, '新手机上要重新导入订阅吗？旧手机还能继续用吗？', 55 * 60),
+      msg('agent', '林舟', '在新设备上复制订阅链接导入即可，旧设备不受影响。', 54 * 60),
+      msg('system', null, '客服回复后 24 小时内没有新的回复，工单已自动关闭；如还有问题请新建工单', 30 * 60),
+    ],
+    { closed_reason: 'auto_closed' },
+  ),
 ]
 
 // R114：4818（付款后仍待支付）关联一张待支付订单，详情头能看到「关联订单」
@@ -175,10 +192,21 @@ for (let i = 0; i < 26; i++) {
   )
 }
 
+// 设计稿给了 13 条快捷回复，撑起「前 4 个 + 全部 N」浮层
 let macros = [
   { id: randomUUID(), title: '线路排查', body: '您好，我们已记录该线路问题，请提供本地运营商与测速截图，我们会在 2 小时内反馈。', sort_order: 10, created_at: at(900), updated_at: at(900) },
-  { id: randomUUID(), title: '重新导入', body: '请在门户「我的订阅」中复制最新订阅地址，删除旧配置后重新导入。', sort_order: 20, created_at: at(800), updated_at: at(800) },
+  { id: randomUUID(), title: '重新导入', body: '请在用户端「我的订阅」中复制最新订阅地址，删除旧配置后重新导入。', sort_order: 20, created_at: at(800), updated_at: at(800) },
   { id: randomUUID(), title: '已退款', body: '款项已原路退回，预计 1–3 个工作日到账。', sort_order: 30, created_at: at(700), updated_at: at(700) },
+  { id: randomUUID(), title: '流量已重置', body: '已为您重置本期流量，重新连接即可生效。', sort_order: 40, created_at: at(600), updated_at: at(600) },
+  { id: randomUUID(), title: '设备数超限', body: '您的套餐最多同时在线 3 台设备，请在用户端「设备管理」里下线旧设备。', sort_order: 50, created_at: at(590), updated_at: at(590) },
+  { id: randomUUID(), title: '客户端推荐', body: '推荐 iOS 用 Stash、Android 用 Clash Meta、Windows 用 Clash Verge。', sort_order: 60, created_at: at(580), updated_at: at(580) },
+  { id: randomUUID(), title: '续费指引', body: '在用户端「套餐」里选择当前套餐点「续费」，剩余时长会自动叠加。', sort_order: 70, created_at: at(570), updated_at: at(570) },
+  { id: randomUUID(), title: '发票申请', body: '请提供抬头与税号，我们会在 3 个工作日内开具并发送到邮箱。', sort_order: 80, created_at: at(560), updated_at: at(560) },
+  { id: randomUUID(), title: '节点维护中', body: '该节点正在维护，预计 30 分钟内恢复，请先切换到同地区其他节点。', sort_order: 90, created_at: at(550), updated_at: at(550) },
+  { id: randomUUID(), title: '修改邮箱', body: '出于安全考虑，请用旧邮箱发信说明新邮箱地址，我们核实后为您修改。', sort_order: 100, created_at: at(540), updated_at: at(540) },
+  { id: randomUUID(), title: '已转技术', body: '已转交技术同事处理，有进展会第一时间回复您。', sort_order: 110, created_at: at(530), updated_at: at(530) },
+  { id: randomUUID(), title: '请补充日志', body: '请在客户端「日志」页导出最近 10 分钟的日志并附在回复里。', sort_order: 120, created_at: at(520), updated_at: at(520) },
+  { id: randomUUID(), title: '感谢反馈', body: '感谢您的反馈，已记录在改进计划中。', sort_order: 130, created_at: at(510), updated_at: at(510) },
 ]
 
 // ---------------------------------------------------------------------------
@@ -231,7 +259,7 @@ function view(t: Row, assignees: ReadonlyArray<{ id: string; email: string }>, d
     if (t.user_active_plan) out.user_active_plan = t.user_active_plan
     out.messages = t.messages.map((m) => ({ id: m.id, author_kind: m.author_kind, author_name: m.author_name, body: m.body, ...(m.internal_note ? { internal_note: true } : {}), created_at: m.created_at }))
   } else {
-    const last = [...t.messages].reverse().find((m) => !m.internal_note)
+    const last = [...t.messages].reverse().find((m) => !m.internal_note && m.author_kind !== 'system')
     if (last) out.last_message_author_kind = last.author_kind
   }
   return out
@@ -250,13 +278,46 @@ function envelope(code: string, message: string, fields?: Record<string, string>
   return { error: { code, message, ...(fields ? { fields } : {}) } }
 }
 
+/** 全部工单 id（实时事件模拟取真实行用，见 events.ts） */
+export const ticketIds = () => rows.map((r) => r.id)
+
 const notFound: MockResult = { status: 404, body: envelope('not_found', '工单不存在') }
 const touch = (t: Row) => {
   t.updated_at = new Date().toISOString()
 }
 
+const supportSettings = { wait_for_reply: false, auto_close_enabled: false, auto_close_hours: 24 }
+
+async function saveSupportSettings(ctx: MockContext): Promise<MockResult> {
+  const body = await ctx.body()
+  if (!body) return { status: 400, body: envelope('bad_request', '请求体不是合法的 JSON') }
+  const unknown = Object.keys(body).filter((k) => !['wait_for_reply', 'auto_close_enabled', 'auto_close_hours'].includes(k))
+  if (unknown.length) return { status: 400, body: envelope('bad_request', `未知字段：${unknown.join(', ')}`) }
+  const fields: Record<string, string> = {}
+  if (typeof body.wait_for_reply !== 'boolean') fields.wait_for_reply = '必填'
+  if (typeof body.auto_close_enabled !== 'boolean') fields.auto_close_enabled = '必填'
+  if (typeof body.auto_close_hours !== 'number' || !Number.isInteger(body.auto_close_hours)) fields.auto_close_hours = '必填'
+  else if (body.auto_close_hours < 1 || body.auto_close_hours > 720) fields.auto_close_hours = '自动关闭时长要在 1 到 720 小时之间'
+  if (Object.keys(fields).length) return { status: 422, body: envelope('validation_failed', '请求参数校验未通过', fields) }
+  Object.assign(supportSettings, {
+    wait_for_reply: body.wait_for_reply === true,
+    auto_close_enabled: body.auto_close_enabled === true,
+    auto_close_hours: body.auto_close_hours as number,
+  })
+  return { status: 200, body: { ...supportSettings } }
+}
+
 export const tickets: MockModule = {
   routes: {
+    'GET /v1/settings/support': (ctx) => {
+      ctx.send(200, { ...supportSettings })
+    },
+    'POST /v1/settings/support': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const r = await saveSupportSettings(ctx)
+      ctx.send(r.status, r.body)
+    },
+
     'GET /v1/tickets/assignees': (ctx) => {
       ctx.send(200, { assignees: assigneesFor(ctx) })
     },

@@ -6,7 +6,7 @@ import { useMemo, useSyncExternalStore } from 'react'
 // 所以页面地址全部在 # 之后：#/orders?status=paid、#/quick-login/<token>。
 // 真相在 location.hash 上，不另存 React 状态。
 // ---------------------------------------------------------------------------
-export interface HashLocation {
+interface HashLocation {
   /** 以 / 开头、无尾斜杠（根除外）的路径，如 /users/abc。 */
   path: string
   query: URLSearchParams

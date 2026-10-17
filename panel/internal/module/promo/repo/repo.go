@@ -3,10 +3,8 @@ package repo
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -24,39 +22,19 @@ var ErrDuplicate = errors.New("promo: 唯一约束冲突")
 // ErrForeignKey 表示外键约束冲突。
 var ErrForeignKey = errors.New("promo: 外键约束冲突")
 
-// mapErr 把 GORM 翻译后的约束错误转成模块哨兵。
-func mapErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return ErrDuplicate
-	}
-	if errors.Is(err, gorm.ErrForeignKeyViolated) {
-		return ErrForeignKey
-	}
-	return err
+// ErrPlanGone 表示限定的套餐在写入 coupon_plans 时已不存在（coupon_plans_plan_id_fkey）。
+var ErrPlanGone = errors.New("promo: 限定的套餐不存在（coupon_plans 外键）")
+
+const fkCouponPlansPlan = "coupon_plans_plan_id_fkey"
+
+// constraintErrs 把约束违例翻译成本模块哨兵：coupon_plans 的套餐外键单独报 ErrPlanGone，其余外键报 ErrForeignKey。
+var constraintErrs = db.ConstraintErrors{
+	ByCode: map[string]error{db.CodeUnique: ErrDuplicate, db.CodeForeignKey: ErrForeignKey},
+	ByName: map[string]error{fkCouponPlansPlan: ErrPlanGone},
 }
 
-// likePattern 把用户输入转成 ILIKE 的包含模式：先转义 \ % _，再两头加 %。
-func likePattern(q string) string {
-	return "%" + escapeLike(q) + "%"
-}
-
-// escapeLike 为 ILIKE/LIKE 转义 \、%、_。
-func escapeLike(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '\\', '%', '_':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
+// mapErr 把约束违例翻译成本模块哨兵，并包住原错误。
+func mapErr(err error) error { return constraintErrs.Map(err) }
 
 // checkMoney 在写入前校验金额最多 2 位小数。
 func checkMoney(vals ...decimal.Decimal) error {

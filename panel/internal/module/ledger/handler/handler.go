@@ -28,7 +28,7 @@ type Handler struct{ svc Service }
 // New 构造 Handler。
 func New(svc Service) *Handler { return &Handler{svc: svc} }
 
-// AdjustIdempotencyScope 是后台人工调账的幂等作用域（与旧接口相同）。
+// AdjustIdempotencyScope 是后台人工调账的幂等作用域。
 const AdjustIdempotencyScope = "admin_user_balance_adjust"
 
 // RegisterPublic 注册门户路由。
@@ -67,9 +67,8 @@ func (h *Handler) myBalance(c *gin.Context) {
 		})
 	}
 	httpx.OK(c, myBalanceResponse{
-		Balance:  bal,
-		Currency: string(w.Currency),
-		History:  hist,
+		Balance: bal,
+		History: hist,
 	})
 }
 
@@ -85,10 +84,9 @@ func (h *Handler) adjustBalance(c *gin.Context) {
 		return
 	}
 	res, err := h.svc.AdjustBalance(c.Request.Context(), service.Adjustment{
-		UserID:   id,
-		Amount:   money.FromCents(req.Amount),
-		Currency: req.Currency,
-		Reason:   req.Reason,
+		UserID: id,
+		Amount: money.FromCents(req.Amount),
+		Reason: req.Reason,
 	})
 	if err != nil {
 		httpx.Fail(c, err)

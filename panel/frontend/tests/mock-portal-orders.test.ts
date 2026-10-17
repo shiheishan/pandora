@@ -3,7 +3,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
-interface Plan { id: string; prices: Array<{ id: string; currency: string }> }
+interface Plan { id: string; prices: Array<{ id: string }> }
+// 默认场景手上只有专业版：买标准版不撞同款
+const STD_PLAN = '6f1c2a10-0000-4000-8000-000000000001'
 interface Queried { order_id: string; order_no: string; provider_code: string; channel_status: string; reconciled: boolean; already_recorded: boolean; order_status: string }
 const FIELDS = ['order_id', 'order_no', 'provider_code', 'channel_status', 'reconciled', 'already_recorded', 'order_status']
 async function queried(res: Response): Promise<Queried> {
@@ -27,8 +29,8 @@ describe('mock api · portal order query', () => {
 
   it('answers unpaid, then reconciles a payment whose callback was lost', async () => {
     const plans = ((await (await mockFetch(base, auth, 'GET', '/v1/plans')).json()) as { plans: Plan[] }).plans
-    const plan = plans.find((p) => p.prices.some((x) => x.currency === 'CNY'))!
-    const placed = await mockFetch(base, auth, 'POST', '/v1/orders', { plan_id: plan.id, price_id: plan.prices.find((x) => x.currency === 'CNY')!.id }, 'pq-order-1')
+    const plan = plans.find((p) => p.id === STD_PLAN)!
+    const placed = await mockFetch(base, auth, 'POST', '/v1/orders', { plan_id: plan.id, price_id: plan.prices[0]!.id }, 'pq-order-1')
     expect(placed.status).toBe(201)
     const { order_id } = (await placed.json()) as { order_id: string }
 
@@ -69,10 +71,11 @@ describe('mock api · portal order query', () => {
   it('hides other orders and rate-limits per account', async () => {
     expect((await query('not-a-uuid')).status).toBe(404)
     expect((await query('00000000-0000-4000-8000-000000000000')).status).toBe(404)
-    // 每账号每分钟 6 次（404 前置拒绝不计）：连查 7 次一定撞上 429，此前是种子处理中单的 503（发起过支付、假渠道查不到）
-    const { orders } = (await (await mockFetch(base, auth, 'GET', '/v1/orders?status=processing')).json()) as { orders: Array<{ id: string; has_payment_intent: boolean }> }
-    expect(orders[0]!.has_payment_intent).toBe(true)
-    const target = orders[0]!.id
+    // 每账号每分钟 6 次（404 前置拒绝不计）：连查 7 次一定撞上 429，此前是种子里已发起支付的待支付充值单的 503（发起过支付、假渠道查不到）
+    const { orders } = (await (await mockFetch(base, auth, 'GET', '/v1/orders?status=pending_payment')).json()) as { orders: Array<{ id: string; kind: string; has_payment_intent: boolean }> }
+    const hit = orders.find((o) => o.kind === 'topup' && o.has_payment_intent)
+    expect(hit).toBeDefined()
+    const target = hit!.id
     const statuses: number[] = []
     let limited: Response | undefined
     for (let i = 0; i < 7 && !limited; i++) {

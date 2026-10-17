@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -15,7 +14,7 @@ const (
 	StatusExpired = "expired"
 )
 
-// RenewalWindow 是过期后还能原地续费、延期救回的窗口：过期满 30 天由过期扫描（P4）写 renewal_closed_at 关窗。
+// RenewalWindow 是过期后还能原地续费、延期救回的窗口：过期满 30 天由过期扫描写 renewal_closed_at 关窗。
 const RenewalWindow = 30 * 24 * time.Hour
 
 // 事件与流水上的操作者种类。
@@ -37,6 +36,10 @@ const (
 	EventRenewalClosed = "renewal_closed"
 	// EventLinkRotated 是换订阅链接（旧凭据吊销、签新凭据、节点身份一起换）；状态不变
 	EventLinkRotated = "link_rotated"
+	// EventPeriodEndSet 是后台直接改到期时间；状态不变
+	EventPeriodEndSet = "period_end_set"
+	// EventQuotaLimitSet 是后台改一行配额的当期上限；状态不变
+	EventQuotaLimitSet = "quota_limit_set"
 )
 
 // 流量重置原因。
@@ -46,13 +49,14 @@ const (
 	ResetManual     = "manual"
 	ResetGiftCard   = "gift_card"
 	ResetPlanChange = "plan_change"
+	// ResetOrder 是用户自己买的流量重置（order 模块结算履约时调 ResetTraffic）
+	ResetOrder = "order"
 )
 
-// 流量包余额来源。
+// 送流量的来源（GrantBonus）。
 const (
-	PackSourceOrder    = "order"
-	PackSourceGiftCard = "gift_card"
-	PackSourceAdmin    = "admin"
+	BonusGiftCard = "gift_card"
+	BonusAdmin    = "admin"
 )
 
 // 延期来源（写进 extended 事件）。
@@ -70,14 +74,13 @@ const (
 	MetricTraffic = "traffic.bytes"
 )
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionExtended           = "subscription.extended"
 	ActionTrafficGranted     = "subscription.traffic_granted"
 	ActionManualReset        = "traffic.manual_reset"
 	ActionDeviceLimitChanged = "subscription.device_limit_changed"
 	ActionLabelChanged       = "subscription.label_changed"
-	ActionPackTransferred    = "traffic_pack.transferred"
 	ActionLinkRotated        = "subscription.link_rotated"
 	ActionLinkRotatedByAdmin = "subscription.link_rotated_by_admin"
 	ResourceSubscription     = "subscription"
@@ -91,18 +94,20 @@ var (
 	ErrRenewalWindowClosed = errs.Newf(errs.Conflict, "这条订阅已过期超过 30 天，不能再原地续费，请重新购买（会换新的订阅链接）")
 	// ErrExtendWindowClosed 是续费窗口已关的订阅再来延期。
 	ErrExtendWindowClosed = errs.Newf(errs.Conflict, "这条订阅已过期超过 30 天，不能再延长，只能重新购买（会换新的订阅链接）")
-	// ErrPackNeedsLive 是流量包要加到的那一份不在生效中。
-	ErrPackNeedsLive = errs.Newf(errs.Conflict, "流量包只能加到在用的套餐上，先续费或买个套餐")
-	// ErrPackDuplicate 是同一来源（Source, SourceID）的流量包已经发过。
-	ErrPackDuplicate = errs.Newf(errs.Conflict, "这笔流量包已经发放过")
-	// ErrTransferTarget 是流量包转移的目标已停用。
-	ErrTransferTarget = errs.Newf(errs.Conflict, "只能转到一份还在用（或过期不满 30 天）的套餐上")
-	// ErrTransferSource 是流量包转移的来源还在用（生效中或可救回）。
-	ErrTransferSource = errs.Newf(errs.Conflict, "这份还在用，流量包不能转走；等它停用后再转")
 	// ErrNotLive 是只给生效中的订阅做的操作（重置流量）遇到不生效的订阅。
 	ErrNotLive = errs.Newf(errs.ValidationFailed, "这一份不在生效中，不能重置流量")
 	// ErrNoTrafficQuota 是订阅没有流量配额行。
 	ErrNoTrafficQuota = errs.Newf(errs.ValidationFailed, "这个订阅没有流量配额")
+	// ErrNotActive 是送流量的那一份已过期（送的流量只给生效中的订阅）。
+	ErrNotActive = errs.Newf(errs.Conflict, "这一份已过期，不能再加流量")
+	// ErrUnlimited 是送流量的那一份不限流量（没有限额的流量配额行），无需加。
+	ErrUnlimited = errs.Newf(errs.Conflict, "这一份不限流量，无需加流量")
+	// ErrBonusPeriodSwitching：本期已结束、还没滚到下一期，这时送的流量会在滚动时被清零。
+	ErrBonusPeriodSwitching = errs.Newf(errs.Conflict, "流量周期正在切换，请稍后再试")
+	// ErrRenewOneTime 是一次性套餐来续费：一次性套餐不能续费，只能叠加或另买一份。
+	ErrRenewOneTime = errs.Newf(errs.Conflict, "一次性套餐不能续费，可以叠加到这一份或另买一份")
+	// ErrStackNotOneTime 是叠加的目标不是一次性套餐，或与要叠加的不是同一个套餐。
+	ErrStackNotOneTime = errs.Newf(errs.Conflict, "只有同一个一次性套餐才能叠加")
 	// ErrVersionUnavailable 是开通、换套餐给的版本不存在、不属于该套餐或没发布。
 	ErrVersionUnavailable = errs.Newf(errs.Conflict, "该套餐尚未发布可用版本")
 	// ErrStateChanged 是带旧状态的条件更新影响 0 行（并发改了状态）。
@@ -122,15 +127,17 @@ type Actor struct {
 	ID   *uuid.UUID
 }
 
-// PriceSnapshot 是订阅上的价格快照：开通、续费、换套餐时由调用方从订单（或礼品卡）映射过来，
-// subscription 不回查价格表。Interval 取 day/week/month/quarter/year/one_time，IntervalCount > 0。
+// PriceSnapshot 是订阅上的价格快照：开通、续费、叠加、换套餐时由调用方从订单（或礼品卡）映射过来，
+// subscription 不回查价格表。Interval 取 month/year（订阅套餐）或 one_time（一次性套餐），IntervalCount > 0。
 type PriceSnapshot struct {
-	// PriceID 可空：礼品卡开通可以没有价格档
+	// PriceID 可空：后台直接开通、注册试用可以没有价格档
 	PriceID       *uuid.UUID
-	Currency      money.Currency
 	Amount        decimal.Decimal
 	Interval      string
 	IntervalCount int
+	// ValidityDays 只对一次性价有意义：开通 / 叠加时决定期末（nil = 永久，期末落远期哨兵）；
+	// 只在开通、叠加时用一次，期末已落在 current_period_end，订阅上不另存
+	ValidityDays *int
 }
 
 // Subscription 是一份订阅的行本身（不含配额与目录信息）。
@@ -154,30 +161,41 @@ type Subscription struct {
 	UpdatedAt     time.Time
 }
 
-// Quota 是一行配额余额。Limit 为 nil 表示不限；Remaining = Limit − Consumed（不限时为 nil）。
+// Quota 是一行配额余额。Limit 为 nil 表示不限；Bonus 是本期送的量；Remaining = Limit + Bonus − Consumed（不限时为 nil）。
 type Quota struct {
 	Metric      string
 	Period      string
 	PeriodStart time.Time
 	PeriodEnd   *time.Time
 	Limit       *int64
+	Bonus       int64
 	Consumed    int64
 	Remaining   *int64
 }
 
-// Summary 是一份订阅的摘要：行本身、状态口径、目录展示信息、配额与挂在上面的流量包余量。
+// Summary 是一份订阅的摘要：行本身、状态口径、目录展示信息、配额、流量与重置次数（门户与后台共用）。
 type Summary struct {
 	Subscription
 	State State
-	// PlanName、PlanVersion、PlanMaxDevices、QuotaResetStrategy 取自订阅锁定的套餐版本
-	PlanName           string
-	PlanVersion        int
-	PlanMaxDevices     *int
-	QuotaResetStrategy string
-	// Quotas 按 metric 升序、同一指标内周期起点倒序（与旧接口一致）；永不为 nil
+	// PlanName、PlanKind 取自套餐；PlanVersion、PlanMaxDevices 取自订阅锁定的套餐版本
+	PlanName       string
+	PlanKind       string
+	PlanVersion    int
+	PlanMaxDevices *int
+	// Permanent 是一次性套餐买的永久（期末是远期哨兵，见 IsPermanent）
+	Permanent bool
+	// TrafficLimit、TrafficBonus、TrafficUsed 取自流量配额行（订阅套餐的 cycle 行、一次性套餐的 total 行）：
+	// 上限（nil = 不限或没有流量配额行）、本期送的量、已用
+	TrafficLimit *int64
+	TrafficBonus int64
+	TrafficUsed  int64
+	// ResetsUsed 是本周期（订阅套餐）或有效期内（一次性套餐）已付费重置的次数（traffic_reset_logs reason=order，按订单计）；
+	// ResetLimit、ResetPrice 取自套餐（nil = 不限次数 / 不卖重置）
+	ResetsUsed int
+	ResetLimit *int
+	ResetPrice *decimal.Decimal
+	// Quotas 按 metric 升序、同一指标内周期起点倒序；永不为 nil
 	Quotas []Quota
-	// PackRemainingBytes 是挂在这一份上的流量包余量
-	PackRemainingBytes int64
 }
 
 // UserSubscriptions 是一个用户的全部订阅。
@@ -186,8 +204,6 @@ type UserSubscriptions struct {
 	Subscriptions []Summary
 	// Current 是「当前订阅」：生效中的优先，其次到期最晚，再次最近创建；没有订阅为 nil
 	Current *Summary
-	// UnattachedPackBytes 是还没加到任何一份的流量包余量
-	UnattachedPackBytes int64
 }
 
 // Provision 是开通一份新订阅的输入（订单结算、礼品卡套餐卡、后台直接开通）。
@@ -206,7 +222,8 @@ type Provision struct {
 	Actor Actor
 }
 
-// Renewal 是在原订阅上续一期的输入（续费订单、同套餐的套餐卡）。版本沿用订阅自己的，不换。
+// Renewal 是在原订阅上续一期的输入（续费订单、同套餐的订阅套餐卡）。只许订阅套餐（一次性回 ErrRenewOneTime）。
+// 版本：提前续费本期不动，到点由配额滚动切到套餐当前版本；过期恢复当场切到当前版本。
 type Renewal struct {
 	SubscriptionID uuid.UUID
 	// UserID 是订阅的主人，不符回 ErrNotFound
@@ -259,7 +276,40 @@ type ExtensionResult struct {
 	Prorated map[string]int64
 }
 
-// PlanChange 是把原订阅换成另一个套餐的输入（换套餐订单、套餐卡遇到不同套餐）。
+// Stacking 是一次性套餐的叠加（叠加单履约、同套餐的一次性套餐卡）：total 流量配额上限加上新版本的流量，
+// 期末：新价有天数 → max(原期末, now) + N 天；新价永久或原来已永久 → 永久哨兵。
+type Stacking struct {
+	SubscriptionID uuid.UUID
+	// UserID 是订阅的主人，不符回 ErrNotFound
+	UserID uuid.UUID
+	// PlanVersionID 是买的时候套餐的当前版本：叠加后这一份切到它，加的流量取它的 total 流量配额
+	PlanVersionID uuid.UUID
+	Price         PriceSnapshot
+	PaidAt        time.Time
+	// 来源：OrderID（叠加单）或 GiftCodeID（套餐卡的卡密），恰好一个非 nil
+	OrderID    *uuid.UUID
+	GiftCodeID *uuid.UUID
+	Actor      Actor
+	// Source 写进 renewed 事件：order 或 gift_card
+	Source string
+}
+
+// BonusGrant 是送流量（礼品卡、后台「加流量」、盲盒奖品）：加到这一份流量配额行的 bonus_value。
+// 订阅套餐加在本周期的 cycle 行（滚动时清零），一次性套餐加在 total 行（一直有效）。
+type BonusGrant struct {
+	SubscriptionID uuid.UUID
+	// UserID 非 nil 时校验归属（礼品卡）；后台传 nil
+	UserID *uuid.UUID
+	// Bytes > 0
+	Bytes int64
+	// Source 是 BonusGiftCard 或 BonusAdmin
+	Source string
+	// ActorID 后台必填
+	ActorID *uuid.UUID
+	Note    string
+}
+
+// PlanChange 是把原订阅换成另一个套餐的输入（换套餐订单、套餐卡遇到不同套餐）。可以跨类型（订阅 ↔ 一次性）。
 // 剩余价值、补差价、退余额都由调用方（order / giftcard）算并记账，这里只落订阅与配额。
 type PlanChange struct {
 	SubscriptionID uuid.UUID
@@ -283,76 +333,41 @@ type PlanChangeResult struct {
 	PeriodEnd         time.Time
 }
 
-// PackGrant 是发一笔流量包余额的输入。SubscriptionID 为 nil 时留作未分配。
-type PackGrant struct {
-	UserID         uuid.UUID
-	SubscriptionID *uuid.UUID
-	// Source 是 PackSourceOrder / PackSourceGiftCard / PackSourceAdmin；(Source, SourceID) 唯一，重复发放回 409
-	Source   string
-	SourceID uuid.UUID
-	Bytes    int64
-}
-
-// Pack 是一笔流量包余额。
-type Pack struct {
-	ID             uuid.UUID
-	UserID         uuid.UUID
-	SubscriptionID *uuid.UUID
-	Source         string
-	SourceID       uuid.UUID
-	GrantedBytes   int64
-	ConsumedBytes  int64
-	RemainingBytes int64
-	CreatedAt      time.Time
-}
-
-// PackBalance 是用户的流量包余额：全部剩余与逐笔明细（最近的在前，最多 100 笔）。
-type PackBalance struct {
-	RemainingBytesTotal int64
-	Packs               []Pack
-}
-
-// Transfer 是把流量包从「未分配」（From 为 nil）或一份已停用的订阅，挂到同一用户一份没停用的订阅上。
-type Transfer struct {
-	UserID uuid.UUID
-	From   *uuid.UUID
-	To     uuid.UUID
-	Actor  Actor
-}
-
-// TrafficReset 是把一份订阅本期的流量已用量清零（后台手动、礼品卡）。只给生效中的订阅做。
+// TrafficReset 是把一份订阅本期的流量已用量清零（后台手动、礼品卡、用户购买）。只给生效中的订阅做。
 type TrafficReset struct {
 	SubscriptionID uuid.UUID
-	// UserID 非 nil 时校验订阅属于他（礼品卡）；后台传 nil
+	// UserID 非 nil 时校验订阅属于他（礼品卡、用户购买）；后台传 nil
 	UserID *uuid.UUID
-	// Reason 是 ResetManual（ActorID 必填）或 ResetGiftCard
+	// Reason 是 ResetManual（ActorID 必填）、ResetGiftCard 或 ResetOrder（UserID 必填，Note 写订单号）
 	Reason  string
 	ActorID *uuid.UUID
 	Note    string
+	// At 是判断订阅是否生效用的时刻；零值用 subscription 自己的时钟。订单结算履约时传结算的 now，与订单模块的复核用同一个时刻（不然卡在到期边界时两边结论可能不同，整笔结算报错回滚）
+	At time.Time
 }
 
 // RenewalPrice 是门户续费界面要的当前价格档。
 type RenewalPrice struct {
 	ID              uuid.UUID
-	Currency        money.Currency
 	UnitAmount      decimal.Decimal
 	BillingInterval string
 	IntervalCount   int
-	// Available：价格仍在售、属于本套餐、组价与用户组相符、在有效期内
+	// Available：价格仍在售、属于本套餐
 	Available bool
 }
 
 // MySubscription 是门户「我的订阅」里的一份。
 type MySubscription struct {
 	Summary
-	// EffectiveDeviceLimit = 订阅覆盖 → 套餐版本上限；nil 表示不限（覆盖为 0 时是 0，与旧接口同）
+	// EffectiveDeviceLimit = 订阅覆盖 → 套餐版本上限；nil 表示不限（覆盖为 0 时是 0）
 	EffectiveDeviceLimit *int
 	// OnlineDevices 是设备识别窗口内跨节点去重的在线设备数（node 经 OnlineDeviceCounter 提供，读不到按 0）
 	OnlineDevices int
 	// NextResetAt 是流量配额行的周期末
 	NextResetAt *time.Time
-	// Renewable = 没停用且套餐允许续费；Changeable = 没停用
+	// Renewable = 没停用、订阅套餐、套餐没归档且允许续费；Stackable = 没停用、一次性套餐、套餐在售且接受新购；Changeable = 没停用
 	Renewable    bool
+	Stackable    bool
 	Changeable   bool
 	RenewalPrice *RenewalPrice
 	// RenewUntil 是按 RenewalPrice 续一期会到哪天；不能续时为 nil
@@ -363,8 +378,7 @@ type MySubscription struct {
 
 // MySubscriptions 是门户「我的套餐」。
 type MySubscriptions struct {
-	Subscriptions       []MySubscription
-	UnattachedPackBytes int64
+	Subscriptions []MySubscription
 }
 
 // LabelResult 是改名之后这份订阅的名字：Label 为 nil 表示没起名。
@@ -382,15 +396,14 @@ type AdminExtendResult struct {
 	PeriodEnd      time.Time
 }
 
-// AdminTrafficGrantResult 是后台加流量包的结果。
+// AdminTrafficGrantResult 是后台加流量的结果。
 type AdminTrafficGrantResult struct {
 	SubscriptionID uuid.UUID
 	UserID         uuid.UUID
 	UserEmail      string
-	GrantID        uuid.UUID
 	GrantedBytes   int64
-	// RemainingBytesTotal 是发放之后这一份上全部流量包的剩余合计
-	RemainingBytesTotal int64
+	// BonusBytes 是加完之后这一份本期送的量合计（bonus_value）
+	BonusBytes int64
 }
 
 // ResetLogFilter 是后台流量重置日志的筛选与分页。
@@ -430,6 +443,12 @@ type PullRequest struct {
 	Token string
 	// Target 是显式指定的格式（查询参数 target / flag / type 里第一个非空的）；空串按 UA 判断
 	Target string
+	// Types 是查询参数 types 原文（按协议过滤，如 vless|hysteria2）；空不过滤
+	Types string
+	// Filter 是查询参数 filter 原文（按节点名关键字过滤，| 或逗号分隔）；空不过滤
+	Filter string
+	// Host 是请求的 Host 头（可能带端口）；经后台登记过的订阅域名到达的成功拉取给该域名加分
+	Host string
 }
 
 // Userinfo 是 Subscription-Userinfo 头的四个数：字节与 Unix 秒。Expire 为 0 时不写 expire。
@@ -447,7 +466,7 @@ type PullResult struct {
 	Userinfo    Userinfo
 	// UpdateIntervalHours 是 Profile-Update-Interval：正常 12，过期 1（续费后客户端很快拉回真实线路）
 	UpdateIntervalHours int
-	// ContentDisposition 带客户端里的配置名（与门户 client_name 同一个 ProfileName）
+	// ContentDisposition 带客户端里的配置名（与门户 client_name 同一个 render.ProfileName）
 	ContentDisposition string
 	// Expired 为真是过期订阅的提示配置；WebPageURL 是门户续费页（Profile-Web-Page-Url），只在过期时非空
 	Expired    bool

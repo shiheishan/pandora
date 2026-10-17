@@ -9,9 +9,9 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 )
 
-// decodeSignedRaw 按签名通道（node/signed_config.go）的方式解码：UseNumber，
+// decodeDeliveredRaw 按 gRPC 下发路径（node/server_config.go）的方式解码：UseNumber，
 // 数字到达适配器时是 json.Number 而不是 float64。
-func decodeSignedRaw(t *testing.T, payload string) map[string]any {
+func decodeDeliveredRaw(t *testing.T, payload string) map[string]any {
 	t.Helper()
 	var raw map[string]any
 	decoder := json.NewDecoder(bytes.NewReader([]byte(payload)))
@@ -22,10 +22,10 @@ func decodeSignedRaw(t *testing.T, payload string) map[string]any {
 	return raw
 }
 
-// TestSignedConfigNumericFieldsAccepted：10-08 真节点测试里 hy2 带 bandwidth、
-// tuic 写数值 heartbeat 的节点在签名下发路径上起不来（json.Number 不被认）。
-// 每个协议的数值 / 时长字段都要按签名通道的解码结果喂一遍。
-func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
+// TestDeliveredConfigNumericFieldsAccepted：10-08 真节点测试里 hy2 带 bandwidth、
+// tuic 写数值 heartbeat 的节点在下发路径上起不来（json.Number 不被认）。
+// 每个协议的数值 / 时长字段都要按下发路径的解码结果喂一遍。
+func TestDeliveredConfigNumericFieldsAccepted(t *testing.T) {
 	adapters := map[string]Adapter{
 		"hysteria2": &hysteria2Adapter{},
 		"tuic":      &tuicAdapter{},
@@ -44,15 +44,15 @@ func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			spec := InboundSpec{Config: core.InboundConfig{Protocol: tc.protocol, Port: 443, Raw: decodeSignedRaw(t, tc.payload)}}
+			spec := InboundSpec{Config: core.InboundConfig{Protocol: tc.protocol, Port: 443, Raw: decodeDeliveredRaw(t, tc.payload)}}
 			if err := adapters[tc.protocol].Validate(spec); err != nil {
-				t.Fatalf("签名通道下发的数值字段被拒: %v", err)
+				t.Fatalf("下发路径的数值字段被拒: %v", err)
 			}
 		})
 	}
 
 	t.Run("hysteria2 取值", func(t *testing.T) {
-		raw := decodeSignedRaw(t, `{"up_mbps":100,"udp_timeout":15,"udp_queue_size":2048}`)
+		raw := decodeDeliveredRaw(t, `{"up_mbps":100,"udp_timeout":15,"udp_queue_size":2048}`)
 		if n, ok := nonNegativeInt(raw["up_mbps"]); !ok || n != 100 {
 			t.Fatalf("up_mbps = %d, %v", n, ok)
 		}
@@ -65,7 +65,7 @@ func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
 	})
 
 	t.Run("reality max_time_diff 与 xver", func(t *testing.T) {
-		raw := decodeSignedRaw(t, `{"dest":"example.com:443","server_names":["example.com"],`+
+		raw := decodeDeliveredRaw(t, `{"dest":"example.com:443","server_names":["example.com"],`+
 			`"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","short_ids":["01"],"max_time_diff":60,"xver":1}`)
 		cfg, err := ParseRealityServerConfig(raw)
 		if err != nil {
@@ -77,7 +77,7 @@ func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
 	})
 
 	t.Run("xhttp 数值与范围", func(t *testing.T) {
-		raw := decodeSignedRaw(t, `{"path":"/x","sc_max_buffered_posts":7,"server_max_header_bytes":4096,`+
+		raw := decodeDeliveredRaw(t, `{"path":"/x","sc_max_buffered_posts":7,"server_max_header_bytes":4096,`+
 			`"sc_max_each_post_bytes":{"from":1000,"to":2000}}`)
 		cfg, err := ParseXHTTPConfig(raw)
 		if err != nil {
@@ -89,7 +89,7 @@ func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
 	})
 
 	t.Run("mkcp 数值", func(t *testing.T) {
-		raw := decodeSignedRaw(t, `{"mtu":1350,"tti":20,"uplink_capacity":5,"downlink_capacity":20,"read_buffer_size":2,"write_buffer_size":2}`)
+		raw := decodeDeliveredRaw(t, `{"mtu":1350,"tti":20,"uplink_capacity":5,"downlink_capacity":20,"read_buffer_size":2,"write_buffer_size":2}`)
 		cfg, err := ParseMKCPConfig(raw)
 		if err != nil {
 			t.Fatal(err)
@@ -100,7 +100,7 @@ func TestSignedConfigNumericFieldsAccepted(t *testing.T) {
 	})
 
 	t.Run("shadowtls version 与 server_port", func(t *testing.T) {
-		raw := decodeSignedRaw(t, `{"version":3,"server_port":8443}`)
+		raw := decodeDeliveredRaw(t, `{"version":3,"server_port":8443}`)
 		if v := shadowRawInt(raw, "version", 0); v != 3 {
 			t.Fatalf("version = %d", v)
 		}

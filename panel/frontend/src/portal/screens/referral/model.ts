@@ -1,15 +1,54 @@
 import { formatMoney } from '../../../core/format'
+import { isUSDTMethod, looksLikeUSDTAddress, payoutAccountHint, withdrawMethodLabel } from '../../../core/withdraw-methods'
 import type { Commission } from '../../queries'
 import { shortDate } from '../common/traffic'
-import type { Invite } from './api'
+import type { Invite, InviteCode } from './api'
 
 /** 契约门户-06：/r/CODE 会撞 public 网关根下的订阅通配，邀请链接用查询串 */
 export const inviteLink = (code: string, origin: string) => `${origin}/?invite=${encodeURIComponent(code)}`
 
-/** 横幅标题：按计佣范围写（R81 / R114），first_order 才说「首单」；费率为 0 时不提佣金 */
-export function headline(ratePercent: number, scope: Commission['summary']['scope']): string {
-  if (ratePercent <= 0) return '邀请好友注册'
-  return scope === 'first_order' ? `好友首单付费，您得 ${ratePercent}% 佣金` : `邀请好友付费，您得 ${ratePercent}% 佣金`
+/** 万分比转百分比文字，去掉多余的 0（如 1000 → '10'，500 → '5'，495 → '4.95'，1250 → '12.5'） */
+export function ratePercentText(bp: number): string {
+  const intPart = Math.floor(bp / 100)
+  const decPart = bp % 100
+  if (decPart === 0) return `${intPart}`
+  if (decPart % 10 === 0) return `${intPart}.${decPart / 10}`
+  return `${intPart}.${decPart.toString().padStart(2, '0')}`
+}
+
+/**
+ * 邀请卡标题（样稿 .inv-h）：大号比例 + 一句话，按计佣范围写（R81 / R114），first_order 才说「首单」；
+ * 费率为 0 时不提佣金，rate 为 null、只写「邀请好友注册」
+ */
+export function headlineParts(directRateBP: number, scope: Commission['summary']['scope']): { rate: string | null; text: string } {
+  if (directRateBP <= 0) return { rate: null, text: '邀请好友注册' }
+  const rate = ratePercentText(directRateBP)
+  return { rate, text: scope === 'first_order' ? '好友首单付款，你拿这么多佣金' : '好友每次付款，你都拿这么多佣金' }
+}
+
+/** 金额去掉 ¥ 符号，给大号数字用（符号单独做小字）；只用于非负金额 */
+export const yuanText = (minor: number) => formatMoney(minor).replace('¥', '')
+
+/** 当前仍为有效的邀请码个数（可同时持有上限由 max_codes 约束） */
+export function activeCodeCount(codes: readonly InviteCode[]): number {
+  return codes.filter((c) => c.status === 'active').length
+}
+
+/** 是否还能再生成一个有效邀请码 */
+export function canCreateCode(codes: readonly InviteCode[], maxCodes: number): boolean {
+  return activeCodeCount(codes) < maxCodes
+}
+
+/** 列表里展示的状态文案 */
+export function codeStatusLabel(status: InviteCode['status']): string {
+  switch (status) {
+    case 'active':
+      return '有效'
+    case 'exhausted':
+      return '已用满'
+    case 'disabled':
+      return '已停用'
+  }
 }
 
 /** 邀请码有使用上限时的一句说明；没有上限返回 null */
@@ -17,26 +56,53 @@ export function inviteUsage(invite: Invite['invite']): { text: string; exhausted
   if (invite.max_uses === null) return null
   const exhausted = invite.invited >= invite.max_uses
   return {
-    text: exhausted ? `邀请码已用满 ${invite.max_uses} 次，新朋友暂时无法用它注册` : `邀请码最多可用 ${invite.max_uses} 次，已用 ${invite.invited} 次`,
+    text: exhausted
+      ? `邀请码已用满 ${invite.max_uses} 次，新朋友暂时无法用它注册`
+      : `这个邀请码已有 ${invite.invited} 人注册，还能再邀请 ${invite.max_uses - invite.invited} 人。`,
     exhausted,
   }
 }
 
 /** 元 → 分；最多两位小数，不低于最低提现额、不超过可用佣金（后端同样校验，这里先挡一道） */
-export function parseWithdrawAmount(input: string, limits: { min: number; available: number; currency: string }): { cents: number } | { error: string } {
+export function parseWithdrawAmount(input: string, limits: { min: number; available: number }): { cents: number } | { error: string } {
   const text = input.trim()
   if (!text) return { error: '请输入提现金额' }
   if (!/^\d+(\.\d{1,2})?$/.test(text)) return { error: '金额最多两位小数' }
   const cents = Math.round(Number(text) * 100)
-  if (cents < limits.min) return { error: `最低提现 ${formatMoney(limits.min, limits.currency)}` }
-  if (cents > limits.available) return { error: `超过可用佣金 ${formatMoney(limits.available, limits.currency)}` }
+  if (cents < limits.min) return { error: `最低提现 ${formatMoney(limits.min)}` }
+  if (cents > limits.available) return { error: `超过可用佣金 ${formatMoney(limits.available)}` }
   return { cents }
+}
+
+/** 校验收款账号：USDT 检查地址特征 */
+export function payoutError(method: string, detail: string): string | undefined {
+  if (!detail.trim()) return '请填写收款账号'
+  if (isUSDTMethod(method) && !looksLikeUSDTAddress(method, detail)) {
+    return `地址格式不对：${payoutAccountHint(method)}`
+  }
+  return undefined
+}
+
+/** 关提现时整页不能提现 */
+export function withdrawClosedHere(summary: Commission['summary']): boolean {
+  return !summary.withdraw_enabled
+}
+
+/**
+ * 关提现时的提示，提现开着时为 null。
+ * 解冻的自动转余额，关闭前已可提现的部分要自己点「转入余额」（后端只自动转关闭后解冻的条目）。
+ */
+export function withdrawClosedHint(summary: Commission['summary']): string | null {
+  if (summary.withdraw_enabled) return null
+  return '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「转入余额」。'
 }
 
 /** 提现表单锁住的理由：后端同一时间只允许一笔在途（含打款中）；可用额不到最低额也提不了 */
 export function withdrawBlock(summary: Commission['summary']): string | null {
-  if (summary.withdrawing > 0) return `有一笔 ${formatMoney(summary.withdrawing, summary.currency)} 的提现正在处理，完成后才能再申请`
-  if (summary.available < summary.min_withdraw) return `可用佣金满 ${formatMoney(summary.min_withdraw, summary.currency)} 才能申请提现`
+  if (withdrawClosedHere(summary)) return '提现已关闭，佣金解冻后会自动转入余额'
+  if (summary.withdraw_methods.length === 0) return '暂未开放提现方式'
+  if (summary.withdrawing > 0) return `有一笔 ${formatMoney(summary.withdrawing)} 的提现正在处理，完成后才能再申请`
+  if (summary.available < summary.min_withdraw) return `可用佣金满 ${formatMoney(summary.min_withdraw)} 才能申请提现`
   return null
 }
 
@@ -44,7 +110,9 @@ export function withdrawBlock(summary: Commission['summary']): string | null {
 // 佣金记录：entries（+）、transfers（−，完成）、withdrawals（−）按时间倒序合并
 // ---------------------------------------------------------------------------
 /** plus 入账；minus 出账；void 没有生效（冲销、驳回、失败退回），金额划掉 */
-export type RecordTone = 'plus' | 'minus' | 'void'
+type RecordTone = 'plus' | 'minus' | 'void'
+/** 行首图标（样稿 .rec .ico）：返佣 gift、转入余额 wallet、提现 out */
+type RecordIcon = 'gift' | 'wallet' | 'out'
 
 export interface CommissionRecord {
   key: string
@@ -55,9 +123,9 @@ export interface CommissionRecord {
   meta: string
   /** 带符号的金额（分） */
   amount: number
-  currency: string
   status: string
   tone: RecordTone
+  icon: RecordIcon
   at: string
 }
 
@@ -70,6 +138,7 @@ function entryStatus(e: Entry): { status: string; tone: RecordTone } {
     case 'frozen':
       return { status: e.frozen_until ? `冻结至 ${shortDate(e.frozen_until)}` : '冻结中', tone: 'plus' }
     case 'available':
+      return { status: '可用', tone: 'plus' }
     case 'settled':
       return { status: '已结算', tone: 'plus' }
     case 'reversed':
@@ -95,23 +164,35 @@ const WITHDRAWAL_STATUS: Readonly<Record<Withdrawal['status'], { status: string;
 export function commissionRecords(c: Commission): CommissionRecord[] {
   const rows: CommissionRecord[] = []
   c.entries.forEach((e, i) => {
+    const title = e.level <= 1 ? '好友付款返佣' : `第 ${e.level} 级好友付款返佣`
+    const metaBase = shortDate(e.created_at)
+    const meta = e.level <= 1 && e.from ? `${metaBase} · ${e.from}` : metaBase
     rows.push({
       key: `e${i}`,
-      title: `好友 ${e.from}`,
+      title,
       ...(e.order_no ? { ref: e.order_no } : {}),
-      meta: shortDate(e.created_at),
+      meta,
       amount: e.amount,
-      currency: e.currency,
+      icon: 'gift',
       at: e.created_at,
       ...entryStatus(e),
     })
   })
   for (const t of c.transfers) {
-    rows.push({ key: `t${t.ledger_txn_id}`, title: '转入余额', meta: shortDate(t.created_at), amount: -t.amount, currency: t.currency, status: '完成', tone: 'minus', at: t.created_at })
+    rows.push({ key: `t${t.ledger_txn_id}`, title: '转入余额', meta: shortDate(t.created_at), amount: -t.amount, status: '已完成', tone: 'minus', icon: 'wallet', at: t.created_at })
   }
   for (const w of c.withdrawals) {
     const reason = w.status === 'rejected' && w.reject_reason ? ` · ${w.reject_reason}` : ''
-    rows.push({ key: `w${w.id}`, title: '申请提现', meta: shortDate(w.requested_at) + reason, amount: -w.amount, currency: w.currency, at: w.requested_at, ...WITHDRAWAL_STATUS[w.status] })
+    rows.push({
+      key: `w${w.id}`,
+      title: '提现',
+      ref: withdrawMethodLabel(w.method),
+      meta: shortDate(w.requested_at) + reason,
+      amount: -w.amount,
+      icon: 'out',
+      at: w.requested_at,
+      ...WITHDRAWAL_STATUS[w.status],
+    })
   }
   return rows.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 }

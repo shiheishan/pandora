@@ -1,6 +1,6 @@
 package repo
 
-// 本文件归 p5-inventory：服务器的读写。
+// 服务器的读写。
 
 import (
 	"context"

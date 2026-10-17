@@ -3,11 +3,12 @@ import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { planOptionsKey } from '../plans/api'
 import type { Kind } from './schemas'
-import { announcementsResponse, pageResponse, pagesResponse, planCatalogResponse, siteSettingsSchema, slotsResponse, themesResponse } from './schemas'
+import { announcementsResponse, pageResponse, pagesResponse, planCatalogResponse, slotsResponse, themesResponse } from './schemas'
 
 export { useFailure, useIntentKey } from '../../actions'
+export { useSiteSettings } from '../../site'
 
-export const CK = ['admin', 'content'] as const
+const CK = ['admin', 'content'] as const
 
 export function useAnnouncements() {
   const api = useApi()
@@ -68,12 +69,6 @@ export function useThemes() {
 export function useSlots() {
   const api = useApi()
   return useQuery({ queryKey: [...CK, 'slots'], queryFn: ({ signal }) => api.get('v1/slots', slotsResponse, { signal }).then((r) => r.slots) })
-}
-
-/** 站点时区 */
-export function useSiteSettings() {
-  const api = useApi()
-  return useQuery({ queryKey: [...CK, 'site'], queryFn: ({ signal }) => api.get('v1/settings/site', siteSettingsSchema, { signal }) })
 }
 
 export function useInvalidateContent() {

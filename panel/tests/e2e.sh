@@ -1,25 +1,12 @@
 #!/usr/bin/env bash
-# 端到端链路（新栈 pandora）：注册 → 登录 → 套餐 → 下单 → 易支付回调幂等 → 账本 → 订阅与配额 → 审计 → 限流与错误处理。
+# 端到端链路：注册 → 登录 → 套餐 → 下单 → 易支付回调幂等 → 账本 → 订阅与配额 → 审计 → 限流与错误处理。
 #
 # 与 invariants / 其它 e2e 的分工：本脚本证明整条 HTTP 业务链路在真实网关与一次性库上跑得通；
 # PAY-003 同一易支付回调连发 10 次只产生一次权益与一笔账。
 #
-# 与旧版步骤对照：
-#   旧 0 读旧配置与旧网关/主密钥变量 → 新 0：PUB/ADM/PSQL、E2E_DISPOSABLE、库名 test/e2e 段、readyz
-#   旧 1–2 注册登录（旧令牌域标记）→ 新 1–2：JWT aud=public；跨域改 aud 为 admin
-#   旧 3 挑「有活跃节点」的池 → 新 3：自建 e2e 可服务节点夹具（无节点端，SQL 标 ready/active）
-#   旧 4 下单 use_balance 整数 → 新 4：同；幂等冲突改 label 字段
-#   旧 5 旧 demo 渠道回调与签名头 → 新 5：易支付 GET 回调，纯文本 success/fail
-#   旧 6 旧账本校验函数与有符号金额列 → 新 6：分录 CASE 配平 + DriftAccounts 口径 SQL
-#   旧 7 pending→active 事件 → 新 7：activated，from_status IS NULL；配额行数随版本定义
-#   旧 8 审计哈希链 → 新 8：只数条数 + audit_events_append_only 触发器
-#   旧 9 限流 → 新 9：独立邮箱 rl-<STAMP>@…；404 带 request_id
-#
-# 删掉的旧断言及原因：
-#   - processed / already_handled JSON：易支付回执无此字段（纯文本 success）
-#   - 旧哈希链字段（当前链与前驱哈希）及连续性：新栈审计无哈希链（见 p7e2e-common 产品决定）
-#   - 旧版令牌形状：改为 JWT HS256
-#   - 租户列与多租户环境：单租户新栈无 RLS
+# 不测的东西及原因：
+#   - 审计哈希链：审计没有哈希链（产品决定），只数条数并核对 audit_events_append_only 触发器
+#   - 租户隔离：单租户，没有租户列与 RLS
 #
 # 仍用 SQL 的步骤及原因：
 #   - 口令 PHC、验证码哈希、订单快照、支付/账本/订阅/凭据/事件：无更稳的只读 HTTP，或要核对库内唯一约束
@@ -53,6 +40,9 @@ json() { curl -sS -H 'Content-Type: application/json' "$@"; }
 DB_NAME=$(db 'SELECT current_database()')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 STAMP="$(date +%s)$RANDOM"
 # 审计计数的起点：取库的时钟（UTC ISO 串，不含空格，db() 会删空白）
@@ -293,7 +283,7 @@ meid=$(echo "$me" | jqr "['user_id']")
 #-------------------------------------------------------------------------------
 sec "3. 套餐目录（自建可服务节点 + authoring）"
 #-------------------------------------------------------------------------------
-# e2e job 无节点端：API 建池/服务器/节点后 SQL 标 ready 与 serving active（见 p7e2e-common）。
+# e2e job 无节点端：API 建池/服务器/节点后 SQL 标 ready 与 serving active。
 PLAN_TAG="e2e-${STAMP}"
 admin_reauth || true
 
@@ -332,40 +322,24 @@ ok "夹具节点标为可服务（SQL：无节点端）"
 admin_reauth || true
 rp=$(curl -sS -X POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: ${PLAN_TAG}-create" \
-  -d "{\"code\":\"${PLAN_TAG}\",\"name\":\"E2E 链路 ${STAMP}\",\"visibility\":\"public\"}")
+  -d "{\"kind\":\"subscription\",\"name\":\"E2E 链路 ${STAMP}\",\"visibility\":\"public\",
+       \"traffic_bytes\":107374182400,\"max_devices\":3,\"pool_ids\":[\"${POOL_ID}\"],
+       \"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990}]}")
 PLAN_ID=$(echo "$rp" | jqr "['plan']['id']"); PLAN_RV=$(echo "$rp" | jqr "['plan']['row_version']")
-[ -n "$PLAN_ID" ] && ok "草稿套餐已创建 ${PLAN_ID}" || { bad "建套餐失败: $rp"; exit 1; }
-
-rv=$(curl -sS -X POST "$ADM/v1/plans/${PLAN_ID}/versions" -H "$AH" \
-  -H "Idempotency-Key: ${PLAN_TAG}-version")
-VID=$(echo "$rv" | jqr "['version']['id']"); VRV=$(echo "$rv" | jqr "['version']['row_version']")
-[ -n "$VID" ] && ok "草稿版本已创建" || { bad "建版本失败: $rv"; exit 1; }
-
-sem=$(code -X PUT "$ADM/v1/plans/${PLAN_ID}/versions/${VID}" -H "$AH" -H 'Content-Type: application/json' \
-  -d "{\"expected_row_version\":${VRV},\"quota_reset_strategy\":\"billing_cycle\",
-       \"entitlements\":[{\"code\":\"feature.multi_device\",\"value\":true},{\"code\":\"support.tier\",\"value\":\"standard\"}],
-       \"quotas\":[{\"metric\":\"traffic.bytes\",\"limit\":107374182400,\"unit\":\"bytes\",\"period\":\"cycle\"},
-                     {\"metric\":\"devices.active\",\"limit\":3,\"unit\":\"count\",\"period\":\"total\"}]}")
-[ "$sem" = "200" ] && VRV=$((VRV+1)) && ok "版本写入 2 项权益与 2 项配额" || { bad "写版本语义返回 ${sem}"; exit 1; }
-
-rb=$(curl -sS -X POST "$ADM/v1/plans/${PLAN_ID}/pools" -H "$AH" -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: ${PLAN_TAG}-pools" \
-  -d "{\"version_id\":\"${VID}\",\"expected_version_row_version\":${VRV},\"pool_ids\":[\"${POOL_ID}\"]}")
-VRV=$(echo "$rb" | jqr "['row_version']")
-[ -n "$VRV" ] && ok "版本已绑定节点池" || { bad "绑节点池失败: $rb"; exit 1; }
-
-admin_reauth || true
-rpr=$(curl -sS -X POST "$ADM/v1/plans/${PLAN_ID}/prices" -H "$AH" -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: ${PLAN_TAG}-price" \
-  -d '{"currency":"CNY","unit_amount":990,"billing_interval":"month","interval_count":1}')
-[ -n "$(echo "$rpr" | jqr "['price']['id']")" ] && ok "价格已创建（CNY 9.90 / 月）" || { bad "建价格失败: $rpr"; exit 1; }
+VID=$(echo "$rp" | jqr "['plan']['draft_version_id']")
+[ -n "$PLAN_ID" ] && [ -n "$VID" ] && ok "草稿套餐已一步建成（用量、线路、9.90 元 / 月）${PLAN_ID}" || { bad "建套餐失败: $rp"; exit 1; }
+PLAN_SHAPE=$(echo "$rp" | python3 -c "
+import sys,json
+p=json.load(sys.stdin)['plan']
+print(p['kind'], p['status'], ','.join(p['pool_ids']), ','.join(f\"{x['billing_interval']}x{x['interval_count']}:{x['unit_amount']}\" for x in p['prices']))" 2>/dev/null)
+[ "$PLAN_SHAPE" = "subscription draft ${POOL_ID} monthx1:990" ] && ok "新建响应：订阅、草稿、已绑池、一档月价" || bad "新建响应形状不符: ${PLAN_SHAPE}"
 
 admin_reauth || true
 rpub=$(curl -sS -X POST "$ADM/v1/plans/${PLAN_ID}/versions/${VID}/publish" -H "$AH" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: ${PLAN_TAG}-publish" \
-  -d "{\"expected_plan_row_version\":${PLAN_RV},\"expected_version_row_version\":${VRV}}")
-PLAN_RV=$(echo "$rpub" | jqr "['plan_row_version']")
-[ -n "$PLAN_RV" ] && ok "版本已发布" || { bad "发布失败: $rpub"; exit 1; }
+  -d "{\"expected_row_version\":${PLAN_RV}}")
+PLAN_RV=$(echo "$rpub" | jqr "['plan']['row_version']"); PSTATUS=$(echo "$rpub" | jqr "['plan']['status']")
+[ -n "$PLAN_RV" ] && [ "$PSTATUS" = "active" ] && ok "版本已发布，套餐上架" || { bad "发布失败: $rpub"; exit 1; }
 E2E_PLAN_ID="$PLAN_ID"; E2E_PLAN_RV="$PLAN_RV"
 
 plans=$(curl -sS "$PUB/v1/plans")
@@ -393,7 +367,7 @@ r4h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders" \
   -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0}")
 r4=${r4h%$'\n'*}; r4c=${r4h##*$'\n'}
 ORDER_ID=$(echo "$r4" | jqr "['order_id']"); ORDER_NO=$(echo "$r4" | jqr "['order_no']")
-PAYABLE=$(echo "$r4" | jqr "['payable_amount']"); CURRENCY=$(echo "$r4" | jqr "['currency']")
+PAYABLE=$(echo "$r4" | jqr "['payable_amount']")
 [ "$r4c" = "201" ] && [ -n "$ORDER_ID" ] && [ "$PAYABLE" = "990" ] \
   && ok "订单已创建 ${ORDER_NO} 应付=${PAYABLE}（201）" || bad "下单失败 HTTP ${r4c}: ${r4}"
 
@@ -408,8 +382,8 @@ conf=$(code -X POST "$PUB/v1/orders" -H "Authorization: Bearer ${TOKEN}" -H 'Con
   -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0,\"label\":\"dup\"}")
 [ "$conf" = "409" ] && ok "同幂等键+不同请求体返回 409" || bad "期望 409，实际 ${conf}"
 
-snap=$(db "SELECT coalesce(jsonb_array_length(snapshot_entitlements),0) FROM order_items WHERE order_id='${ORDER_ID}'")
-[ "${snap:-0}" -ge 1 ] && ok "订单行已固化 ${snap} 项权益快照" || bad "权益快照缺失"
+snap=$(db "SELECT coalesce(jsonb_array_length(snapshot_quotas),0) FROM order_items WHERE order_id='${ORDER_ID}'")
+[ "${snap:-0}" -ge 1 ] && ok "订单行已固化 ${snap} 项配额快照" || bad "配额快照缺失"
 
 #-------------------------------------------------------------------------------
 sec "5. 易支付渠道与回调幂等"

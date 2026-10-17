@@ -63,7 +63,11 @@ func (s *Service) MyRotate(ctx context.Context, subID uuid.UUID) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return linkURL(d.PublicBaseURL, prefix, token), nil
+	base, err := s.linkBase(ctx, d, p.UserID)
+	if err != nil {
+		return "", err
+	}
+	return linkURL(base, prefix, token), nil
 }
 
 // AdminRotate 是后台替用户换链接（不看状态）；reason 去首尾空白后 5–200 字，不含 NUL。返回里没有令牌与链接。
@@ -79,7 +83,7 @@ func (s *Service) AdminRotate(ctx context.Context, subID uuid.UUID, reason strin
 	// 邮箱在同一事务里读：提交后再读，读失败时链接已经换了、后台却报失败，管理员重试就会再换一次
 	var email string
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		sub, err := s.lockOwned(ctx, subID, nil)
+		sub, err := s.lockForAdmin(ctx, subID)
 		if err != nil {
 			return err
 		}

@@ -29,7 +29,7 @@ bash .agents/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]   # 会话�
 怎么读结果：
 
 - **先看发布物视图**，它就是会上线的代码。
-  - 第一段里调用链从 `tools/`、`core/xray`、`core/sing`（只有 `-tags compat` 才链进来，见 `rules/pdnd-build-boundary.md`）或测试辅助进来的，不上线。照样要升，但不算紧急。
+  - 第一段里调用链从 `tools/` 或测试辅助（xray-core 等互通参照客户端，见 `rules/pdnd-build-boundary.md`）进来的，不上线。照样要升，但不算紧急。
   - 调用链经接口方法分派的是保守估计，要看完整调用链才能判断（脚本末尾打印了取法）。
 - 「Found in: …@go1.x」是标准库漏洞，升 Go（第 2 节）；模块漏洞升那个模块（第 4 节）。
 - **govulncheck 看不到 fork**：fork 进仓库的代码不是模块依赖，漏洞库对不上。下面这些上游出公告时，要人工去对应的 fork 目录里查有没有同样的代码：
@@ -64,7 +64,7 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 | `README.md`、`docs/architecture.md` 里写的「Go 1.26」「Go 1.26.9」（用上面的 grep 找行） | 不用改 | 改 |
 | 根 `CLAUDE.md`「环境与工具坑」里写死的本机 `GOTOOLCHAIN=go1.26.9`（verify 已写成 `go<go.mod 版本>`，不用改） | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
 | `.claude/rules/pdnd-kernel.md` 里写死的 `GOTOOLCHAIN=go1.26.9`（用上面的 grep 找行） | 改 | 改 |
-| **sing-box 的 go:linkname 前提**：`pdnd/go.mod` 的 sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`；Go 1.27 下该符号不存在（本机 1.27.1 已复现：pdnd 与 subscription-e2e/tools 链接失败） | 不涉及 | **先解决再升**：换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用；两个模块的 sing-box 版本要一致（第 4 节） |
+| **sing-box 的 go:linkname 前提**：sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`，Go 1.27 下该符号不存在、链接失败。2026-10-14 起 pdnd 已不依赖 sing-box（兼容层删除，CI 查 `go list -deps -test ./...`），只剩 `subscription-e2e/tools` 受影响 | 不涉及 | pdnd 不再受限（升前用 `GOTOOLCHAIN=go1.27.x go test -run XXX ./...` 确认能链接）；subscription-e2e/tools 要换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用 |
 | `.github/workflows/*.yml`：setup-go 全部用 `go-version-file`，装 go 指令那个精确版本（go.mod 没有 `toolchain` 行），没有写死版本 | 不用改 | 不用改 |
 
 **其他注意**：
@@ -90,14 +90,13 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 | ShadowTLS 诱饵中继 | TLS 记录层与超时 | `internal/nativewire/shadowtls/service_test.go` |
 | REALITY over QUIC / H3 | `internal/reality` 与 `internal/realityquic` 对标准库 crypto 的引用 | `kernel` 的 `TestNativeRealityH3RoundTrip`、`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` |
 | XHTTP 服务端：`kernel/xhttp_server.go` | net/http 的 HTTP/2 响应写出 | `-tags interop` 的 Xray XHTTP 测试 |
-| 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go`；证书签发（lego）：`panel/internal/module/certs/service` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
+| 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
 
 **本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发；`<go.mod 版本>` 取 `pdnd/go.mod` 的 go 指令，如 `go1.26.9`）：
 
 ```bash
 GOTOOLCHAIN=go<go.mod 版本> go test -count=1 ./kernel/ ./internal/reality/... ./internal/nativewire/... ./cmd/pandora-h3-probe/
 GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags interop -run 'TestExternalXray|TestAnyTLSNativeClientTCPAndUOTUDP$' ./kernel   # 本机可跑，约 3 秒；CI 的确切 -run 见 pandora-native.yml
-GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compat 构建也会被依赖升级波及
 ```
 
 **只在 CI 跑的**：
@@ -112,20 +111,20 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compa
 ## 4. Go 依赖：升级、tidy、新依赖审查
 
 **升级**：
-- 在模块目录 `go get <模块>@<版本>`，然后 `go mod tidy`。看 `git diff go.mod`：会顺带抬哪些间接依赖（例如 w9cert 引入 lego 时一起抬了 x/crypto、x/net、x/text）。
-- pdnd 的依赖一变，再到 `.agents/skills/subscription-e2e/tools` 跑一次 `go mod tidy`（联网）。它经 replace 跟随 pdnd，sing-box 版本也要和 pdnd 一致（见 subscription-e2e skill）。这一步顺便把新版本拉进本机模块缓存，subscription-e2e 离线跑（`GOPROXY=off`）才找得到。
+- 在模块目录 `go get <模块>@<版本>`，然后 `go mod tidy`。看 `git diff go.mod`：会顺带抬哪些间接依赖（例如引入一个 DNS 服务商 SDK 时一起抬了 x/crypto、x/net、x/text）。
+- pdnd 的依赖一变，再到 `.agents/skills/subscription-e2e/tools` 跑一次 `go mod tidy`（联网）。它经 replace 跟随 pdnd；sing-box 只在它自己的 go.mod 里（pdnd 不依赖 sing-box）。这一步顺便把新版本拉进本机模块缓存，subscription-e2e 离线跑（`GOPROXY=off`）才找得到。
 - 升完重跑 `vulncheck.sh`，确认目标漏洞消失，也没有新增。
 
 **tidy 检查**：
 - CI 不查 tidy，三个模块各跑一次 `go mod tidy -diff`，没有输出才算 tidy。
 - 10-09 前的教训：pdnd 一度把 xtls/reality、x/time 标成 indirect（实际是直接 import），go.sum 里还留着换版前的 sing-anytls v0.0.11。
 
-**新依赖审查**（参照 w9cert 引入 lego）：
-- 只 import 用到的子包。例如 lego 只引 cloudflare、alidns、tencentcloud 三个提供方，不引全量 providers。版本锁死。
-- **它会不会自己读进程环境变量**：panel 的配置只经 `internal/pkg/config`（viper，`PANDORA_` 前缀）读环境变量，第三方库自己读的变量管不到。库会读的变量要登记，先例是 `panel/internal/module/certs/service/service.go` 的 `legoEnvExact` 与 `LibraryEnvWarnings`（worker 启动签发任务时告警）；文档写进 `docs/node-certificates.md`。
-- 日志接到 zap：先例是 `panel/internal/module/certs/service/issuer.go` 把 lego 的 `[WARN]`、`[INFO]` 前缀分别映射成 Warn、Info。HTTP 客户端能不能注入，决定了超时、代理和测试怎么做。
-- 许可证：AGPL 不能链进二进制（先例：juicity 只能跑在进程外，见 `rules/pdnd-build-boundary.md`）；GPL 的 fork 要保留 LICENSE。
-- pdnd 的默认构建只许 NativeCore：新依赖不能把 `core/xray`、`core/sing`、sing-box 拉进 `go list -deps .`。CI 的「Default dependency boundary」步骤会拦，本机先自查。
+**新依赖审查**：
+- 只 import 用到的子包（例如一个库按服务商分子包时只引用到的几个，不引全量）。版本锁死。
+- **它会不会自己读进程环境变量**：panel 的配置只经 `internal/pkg/config`（viper，`PANDORA_` 前缀）读环境变量，第三方库自己读的变量管不到。库会读的变量要登记在用它的模块里（启动时对已设置的变量打告警），并写进对应文档。
+- 日志接到 zap：库自带的 `[WARN]`、`[INFO]` 一类前缀分别映射成 Warn、Info。HTTP 客户端能不能注入，决定了超时、代理和测试怎么做。
+- 许可证：AGPL 不能链进发布物（juicity 的上游实现是 AGPL，NativeCore 的 juicity 是自研的）；GPL 的 fork 要保留 LICENSE。
+- pdnd 只有 NativeCore：新依赖不能把 sing-box 拉进 `go list -deps -test ./...`（含测试）。CI 的「Default dependency boundary」步骤与 `release/build.sh` 会拦，本机先自查。
 - 引入后跑一遍 `vulncheck.sh`，结果写进任务报告。
 
 ## 5. npm 依赖
@@ -164,10 +163,11 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 
 | 客户端 | 版本在哪 | 谁在用 | 升级时同步 |
 |---|---|---|---|
-| Xray（作 Go 模块） | `pdnd/go.mod` 的 `xtls/xray-core` | CI interop（`pandora-native.yml` 的 `-run` 正则）、compat 构建 | 新加的 Xray interop 测试要补进 `-run`（`rules/pdnd-kernel.md`） |
+| Xray（作 Go 模块） | `pdnd/go.mod` 的 `xtls/xray-core` | CI interop（`pandora-native.yml` 的 `-run` 正则）、gun 互通测试 `TestNativeGRPCInteropWithXrayGunClient` | 新加的 Xray interop 测试要补进 `-run`（`rules/pdnd-kernel.md`） |
 | sing-anytls 客户端 | `pdnd/go.mod` | CI 的 AnyTLS interop | yaml 注释里写着版本，要一起改 |
-| sing-box（作 Go 模块） | `pdnd/go.mod` 与 `subscription-e2e/tools/go.mod`，两处必须一致 | subscription-e2e | tools 模块跑 tidy |
-| mihomo、sing-box、Juicity、Naive 外部二进制 | 不入库，跑测试时经 `*_BIN` + `*_SHA256` 环境变量传入（`interop_mihomo`、`interop_external` 标签） | 本机或测试机手动门禁 | SHA 用 GitHub release 页公布的值，不用自己下载后算出来的；`pdnd/release/README.md` 里的 mihomo 实测记录是历史结论，换版本后要重测 |
+| sing-box（作 Go 模块） | 只在 `subscription-e2e/tools/go.mod`（pdnd 不依赖 sing-box） | subscription-e2e | tools 模块跑 tidy |
+| mihomo 外部二进制 | CI `pandora-native.yml` 的「External Mihomo interoperability」一步：`MIHOMO_VERSION` 与下载包的 `MIHOMO_GZ_SHA256` 成对写在 step 的 env 里（`interop_mihomo` 标签，每次 CI 都跑） | CI |
+| sing-box、Juicity、Naive 外部二进制 | 不入库，跑测试时经 `*_BIN` + `*_SHA256` 环境变量传入（`interop_external` 标签） | 本机或测试机手动门禁 | SHA 用 GitHub release 页公布的值，不用自己下载后算出来的；`pdnd/release/README.md` 里的 mihomo 实测记录是历史结论，换版本后要重测 |
 | node-e2e 真客户端（sing-box、mihomo、Xray、Juicity、mieru） | ops-local `vultr-test2/node-e2e/scripts/install-clients.sh` 里的版本变量和逐个写死的 SHA-256 | node-e2e skill | 版本与 SHA 成对改，sing-box 用 `-glibc` 包 |
 | 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | node-e2e 的接入证据 | 见 node-e2e |
 

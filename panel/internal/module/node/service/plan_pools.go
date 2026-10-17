@@ -9,16 +9,24 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// PlanPools 返回套餐页绑池选择器数据（草稿优先，否则当前发布版本）。
+// PlanPools 返回套餐页绑池选择器数据（可选的池与是否已绑）。
 func (s *Service) PlanPools(ctx context.Context, planID uuid.UUID) (PlanPools, error) {
 	if s.catalog == nil {
 		return PlanPools{}, errPoolPortMissing
 	}
-	b, err := s.catalog.PoolBindingVersion(ctx, planID)
+	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{planID})
 	if err != nil {
 		return PlanPools{}, err
 	}
-	rows, err := s.repo.PickablePools(ctx, b.PoolIDs)
+	if _, ok := plans[planID]; !ok {
+		return PlanPools{}, errs.New(errs.NotFound)
+	}
+	pp, err := s.catalog.PlanPools(ctx, []uuid.UUID{planID})
+	if err != nil {
+		return PlanPools{}, err
+	}
+	poolIDs := pp[planID]
+	rows, err := s.repo.PickablePools(ctx, poolIDs)
 	if err != nil {
 		return PlanPools{}, err
 	}
@@ -26,8 +34,8 @@ func (s *Service) PlanPools(ctx context.Context, planID uuid.UUID) (PlanPools, e
 	for i, r := range rows {
 		ids[i] = r.ID
 	}
-	bound := make(map[uuid.UUID]bool, len(b.PoolIDs))
-	for _, id := range b.PoolIDs {
+	bound := make(map[uuid.UUID]bool, len(poolIDs))
+	for _, id := range poolIDs {
 		bound[id] = true
 	}
 
@@ -58,38 +66,8 @@ func (s *Service) PlanPools(ctx context.Context, planID uuid.UUID) (PlanPools, e
 		}
 	}
 	return PlanPools{
-		VersionID:     b.VersionID,
-		VersionStatus: b.Status,
-		RowVersion:    b.RowVersion,
-		Editable:      b.Editable,
-		Pools:         pools,
+		Pools: pools,
 	}, nil
-}
-
-// SetPlanPools 整体替换草稿版本的绑池；只改草稿，不影响在用订阅，故不推进名单纪元。
-func (s *Service) SetPlanPools(ctx context.Context, planID, versionID uuid.UUID, expectedRowVersion int64, poolIDs []uuid.UUID) (int64, error) {
-	if len(poolIDs) > MaxPlanPools {
-		return 0, errs.Invalid(map[string]string{"pool_ids": "一次最多绑定 500 个节点池"})
-	}
-	if s.catalog == nil {
-		return 0, errPoolPortMissing
-	}
-	var next int64
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		if err := s.lockAssignablePoolsInTx(ctx, poolIDs); err != nil {
-			return err
-		}
-		n, err := s.catalog.SetVersionPools(ctx, planID, versionID, expectedRowVersion, poolIDs)
-		if err != nil {
-			return err
-		}
-		next = n
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return next, nil
 }
 
 // LockAssignablePools 按 id 升序锁住可绑定的节点池（catalog 的 PoolGuard）。
@@ -135,27 +113,34 @@ func poolDedupeSortIDs(ids []uuid.UUID) []uuid.UUID {
 	return out
 }
 
-// CheckPublishable 在发布版本前检查绑池是否至少有一个可服务节点（catalog 的 PublishGate）。
+// 发布检查的两种「没有可用池」提示。
+const (
+	poolNoteUnbound     = "发布前至少绑定一个节点池"
+	poolNoteAllDisabled = "绑定的节点池都已停用：先在「线路 · 节点池」里启用，或换绑一个启用中的池"
+)
+
+// CheckPublishable 在发布套餐前检查套餐绑定的池是否至少有一个可服务节点（catalog 的 PublishGate）。
 // 「可服务」= repo.DeliverableNodeCond，与套餐页的 deliverable_nodes、套餐列表的可服务节点数同一口径。
-func (s *Service) CheckPublishable(ctx context.Context, versionID uuid.UUID) error {
+func (s *Service) CheckPublishable(ctx context.Context, planID uuid.UUID) error {
 	if s.catalog == nil {
 		return errPoolPortMissing
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		vp, err := s.catalog.VersionPools(ctx, []uuid.UUID{versionID})
+		pp, err := s.catalog.PlanPools(ctx, []uuid.UUID{planID})
 		if err != nil {
 			return err
 		}
-		ids := vp[versionID]
+		ids := pp[planID]
+		// 「没绑池」与「绑的池都停用了」分开提示，方便管理员排查（用户 2026-10-14 定；门户侧不受影响）
 		if len(ids) == 0 {
-			return errs.Invalid(map[string]string{"pool_ids": "发布前至少绑定一个可用节点池"})
+			return errs.Invalid(map[string]string{"pool_ids": poolNoteUnbound})
 		}
 		locked, err := s.repo.LockAssignablePools(ctx, ids)
 		if err != nil {
 			return err
 		}
 		if len(locked) == 0 {
-			return errs.Invalid(map[string]string{"pool_ids": "发布前至少绑定一个可用节点池"})
+			return errs.Invalid(map[string]string{"pool_ids": poolNoteAllDisabled})
 		}
 		ok, err := s.repo.HasDeliverableNode(ctx, ids)
 		if err != nil {
@@ -168,20 +153,20 @@ func (s *Service) CheckPublishable(ctx context.Context, versionID uuid.UUID) err
 	})
 }
 
-// ServingNodeCounts 返回每个版本绑定线路里可服务节点数（catalog handler 的 NodeCounter）。
-func (s *Service) ServingNodeCounts(ctx context.Context, versionIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
-	if len(versionIDs) == 0 {
+// ServingNodeCounts 返回每个套餐绑定线路里可服务节点数（catalog 后台套餐列表的可服务节点数）。
+func (s *Service) ServingNodeCounts(ctx context.Context, planIDs []uuid.UUID) (map[uuid.UUID]int64, error) {
+	if len(planIDs) == 0 {
 		return map[uuid.UUID]int64{}, nil
 	}
 	if s.catalog == nil {
 		return nil, errPoolPortMissing
 	}
-	vp, err := s.catalog.VersionPools(ctx, versionIDs)
+	pp, err := s.catalog.PlanPools(ctx, planIDs)
 	if err != nil {
 		return nil, err
 	}
 	poolIDSet := make(map[uuid.UUID]struct{})
-	for _, pids := range vp {
+	for _, pids := range pp {
 		for _, id := range pids {
 			poolIDSet[id] = struct{}{}
 		}
@@ -200,13 +185,13 @@ func (s *Service) ServingNodeCounts(ctx context.Context, versionIDs []uuid.UUID)
 		}
 	}
 
-	out := make(map[uuid.UUID]int64, len(versionIDs))
-	for _, vid := range versionIDs {
+	out := make(map[uuid.UUID]int64, len(planIDs))
+	for _, pid := range planIDs {
 		var sum int64
-		for _, pid := range vp[vid] {
-			sum += counts[pid]
+		for _, poolID := range pp[pid] {
+			sum += counts[poolID]
 		}
-		out[vid] = sum
+		out[pid] = sum
 	}
 	return out, nil
 }

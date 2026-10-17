@@ -24,23 +24,23 @@ func TestRequestWithdrawalRules(t *testing.T) {
 
 	// 没有任何佣金
 	poor := newUser(t, e, ctx)
-	if _, err := e.svc.RequestWithdrawal(userCtx(ctx, poor), poor, dec2("10.00"), "alipay p@example.test"); !errors.Is(err, ErrNoCommission) {
+	if _, err := e.svc.RequestWithdrawal(userCtx(ctx, poor), poor, dec2("10.00"), "alipay", "alipay p@example.test"); !errors.Is(err, ErrNoCommission) {
 		t.Fatalf("没有佣金应拒绝: %v", err)
 	}
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("5.00"), "alipay a@example.test"); !errors.Is(err, ErrWithdrawTooSmall) {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("5.00"), "alipay", "alipay a@example.test"); !errors.Is(err, ErrWithdrawTooSmall) {
 		t.Fatalf("低于最低额应拒绝: %v", err)
 	}
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("20.01"), "alipay a@example.test"); !errors.Is(err, ErrWithdrawTooMuch) {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("20.01"), "alipay", "alipay a@example.test"); !errors.Is(err, ErrWithdrawTooMuch) {
 		t.Fatalf("超过可提现应拒绝: %v", err)
 	}
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "   "); errCode(err) != errs.ValidationFailed {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay", "   "); errCode(err) != errs.ValidationFailed {
 		t.Fatalf("空收款方式应 422: %v", err)
 	}
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.001"), "alipay a@example.test"); errCode(err) != errs.ValidationFailed {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.001"), "alipay", "alipay a@example.test"); errCode(err) != errs.ValidationFailed {
 		t.Fatalf("三位小数应 422: %v", err)
 	}
 
-	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), " alipay a@example.test ")
+	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay", " alipay a@example.test ")
 	if err != nil {
 		t.Fatalf("提现申请: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestRequestWithdrawalRules(t *testing.T) {
 	}
 
 	// 已有在途申请
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "alipay a@example.test"); !errors.Is(err, ErrWithdrawPending) {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "alipay", "alipay a@example.test"); !errors.Is(err, ErrWithdrawPending) {
 		t.Fatalf("在途时再申请应拒绝: %v", err)
 	}
 }
@@ -73,7 +73,7 @@ func TestReviewAndPay(t *testing.T) {
 	setConfig(t, e, ctx, admin, 10, 0, "10.00", "every_order")
 	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
 	accrueAvailable(t, e, ctx, referrer, buyer, "200.00")
-	id, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("15.00"), "alipay a@example.test")
+	id, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("15.00"), "alipay", "alipay a@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestReviewAndPay(t *testing.T) {
 	if _, err := e.svc.ReviewWithdrawal(actx, id, true, "顺便说一句"); errCode(err) != errs.ValidationFailed {
 		t.Fatalf("批准带理由应 422: %v", err)
 	}
-	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-EARLY"); !errors.Is(err, ErrWithdrawalNotPayable) {
+	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-EARLY", nil); !errors.Is(err, ErrWithdrawalNotPayable) {
 		t.Fatalf("未批准就打款应拒绝: %v", err)
 	}
 	st, err := e.svc.ReviewWithdrawal(actx, id, true, "")
@@ -98,10 +98,10 @@ func TestReviewAndPay(t *testing.T) {
 	if _, err := e.svc.ReviewWithdrawal(actx, id, false, "改主意"); !errors.Is(err, ErrWithdrawalHandled) {
 		t.Fatalf("已批准的再审应拒绝: %v", err)
 	}
-	if err := e.svc.MarkWithdrawalPaid(actx, id, "  "); errCode(err) != errs.ValidationFailed {
+	if err := e.svc.MarkWithdrawalPaid(actx, id, "  ", nil); errCode(err) != errs.ValidationFailed {
 		t.Fatalf("空流水号应 422: %v", err)
 	}
-	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0001"); err != nil {
+	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0001", nil); err != nil {
 		t.Fatalf("打款: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestReviewAndPay(t *testing.T) {
 	if err := e.row(ctx, `SELECT kind FROM ledger_transactions WHERE id = ?`, *payoutTxn).Scan(&kind); err != nil || kind != "commission_paid" {
 		t.Fatalf("打款交易 kind=%s err=%v", kind, err)
 	}
-	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0002"); !errors.Is(err, ErrWithdrawalNotPayable) {
+	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0002", nil); !errors.Is(err, ErrWithdrawalNotPayable) {
 		t.Fatalf("重复打款应拒绝: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func TestRejectWithdrawal(t *testing.T) {
 	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
 	accrueAvailable(t, e, ctx, referrer, buyer, "200.00")
 	uctx, actx := userCtx(ctx, referrer), adminCtx(ctx, admin)
-	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay a@example.test")
+	id, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("15.00"), "alipay", "alipay a@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestRejectWithdrawal(t *testing.T) {
 	if err != nil || st != WithdrawalRejected {
 		t.Fatalf("拒绝: %s %v", st, err)
 	}
-	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0001"); !errors.Is(err, ErrWithdrawalNotPayable) {
+	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0001", nil); !errors.Is(err, ErrWithdrawalNotPayable) {
 		t.Fatalf("已拒绝的打款应拒绝: %v", err)
 	}
 	if _, err := e.svc.ReviewWithdrawal(actx, id, true, ""); !errors.Is(err, ErrWithdrawalHandled) {
@@ -180,7 +180,7 @@ func TestRejectWithdrawal(t *testing.T) {
 		t.Fatalf("拒绝不动账，可提现佣金科目 %s", bal)
 	}
 	// 拒绝后可以重新申请全额
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("20.00"), "alipay a@example.test"); err != nil {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("20.00"), "alipay", "alipay a@example.test"); err != nil {
 		t.Fatalf("拒绝后重新申请: %v", err)
 	}
 }
@@ -195,21 +195,35 @@ func TestAdminWithdrawalsAndOverview(t *testing.T) {
 	}
 	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
 	accrueAvailable(t, e, ctx, referrer, buyer, "200.00")
-	id, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("15.00"), "alipay a@example.test")
+	id, err := e.svc.RequestWithdrawal(userCtx(ctx, referrer), referrer, dec2("15.00"), "alipay", "alipay a@example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := e.svc.AdminWithdrawals(ctx, "bogus"); errCode(err) != errs.ValidationFailed {
+	if _, err := e.svc.AdminWithdrawals(ctx, []string{"bogus"}); errCode(err) != errs.ValidationFailed {
 		t.Fatalf("非法状态应 422: %v", err)
 	}
-	rows, err := e.svc.AdminWithdrawals(ctx, WithdrawalRequested)
+	if _, err := e.svc.AdminWithdrawals(ctx, []string{WithdrawalRequested, "bogus"}); errCode(err) != errs.ValidationFailed {
+		t.Fatalf("混进一个非法状态也应 422: %v", err)
+	}
+	// 「已完成」= paid,rejected：刚申请的不在里面
+	done, err := e.svc.AdminWithdrawals(ctx, []string{WithdrawalPaid, WithdrawalRejected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range done {
+		if r.ID == id || (r.Status != WithdrawalPaid && r.Status != WithdrawalRejected) {
+			t.Fatalf("已完成筛出了 %s", r.Status)
+		}
+	}
+	// 「处理中」= requested,approved（重复的状态去重）
+	rows, err := e.svc.AdminWithdrawals(ctx, []string{WithdrawalRequested, WithdrawalApproved, WithdrawalRequested})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got *AdminWithdrawal
 	for i := range rows {
-		if rows[i].Status != WithdrawalRequested {
+		if rows[i].Status != WithdrawalRequested && rows[i].Status != WithdrawalApproved {
 			t.Fatalf("按状态筛出了 %s", rows[i].Status)
 		}
 		if rows[i].ID == id {
@@ -257,7 +271,7 @@ func TestMyCommissionSummary(t *testing.T) {
 	if _, err := e.svc.TransferToBalance(uctx, referrer, dec2("3.00")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "alipay a@example.test"); err != nil {
+	if _, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "alipay", "alipay a@example.test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -266,7 +280,7 @@ func TestMyCommissionSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := mc.Summary
-	if s.Currency != testCurrency || !s.Pending.Equal(dec2("5.00")) || !s.Available.Equal(dec2("7.00")) ||
+	if !s.Pending.Equal(dec2("5.00")) || !s.Available.Equal(dec2("7.00")) ||
 		!s.Withdrawing.Equal(dec2("10.00")) || !s.Settled.IsZero() || !s.TotalEarned.Equal(dec2("25.00")) {
 		t.Fatalf("金额汇总 %+v", s)
 	}

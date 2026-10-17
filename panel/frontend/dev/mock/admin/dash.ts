@@ -2,7 +2,7 @@ import type { MockContext, MockModule } from '../types.ts'
 import { stalePendingCount } from './billing-store.ts'
 
 // ---------------------------------------------------------------------------
-// 确定性的伪数据：同一天、同一币种得到同一组数，刷新不跳
+// 确定性的伪数据：同一天得到同一组数，刷新不跳
 // ---------------------------------------------------------------------------
 const DAY_MS = 86_400_000
 
@@ -11,14 +11,11 @@ function wave(i: number, seed: number): number {
 }
 
 /** 距今 daysAgo 天那一天的收入拆分（分）；天序号按绝对日期取，跨请求一致 */
-function dailyRevenue(currency: string, daysAgo: number) {
+function dailyRevenue(daysAgo: number) {
   const dayIndex = Math.floor(Date.now() / DAY_MS) - daysAgo
-  const cny = currency === 'CNY'
-  const base = cny ? 620_000 : 82_000
-  const amp = cny ? 380_000 : 52_000
-  const credit = Math.max(0, Math.round(base + amp * wave(dayIndex, cny ? 1 : 3)))
+  const credit = Math.max(0, Math.round(620_000 + 380_000 * wave(dayIndex, 1)))
   const debit = dayIndex % 9 === 0 ? Math.round(credit * 0.04) : 0
-  const adjustment = dayIndex % 13 === 0 ? (cny ? -5_000 : 1_200) : 0
+  const adjustment = dayIndex % 13 === 0 ? -5_000 : 0
   return { credit, debit, adjustment, net: credit - debit + adjustment }
 }
 
@@ -33,10 +30,10 @@ function micros(at: Date): string {
   return at.toISOString().replace(/\.(\d{3})Z$/, '.$1000Z')
 }
 
-function sumNet(currency: string, from: number, to: number, pick: 'net' | 'actual' | 'adjustment' = 'net'): number {
+function sumNet(from: number, to: number, pick: 'net' | 'actual' | 'adjustment' = 'net'): number {
   let sum = 0
   for (let i = from; i < to; i++) {
-    const r = dailyRevenue(currency, i)
+    const r = dailyRevenue(i)
     sum += pick === 'net' ? r.net : pick === 'actual' ? r.credit - r.debit : r.adjustment
   }
   return sum
@@ -110,7 +107,7 @@ export const dash: MockModule = {
     'GET /v1/dashboard/tasks': (ctx) => {
       const items = [
         { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 + 540 },
-        { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128_000 }] },
+        { kind: 'withdrawals_pending', count: 3, amount: 128_000 },
         { kind: 'nodes_offline', count: 3, sample: [{ id: NODE_ROWS[1].node_id, name: 'JP-TYO-03' }, { id: NODE_ROWS[3].node_id, name: 'US-LAX-01' }, { id: NODE_ROWS[5].node_id, name: 'DE-FRA-01' }], longest_offline_seconds: 26 * 60 },
         // 与订单假后端同一份数据：待支付筛选里能看到这几张
         { kind: 'orders_pending_stale', count: stalePendingCount(1800 * 1000), threshold_seconds: 1800 },
@@ -137,30 +134,27 @@ export const dash: MockModule = {
 
     // yesterday / actual_yesterday / new_7_days / nodes 与 Go 一样必回
     'GET /v1/overview': (ctx) => {
-      const revenue = ['CNY', 'USD'].map((currency) => {
-        const today = dailyRevenue(currency, 0)
-        const yesterday = dailyRevenue(currency, 1)
-        return {
-          currency,
-          today: today.net,
-          last_7_days: sumNet(currency, 0, 7),
-          last_30_days: sumNet(currency, 0, 30),
-          total: sumNet(currency, 0, 400),
-          actual_today: today.credit - today.debit,
-          actual_7_days: sumNet(currency, 0, 7, 'actual'),
-          actual_30_days: sumNet(currency, 0, 30, 'actual'),
-          actual_total: sumNet(currency, 0, 400, 'actual'),
-          adjustment_today: today.adjustment,
-          adjustment_7_days: sumNet(currency, 0, 7, 'adjustment'),
-          adjustment_30_days: sumNet(currency, 0, 30, 'adjustment'),
-          adjustment_total: sumNet(currency, 0, 400, 'adjustment'),
-          yesterday: yesterday.net,
-          actual_yesterday: yesterday.credit - yesterday.debit,
-        }
-      })
+      const today = dailyRevenue(0)
+      const yesterday = dailyRevenue(1)
+      const revenue = {
+        today: today.net,
+        last_7_days: sumNet(0, 7),
+        last_30_days: sumNet(0, 30),
+        total: sumNet(0, 400),
+        actual_today: today.credit - today.debit,
+        actual_7_days: sumNet(0, 7, 'actual'),
+        actual_30_days: sumNet(0, 30, 'actual'),
+        actual_total: sumNet(0, 400, 'actual'),
+        adjustment_today: today.adjustment,
+        adjustment_7_days: sumNet(0, 7, 'adjustment'),
+        adjustment_30_days: sumNet(0, 30, 'adjustment'),
+        adjustment_total: sumNet(0, 400, 'adjustment'),
+        yesterday: yesterday.net,
+        actual_yesterday: yesterday.credit - yesterday.debit,
+      }
       ctx.send(200, {
         users: { total: 18_204, active: 13_870, today: 96, last_7_days: 612 },
-        subscriptions: { active: 12_408, trialing: 214, expiring_7_days: 731, expired: 5_022, new_7_days: 386 },
+        subscriptions: { active: 12_408, expiring_7_days: 731, expired: 5_022, new_7_days: 386 },
         revenue,
         orders: { paid_today: 142, pending: 17, failed_today: 3 },
         ledger_drift_accounts: 0,
@@ -170,17 +164,15 @@ export const dash: MockModule = {
 
     // previous_total 必回
     'GET /v1/revenue/timeseries': (ctx) => {
-      const currency = (ctx.query.get('currency') ?? '').toUpperCase()
-      if (currency !== 'CNY' && currency !== 'USD') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { currency: '仅支持 CNY 或 USD' })
       const daysRaw = ctx.query.get('days')
       const days = isInt(daysRaw) ? Number(daysRaw) : 30
       if (![7, 30, 90].includes(days)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { days: '仅支持 7、30 或 90 天' })
       const points = []
       for (let i = days - 1; i >= 0; i--) {
-        const r = dailyRevenue(currency, i)
+        const r = dailyRevenue(i)
         points.push({ date: localDate(i), actual_credit: r.credit, actual_debit: r.debit, adjustment: r.adjustment, displayed_net: r.net })
       }
-      ctx.send(200, { currency, days, points, previous_total: sumNet(currency, days, days * 2) })
+      ctx.send(200, { days, points, previous_total: sumNet(days, days * 2) })
     },
 
     'GET /v1/dashboard/traffic/nodes': (ctx) => {
@@ -208,7 +200,7 @@ export const dash: MockModule = {
         items,
         totals: { reported_bytes: String(reported), attributed_bytes: String(reported - unattributed), unattributed_bytes: String(unattributed) },
         ranking: { returned_bytes: String(returned), other_node_bytes: String(reported - returned) },
-        quality: { duplicate_report_count: 2, invalid_report_count: 0, invalid_entry_count: 1 },
+        quality: { invalid_report_count: 0, invalid_entry_count: 1 },
       })
     },
 
@@ -238,7 +230,7 @@ export const dash: MockModule = {
         items,
         totals: { reported_bytes: String(attributed + unattributed), attributed_bytes: String(attributed), unattributed_bytes: String(unattributed) },
         ranking: { returned_bytes: String(returned), other_user_bytes: String(attributed - returned) },
-        quality: { duplicate_report_count: 2, invalid_report_count: 0, invalid_entry_count: 1 },
+        quality: { invalid_report_count: 0, invalid_entry_count: 1 },
       })
     },
 
@@ -248,7 +240,7 @@ export const dash: MockModule = {
       const files = Array.from({ length: 10 }, (_, i) => {
         const at = new Date(now - (i * 24 + 5) * 3_600_000)
         return {
-          name: `aegis-${at.toISOString().slice(0, 19).replace(/[-:]/g, '')}Z.dump.age`,
+          name: `pandora-postgres-${at.toISOString().slice(0, 19).replace(/[-:]/g, '')}Z.dump.age`,
           size: 412_000_000 - i * 1_800_000,
           created_at: at.toISOString(),
           has_checksum: i !== 7,
@@ -274,7 +266,7 @@ export const dash: MockModule = {
         state: 'degraded',
         components: [
           { key: 'postgres', state: 'ok', latency_ms: 3.2, metrics: { size_bytes: 3_418_000_000, connections: 23, max_connections: 200 } },
-          { key: 'valkey', state: 'ok', latency_ms: 0.4, metrics: {} },
+          { key: 'redis', state: 'ok', latency_ms: 0.4, metrics: {} },
           { key: 'node_fabric', state: 'warn', metrics: { total: 44, online: 41, config_lagging: 2 }, message: '3 个节点心跳超过 90 秒' },
           { key: 'payment_callbacks', state: 'ok', metrics: { pending: 0 } },
           { key: 'mail', state: 'warn', metrics: { queued: 214, retrying: 21, failed_total: 9 }, message: 'SMTP 连接超时，正在重试' },

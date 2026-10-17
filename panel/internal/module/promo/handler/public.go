@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// previewCoupon 是门户下单前的优惠码试算：{plan_id, price_id} 试算套餐，或 {pack_id} 试算流量包。
+// previewCoupon 是门户下单前的优惠码试算：{plan_id, price_id} 试算套餐。
 // 金额由服务端按价格查出，不接受前端传值。
 func (h *Handler) previewCoupon(c *gin.Context) {
 	p, ok := authn.FromGin(c)
@@ -26,26 +26,15 @@ func (h *Handler) previewCoupon(c *gin.Context) {
 	// 空串或不是 UUID 的值在这里挡掉，回字段级 422，而不是一路传下去
 	fields := map[string]string{}
 	var item service.PreviewItem
-	if req.PackID != "" {
-		if id, err := uuid.Parse(req.PackID); err != nil {
-			fields["pack_id"] = "必填"
-		} else {
-			item.PackID = &id
-		}
-		if req.PlanID != "" || req.PriceID != "" {
-			fields["pack_id"] = "流量包与套餐只能二选一"
-		}
+	if id, err := uuid.Parse(req.PlanID); err != nil {
+		fields["plan_id"] = "必填"
 	} else {
-		if id, err := uuid.Parse(req.PlanID); err != nil {
-			fields["plan_id"] = "必填"
-		} else {
-			item.PlanID = &id
-		}
-		if id, err := uuid.Parse(req.PriceID); err != nil {
-			fields["price_id"] = "必填"
-		} else {
-			item.PriceID = &id
-		}
+		item.PlanID = id
+	}
+	if id, err := uuid.Parse(req.PriceID); err != nil {
+		fields["price_id"] = "必填"
+	} else {
+		item.PriceID = id
 	}
 	if len(fields) > 0 {
 		httpx.Fail(c, errs.Invalid(fields))

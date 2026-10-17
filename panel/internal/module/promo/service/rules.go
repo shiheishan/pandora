@@ -95,13 +95,6 @@ func validateSpec(spec Spec) (Spec, error) {
 		fields["discount_type"] = "只支持 percent 或 fixed"
 	}
 
-	cur, err := money.ParseCurrency(spec.Currency)
-	if err != nil {
-		fields["currency"] = "只支持 CNY 或 USD"
-	} else {
-		out.Currency = string(cur)
-	}
-
 	if spec.MaxDiscount != nil {
 		if spec.Face.Kind != KindPercent {
 			fields["max_discount"] = "定额券不设封顶"
@@ -174,7 +167,7 @@ func faceOf(c model.Coupon) Face {
 }
 
 func checkBasics(c model.Coupon, t Target, now time.Time) error {
-	if c.Status != model.CouponActive {
+	if c.Status != StatusActive {
 		return ErrCouponNotFound
 	}
 	if c.ValidFrom != nil && now.Before(*c.ValidFrom) {
@@ -186,16 +179,13 @@ func checkBasics(c model.Coupon, t Target, now time.Time) error {
 	if c.MaxRedemptions != nil && c.RedeemedCount+c.ReservedCount >= *c.MaxRedemptions {
 		return ErrCouponUsedUp
 	}
-	if c.Currency != t.Currency {
-		return ErrCouponNotFound
-	}
 	if t.Subtotal.LessThan(c.MinOrderAmount) {
 		return ErrCouponMinAmount
 	}
 	return nil
 }
 
-// checkPlan 判断券限定的套餐（planIDs 为空即不限）是否包含这一单的套餐；流量包订单 planID 为 nil。
+// checkPlan 判断券限定的套餐（planIDs 为空即不限）是否包含这一单的套餐；没有套餐的单 planID 为 nil。
 func checkPlan(planIDs []uuid.UUID, planID *uuid.UUID) error {
 	if len(planIDs) == 0 {
 		return nil
@@ -240,10 +230,6 @@ func CanTransition(from, to string) bool {
 }
 
 func checkTarget(t Target) error {
-	// 币种必须已是规范的大写代码：券的币种按原样比较
-	if cur, err := money.ParseCurrency(t.Currency); err != nil || string(cur) != t.Currency {
-		return errs.Wrap(errs.Internal, fmt.Errorf("promo target: 币种 %q 不规范", t.Currency))
-	}
 	if err := money.CheckNonNegative(t.Subtotal); err != nil {
 		return errs.Wrap(errs.Internal, fmt.Errorf("promo target: %w", err))
 	}

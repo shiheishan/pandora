@@ -5,30 +5,32 @@
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-md);
   background: var(--border);
 }
 
 .cell {
   min-width: 0;
-  padding: 14px var(--space-16);
+  padding: 12px 14px;
   background: var(--surface);
 }
 
 .label {
-  color: var(--text-2);
+  color: var(--text-3);
   font-size: var(--fs-caption);
 }
 
 .value {
-  margin-top: var(--space-4);
-  font-size: 20px;
-  font-weight: var(--fw-semibold);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 960px) {
-  .strip {
+@media (max-width: 959px) {
+  /* 三格以内一行放得下，四格起才折成两列（免得三格时空出一格） */
+  .strip:has(> :nth-child(4)) {
     grid-auto-flow: row;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

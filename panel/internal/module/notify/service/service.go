@@ -1,5 +1,5 @@
-// Package service 是 notify 模块的业务层：投递记录、SMTP 与 Telegram 发送、通知模板与后台邮件设置（P2），
-// 站内信、通知去重、通知偏好、公告、Telegram 绑定与设置、到期与流量扫描（P6）。
+// Package service 是 notify 模块的业务层：投递记录、SMTP 与 Telegram 发送、通知模板与后台邮件设置，
+// 站内信、通知去重、通知偏好、公告、Telegram 绑定与设置、到期与流量扫描。
 //
 // 「决定要发」和「实际送出」分两步，中间隔着投递表：SendToAddress 在调用方事务里写一行 queued，
 // 提交后入队 notify:dispatch；Dispatch 认领到期的行逐封发送，失败按退避重试。业务操作不因 SMTP
@@ -7,7 +7,7 @@
 //
 // 文件划分：registry.go 内置模板；render.go 模板校验与渲染；smtp.go 发信；mailer.go 写投递与入队；
 // dispatch.go 认领与发送；templates.go 后台模板管理；mailsettings.go 后台邮件设置与测试发信。
-// P6：p6.go 对外类型与跨模块端口；notice.go 给用户写一条通知（去重、站内信、邮件、Telegram）；
+// ports.go 对外类型与跨模块端口；notice.go 给用户写一条通知（去重、站内信、邮件、Telegram）；
 // inbox.go 收件箱与偏好；scan.go 到期与流量扫描；announce*.go 公告；telegram*.go Telegram；
 // dispatch_telegram.go Telegram 派发。
 package service
@@ -21,6 +21,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/notify/repo"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
+	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/google/uuid"
@@ -50,6 +51,8 @@ type Settings interface {
 	SwitchEnabled(ctx context.Context, code string) (bool, error)
 	Telegram(ctx context.Context) (settingssvc.Telegram, error)
 	SetTelegram(ctx context.Context, v settingssvc.TelegramUpdate) error
+	TelegramExtras(ctx context.Context) (settingssvc.TelegramExtras, error)
+	SetTelegramExtras(ctx context.Context, v settingssvc.TelegramExtras) error
 }
 
 var _ Settings = (*settingssvc.Service)(nil)
@@ -103,6 +106,7 @@ type store interface {
 	PurgeDeliveries(ctx context.Context, before time.Time, batch int) (int, error)
 
 	p6Store
+	xbStore
 }
 
 var _ store = (*repo.Repo)(nil)
@@ -111,7 +115,7 @@ var _ store = (*repo.Repo)(nil)
 type Service struct {
 	store    store
 	tx       txRunner
-	events   PluginEvents // 插件钩子出站事件，装配时注入（plugin_events.go）
+	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
 	settings Settings
 	audit    auditWriter
 	queue    Queue
@@ -120,13 +124,20 @@ type Service struct {
 	sealer   *crypto.Sealer
 	now      func() time.Time
 
-	// P6：跨模块端口由装配注入（p6.go 的 Use* 方法）；tg 是 Telegram Bot API 客户端
+	// 跨模块端口由装配注入（ports.go 的 Use* 方法）；tg 是 Telegram Bot API 客户端
 	dir           Directory
 	plans         Plans
 	subs          Subscriptions
 	orders        Orders
 	tg            telegramAPI
 	publicBaseURL string
+
+	// xb-tg 的端口（ports_xb.go 的 Use* 方法）
+	summaries SubscriptionSummaries
+	links     SubscribeLinks
+	balances  Balances
+	admins    Admins
+	replier   TicketReplier
 
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher

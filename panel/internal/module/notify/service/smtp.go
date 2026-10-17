@@ -102,7 +102,7 @@ func (s *smtpSender) Send(ctx context.Context, cfg SMTPConfig, m Message) error 
 	}
 	defer c.Close()
 
-	// tls 强制 STARTTLS；none 是「服务器支持就升级」（照旧），不支持才走明文
+	// tls 强制 STARTTLS；none 是「服务器支持就升级」，不支持才走明文
 	if cfg.Encryption != settingssvc.MailEncryptionSSL {
 		ok, _ := c.Extension("STARTTLS")
 		if !ok && cfg.Encryption == settingssvc.MailEncryptionTLS {

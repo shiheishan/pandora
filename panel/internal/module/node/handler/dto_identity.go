@@ -10,12 +10,6 @@ type bootstrapTokenRequest struct {
 	TTLMinutes int `json:"ttl_minutes"` // 0 或省略 = 缺省 20 分钟
 }
 
-type nodeBootstrapTokenRequest struct {
-	NodeName   string `json:"node_name"` // 前端会发，忽略
-	ServerID   string `json:"server_id"` // 节点所在服务器；空 = 节点还没放到服务器上
-	TTLMinutes int    `json:"ttl_minutes"`
-}
-
 type bootstrapTokenResponse struct {
 	Token          string    `json:"token"`
 	ExpiresAt      time.Time `json:"expires_at"`
@@ -23,9 +17,8 @@ type bootstrapTokenResponse struct {
 }
 
 type nodeIdentityResponse struct {
-	Identity               *identityResponse         `json:"identity"` // null = 从未接入
-	ServerToken            serverTokenStatusResponse `json:"server_token"`
-	BootstrapTokensPending int64                     `json:"bootstrap_tokens_pending"`
+	Identity               *identityResponse `json:"identity"` // null = 从未接入
+	BootstrapTokensPending int64             `json:"bootstrap_tokens_pending"`
 }
 
 type identityResponse struct {
@@ -37,11 +30,6 @@ type identityResponse struct {
 	ExpiresAt         time.Time  `json:"expires_at"`
 	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
 	RevokedReason     *string    `json:"revoked_reason,omitempty"`
-}
-
-// serverTokenStatusResponse：第三方节点端的服务端令牌已不支持，present 恒为 false（前端字段照给）。
-type serverTokenStatusResponse struct {
-	Present bool `json:"present"`
 }
 
 type identityOKResponse struct {
@@ -58,7 +46,6 @@ func bootstrapTokenResponseFrom(r service.BootstrapTokenIssued) bootstrapTokenRe
 
 func nodeIdentityResponseFrom(v service.NodeIdentityView) nodeIdentityResponse {
 	out := nodeIdentityResponse{
-		ServerToken:            serverTokenStatusResponse{Present: false},
 		BootstrapTokensPending: v.PendingTokens,
 	}
 	if v.Identity != nil {

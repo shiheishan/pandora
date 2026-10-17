@@ -11,20 +11,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/aegispanel/aegis/internal/module/payment/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
+// pgCode 取约束违例的 SQLSTATE，取不到返回空串。
 func pgCode(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code
-	}
-	return ""
+	v, _ := db.AsViolation(err)
+	return v.Code
 }
 
 func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {
@@ -37,14 +35,14 @@ func mkUser(t *testing.T, g *gorm.DB) uuid.UUID {
 	return id
 }
 
-// newOrder 插一张待付的充值单（9.90 CNY，与 baseIntent / basePayment 的金额一致），返回 ID 与订单号：
+// newOrder 插一张待付的充值单（9.90，与 baseIntent / basePayment 的金额一致），返回 ID 与订单号：
 // 意图、收款、挂账的 order_id 都有指向 orders 的外键。订单号用随机串，满足 ^[A-Z0-9-]{1,64}$ 且全局唯一。
 func newOrder(t *testing.T, g *gorm.DB, user uuid.UUID) (uuid.UUID, string) {
 	t.Helper()
 	var id uuid.UUID
 	no := "T-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
-	err := g.Raw(`INSERT INTO orders (order_no, user_id, kind, currency, subtotal_amount, total_amount, payable_amount, expires_at)
-		VALUES (?, ?, 'topup', 'CNY', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, no, user).Row().Scan(&id)
+	err := g.Raw(`INSERT INTO orders (order_no, user_id, kind, subtotal_amount, total_amount, payable_amount, expires_at)
+		VALUES (?, ?, 'topup', 9.90, 9.90, 9.90, now() + interval '30 minutes') RETURNING id`, no, user).Row().Scan(&id)
 	if err != nil {
 		t.Fatalf("建订单: %v", err)
 	}
@@ -73,13 +71,17 @@ func newRepo(t *testing.T) (*Repo, context.Context, *gorm.DB) {
 
 func insertProvider(t *testing.T, r *Repo, ctx context.Context, code string, min string, enabled, accepting bool, methods []string) uuid.UUID {
 	t.Helper()
+	return insertProviderAdapter(t, r, ctx, code, "epay", min, enabled, accepting, methods)
+}
+
+func insertProviderAdapter(t *testing.T, r *Repo, ctx context.Context, code, adapter, min string, enabled, accepting bool, methods []string) uuid.UUID {
+	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	p := &model.Provider{
 		ID:           id,
 		Code:         code,
-		Adapter:      "demo_hmac",
+		Adapter:      adapter,
 		DisplayName:  "测试渠道",
-		Currencies:   []string{"CNY", "USD"},
 		BaseURL:      "https://checkout.example.test",
 		Methods:      methods,
 		MinAmount:    decimal.RequireFromString(min),
@@ -100,7 +102,6 @@ func baseIntent(orderID, userID, providerID uuid.UUID, orderNo, outTradeNo strin
 		UserID:      userID,
 		ProviderID:  providerID,
 		OutTradeNo:  outTradeNo,
-		Currency:    "CNY",
 		Amount:      decimal.RequireFromString("9.90"),
 		Status:      "requires_action",
 		HTTPMethod:  "GET",
@@ -116,7 +117,6 @@ func basePayment(orderID, userID, providerID uuid.UUID, providerPayID string) *m
 		UserID:            userID,
 		ProviderID:        providerID,
 		ProviderPaymentID: providerPayID,
-		Currency:          "CNY",
 		Amount:            decimal.RequireFromString("9.90"),
 		FeeAmount:         decimal.Zero,
 		Status:            "succeeded",
@@ -133,8 +133,8 @@ func TestProviderJsonbAndUniqueness(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ProviderByCode: err=%v ok=%v", err, ok)
 	}
-	if got.ID != id || len(got.Currencies) != 2 || got.Currencies[0] != "CNY" || got.Currencies[1] != "USD" {
-		t.Fatalf("currencies 往返不对: %+v", got.Currencies)
+	if got.ID != id {
+		t.Fatalf("provider ID 不对: got=%v want=%v", got.ID, id)
 	}
 	if len(got.Methods) != 1 || got.Methods[0] != "alipay" {
 		t.Fatalf("methods 往返不对: %+v", got.Methods)
@@ -143,9 +143,8 @@ func TestProviderJsonbAndUniqueness(t *testing.T) {
 	bad := &model.Provider{
 		ID:           uuid.Must(uuid.NewV7()),
 		Code:         "pgp_bad_" + uuid.NewString()[:6],
-		Adapter:      "demo_hmac",
+		Adapter:      "epay",
 		DisplayName:  "坏渠道",
-		Currencies:   []string{"CNY"},
 		BaseURL:      "https://checkout.example.test",
 		Methods:      []string{"paypal"},
 		MinAmount:    decimal.Zero,
@@ -159,9 +158,8 @@ func TestProviderJsonbAndUniqueness(t *testing.T) {
 	dup := &model.Provider{
 		ID:           uuid.Must(uuid.NewV7()),
 		Code:         code,
-		Adapter:      "demo_hmac",
+		Adapter:      "epay",
 		DisplayName:  "重复",
-		Currencies:   []string{"CNY"},
 		BaseURL:      "https://checkout.example.test",
 		Methods:      []string{"alipay"},
 		MinAmount:    decimal.Zero,
@@ -180,15 +178,10 @@ func TestMinAcceptingAmount(t *testing.T) {
 	loCode := "pgp_lo_" + uuid.NewString()[:6]
 	hiID := insertProvider(t, r, ctx, hiCode, "1.00", true, true, []string{"alipay"})
 	loID := insertProvider(t, r, ctx, loCode, "0.50", true, true, []string{"alipay"})
-	// 只有在线渠道（epay）算数：demo 与 offline 不参与最低额
-	for _, id := range []uuid.UUID{hiID, loID} {
-		if _, err := r.UpdateProviderFields(ctx, id, map[string]any{"adapter": "epay"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	insertProvider(t, r, ctx, "pgp_demo_"+uuid.NewString()[:6], "0.02", true, true, []string{"alipay"})
+	// 只有在线渠道（epay）算数：线下渠道不参与最低额
+	insertProviderAdapter(t, r, ctx, "pgp_off_"+uuid.NewString()[:6], "offline", "0.02", true, true, nil)
 
-	min, found, err := r.MinAcceptingAmount(ctx, "CNY")
+	min, found, err := r.MinAcceptingAmount(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +190,7 @@ func TestMinAcceptingAmount(t *testing.T) {
 		t.Fatalf("want min <= 0.50 among accepting (含本事务两渠道), got %s found=%v", min, found)
 	}
 	if min.Equal(decimal.RequireFromString("0.02")) {
-		t.Fatal("demo 渠道不应参与最低额")
+		t.Fatal("线下渠道不应参与最低额")
 	}
 	if !min.Equal(wantLo) {
 		// 共享库上可能有更低 min 的已提交渠道，只断言本事务插入的 0.50 在候选里
@@ -212,7 +205,7 @@ func TestMinAcceptingAmount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	min2, found2, err := r.MinAcceptingAmount(ctx, "CNY")
+	min2, found2, err := r.MinAcceptingAmount(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

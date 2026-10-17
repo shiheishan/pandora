@@ -14,6 +14,7 @@ import {
   ordersSchema,
   paymentHistorySchema,
   providersSchema,
+  paymentSettingsSchema,
   providerWrittenSchema,
 } from '../src/admin/screens/billing/schemas'
 import { bearer, close, mockFetch, serve } from './mock-helpers'
@@ -41,9 +42,9 @@ describe('mock api · admin billing', () => {
   // dev/mock/admin/users.ts 的第 3 个种子用户（id 固定）
   const SEED_USER = '1a2b3c43-0000-4000-8000-000000000003'
   const firstPlan = async () => {
-    const plans = await json<{ plans: Array<{ id: string; status: string; prices: Array<{ id: string; status: string; currency: string }> }> }>(await get(admin, 'plans'))
+    const plans = await json<{ plans: Array<{ id: string; status: string; prices: Array<{ id: string; status: string }> }> }>(await get(admin, 'plans'))
     const plan = plans.plans.find((p) => p.status === 'active')!
-    return { plan_id: plan.id, price_id: plan.prices.find((x) => x.status === 'active' && x.currency === 'CNY')!.id }
+    return { plan_id: plan.id, price_id: plan.prices.find((x) => x.status === 'active')!.id }
   }
 
   it('counts the dashboard stale-pending card from the same orders the pending filter lists', async () => {
@@ -55,14 +56,19 @@ describe('mock api · admin billing', () => {
   })
 
   it('serves orders the page schemas accept, with multi-status and user filters (R63)', async () => {
-    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=draft,pending_payment,processing&limit=100')))
+    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment,cancelled&limit=100')))
     expect(pending.orders.length).toBeGreaterThan(0)
-    expect(pending.orders.every((o) => ['draft', 'pending_payment', 'processing'].includes(o.status))).toBe(true)
+    expect(pending.orders.every((o) => ['pending_payment', 'cancelled'].includes(o.status))).toBe(true)
     expect((await get(admin, 'orders?status=pending')).status).toBe(400)
+    expect((await get(admin, 'orders?status=processing')).status).toBe(400)
     expect((await get(admin, 'orders?user_id=nope')).status).toBe(400)
     const all = ordersSchema.parse(await json(await get(admin, 'orders?limit=100')))
-    expect(all.orders.some((o) => o.kind === 'addon' && o.plan_name.includes('加油包'))).toBe(true)
+    expect(all.orders.some((o) => o.kind === 'stack')).toBe(true)
     expect(all.orders.some((o) => o.provider_name === null && o.balance_applied === o.total_amount && o.total_amount > 0)).toBe(true)
+    expect(all.orders.some((o) => o.provider_code === 'epay' && o.paid_amount > 0 && o.method === 'alipay')).toBe(true)
+    expect(all.orders.some((o) => o.provider_code === 'epay' && o.paid_amount > 0 && o.method === 'wxpay')).toBe(true)
+    expect(all.orders.some((o) => o.method === 'offline' && o.manual)).toBe(true)
+    expect(all.orders.some((o) => o.status === 'pending_payment' && o.method === null)).toBe(true)
 
     // 用户详情的最近订单与订单页同一份：深链 #/billing/orders/<id> 落得到
     const user = await json<{ recent_orders: Array<{ id: string }> }>(await get(admin, `users/${SEED_USER}`))
@@ -71,6 +77,9 @@ describe('mock api · admin billing', () => {
     const detail = orderResponseSchema.parse(await json(await get(admin, `orders/${user.recent_orders[0]!.id}`)))
     expect(detail.order.user_id).toBe(SEED_USER)
     paymentHistorySchema.parse(await json(await get(admin, `orders/${detail.order.id}/payments`)))
+    const epayPaid = all.orders.find((o) => o.provider_code === 'epay' && o.paid_amount > 0)!
+    const epayHist = paymentHistorySchema.parse(await json(await get(admin, `orders/${epayPaid.id}/payments`)))
+    expect(epayHist.payment_intents.every((i) => typeof i.method === 'string' && i.method.length > 0)).toBe(true)
     expect((await get(admin, 'orders/not-a-uuid')).status).toBe(404)
   })
 
@@ -124,7 +133,7 @@ describe('mock api · admin billing', () => {
     const after = orderResponseSchema.parse(await json(await get(admin, `orders/${created.order_id}`))).order
     expect(after.status).toBe('fulfilled')
     const history = paymentHistorySchema.parse(await json(await get(admin, `orders/${created.order_id}/payments`)))
-    expect(history.payments[0]).toMatchObject({ provider_code: 'offline', provider_payment_id: 'offline:ICBC-TEST-2', payment_intent_id: null })
+    expect(history.payments[0]).toMatchObject({ provider_code: 'offline', provider_payment_id: 'offline:ICBC-TEST-2', payment_intent_id: null, method: 'offline' })
     expect((await post(admin, `orders/${created.order_id}/mark-paid`, { ...markBody, reference: 'ICBC-TEST-3' }, 'mark-3')).status).toBe(409)
   })
 
@@ -137,12 +146,12 @@ describe('mock api · admin billing', () => {
   const TWIN = '1a2b3c46-0000-4000-8000-000000000006'
   const SOLO = '1a2b3c41-0000-4000-8000-000000000001'
   type SubRow = { id: string; label: string | null; plan_name: string; status: string; current_period_end: string; current_period_start: string; quotas: Array<{ consumed: number }> }
-  type Detail = { balance: number; subscriptions: Array<SubRow & { pack_remaining_bytes: number }>; recent_orders: Array<{ id: string; kind: string }>; unattached_pack_bytes: number }
+  type Detail = { balance: number; subscriptions: Array<SubRow>; recent_orders: Array<{ id: string; kind: string }> }
   const detailOf = async (id: string) => json<Detail>(await get(admin, `users/${id}`))
   const planByName = async (name: string) => {
-    const plans = await json<{ plans: Array<{ id: string; name: string; status: string; prices: Array<{ id: string; status: string; currency: string; unit_amount: number }> }> }>(await get(admin, 'plans'))
+    const plans = await json<{ plans: Array<{ id: string; name: string; status: string; prices: Array<{ id: string; status: string; unit_amount: number }> }> }>(await get(admin, 'plans'))
     const plan = plans.plans.find((p) => p.name === name && p.status === 'active')!
-    const price = plan.prices.find((x) => x.status === 'active' && x.currency === 'CNY')!
+    const price = plan.prices.find((x) => x.status === 'active')!
     return { plan_id: plan.id, price_id: price.id, amount: price.unit_amount }
   }
   const preview = async (user: string, plan: { plan_id: string; price_id: string }, entry?: string, token = admin) =>
@@ -284,24 +293,6 @@ describe('mock api · admin billing', () => {
     expect(after.balance).toBe(before.balance + created.balance_refund!)
   })
 
-  it('attaches unattached traffic to a first subscription, and leaves it alone when several are in use', async () => {
-    const GiB = 1024 ** 3
-    const standard = await planByName('标准版')
-    admin = await reauthed()
-    // 第 7 位种子用户没有订阅、兑过 20 GiB 的送流量卡：开第一份时自动挂上（billing provision）
-    const found = await json<{ users: Array<{ id: string }> }>(await get(admin, 'users?q=grace.h@foxmail.com&limit=1'))
-    const lone = found.users[0]!.id
-    expect(await detailOf(lone)).toMatchObject({ subscriptions: [], unattached_pack_bytes: 20 * GiB })
-    const first = await post(admin, 'orders/manual', { user_id: lone, plan_id: standard.plan_id, price_id: standard.price_id, reason: '首次开通赠送', settlement: 'grant' }, 'attach-1')
-    expect(first.status).toBe(201)
-    const after = await detailOf(lone)
-    expect(after.unattached_pack_bytes).toBe(0)
-    expect(after.subscriptions).toHaveLength(1)
-    expect(after.subscriptions[0]!.pack_remaining_bytes).toBe(20 * GiB)
-    // …02 两份不同款都在用，未分配的 5 GiB 不会被系统挑一份挂上
-    expect((await detailOf(DUO)).unattached_pack_bytes).toBe(5 * GiB)
-  })
-
   it('opens another copy when asked to, and a single option needs no target', async () => {
     const standard = await planByName('标准版')
     admin = await reauthed()
@@ -370,7 +361,7 @@ describe('mock api · admin billing', () => {
   })
 
   it('queries the channel with a key, no reauth, and reconciles a lost callback (PAY-009)', async () => {
-    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment,processing&limit=100'))).orders
+    const pending = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment&limit=100'))).orders
     const lost = pending.find((o) => o.provider_code === 'epay' && Date.now() - Date.parse(o.created_at) > 3600 * 1000)!
     const fresh = pending.find((o) => o.provider_code === 'epay' && Date.now() - Date.parse(o.created_at) < 3600 * 1000)!
     const failing = pending.find((o) => o.provider_code === 'epay_backup')!
@@ -398,14 +389,16 @@ describe('mock api · admin billing', () => {
     expect((await json<{ error: { message: string } }>(never)).error.message).toBe('该订单从未发起过支付，无法向渠道查单')
   })
 
-  it('totals late payments per currency and applies one to the balance exactly once (R3)', async () => {
+  it('totals pending late payments and applies one to the balance exactly once (R3)', async () => {
     const late = latePaymentsSchema.parse(await json(await get(admin, 'late-payments')))
-    expect(Object.keys(late.pending_amounts).sort()).toEqual(['CNY', 'USD'])
+    const suspenseSum = late.cases.filter((c) => c.status === 'suspense').reduce((n, c) => n + c.amount, 0)
+    expect(late.pending_amount).toBe(suspenseSum)
+    expect(typeof late.pending_amount).toBe('number')
     expect(late.cases[0]!.status).toBe('suspense')
     expect(late.cases.find((c) => c.status === 'suspense')!.resolved_at).toBeUndefined()
     expect((await get(admin, 'late-payments?status=overdue')).status).toBe(400)
 
-    const c = late.cases.find((x) => x.status === 'suspense' && x.currency === 'CNY')!
+    const c = late.cases.find((x) => x.status === 'suspense')!
     const balanceOf = async () => (await json<{ balance: number }>(await get(admin, `users/${c.user_id}`))).balance
     const before = await balanceOf()
     expect(await json(await post(admin, `late-payments/${c.id}/apply-to-balance`, { reason: '短' }, 'late-1'))).toMatchObject({ error: { fields: { reason: expect.any(String) } } })
@@ -440,20 +433,28 @@ describe('mock api · admin billing', () => {
 
   it('lists providers with card stats and toggles accepting_new (R66)', async () => {
     const list = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers
-    expect(list.map((p) => p.code)).toEqual(['demo', 'epay', 'epay_backup', 'offline'])
-    expect(list.find((p) => p.code === 'epay')!.today.CNY).toBeGreaterThan(0)
-    // 最低付款额（分）：易支付默认 ¥1.00，演示与线下渠道没有这个概念回 0
-    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['demo', 0], ['epay', 100], ['epay_backup', 100], ['offline', 0]])
+    expect(list.map((p) => p.code)).toEqual(['btcpay', 'epay', 'epay_backup', 'offline'])
+    const btcpay = list.find((p) => p.code === 'btcpay')!
+    expect(btcpay).toMatchObject({ has_webhook_secret: true, fee_percent: '1.00' })
+    expect(btcpay.notify_url.endsWith('/v1/webhooks/payments/btcpay')).toBe(true)
+    expect(list.find((p) => p.code === 'epay')!.today).toBeGreaterThan(0)
+    expect(typeof list.find((p) => p.code === 'epay')!.today).toBe('number')
+    // 最低付款额（分）：易支付默认 ¥1.00，线下渠道没有这个概念回 0
+    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['btcpay', 100], ['epay', 100], ['epay_backup', 100], ['offline', 0]])
     expect((await post(admin, 'payment-providers/nope/toggle', { enabled: true, accepting_new: true })).status).toBe(404)
     expect((await post(admin, 'payment-providers/epay/toggle', { enabled: true })).status).toBe(200)
     const epay = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay')!
     expect(epay).toMatchObject({ enabled: true, accepting_new: false })
   })
 
-  it('creates and edits an epay provider; secrets are write-only (w2pay)', async () => {
+  it('creates and edits an epay provider; secrets are write-only', async () => {
     const settings = { display_name: '易支付 · 新', base_url: 'https://pay3.example.com', submit_path: '', api_path: '', methods: ['wxpay', 'alipay'], default_method: '', allow_private_host: false }
-    expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'demo', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
-      error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), methods: expect.any(String), merchant_id: '必填', key: '必填' } },
+    expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'paypal', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
+      error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), merchant_id: '必填', key: '必填' } },
+    })
+    // 支付方式只有易支付才校验（同 Go 的 normalizeSettings）：类型不认识时不报 methods，易支付勾了不认识的方式才报
+    expect(await json(await post(admin, 'payment-providers', { code: 'epay-bad', adapter: 'epay', ...settings, methods: ['paypal'], merchant_id: '2009', key: 'k' }, 'prov-0m'))).toMatchObject({
+      error: { code: 'validation_failed', fields: { methods: '支付方式只能从支付宝、微信支付中选' } },
     })
     const created = await post(admin, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'secret-2001' }, 'prov-1')
     expect(created.status).toBe(201)
@@ -496,13 +497,47 @@ describe('mock api · admin billing', () => {
     expect(kept.credentials_changed).toBe(false)
     const rotated = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, merchant_id: '', key: 'secret-rotated' }, 'prov-5')))
     expect(rotated.credentials_changed).toBe(true)
-    // 没有凭据的旧渠道编辑时必须补齐；offline 与演示渠道只读
+    // 没有凭据的旧渠道编辑时必须补齐；offline 只读
     expect(await json(await put(admin, 'payment-providers/epay_backup', { ...settings, merchant_id: '', key: '' }, 'prov-6'))).toMatchObject({
       error: { fields: { merchant_id: expect.any(String), key: expect.any(String) } },
     })
     expect((await put(admin, 'payment-providers/offline', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-7')).status).toBe(409)
-    expect((await put(admin, 'payment-providers/demo', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-8')).status).toBe(409)
     expect((await put(admin, 'payment-providers/nope', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-9')).status).toBe(404)
+  })
+
+  it('creates btcpay with webhook secret and manages payment callback base URL', async () => {
+    const settings = {
+      display_name: 'BTCPay 测试',
+      base_url: 'https://btcpay.example.com',
+      allow_private_host: false,
+      merchant_id: 'STORE2',
+      key: 'mock-key',
+      webhook_secret: 'mock-hook-2',
+      fee_fixed: 0,
+      fee_percent: '0',
+    }
+    const missingHook = await post(
+      admin,
+      'payment-providers',
+      { code: 'btcpay_x', adapter: 'btcpay', ...settings, webhook_secret: '' },
+      'btcpay-no-hook',
+    )
+    expect(missingHook.status).toBe(422)
+    expect(await json(missingHook)).toMatchObject({ error: { fields: { webhook_secret: '必填' } } })
+
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    const blocked = await put(admin, 'payment-settings', { notify_base_url: 'https://cb.example.test' })
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({ error: { code: 'reauth_required' } })
+    const reauth = await post(admin, 'auth/reauth', { password: MOCK_ACCOUNTS.admin.password })
+    admin = (await json<{ access_token: string }>(reauth)).access_token
+
+    const saved = paymentSettingsSchema.parse(
+      await json(await put(admin, 'payment-settings', { notify_base_url: 'https://cb.example.test' })),
+    )
+    expect(saved.effective_base).toBe('https://cb.example.test')
+    const after = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'btcpay')!
+    expect(after.notify_url).toBe('https://cb.example.test/v1/webhooks/payments/btcpay')
   })
 
   it('refuses a pending manual order below the minimum payment, but grants and offline receipts go through (F4)', async () => {
@@ -535,18 +570,18 @@ describe('mock api · admin billing', () => {
 
   it('records, lists and reverses revenue adjustments once', async () => {
     const future = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10)
-    expect(await json(await post(admin, 'revenue/adjustments', { currency: 'CNY', amount: 100, reason: '补录线下收入', effective_on: future }, 'adj-1'))).toMatchObject({
+    expect(await json(await post(admin, 'revenue/adjustments', { amount: 100, reason: '补录线下收入', effective_on: future }, 'adj-1'))).toMatchObject({
       error: { fields: { effective_on: expect.any(String) } },
     })
-    expect(await json(await post(admin, 'revenue/adjustments', { currency: 'EUR', amount: 0, reason: '短' }, 'adj-2'))).toMatchObject({
-      error: { fields: { currency: expect.any(String), amount: expect.any(String), reason: expect.any(String) } },
+    expect((await post(admin, 'revenue/adjustments', { currency: 'EUR', amount: 0, reason: '短' }, 'adj-2')).status).toBe(400)
+    expect(await json(await post(admin, 'revenue/adjustments', { amount: 0, reason: '短' }, 'adj-2b'))).toMatchObject({
+      error: { fields: { amount: expect.any(String), reason: expect.any(String) } },
     })
-    const created = adjustmentSchema.parse(await json(await post(admin, 'revenue/adjustments', { currency: 'CNY', amount: -2050, reason: '重复扣款退回' }, 'adj-3')))
+    const created = adjustmentSchema.parse(await json(await post(admin, 'revenue/adjustments', { amount: -2050, reason: '重复扣款退回' }, 'adj-3')))
     expect(created).toMatchObject({ amount: -2050, reversed: false, created_by_email: MOCK_ACCOUNTS.admin.email })
     expect(created.reversal_of).toBeUndefined()
-    const usd = adjustmentsSchema.parse(await json(await get(admin, 'revenue/adjustments?currency=USD'))).adjustments
-    expect(usd.every((a) => a.currency === 'USD')).toBe(true)
-    expect((await get(admin, 'revenue/adjustments?currency=EUR')).status).toBe(422)
+    const listed = adjustmentsSchema.parse(await json(await get(admin, 'revenue/adjustments?currency=USD'))).adjustments
+    expect(listed.length).toBeGreaterThan(0)
 
     const reversal = adjustmentSchema.parse(await json(await post(admin, `revenue/adjustments/${created.id}/reverse`, { reason: '冲销：重复扣款退回' }, 'rev-1')))
     expect(reversal).toMatchObject({ amount: 2050, reversal_of: created.id, effective_on: created.effective_on })

@@ -1,11 +1,10 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-12);
   min-width: 0;
-  padding: var(--pad-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
+  /* 不裁切溢出：卡片里的菜单、提示要能伸出卡片 */
   background: var(--surface);
 }
 
@@ -14,32 +13,74 @@
   background: var(--brand-tint);
 }
 
-.flush {
-  padding: 0;
-  gap: 0;
-  overflow: hidden;
-}
-
-.flush > .head {
-  padding: var(--pad-card) var(--pad-card) var(--space-12);
-}
-
 .head {
   display: flex;
   align-items: center;
-  gap: var(--space-8);
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+/* 手机上卡头放不下时，右侧操作换到下一行 */
+@media (max-width: 639px) {
+  .head {
+    flex-wrap: wrap;
+    padding-block: 8px;
+  }
 }
 
 .title {
-  flex: 1;
-  min-width: 0;
   margin: 0;
-  font-size: var(--fs-h3);
-  font-weight: var(--fw-semibold);
+  flex: none;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: var(--fw-medium);
+}
+
+/* 副标题放不下就截断，不挤得标题折行（手机上卡头常只剩标题加一个按钮的宽度） */
+.subtitle {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.spacer {
+  flex: 1;
 }
 
 .extra {
   display: flex;
   align-items: center;
   gap: var(--space-8);
+}
+
+.body {
+  /* 撑满卡片剩余高度：并排的卡片 align-items: stretch 时内容区也一样高 */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+  padding: var(--pad-card);
+}
+
+.flush .body {
+  padding: 0;
+  gap: 0;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-2);
 }

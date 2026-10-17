@@ -23,6 +23,8 @@ export interface MockResult {
   status: number
   body?: unknown
   raw?: MockRaw
+  /** 2xx 时以「不可重放」完成（与后端 CompleteUnreplayable 一致）：响应里有一次性秘密，同 key 同请求再来回 409 conflict，不重放 */
+  unreplayable?: boolean
 }
 
 /** 匿名接口的上下文 */
@@ -41,7 +43,7 @@ export interface AnonContext {
   send(status: number, body?: unknown): void
   /** 非 JSON 响应，带 Cache-Control: no-store */
   sendRaw(status: number, raw: MockRaw): void
-  /** 错误信封 { error: { code, message, fields?, request_id } }，形状与 platform/httpx 一致 */
+  /** 错误信封 { error: { code, message, fields?, request_id } }，形状与 pkg/httpx 一致 */
   fail(status: number, code: string, message: string, fields?: Record<string, string>): void
 }
 
@@ -63,8 +65,9 @@ export interface MockContext extends AnonContext {
   requireReauth(): boolean
   /**
    * Idempotency（契约 R85，与 Go 中间件一致）：缺 Idempotency-Key 回 400；同 key 同请求——上次是 2xx
-   * 原样重放，上次非 2xx（含 5xx）重新执行 run，在途回 409 conflict；同 key 换请求（方法 + 路径 +
-   * 查询串 + 请求体）不论上次结果都回 409 idempotency_key_reuse。scope 相同的路由共用一个键空间。
+   * 原样重放，run 返回 unreplayable: true 的 2xx 之后同 key 同请求回 409 conflict；上次非 2xx（含 5xx）
+   * 重新执行 run，在途回 409 conflict；同 key 换请求（方法 + 路径 + 查询串 + 请求体）不论上次结果都回
+   * 409 idempotency_key_reuse。scope 相同的路由共用一个键空间。
    */
   idempotent(scope: string, run: () => MockResult | Promise<MockResult>): Promise<void>
 }

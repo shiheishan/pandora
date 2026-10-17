@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/promo/model"
+	"github.com/aegispanel/aegis/internal/pkg/db"
 )
 
 // checkCouponMoney 写入前校验券上所有金额字段。
@@ -51,6 +52,89 @@ func (r *Repo) InsertCouponIfAbsent(ctx context.Context, c *model.Coupon, planID
 		}
 	}
 	return true, nil
+}
+
+// InsertCouponsIfAbsent 用一条语句插入一批券码相同规格的券（tmpl 提供除 code 外的全部字段）及其限定的套餐：
+// 撞已有券码的跳过（ON CONFLICT DO NOTHING，不让事务出错），返回真正插入的券码（顺序不定）。
+// 券与 coupon_plans 在同一条语句里写（数据修改 CTE），往返次数与张数无关。
+func (r *Repo) InsertCouponsIfAbsent(ctx context.Context, tmpl *model.Coupon, codes []string, planIDs []uuid.UUID) ([]string, error) {
+	if len(codes) == 0 {
+		return []string{}, nil
+	}
+	if err := checkCouponMoney(tmpl); err != nil {
+		return nil, err
+	}
+
+	var amountOff, percentOffBP, maxDiscount, maxRedemptions any
+	if tmpl.AmountOff != nil {
+		amountOff = *tmpl.AmountOff
+	}
+	if tmpl.PercentOffBP != nil {
+		percentOffBP = *tmpl.PercentOffBP
+	}
+	if tmpl.MaxDiscount != nil {
+		maxDiscount = *tmpl.MaxDiscount
+	}
+	if tmpl.MaxRedemptions != nil {
+		maxRedemptions = *tmpl.MaxRedemptions
+	}
+	var userGroup, createdBy any
+	if tmpl.UserGroupID != nil {
+		userGroup = *tmpl.UserGroupID
+	}
+	if tmpl.CreatedBy != nil {
+		createdBy = *tmpl.CreatedBy
+	}
+
+	const sql = `
+WITH ins AS (
+  INSERT INTO coupons (code, name, amount_off, percent_off_bp, max_discount, min_order_amount,
+                       max_redemptions, max_redemptions_per_user, user_group_id, valid_from, valid_until, status, created_by)
+  SELECT c, CAST(? AS text), CAST(? AS numeric), CAST(? AS integer), CAST(? AS numeric),
+         CAST(? AS numeric), CAST(? AS integer), CAST(? AS integer), CAST(? AS uuid),
+         CAST(? AS timestamptz), CAST(? AS timestamptz), CAST(? AS text), CAST(? AS uuid)
+    FROM unnest(CAST(? AS text[])) AS c
+  ON CONFLICT (code) DO NOTHING
+  RETURNING id, code
+), plans AS (
+  INSERT INTO coupon_plans (coupon_id, plan_id)
+  SELECT ins.id, p FROM ins CROSS JOIN unnest(CAST(? AS uuid[])) AS p
+)
+SELECT code FROM ins`
+
+	rows, err := r.d.Conn(ctx).Raw(sql,
+		tmpl.Name,
+		amountOff,
+		percentOffBP,
+		maxDiscount,
+		tmpl.MinOrderAmount,
+		maxRedemptions,
+		tmpl.MaxRedemptionsPerUser,
+		userGroup,
+		tmpl.ValidFrom,
+		tmpl.ValidUntil,
+		tmpl.Status,
+		createdBy,
+		textArrayLiteral(codes),
+		uuidArray(planIDs),
+	).Rows()
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+
+	var inserted []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, mapErr(err)
+		}
+		inserted = append(inserted, code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return inserted, nil
 }
 
 // PlanIDsByCoupons 批量取券限定的套餐（一条 SQL）；没有限定的券不在结果里。
@@ -163,7 +247,7 @@ type CouponListRow struct {
 func couponListWhere(q CouponListQuery) (clause string, args []any) {
 	var parts []string
 	if query := strings.TrimSpace(q.Query); query != "" {
-		pat := likePattern(query)
+		pat := db.ContainsPattern(query)
 		parts = append(parts, "(c.code ILIKE ? ESCAPE '\\' OR c.name ILIKE ? ESCAPE '\\')")
 		args = append(args, pat, pat)
 	}
@@ -222,4 +306,46 @@ func (r *Repo) CouponCodes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]
 		out[row.ID] = row.Code
 	}
 	return out, nil
+}
+
+// textArrayLiteral 把字符串切片编成 PostgreSQL text 数组字面量（元素双引号转义）；
+// 写法照抄 identity/repo/generation.go 的 textArrayLiteral。
+func textArrayLiteral(ss []string) string {
+	if len(ss) == 0 {
+		return "{}"
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, s := range ss {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('"')
+		for _, r := range s {
+			if r == '\\' || r == '"' {
+				b.WriteByte('\\')
+			}
+			b.WriteRune(r)
+		}
+		b.WriteByte('"')
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// uuidArray 把 UUID 切片编成 PostgreSQL uuid 数组字面量；写法照抄 identity/repo/ops_users.go 的 uuidArray。
+func uuidArray(ids []uuid.UUID) string {
+	if len(ids) == 0 {
+		return "{}"
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(id.String())
+	}
+	b.WriteByte('}')
+	return b.String()
 }

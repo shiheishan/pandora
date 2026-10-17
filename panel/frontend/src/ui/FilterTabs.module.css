@@ -1,0 +1,53 @@
+.tabs {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--h-control);
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* 放在纵向 flex 容器里也只占内容宽，不被拉成整行 */
+  align-self: flex-start;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.on {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.count {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+}

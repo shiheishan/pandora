@@ -5,18 +5,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // PaidNotice 是一张已履约、挂在订阅上的订单，notify 写「支付成功」通知用。
 type PaidNotice struct {
-	OrderID uuid.UUID
-	UserID  uuid.UUID
-	OrderNo string
-	Kind    string
-	// TrafficBytes 是流量包订单（Kind=addon）加的流量，其余种类为 nil
-	TrafficBytes   *int64
+	OrderID        uuid.UUID
+	UserID         uuid.UUID
+	OrderNo        string
+	Kind           string
 	SubscriptionID uuid.UUID
 	FulfilledAt    time.Time
+	// Total 是订单总额（管理员收款提醒用）
+	Total decimal.Decimal
 }
 
 // PaidForNotify 按 (FulfilledAt, OrderID) 游标翻页取已履约订单（充值单不在内），取 (afterAt, afterID) 之后的至多 limit 张。
@@ -29,7 +30,7 @@ func (s *Service) PaidForNotify(ctx context.Context, afterAt time.Time, afterID 
 	out := make([]PaidNotice, len(rows))
 	for i, r := range rows {
 		out[i] = PaidNotice{OrderID: r.ID, UserID: r.UserID, OrderNo: r.OrderNo, Kind: r.Kind,
-			TrafficBytes: r.TrafficBytes, SubscriptionID: r.SubscriptionID, FulfilledAt: r.FulfilledAt}
+			SubscriptionID: r.SubscriptionID, FulfilledAt: r.FulfilledAt, Total: r.TotalAmount}
 	}
 	return out, nil
 }

@@ -1,14 +1,13 @@
 import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Checkbox, ConfirmModal, Input, Modal, QueryView, Tag, TextArea, useToast } from '../../../ui'
-import { groupCreateBody, groupFormErrors, groupFormFrom, groupPatchBody, nodeState, referenceOutbounds, sameIds, type GroupForm } from './logic'
+import { Button, ConfirmModal, Input, Modal, QueryView, useToast } from '../../../ui'
+import { groupFormErrors, groupFormFrom, groupPatchBody, referenceOutbounds, type GroupForm } from './logic'
 import { ScopeRoutingEditor, type RoutingPayload } from './ScopeRouting'
-import x from './infra.module.css'
-import css from './nodes.module.css'
-import { endsIntent, useFailure, useGlobalRouting, useGroupRouting, useIntentKey, useInvalidateNodes, useNodes } from './queries'
+import n from './nodes.module.css'
+import { endsIntent, useFailure, useGlobalRouting, useGroupRouting, useIntentKey, useInvalidateNodes } from './queries'
 import { groupRoutingSaved, routeGroupDeleted, routeGroupSchema, routeGroupUpdated, type GroupRouting, type RouteGroup } from './schemas'
 
 /** 写失败的共同处理：行版本冲突刷新、其余 409 / 422 原文交给调用方就地显示 */
@@ -33,8 +32,7 @@ export function RouteGroupPanel({ group }: { group: RouteGroup }) {
   const invalidate = useInvalidateNodes()
   const intent = useIntentKey()
   const routing = useGroupRouting(group.id)
-  const [editing, setEditing] = useState(false)
-  const [members, setMembers] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const onDeleteError = useGroupFailure(setDeleteError)
@@ -53,52 +51,31 @@ export function RouteGroupPanel({ group }: { group: RouteGroup }) {
     },
   })
 
+  /** 发布行右侧的组操作：改名与删组都在这里 */
+  const actions = (
+    <>
+      <Button size="sm" variant="ghost" onClick={() => (setDeleteError(null), setRenaming(true))}>
+        改名
+      </Button>
+      <Button size="sm" variant="ghost" busy={remove.isPending} onClick={() => (setDeleteError(null), setRemoving(true))}>
+        删除路由组
+      </Button>
+    </>
+  )
+
   return (
-    <div className={css.stack}>
-      <section className={x.routingPanel} aria-label="路由组">
-        <div className={x.panelHead}>
-          <h3 className={x.panelTitle}>{group.name}</h3>
-          <Tag tone="neutral">排序 {group.sort_order}</Tag>
-          <span className={css.faint}>{group.description || '没有说明'}</span>
-        </div>
-        <div className={x.panelBody}>
-          <div className={x.groupChecks}>
-            {group.members.length === 0 ? (
-              <span className={css.faint}>还没有成员节点。组内规则只对成员节点生效。</span>
-            ) : (
-              group.members.map((m) => (
-                <Button key={m.id} size="xs" variant="ghost" onClick={() => navigate(`/nodes/nodes/${m.id}/routing`)}>
-                  {m.name}
-                </Button>
-              ))
-            )}
-          </div>
-          {deleteError && <div className={css.errorBox}>{deleteError}</div>}
-          <div className={css.formActions}>
-            <Button size="sm" onClick={() => setEditing(true)}>
-              编辑信息
-            </Button>
-            <Button size="sm" onClick={() => setMembers(true)}>
-              成员（{group.members.length}）
-            </Button>
-            <Button size="sm" variant="ghost" busy={remove.isPending} onClick={() => (setDeleteError(null), setRemoving(true))}>
-              删除路由组
-            </Button>
-          </div>
-        </div>
-      </section>
-
+    <div className={n.stack}>
+      {deleteError && <div className={n.errorBox}>{deleteError}</div>}
       <QueryView query={routing} rows={6} isEmpty={() => false} empty={null}>
-        {(data) => <GroupEditor key={data.row_version} group={group} data={data} />}
+        {(data) => <GroupEditor key={data.row_version} group={group} data={data} actions={actions} />}
       </QueryView>
-
-      {editing && <GroupFormModal group={group} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />}
-      {members && <MembersModal group={group} onClose={() => setMembers(false)} />}
+      {renaming && <GroupFormModal group={group} onClose={() => setRenaming(false)} onSaved={() => setRenaming(false)} />}
       <ConfirmModal
         open={removing}
         title={`删除路由组「${group.name}」？`}
-        body={`组内 ${group.outbound_count} 个出站与 ${group.rule_count} 条规则一并删除，${group.members.length} 个成员节点退回只用全局与私有路由并重新发布；成员节点的规则若还指向组内出站会被拒绝。需要重新验证身份。`}
+        body={`组内 ${group.outbound_count} 个出站与 ${group.rule_count} 条规则一并删除，${group.members.length} 个节点退回只用全局与私有路由并重新发布；节点的规则若还指向组内出站会被拒绝。需要重新验证身份。`}
         confirmLabel="删除"
+        tone="danger"
         onConfirm={() => {
           setRemoving(false)
           remove.mutate({ row_version: group.row_version })
@@ -109,7 +86,7 @@ export function RouteGroupPanel({ group }: { group: RouteGroup }) {
   )
 }
 
-function GroupEditor({ group, data }: { group: RouteGroup; data: GroupRouting }) {
+function GroupEditor({ group, data, actions }: { group: RouteGroup; data: GroupRouting; actions: ReactNode }) {
   const api = useApi()
   const toast = useToast()
   const invalidate = useInvalidateNodes()
@@ -143,16 +120,17 @@ function GroupEditor({ group, data }: { group: RouteGroup; data: GroupRouting })
         outbounds={data.outbounds}
         routes={data.routes}
         references={referenceOutbounds([{ label: '全局', tags: (global.data?.outbounds ?? []).map((o) => o.tag) }])}
-        ruleHint="成员节点上排在节点私有规则之后、全局规则之前；同名出站覆盖全局的。规则可以指向本组与全局出站"
-        emptyHint="组内没有规则。成员节点只用全局与私有规则。"
+        ruleHint="组内规则排在全局规则之前，只作用于这个组里的节点"
+        emptyHint="这个组还没有规则。"
         busy={publish.isPending}
         formError={formError}
-        publishLabel={`发布到组内 ${group.members.length} 个节点`}
+        publishLabel="发布到组内节点"
+        actions={actions}
         onSubmit={submit}
       />
       <ConfirmModal
         open={confirming !== null}
-        title={`发布路由组「${group.name}」？`}
+        title="发布路由到组内节点？"
         body={`${(confirming?.routes as unknown[] | undefined)?.length ?? 0} 条规则会下发到组内 ${group.members.length} 个节点；离线节点上线后拉到同一份。需要重新验证身份。`}
         confirmLabel="发布"
         onConfirm={() => {
@@ -165,7 +143,7 @@ function GroupEditor({ group, data }: { group: RouteGroup; data: GroupRouting })
   )
 }
 
-/** 新建（group 缺省）或编辑组信息：名称、说明、排序；排序决定节点在多个组里时谁先生效 */
+/** 新建（group 缺省）或改名：路由组只有名称，说明、排序、成员都不在前端管 */
 export function GroupFormModal({ group, onClose, onSaved }: { group?: RouteGroup; onClose: () => void; onSaved: (id: string) => void }) {
   const api = useApi()
   const toast = useToast()
@@ -180,11 +158,11 @@ export function GroupFormModal({ group, onClose, onSaved }: { group?: RouteGroup
   const save = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       group
-        ? api.request(`v1/route-groups/${group.id}`, routeGroupUpdated, { method: 'PATCH', body, idempotencyKey: intent.keyFor(body) }).then((r) => ({ id: r.group.id, affected: r.affected_nodes }))
-        : api.post('v1/route-groups', routeGroupSchema, { body, idempotencyKey: intent.keyFor(body) }).then((g) => ({ id: g.id, affected: 0 })),
+        ? api.request(`v1/route-groups/${group.id}`, routeGroupUpdated, { method: 'PATCH', body, idempotencyKey: intent.keyFor(body) }).then((r) => ({ id: r.group.id }))
+        : api.post('v1/route-groups', routeGroupSchema, { body, idempotencyKey: intent.keyFor(body) }).then((g) => ({ id: g.id })),
     onSuccess: (r) => {
       intent.reset()
-      toast(group ? (r.affected ? `已保存，排序变了，${r.affected} 个节点会拉到新配置` : '已保存') : '路由组已建好，接着添加出站、规则与成员')
+      toast(group ? '已改名' : `路由组「${form.name.trim()}」已创建`)
       void invalidate()
       onSaved(r.id)
     },
@@ -199,8 +177,9 @@ export function GroupFormModal({ group, onClose, onSaved }: { group?: RouteGroup
     setFormError(null)
     const e = groupFormErrors(form)
     setErrors(e)
-    if (Object.keys(e).length) return
-    if (!group) return save.mutate(groupCreateBody(form))
+    if (e.name) return
+    if (!group) return save.mutate({ name: form.name.trim() })
+    // 说明与排序不归前端管：表单初值取自组本身，diff 后只会带 name 与 row_version
     const body = groupPatchBody(group, form)
     if (!body) return onClose()
     save.mutate(body)
@@ -210,92 +189,23 @@ export function GroupFormModal({ group, onClose, onSaved }: { group?: RouteGroup
     <Modal
       open
       onClose={onClose}
-      size="md"
-      title={group ? `编辑路由组「${group.name}」` : '新建路由组'}
-      eyebrow={group ? '改排序会让成员节点重新发布，需要重新验证身份' : '建好后再添加出站、规则与成员'}
+      size={480}
+      title={group ? `重命名路由组「${group.name}」` : '新建路由组'}
+      subtitle={group ? undefined : '路由组里的规则只作用于加入它的节点；在节点详情「路由」里把节点加进来。'}
       actions={
         <>
           <Button size="dialog" variant="ghost" onClick={onClose}>
             取消
           </Button>
           <Button size="dialog" variant="primary" busy={save.isPending} onClick={submit}>
-            {group ? '保存' : '新建'}
+            {group ? '保存' : '创建'}
           </Button>
         </>
       }
     >
-      <div className={css.stack}>
-        <div className={css.grid2}>
-          <Input label="名称" value={form.name} error={errors.name} onChange={(e) => set({ name: e.target.value })} placeholder="如 香港 · 流媒体解锁" />
-          <Input label="排序" mono value={form.sortOrder} error={errors.sort_order} onChange={(e) => set({ sortOrder: e.target.value })} />
-          <TextArea label="说明（可选）" rows={3} value={form.description} error={errors.description} fieldClassName={css.span2} onChange={(e) => set({ description: e.target.value })} />
-        </div>
-        <div className={css.faint}>排序小的先生效：节点在多个组里时，排在前面的组的规则先匹配，同名出站也以它为准。</div>
-        {formError && <div className={css.errorBox}>{formError}</div>}
-      </div>
-    </Modal>
-  )
-}
-
-/** 成员：勾选未退役的节点；只发改了的集合 */
-function MembersModal({ group, onClose }: { group: RouteGroup; onClose: () => void }) {
-  const api = useApi()
-  const toast = useToast()
-  const invalidate = useInvalidateNodes()
-  const intent = useIntentKey()
-  const nodes = useNodes()
-  const initial = group.members.map((m) => m.id)
-  const [picked, setPicked] = useState<string[]>(initial)
-  const [formError, setFormError] = useState<string | null>(null)
-  const onError = useGroupFailure(setFormError)
-  const toggle = (id: string) => setPicked(picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id])
-
-  const save = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.put(`v1/route-groups/${group.id}/members`, groupRoutingSaved, { body, idempotencyKey: intent.keyFor(body) }),
-    onSuccess: (r) => {
-      intent.reset()
-      toast(`成员已更新，${r.affected_nodes} 个节点会拉到新配置`)
-      void invalidate()
-      onClose()
-    },
-    onError: (error) => {
-      if (endsIntent(error)) intent.reset()
-      onError(error)
-    },
-  })
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="md"
-      title={`「${group.name}」的成员节点`}
-      eyebrow="进出组的节点会重新发布，需要重新验证身份"
-      actions={
-        <>
-          <Button size="dialog" variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          <Button size="dialog" variant="primary" busy={save.isPending} onClick={() => (sameIds(picked, initial) ? onClose() : save.mutate({ row_version: group.row_version, node_ids: picked }))}>
-            保存
-          </Button>
-        </>
-      }
-    >
-      <div className={css.stack}>
-        <QueryView query={nodes} rows={4} isEmpty={(d) => d.nodes.length === 0} empty={<span className={css.faint}>还没有节点。</span>}>
-          {(data) => (
-            <div className={x.groupChecks}>
-              {data.nodes
-                .filter((n) => n.serving_status !== 'retired' || picked.includes(n.id))
-                .map((n) => (
-                  <Checkbox key={n.id} label={`${n.name} · ${nodeState(n).label}`} checked={picked.includes(n.id)} onChange={() => toggle(n.id)} />
-                ))}
-            </div>
-          )}
-        </QueryView>
-        <span className={css.faint}>一个节点可以在多个组里，按组的排序依次生效。移出组的节点若还有规则指向组内出站，保存会被拒绝。</span>
-        {formError && <div className={css.errorBox}>{formError}</div>}
+      <div className={n.stack}>
+        <Input label="名称" value={form.name} error={errors.name} onChange={(e) => set({ name: e.target.value })} placeholder="路由组名称，如 流媒体解锁" />
+        {formError && <div className={n.errorBox}>{formError}</div>}
       </div>
     </Modal>
   )

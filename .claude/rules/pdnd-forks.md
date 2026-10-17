@@ -12,7 +12,7 @@ paths:
 
 ## 上游基点
 
-基点 = 2026-09-22 初次导入（f1390b3）时的 fork 文件与上游逐个候选 diff（只比 fork 里有的文件，先把上游 import 路径换成本仓库路径），差异最小的那个；2026-10-08 核实。go.mod 里同名模块是对照测试或 compat 构建用的，版本**不等于**基点（anytls 即是反例）。合上游时从这里的基点取「基点..目标」的 diff，合完更新本表并在提交说明写上目标 commit。
+基点 = 2026-09-22 初次导入（f1390b3）时的 fork 文件与上游逐个候选 diff（只比 fork 里有的文件，先把上游 import 路径换成本仓库路径），差异最小的那个；2026-10-08 核实。go.mod 里同名模块只给对照测试用，版本**不等于**基点（anytls 即是反例）。合上游时从这里的基点取「基点..目标」的 diff，合完更新本表并在提交说明写上目标 commit。
 
 | fork 目录（pdnd/internal/） | 上游 | 基点 | 导入时相对基点的差异 |
 |---|---|---|---|
@@ -20,7 +20,7 @@ paths:
 | `realityquic` | github.com/apernet/quic-go 的 `v0.59.0-mod-rename` 分支（无 tag；master 停在 v0.51） | commit db4786c77a22（2026-02-17，即 go.mod 的 `v0.59.1-0.20260217092621-db4786c77a22`）；下一个提交 20e2c69 在 `connection.go` 多一行 `SetMaxDatagramSize`，fork 没有 | 114 行：约 20 个文件把 `crypto/tls` 换成 `internal/reality`、`connection.go` 的 `mtuDiscoverer != nil` 判断、`http3/transport.go` 改用 `standardTLSState`；独有 `http3/tls_state.go`、README |
 | `nativewire/shadowtls` | github.com/SagerNet/sing-shadowtls | commit fcd445d33c11（2025-05-03，`v0.2.1-0.20250503051639-fcd445d33c11`，sing-box v1.13.14 同版本） | 0 行（逐字节一致） |
 | `nativewire/anytls` | github.com/anytls/sing-anytls | **v0.0.11**（130d2e61b889）。go.mod 的对照客户端是 v0.0.13；v0.0.12 起上游把 `pipe/`、`skiplist/` 挪进 `internal/`，fork 仍是旧布局 | 9 行：`service.go` 口令查找加 `userAccess` 读写锁 |
-| `nativewire/hysteria2` | github.com/SagerNet/sing-quic 的 `hysteria2/` | v0.6.1（907fec5e8e6b，2026-03-30；与 go.mod 一致） | 11 行：`service.go` 用户表读写锁、import 排序 |
+| `nativewire/hysteria2` | github.com/SagerNet/sing-quic 的 `hysteria2/` | v0.6.1（907fec5e8e6b，2026-03-30；与 go.mod 一致） | 11 行：`service.go` 用户表读写锁、import 排序。2026-10-14 起只保留服务端：上游的 `client*.go` 与 `internal/protocol` 里只给客户端用的函数已删，合上游时这部分 diff 跳过 |
 | `nativewire/tuic` | github.com/SagerNet/sing-quic 的 `tuic/` | v0.6.1（同上；单看 tuic 与相邻的 ec3b222、2afc335 并列，按 hysteria2 定） | 8 行：`service.go` 用户表读写锁 |
 
 导入之后本仓库在基点之上的改动（合上游时要保住）：

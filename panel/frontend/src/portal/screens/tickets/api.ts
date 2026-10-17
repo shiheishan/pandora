@@ -4,10 +4,10 @@ import { useApi } from '../../../shell/runtime'
 import { ordersPageSchema } from '../common/orders'
 
 // ---------------------------------------------------------------------------
-// 读形状（domain/support.Ticket）。三个列表 Go 端都以空切片初始化，不收 null。
+// 读形状（module/support 的 service.Ticket）。三个列表 Go 端都以空切片初始化，不收 null。
 // 修订 R60 的 closed_reason / related_order 在 Go 里是无 omitempty 的指针：恒在，未关闭 / 无关联为 null
 // ---------------------------------------------------------------------------
-export const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
+const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
 
 const ticketBase = {
   id: z.string(),
@@ -21,14 +21,14 @@ const ticketBase = {
   resolved_at: z.string().nullable(),
   message_count: z.number().int(),
   last_reply_at: z.string(),
-  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed']).nullable(),
+  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed', 'auto_closed']).nullable(),
 }
 
 /** 列表行：related_order 只在详情里填，列表恒为 null */
 export const ticketRowSchema = z.object({ ...ticketBase, related_order: z.null() })
 export type TicketRow = z.output<typeof ticketRowSchema>
 
-export const ticketMessageSchema = z.object({
+const ticketMessageSchema = z.object({
   id: z.string(),
   author_kind: z.enum(['user', 'agent', 'system']),
   // 非 user 恒为 null（客服真实姓名不给用户，D-F-2 已决）；user 是自己的 display_name，也可能为 null
@@ -43,6 +43,7 @@ export const ticketDetailSchema = z.object({
   ...ticketBase,
   related_order: z.object({ id: z.string(), order_no: z.string() }).nullable(),
   messages: z.array(ticketMessageSchema),
+  reply_blocked: z.boolean(),
 })
 export type TicketDetail = z.output<typeof ticketDetailSchema>
 
@@ -106,7 +107,7 @@ function useRefresh() {
   }
 }
 
-export interface NewTicket {
+interface NewTicket {
   subject: string
   category: string
   body: string

@@ -51,6 +51,39 @@ func TestReportSubscriptionCountsPG(t *testing.T) {
 	}
 }
 
+func TestLiveSubscriptionCountsPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	planA, verA := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
+	planB, verB := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
+	planC, _ := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(gib)})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// A：两份生效（同一用户名下两份也各算）+ 一份已过期；B：一份生效；C：没有订阅
+	u1 := newUser(t, e, ctx)
+	provision(t, e, ctx, u1, planA, verA, "a1")
+	provision(t, e, ctx, u1, planA, verA, "a2")
+	u2 := newUser(t, e, ctx)
+	dead := provision(t, e, ctx, u2, planA, verA, "a-dead")
+	expireSetPeriod(t, e, ctx, dead.ID, StatusExpired, now.Add(-time.Hour))
+	provision(t, e, ctx, u2, planB, verB, "b1")
+
+	m, err := e.svc.LiveSubscriptionCounts(ctx, []uuid.UUID{planA, planB, planC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[planA] != 2 || m[planB] != 1 {
+		t.Fatalf("生效订阅数不对: %v", m)
+	}
+	if _, ok := m[planC]; ok {
+		t.Fatalf("没有订阅的套餐不该在结果里: %v", m)
+	}
+	empty, err := e.svc.LiveSubscriptionCounts(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("空入参应空 map，得 %v %v", empty, err)
+	}
+}
+
 func TestOwnersBySubscriptionPG(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()

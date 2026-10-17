@@ -10,23 +10,51 @@ package render
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 )
 
-func renderURI(nodes []Node, uuid string) ([]byte, string, int) {
-	var lines []string
-	for _, n := range nodes {
-		if u, _ := nodeToURI(n, uuid); u != "" {
-			lines = append(lines, u)
+func renderURI(rc renderCtx, status bool) ([]byte, string, int) {
+	infoNodes, realNodes := rc.splitInfo()
+	var realLines []string
+	for _, n := range realNodes {
+		if u, _ := nodeToURI(n, rc.uuid); u != "" {
+			realLines = append(realLines, u)
 		}
 	}
+	var lines []string
+	if len(realLines) > 0 {
+		for _, n := range infoNodes {
+			if u, _ := nodeToURI(n, rc.uuid); u != "" {
+				lines = append(lines, u)
+			}
+		}
+		lines = append(lines, realLines...)
+	}
 	body := strings.Join(lines, "\n")
+	if status {
+		body = statusLine(rc.status) + "\n" + body
+	}
 	// 整体 base64：这是这类客户端的既定约定，不是为了隐藏什么
 	enc := base64.StdEncoding.EncodeToString([]byte(body))
-	return []byte(enc), "text/plain; charset=utf-8", len(lines)
+	return []byte(enc), "text/plain; charset=utf-8", len(realLines)
+}
+
+// statusLine 照 Xboard 格式生成 STATUS 行，Shadowrocket 把 STATUS 行显示在订阅上。
+func statusLine(st Status) string {
+	tot := "∞"
+	if st.Total > 0 {
+		tot = fmt.Sprintf("%.2fGB", float64(st.Total)/(1<<30))
+	}
+	return fmt.Sprintf("STATUS=🚀↑:%.2fGB,↓:%.2fGB,TOT:%s💡Expires:%s",
+		float64(st.Upload)/(1<<30),
+		float64(st.Download)/(1<<30),
+		tot,
+		expireDate(st, "N/A"),
+	)
 }
 
 // nodeToURI 返回分享链接；不能渲染时返回空串和跳过原因。
@@ -98,8 +126,17 @@ func nodeToURI(n Node, uuid string) (string, string) {
 		return "trojan://" + url.QueryEscape(uuid) + "@" + addr + "?" + q.Encode() + frag, ""
 
 	case "shadowsocks":
-		// SIP002：base64url(method:password) 放在 userinfo 位
-		userinfo := base64.RawURLEncoding.EncodeToString([]byte(ssMethod(n.Config) + ":" + uuid))
+		method := ssMethod(n.Config)
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return "", reason
+		}
+		if isSS2022(method) {
+			// SIP002：AEAD-2022 的 userinfo 不做 base64，method 与 password 各自百分号编码（SIP022 密码里有 + / = :）
+			return "ss://" + url.QueryEscape(method) + ":" + url.QueryEscape(pw) + "@" + addr + frag, ""
+		}
+		// SIP002：经典 AEAD 是 base64url(method:password) 放在 userinfo 位
+		userinfo := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + pw))
 		return "ss://" + userinfo + "@" + addr + frag, ""
 
 	case "hysteria2":

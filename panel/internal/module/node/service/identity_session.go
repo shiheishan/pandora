@@ -1,6 +1,6 @@
 package service
 
-// 会话的身份校验与续期（p5-enroll 实现）。
+// 会话的身份校验与续期。
 //
 // 续期分两步：RenewCertificate 签出的新证书先登记为 pending，旧的 active 照常有效；节点第一次用新证书建流时
 // AuthorizeSession 在同一事务里把 pending 转为 active、旧的 active 置 superseded。节点没收到新证书、或落盘前

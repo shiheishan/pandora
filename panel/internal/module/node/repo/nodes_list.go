@@ -1,6 +1,6 @@
 package repo
 
-// 本文件归 p5-inventory：后台节点列表的读模型。
+// 后台节点列表的读模型。
 
 import (
 	"context"
@@ -17,6 +17,7 @@ type NodeListFilter struct {
 	State          string // ''/all/online/offline/disabled/retired
 	Search         string
 	ID             *uuid.UUID
+	Tag            string
 	Limit          int
 	Offset         int
 	Detail         bool // true 时读 protocol_config，否则该列给 NULL
@@ -59,12 +60,20 @@ type NodeListRow struct {
 	ApplyFailedDetail     *string         `gorm:"column:apply_failed_detail"`
 	ApplyFailedAt         *time.Time      `gorm:"column:apply_failed_at"`
 	TrafficRate           decimal.Decimal `gorm:"column:traffic_rate"`
-	Kernel                string          `gorm:"column:kernel"`
 	ProtocolConfig        *string         `gorm:"column:protocol_config"`
 	ProtocolSchemaVersion int             `gorm:"column:protocol_schema_version"`
 	ConfigValidatedAt     *time.Time      `gorm:"column:config_validated_at"`
 	ServerReady           bool            `gorm:"column:server_ready"`
 	Deliverable           bool            `gorm:"column:deliverable"`
+	Tags                  string          `gorm:"column:tags"`
+	TrafficLimitBytes     *int64          `gorm:"column:traffic_limit_bytes"`
+	TrafficResetDay       *int            `gorm:"column:traffic_reset_day"`
+	TrafficUsedBytes      int64           `gorm:"column:traffic_used_bytes"`
+	TrafficResetAt        time.Time       `gorm:"column:traffic_reset_at"`
+	TrafficExceededAt     *time.Time      `gorm:"column:traffic_exceeded_at"`
+	RateSchedule          string          `gorm:"column:rate_schedule"`
+	RelayCount            int             `gorm:"column:relay_count"`
+	ECHEnabled            bool            `gorm:"column:ech_enabled"`
 	Total                 int64           `gorm:"column:total"`
 }
 
@@ -95,6 +104,10 @@ func nodeListFilterSQL(f NodeListFilter) (string, []any) {
 		conds = append(conds, "n.id = ?")
 		args = append(args, *f.ID)
 	}
+	if f.Tag != "" {
+		conds = append(conds, "n.tags @> jsonb_build_array(?::text)")
+		args = append(args, f.Tag)
+	}
 	return strings.Join(conds, " AND "), args
 }
 
@@ -123,9 +136,13 @@ SELECT n.id, n.node_no, n.row_version, n.name, n.serving_status, n.server_id,
        n.node_type, n.server_host, n.server_port, n.display_name, n.country_code, n.sort_order, n.created_at,
        n.runtime_status, n.runtime_reason, n.runtime_state_at, ro.name AS runtime_reason_node,
        n.applied_config_sha256, n.apply_failed_sha256, n.apply_failed_reason, n.apply_failed_detail, n.apply_failed_at,
-       n.traffic_rate, n.kernel, ` + protoCol + ` AS protocol_config, n.protocol_schema_version, n.config_validated_at,
+       n.traffic_rate, ` + protoCol + ` AS protocol_config, n.protocol_schema_version, n.config_validated_at,
        COALESCE(s.status = 'ready' AND s.deleted_at IS NULL, false) AS server_ready,
        COALESCE((` + DeliverableNodeCond + `), false) AS deliverable,
+       n.tags::text AS tags, n.traffic_limit_bytes, n.traffic_reset_day, n.traffic_used_bytes, n.traffic_reset_at,
+       n.traffic_exceeded_at, n.traffic_rate_schedule::text AS rate_schedule,
+       (SELECT count(*) FROM node_relays r WHERE r.parent_node_id = n.id)::int AS relay_count,
+       EXISTS (SELECT 1 FROM node_ech_keys k WHERE k.node_id = n.id AND k.superseded_at IS NULL) AS ech_enabled,
        pg.total
   FROM page pg JOIN nodes n ON n.id = pg.id
   LEFT JOIN servers s ON s.id = n.server_id

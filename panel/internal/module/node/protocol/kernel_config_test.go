@@ -121,8 +121,8 @@ func TestXboardShapeTranslatesToKernelFields(t *testing.T) {
 			},
 			// tls 键整个删掉，不留 tls:false。
 			//
-			// 校验器明确禁止 tls=true（"证书生命周期完成前仅允许 tls=false，
-			// 请改用 security=reality"），而现网 4 个在役 vless 存的就是
+			// vless 的普通 TLS 还没开放（校验器拒绝 tls=1，见 plainTLSNotYetMessage），
+			// 而现网 4 个在役 vless 存的就是
 			// 「只有 security、没有 tls」。补一个 false 会改变下发内容，
 			// 也就没法再断言这次改名对数据面完全无影响。
 			want: map[string]any{
@@ -153,6 +153,44 @@ func TestXboardShapeTranslatesToKernelFields(t *testing.T) {
 				t.Errorf("翻译结果不对\n  得到 %#v\n  期望 %#v", got, c.want)
 			}
 		})
+	}
+}
+
+// host 同时来自 network_settings.host 与 headers.Host 时，下发必须稳定且表单字段优先。
+func TestToKernelConfigHostPriorityDeterministic(t *testing.T) {
+	var first map[string]any
+	for i := 0; i < 200; i++ {
+		in := map[string]any{
+			"network": "ws",
+			"network_settings": map[string]any{
+				"host":    "api.example.com",
+				"headers": map[string]any{"Host": "form.example.com"},
+				"path":    "/p",
+			},
+		}
+		got := toKernelConfig("vless", in)
+		if got["host"] != "form.example.com" {
+			t.Fatalf("第 %d 次 host=%q，期望 form.example.com（headers.Host 优先）", i, got["host"])
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !reflect.DeepEqual(got, first) {
+			t.Fatalf("第 %d 次结果与第一次不一致\n  第一次 %#v\n  本次 %#v", i, first, got)
+		}
+	}
+
+	onlyAPI := map[string]any{
+		"network": "ws",
+		"network_settings": map[string]any{
+			"host": "api.example.com",
+			"path": "/p",
+		},
+	}
+	got := toKernelConfig("vless", onlyAPI)
+	if got["host"] != "api.example.com" {
+		t.Fatalf("仅 network_settings.host 时 host=%q，期望 api.example.com", got["host"])
 	}
 }
 
@@ -202,7 +240,7 @@ func TestTrojanXboardRealityConfigPassesAdminValidation(t *testing.T) {
 	// 全零私钥（clamp 后）对应的公钥：校验器要求两把钥匙成对
 	pub := "L-V9o0fNYkMVKNqsX7spBzD_9oSvxM_C7ZCZX1jLO3Q"
 	raw := json.RawMessage(`{"network":"tcp","tls":2,"reality_settings":{"dest":"www.example.com:443","server_name":"www.example.com","private_key":"` + key + `","public_key":"` + pub + `","short_id":"01234567"}}`)
-	version, fields := Validate("trojan", "pandora-native", 443, raw)
+	version, fields := Validate("trojan", 443, raw)
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("xboard-shaped Trojan REALITY config rejected: version=%d fields=%v", version, fields)
 	}
@@ -210,7 +248,7 @@ func TestTrojanXboardRealityConfigPassesAdminValidation(t *testing.T) {
 
 func TestTrojanXboardTLSConfigPassesAdminValidation(t *testing.T) {
 	raw := json.RawMessage(`{"network":"tcp","tls":1,"cert_path":"/etc/pandora-native/certs/example.com/trojan.crt","key_path":"/etc/pandora-native/certs/example.com/trojan.key"}`)
-	version, fields := Validate("trojan", "pandora-native", 443, raw)
+	version, fields := Validate("trojan", 443, raw)
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("xboard-shaped Trojan TLS config rejected: version=%d fields=%v", version, fields)
 	}

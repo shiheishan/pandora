@@ -1,6 +1,6 @@
 package service
 
-// 会话管理（p5-session）：按服务器维护一条在途控制流，负责对齐、名单与配置下发、回执、心跳、续期、吊销断流、
+// 会话管理：按服务器维护一条在途控制流，负责对齐、名单与配置下发、回执、心跳、续期、吊销断流、
 // 重启前错峰重连。传输层（grpc/control.go）只做收发与 proto 互转，业务都在这里。
 //
 // 并发模型：
@@ -10,6 +10,9 @@ package service
 //     先取号的读晚到时直接丢掉。保证的是：取号之前已提交的变更，这次读一定看得到；取号之后才提交的变更，
 //     提交后会推进纪元、触发新一轮，新一轮的序号更大，最终以它为准。序号大不代表读到的数据一定更新（两次读可能交错），
 //     由「每次提交后必有一轮序号更大的重算」兜底。
+//   - 建流对齐合批（session_align.go）：同一时段到达的建流共用一次配置与名单读，一批取一对序号（先配置后名单）；
+//     批是串行的，同时只有一批在读库。
+//   - 日志：server_id 只由 gRPC 鉴权拦截器挂在流 ctx 的 logger 上（grpc/interceptors.go），会话层只加 session_id。
 
 import (
 	"bytes"
@@ -31,8 +34,14 @@ import (
 // FeatureUsersDelta 是「能收名单增量」的能力名（Hello.features / Welcome.features）。
 const FeatureUsersDelta = "users_delta"
 
-// UsersChunkSize 是 UsersFull 每块的人数。
-const UsersChunkSize = 5000
+// UsersChunkSize 是 UsersFull 每块的人数。一人编码后最多约 60 字节，500 人一块不到 32 KB：
+// gRPC 的发送缓冲按档取（256 B、4 KB、16 KB、32 KB、1 MB），32 KB 到 1 MB 之间的消息一律占一块 1 MB 的缓冲，
+// 面板重启后几百条流同时发全量时，块大就是几百 MB 的瞬时内存（同机闸门 10-14 量到）。
+// 守卫是 grpc 包的 TestUsersFullChunkFitsSendBuffer。
+const UsersChunkSize = 500
+
+// UsersDeltaMax 是一份增量最多的变更条数（新增或改了的加移除的）；超过就发全量。增量不分块。
+const UsersDeltaMax = 5000
 
 // panelFeatures 是面板支持的可选能力。
 var panelFeatures = []string{FeatureUsersDelta}
@@ -51,8 +60,8 @@ var (
 	ErrSessionPeerGone = errors.New("node: 节点已断开")
 )
 
-// SessionBackend 是会话管理要用的数据面：名单与配置（p5-delivery、p5-routing）、上报入账（p5-traffic）、
-// 续期（p5-enroll）、会话自己的落库（session_store.go）。*Service 实现它；测试换成假的。
+// SessionBackend 是会话管理要用的数据面：名单与配置、上报入账、
+// 续期、会话自己的落库（session_store.go）。*Service 实现它；测试换成假的。
 type SessionBackend interface {
 	Rosters(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeRoster, error)
 	ServerConfigs(ctx context.Context, serverIDs []uuid.UUID) (map[uuid.UUID][]NodeConfigDoc, error)
@@ -84,10 +93,8 @@ type SessionOptions struct {
 	TerminateGrace time.Duration
 	// ShutdownBase、ShutdownSpread：停机时第 i 个会话的 reconnect in_ms = Base + i×Spread/n，缺省 2 秒、10 秒
 	ShutdownBase, ShutdownSpread time.Duration
-	// AlignConcurrency 是同时在做建流对齐（配置与名单首读）的流数上限，缺省 8：面板重启后全部节点一起重连时，
-	// 不让对齐读占满连接池、拖住后台与鉴权
-	AlignConcurrency int
-	// AlignTimeout 是建流对齐（排队加读）的总时限，缺省 10 秒，短于节点端等 Welcome 的 15 秒；超时回 Unavailable，节点退避重连
+	// AlignTimeout 是建流对齐（记 Hello、等这批读完）的总时限，也是一批读库的时限；缺省 10 秒，短于节点端等 Welcome 的 15 秒。
+	// 超时回 Unavailable，节点退避重连
 	AlignTimeout time.Duration
 }
 
@@ -112,9 +119,6 @@ func (o SessionOptions) withDefaults() SessionOptions {
 	def(&o.ShutdownBase, 2*time.Second)
 	def(&o.ShutdownSpread, 10*time.Second)
 	def(&o.AlignTimeout, 10*time.Second)
-	if o.AlignConcurrency <= 0 {
-		o.AlignConcurrency = 8
-	}
 	return o
 }
 
@@ -132,8 +136,8 @@ type Sessions struct {
 	byServer map[uuid.UUID]*Session
 	closing  bool
 
-	// alignSem 限制同时做建流对齐的流数（AlignConcurrency）
-	alignSem chan struct{}
+	// align 是建流对齐合批的排队状态（session_align.go）
+	align alignQueue
 
 	// 纪元轮次的待办（session_epoch.go）
 	dirtyMu                 sync.Mutex
@@ -146,7 +150,6 @@ func NewSessionManager(b SessionBackend, rdb *redis.Client, opt SessionOptions) 
 	opt = opt.withDefaults()
 	return &Sessions{
 		b: b, rdb: rdb, opt: opt, now: time.Now,
-		alignSem: make(chan struct{}, opt.AlignConcurrency),
 		byServer: map[uuid.UUID]*Session{},
 		wake:     make(chan struct{}, 1),
 	}
@@ -206,7 +209,7 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 	return m.OpenVerified(ctx, serverID, h, nil)
 }
 
-// ErrAlignBusy 是建流对齐在 AlignTimeout 内没排上或没读完：回 Unavailable，节点退避重连。
+// ErrAlignBusy 是建流对齐在 AlignTimeout 内没等到结果（前面的批还没读完，或这批没读完）：回 Unavailable，节点退避重连。
 var ErrAlignBusy = errors.New("node: 建流对齐超时")
 
 // OpenVerified 同 Open，另在两处调 verify 复核身份（传输层传 AuthorizeSession；nil 表示不复核）：
@@ -224,7 +227,8 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 		sid = uuid.New()
 	}
 	s := newSession(m, serverID, sid.String(), h)
-	log := plog.From(ctx).With(zap.String("server_id", serverID.String()), zap.String("session_id", s.id))
+	// server_id 已由 gRPC 鉴权拦截器挂在 ctx 的 logger 上
+	log := plog.From(ctx).With(zap.String("session_id", s.id))
 
 	at := m.now()
 	s.enqueue(Outbound{Kind: OutWelcome, Welcome: Welcome{
@@ -259,51 +263,24 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 		}
 	}
 
-	// 对齐读限并发、限时：排队与读共用一个期限
+	// 从这里起是建流对齐，记 Hello 与等这批读完共用一个期限 AlignTimeout
 	actx, cancel := context.WithTimeout(ctx, m.opt.AlignTimeout)
 	defer cancel()
-	select {
-	case m.alignSem <- struct{}{}:
-		defer func() { <-m.alignSem }()
-	case <-actx.Done():
-		s.Close(ErrSessionPeerGone)
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, ErrAlignBusy
-	}
-
 	if err := m.b.RecordHello(actx, serverID, h, at); err != nil {
 		// 主机信息与心跳时间只是展示；对齐照常做
 		log.Warn("记录 Hello 失败", zap.Error(err))
 	}
-
-	ids := []uuid.UUID{serverID}
-	cfgSeq := m.seq.Add(1)
-	cfgs, err := m.b.ServerConfigs(actx, ids)
+	// 配置与名单的首读交给对齐器合批（session_align.go）
+	r, err := m.awaitAlign(ctx, actx, serverID)
 	if err != nil {
 		s.Close(ErrSessionPeerGone)
-		return nil, alignErr(ctx, actx, err)
-	}
-	usersSeq := m.seq.Add(1)
-	rosters, err := m.b.Rosters(actx, ids)
-	if err != nil {
-		s.Close(ErrSessionPeerGone)
-		return nil, alignErr(ctx, actx, err)
+		return nil, err
 	}
 	// 先配置后名单：新节点先有入站再收用户
-	s.applyConfig(cfgSeq, cfgs[serverID])
-	s.applyRosters(usersSeq, rosters[serverID])
+	s.applyConfig(r.cfgSeq, r.cfgs)
+	s.applyRosters(r.usersSeq, r.rosters)
 	log.Info("节点会话已建立", zap.String("agent_version", h.AgentVersion), zap.Strings("features", s.features))
 	return s, nil
-}
-
-// alignErr 把对齐读因 AlignTimeout 到期的失败归成 ErrAlignBusy（流本身没断时）。
-func alignErr(ctx, actx context.Context, err error) error {
-	if ctx.Err() == nil && actx.Err() != nil {
-		return ErrAlignBusy
-	}
-	return err
 }
 
 // unregister 把 s 移出登记（只移除自己，不动取代者）。

@@ -28,12 +28,17 @@ type Schema struct {
 	SensitiveProperties []string            `json:"sensitive_properties,omitempty"`
 	// Hints 是表单上挂在字段下的一句说明（按字段路径），前端不硬编码协议知识。
 	Hints map[string]string `json:"hints,omitempty"`
+	// Note 是表单顶部的一句协议说明。
+	Note string `json:"note,omitempty"`
+	// Fields 是表单元数据，按显示顺序；每个 AllowedProperties 恰好出现一次。
+	Fields []FormField `json:"fields,omitempty"`
 }
 
-// 节点入站实际 bind 的 L4。
+// 节点入站实际 bind 的 L4。ListenTCPUDP 是同一端口 TCP、UDP 都听（shadowsocks），与同端口的 tcp、udp 都冲突。
 const (
-	ListenTCP = "tcp"
-	ListenUDP = "udp"
+	ListenTCP    = "tcp"
+	ListenUDP    = "udp"
+	ListenTCPUDP = "tcp+udp"
 )
 
 // CanonicalType 是协议名唯一的存储与审计写法（去空白、小写）。
@@ -48,24 +53,19 @@ func StableTypes() []string {
 
 // Schemas 返回全部稳定协议的 schema，按 node_type 排序。
 func Schemas() []Schema {
-	return stableSchemas()
+	return withForms(stableSchemas())
 }
 
 // Validate 校验一次协议写入。nodeType 为空（未配置协议的草稿）返回 version 0、无错误；
-// 已填的必须是当前 schema。fields 的键是表单路径（server_port、node_type、kernel、
+// 已填的必须是当前 schema。fields 的键是表单路径（server_port、node_type、
 // protocol_config.<键>），值是中文说明；为空即通过。
-func Validate(nodeType, kernel string, port int, raw json.RawMessage) (version int, fields map[string]string) {
-	return validateForm(nodeType, kernel, port, raw)
+func Validate(nodeType string, port int, raw json.RawMessage) (version int, fields map[string]string) {
+	return validateForm(nodeType, port, raw)
 }
 
 // Warnings 返回存量协议配置不满足现行收紧规则的提示（只提示，照常下发）。
 func Warnings(nodeType string, raw json.RawMessage) []string {
 	return configWarnings(nodeType, raw)
-}
-
-// EffectiveKernel 把存量内核取值归一成现行可选值（auto / pandora-native）。
-func EffectiveKernel(kernel string) string {
-	return effectiveKernel(kernel)
 }
 
 // Redact 按敏感键名表在任意深度抹掉敏感值（读接口用）。不是 JSON 对象的原样返回。
@@ -80,7 +80,7 @@ func PreserveSecrets(stored, incoming json.RawMessage) (json.RawMessage, error) 
 	return preserveSecrets(stored, incoming)
 }
 
-// ListenL4 推导节点入站实际 bind 的 L4（ListenTCP / ListenUDP），与 pdnd
+// ListenL4 推导节点入站实际 bind 的 L4（ListenTCP / ListenUDP / ListenTCPUDP），与 pdnd
 // kernel/port_claims.go 的 inboundPortKey 同口径。raw 不是对象时当作没有字段。
 func ListenL4(nodeType string, raw json.RawMessage) string {
 	return listenL4(nodeType, raw)
@@ -89,6 +89,26 @@ func ListenL4(nodeType string, raw json.RawMessage) string {
 // PortClaimLabel 是端口冲突提示里的「端口/L4」写法。
 func PortClaimLabel(port int, l4 string) string {
 	return strconv.Itoa(port) + "/" + strings.ToUpper(l4)
+}
+
+// L4Conflicts 判断同一台服务器同一端口上的两个 L4 是否冲突：相等，或任一为 tcp+udp 且另一方不为空。
+func L4Conflicts(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return a == b || a == ListenTCPUDP || b == ListenTCPUDP
+}
+
+// ConflictingL4s 返回与 l4 冲突的全部取值（按 tcp、udp、tcp+udp 的顺序），门禁按它查同端口的占用者。
+// l4 为空时返回 nil。
+func ConflictingL4s(l4 string) []string {
+	var out []string
+	for _, v := range [...]string{ListenTCP, ListenUDP, ListenTCPUDP} {
+		if L4Conflicts(l4, v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // GenerateRealityKeypair 生成一对 X25519 密钥（RFC 7748 clamping，base64 raw URL 编码）。

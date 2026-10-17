@@ -1,5 +1,5 @@
-import { formatBytes, formatMoney } from '../../../core/format'
-import type { BulkFilter, PaidTotal, OnlineDevice, OrderRow, OrderStatus, Quota, ResetLog, ResetReason, RiskLevel, SubscriptionRow, SubStatus, UserGroup, UserRow, UserStatus, UsersParams } from './api'
+import { formatBytes } from '../../../core/format'
+import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, Quota, RiskLevel, SubscriptionRow, SubStatus, UserGroup, UserProfile, UserRow, UserStatus, UsersParams } from './api'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -14,6 +14,7 @@ export const STATUS_FILTERS = [
   ['active', '正常'],
   ['disabled', '已禁用'],
   ['expired', '已过期'],
+  ['deleted', '已注销'],
 ] as const
 export type StatusFilter = (typeof STATUS_FILTERS)[number][0]
 
@@ -30,6 +31,7 @@ export function listParams(filter: StatusFilter, group: string, q: string, offse
   if (filter === 'active') params.status = 'active'
   if (filter === 'disabled') params.status = 'suspended,banned'
   if (filter === 'expired') params.sub_state = 'expired'
+  if (filter === 'deleted') params.status = 'deleted'
   return params
 }
 
@@ -44,30 +46,21 @@ export const USER_STATUS_VIEW: Record<UserStatus, { label: string; tone: Tone }>
   pending: { label: '待验证', tone: 'neutral' },
   deletion_scheduled: { label: '注销中', tone: 'neutral' },
   anonymized: { label: '已匿名', tone: 'neutral' },
+  deleted: { label: '已注销', tone: 'neutral' },
 }
 
 export const SUB_STATUS_VIEW: Record<SubStatus, { label: string; tone: Tone }> = {
-  pending: { label: '待开通', tone: 'neutral' },
-  trialing: { label: '试用中', tone: 'info' },
   active: { label: '生效中', tone: 'ok' },
-  past_due: { label: '待续费', tone: 'warn' },
-  grace: { label: '宽限期', tone: 'warn' },
-  paused: { label: '已暂停', tone: 'neutral' },
-  cancelled: { label: '已取消', tone: 'neutral' },
   expired: { label: '已过期', tone: 'danger' },
 }
 
-/** 契约后台-05 公共映射：9 个后端状态 → 设计 3 个 + 已过期 + 退款 */
+/** 库里 5 个状态 → 设计 3 个 + 已过期 */
 export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone }> = {
-  draft: { label: '待支付', tone: 'warn' },
   pending_payment: { label: '待支付', tone: 'warn' },
-  processing: { label: '待支付', tone: 'warn' },
   paid: { label: '已支付', tone: 'ok' },
   fulfilled: { label: '已支付', tone: 'ok' },
   cancelled: { label: '已取消', tone: 'neutral' },
   expired: { label: '已过期', tone: 'neutral' },
-  refunded: { label: '已退款', tone: 'info' },
-  partially_refunded: { label: '部分退款', tone: 'info' },
 }
 
 export const RISK_VIEW: Record<RiskLevel, { label: string; tone: Tone }> = {
@@ -77,7 +70,7 @@ export const RISK_VIEW: Record<RiskLevel, { label: string; tone: Tone }> = {
   high: { label: '高', tone: 'danger' },
 }
 
-export const INTERVAL_LABELS: Record<string, string> = {
+const INTERVAL_LABELS: Record<string, string> = {
   day: '日付',
   week: '周付',
   month: '月付',
@@ -86,28 +79,27 @@ export const INTERVAL_LABELS: Record<string, string> = {
   one_time: '一次性',
 }
 
-const KIND_LABELS: Record<OrderRow['kind'], string> = {
+// 订单种类的封闭枚举归订单与收款模块；这里按字符串查，种类增删时没写到的退回空串
+const KIND_LABELS: Readonly<Record<string, string>> = {
   new: '新购',
   renewal: '续费',
   upgrade: '变更套餐',
-  downgrade: '变更套餐',
-  addon: '流量包',
+  stack: '叠加',
   topup: '余额充值',
-  manual: '人工',
+  traffic_reset: '流量重置',
 }
 
-/** 「累计消费」：按币种各写一笔（R80 / R114，币种升序由后端排好），没有实收时按用户币种写 0 */
-export function paidTotalsLabel(totals: readonly PaidTotal[], currency: string): string {
-  return totals.length === 0 ? formatMoney(0, currency) : totals.map((t) => formatMoney(t.amount, t.currency)).join(' · ')
-}
+/** 续费、变更、叠加单在「买了什么」前标出类型，不然和新购长得一样 */
+const KIND_PREFIXED: ReadonlySet<string> = new Set(['renewal', 'upgrade', 'stack'])
 
-/** 订单「买了什么」：套餐名 · 周期（多项时提示还有几项）；充值单没有套餐名 */
-export function orderWhat(o: Pick<OrderRow, 'kind' | 'plan_name' | 'interval' | 'interval_count' | 'item_count'>): string {
-  const name = o.plan_name || KIND_LABELS[o.kind]
+/** 订单「买了什么」：[类型 ·] 套餐名 · 周期（多项时提示还有几项）；充值单没有套餐名 */
+export function orderWhat(o: Pick<OrderRow, 'plan_name' | 'interval' | 'interval_count' | 'item_count'> & { kind: string }): string {
+  const tag = o.plan_name && KIND_PREFIXED.has(o.kind) ? KIND_LABELS[o.kind] : ''
+  const name = o.plan_name || KIND_LABELS[o.kind] || ''
   const every = INTERVAL_LABELS[o.interval]
   const cycle = every ? (o.interval_count > 1 ? `${o.interval_count} × ${every}` : every) : ''
   const more = o.item_count > 1 ? ` 等 ${o.item_count} 项` : ''
-  return [name, cycle].filter(Boolean).join(' · ') + more
+  return [tag, name, cycle].filter(Boolean).join(' · ') + more
 }
 
 export function initial(email: string, displayName: string | null): string {
@@ -118,6 +110,14 @@ export function initial(email: string, displayName: string | null): string {
 export function shortId(id: string): string {
   return id.slice(0, 8)
 }
+
+/** 已注销的账号邮箱是占位值，界面一律显示「已注销 #<短 id>」（与后端 DeletedShortID 同口径） */
+export function userLabel(u: { id: string; email: string; status: UserStatus }): string {
+  return u.status === 'deleted' ? `已注销 #${shortId(u.id)}` : u.email
+}
+
+/** 后台改邮箱、注销、改邀请人、批量封禁、改订阅的原因上限（后端 5–500 字） */
+export const REASON_MAX = 500
 
 // ===========================================================================
 // 列表三列
@@ -159,28 +159,20 @@ export function trafficQuota(quotas: readonly Quota[]): Quota | undefined {
 // 当前订阅：与后端 currentSubscriptionSQL 同一口径——还在用的优先，其次到期最晚、最近创建
 // （详情的 subscriptions 已按 created_at 倒序）
 // ===========================================================================
-const LIVE: ReadonlySet<SubStatus> = new Set(['active', 'trialing', 'grace', 'past_due'])
 
-export function isLiveSub(status: SubStatus): boolean {
-  return LIVE.has(status)
-}
-
-/**
- * 未分配的流量包会怎样生效（billing provision 的口径）：开通后只有一份在用时自动加到那一份；
- * 已经有在用的订阅时不会自动挂，要用户在门户里选一份加上（后台没有挪流量包的入口）
- */
-export function unattachedNext(liveCount: number): string {
-  return liveCount === 0 ? '用户开通第一份订阅时会自动加到那一份上。' : '用户在门户里选一份在用的订阅加上去后才生效。'
+/** 还在用 = 订阅状态为 active（库里只有 active / expired） */
+export function isLive(status: SubStatus): boolean {
+  return status === 'active'
 }
 
 export function currentSubscription<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
   const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
-  return [...subs].sort((a, b) => Number(isLiveSub(b.status)) - Number(isLiveSub(a.status)) || end(b) - end(a))[0]
+  return [...subs].sort((a, b) => Number(isLive(b.status)) - Number(isLive(a.status)) || end(b) - end(a))[0]
 }
 
-/** 换发订阅链接只对还在用的订阅有意义；一个都没有时退回全部 */
-export function liveSubscriptions<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
-  const live = subs.filter((s) => isLiveSub(s.status))
+/** 换发订阅链接的候选：还在用的订阅；一个都没有时退回全部（让管理员仍能换发已过期的那份） */
+export function rotatableSubscriptions<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
+  const live = subs.filter((s) => isLive(s.status))
   return live.length ? live : [...subs]
 }
 
@@ -198,7 +190,7 @@ export function parseYuan(input: string): number | null {
   return negative ? -cents : cents
 }
 
-/** 与 platform/crypto.ValidatePassword 同一策略的前端预检；返回问题描述或 null */
+/** 与 identity/service validatePassword 同一策略的前端预检；返回问题描述或 null */
 export function passwordProblem(p: string): string | null {
   if ([...p].length < 8) return '密码至少需要 8 个字符'
   if (new TextEncoder().encode(p).length > 256) return '密码过长'
@@ -207,15 +199,15 @@ export function passwordProblem(p: string): string | null {
 }
 
 // ===========================================================================
-// 用户组：删除前的拦截与「被引用」列（后端 409 的四种情况，按同样的先后顺序）
+// 用户组：删除前的拦截与「被引用」列（后端 409 的情况，按同样的先后顺序）
+// 专属价格不拦：没卖过的随组删除，卖过的由后端 409 拒绝（提示改用停用）
 // ===========================================================================
-export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'prices' | 'coupons' | 'exclusive_pools'>): string | null {
+export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'coupons' | 'exclusive_pools'>): string | null {
   // R104：与后端 409 同一顺序，先看节点池名单（删了会让那个池悄悄对所有人开放）
   const pool = g.exclusive_pools[0]
   if (pool) return `节点池「${pool.name}」限定了这个组，先在节点池里把它移出名单`
   if (g.users > 0) return `组内还有 ${g.users} 位用户，先把他们移出去`
   if (g.plans > 0) return `还有 ${g.plans} 个套餐按这个组控制可见性，先解除`
-  if (g.prices > 0) return `还有 ${g.prices} 个专属价格挂在这个组上，先删掉`
   if (g.coupons > 0) return `还有 ${g.coupons} 张优惠券限定了这个组，先解除`
   return null
 }
@@ -234,10 +226,26 @@ export function devicePolicyBody(form: { mode: 'loose' | 'strict'; grace: string
   return { mode: form.mode, ...(form.mode === 'strict' ? { grace: g } : {}), ...(form.window !== savedWindow ? { window_minutes: form.window } : {}) }
 }
 
-export function groupRefs(g: Pick<UserGroup, 'plans' | 'prices' | 'coupons'>): string {
-  const parts = [g.plans && `套餐 ${g.plans}`, g.prices && `价格 ${g.prices}`, g.coupons && `优惠券 ${g.coupons}`].filter(Boolean)
+export function groupRefs(g: Pick<UserGroup, 'plans' | 'coupons'>): string {
+  const parts = [g.plans && `套餐 ${g.plans}`, g.coupons && `优惠券 ${g.coupons}`].filter(Boolean)
   return parts.length ? parts.join(' · ') : '—'
 }
+
+/** 停用组在下拉里的后缀 */
+export const GROUP_DISABLED_SUFFIX = '（已停用）'
+/** 下拉、勾选项里一个组的显示名：停用的组加「（已停用）」 */
+export const groupOptionLabel = (g: { name: string; status: string }): string => (g.status === 'disabled' ? `${g.name}${GROUP_DISABLED_SUFFIX}` : g.name)
+/**
+ * 分配 / 选择类下拉的候选：隐藏停用组，但 keep 里的（当前已选的值）照样保留，不能把已有引用丢掉或显示成空。
+ * 筛选类下拉不用它（停用组里还有成员，要能筛出来）。保持原顺序。
+ */
+export function assignableGroups<T extends { id: string; status: string }>(groups: readonly T[], keep: readonly string[] = []): T[] {
+  return groups.filter((g) => g.status !== 'disabled' || keep.includes(g.id))
+}
+/** 停用确认的正文 */
+export const GROUP_DISABLE_NOTICE = '已有成员不受影响，照样看到这个组的套餐、节点池和订阅域名。停用后不能再把用户加进这个组，后台各处的分配下拉里也不再出现它；可以随时重新启用。'
+/** 删组确认的正文 */
+export const GROUP_DELETE_NOTICE = '删除后无法恢复。这个组已经没有成员，也没有套餐或优惠券引用它。'
 
 // ===========================================================================
 // 批量运营：设计稿的四个下拉 → BulkFilter（契约映射）
@@ -292,7 +300,7 @@ export interface GenerateForm {
   reason: string
 }
 
-/** 与 adminops.normalizeGenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
+/** 与 identity/service normalizeGenerateInput 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
 export function generateProblems(f: GenerateForm): Record<string, string> {
   const out: Record<string, string> = {}
   const n = Number(f.count.trim())
@@ -319,29 +327,8 @@ export function pips(online: number, limit: number): Array<'on' | 'over' | 'off'
 }
 
 // ===========================================================================
-// 流量重置
+// 手动重置本期流量（按份：订阅卡上点哪份重置哪份）
 // ===========================================================================
-export const RESET_REASON_VIEW: Record<ResetReason, { label: string; tone: Tone; filter: string }> = {
-  renewal: { label: '自动', tone: 'neutral', filter: '续费' },
-  cycle_roll: { label: '自动', tone: 'neutral', filter: '周期滚动' },
-  manual: { label: '手动', tone: 'info', filter: '手动' },
-  gift_card: { label: '礼品卡', tone: 'ok', filter: '礼品卡' },
-  plan_change: { label: '变更套餐', tone: 'warn', filter: '变更套餐' },
-}
-
-/** 操作人：有 actor_email 用它（有 note 追加「 · note」）；没有时按原因写成「系统 · …」 */
-export function resetActor(log: Pick<ResetLog, 'reason' | 'actor_email' | 'note'>): string {
-  if (log.actor_email) return log.note ? `${log.actor_email} · ${log.note}` : log.actor_email
-  const system: Record<ResetReason, string> = {
-    renewal: '系统 · 续费',
-    cycle_roll: '系统 · 周期滚动',
-    manual: '系统',
-    gift_card: '用户 · 兑换礼品卡',
-    plan_change: '系统 · 变更套餐',
-  }
-  return log.note ? `${system[log.reason]} · ${log.note}` : system[log.reason]
-}
-
 export const NOTE_MAX = 500
 
 /** 重置原因 5–500 字（后端 fields.note） */
@@ -350,42 +337,6 @@ export function noteProblem(note: string): string | null {
   if (n < REASON_MIN) return `请写清重置原因，至少 ${REASON_MIN} 个字`
   if (n > NOTE_MAX) return `重置原因不超过 ${NOTE_MAX} 个字`
   return null
-}
-
-/**
- * 能手动重置本期流量的订阅（按份，购买模型统一）：只看 status=active，不含试用。
- * 不再替管理员挑「到期最晚的一条」：行上点哪份重置哪份，从邮箱或历史页进来再自己选
- */
-export function resettableSubs<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
-  return subs.filter((s) => s.status === 'active')
-}
-
-/** 本期用量比例；不限量的那份按 0 算（清零对它没有意义） */
-function usedRatio(s: Pick<SubscriptionRow, 'quotas'>): number {
-  const q = trafficQuota(s.quotas)
-  return q && q.limit !== null && q.limit > 0 ? q.consumed / q.limit : 0
-}
-
-/**
- * 多份可重置时预选哪份：本期用得最多的（purchase.Options 的流量重置规则，同比例取到期更早的）。
- * 只有一份时就是它；一份都没有返回 undefined
- */
-export function defaultResetSub<T extends Pick<SubscriptionRow, 'status' | 'quotas' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
-  const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : Infinity)
-  const candidates = resettableSubs(subs).sort((a, b) => end(a) - end(b))
-  return candidates.reduce<T | undefined>((best, s) => (best === undefined || usedRatio(s) > usedRatio(best) ? s : best), undefined)
-}
-
-/**
- * 多份可加流量时预选哪份：剩余最少的（套餐本期剩余加这一份的流量包余量，purchase.Options 的加流量规则）；
- * 不限量的那份最大，排在最后
- */
-export function defaultTrafficSub<T extends Pick<SubscriptionRow, 'quotas' | 'pack_remaining_bytes'>>(subs: readonly T[]): T | undefined {
-  const left = (s: T) => {
-    const q = trafficQuota(s.quotas)
-    return q && q.limit !== null ? Math.max(0, q.limit - q.consumed) + s.pack_remaining_bytes : Infinity
-  }
-  return subs.reduce<T | undefined>((best, s) => (best === undefined || left(s) < left(best) ? s : best), undefined)
 }
 
 /** 这一份怎么称呼：有备注名写「备注名」套餐名，没有就只写套餐名 */
@@ -400,12 +351,7 @@ export function subLabel(s: Pick<SubscriptionRow, 'label' | 'plan_name' | 'plan_
 
 /** 「给这份开单」有意义的订阅：还在用的，或过期不满 30 天还能续的（其余落点规则里不出现） */
 export function isOrderTarget<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
-  return isLiveSub(s.status) || extendableSubscriptions([s], now).length > 0
-}
-
-/** 能加流量的订阅：只有还在用的（流量包挂在停用的那份上用不上） */
-export function trafficPackTargets<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
-  return subs.filter((s) => isLiveSub(s.status))
+  return isLive(s.status) || extendableSubscriptions([s], now).length > 0
 }
 
 /** 按邮箱找人：GET v1/users?q= 是模糊匹配，只认邮箱完全相等（不分大小写）的那一条 */
@@ -422,7 +368,7 @@ export const EXTEND_DAYS_MAX = 3650
 export const EXTEND_PRESETS = [7, 30, 90] as const
 
 /** 原地续费窗口（后端过期扫描在过期满 30 天时关窗，billing/expire.go） */
-export const RENEWAL_WINDOW_DAYS = 30
+const RENEWAL_WINDOW_DAYS = 30
 
 /** 已过期整天数（周期末已过才有，否则 null） */
 export function expiredDays(periodEnd: string | null, now: Date): number | null {
@@ -432,22 +378,22 @@ export function expiredDays(periodEnd: string | null, now: Date): number | null 
 }
 
 /**
- * 能加时长的订阅（w5expiry）：生效中、试用中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
+ * 能加时长的订阅：生效中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
  * 旧链接恢复可用）；都要有到期时间。别的状态后端回 409，没有到期时间回 422。后台列表不带关窗时刻，
  * 按周期末推算（关窗由过期扫描一分钟内写上）。
  */
 export function extendableSubscriptions<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[], now: Date = new Date()): T[] {
   return subs.filter((s) => {
     if (s.current_period_end === null) return false
-    if (s.status === 'active' || s.status === 'trialing') return true
+    if (s.status === 'active') return true
     const d = expiredDays(s.current_period_end, now)
     return s.status === 'expired' && d !== null && d < RENEWAL_WINDOW_DAYS
   })
 }
 
-/** 这次加时长是不是「救回」：已过期（状态或周期末）或试用中，要二次确认 */
+/** 这次加时长是不是「救回」：已过期（状态或周期末），要二次确认 */
 export function isRescue<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
-  return s.status === 'expired' || s.status === 'trialing' || expiredDays(s.current_period_end, now) !== null
+  return s.status === 'expired' || expiredDays(s.current_period_end, now) !== null
 }
 
 /** 天数：1 到 3650 的整数，否则 null（后端 fields.days） */
@@ -470,4 +416,81 @@ export function extendReasonProblem(reason: string): string | null {
 export function extendedEnd(periodEnd: string, days: number, now: Date): Date {
   const base = Math.max(new Date(periodEnd).getTime(), now.getTime())
   return new Date(base + days * DAY)
+}
+
+// ===========================================================================
+// 两类套餐（10-16）：订阅套餐按时间算、每周期一份流量；一次性套餐按流量算、总量不清零，有效天数可空（永久）。
+// 后台详情不直接带套餐类型：按流量配额的周期认（subscription 服务 trafficPeriod：一次性是 total，订阅是 cycle）
+// ===========================================================================
+export type PlanKind = 'subscription' | 'one_time'
+
+export function planKind(s: Pick<SubscriptionRow, 'quotas'>): PlanKind {
+  return trafficQuota(s.quotas)?.period === 'total' ? 'one_time' : 'subscription'
+}
+
+/** 永久的远期哨兵门槛（与 subscription 服务 IsPermanent 同口径：期末晚于现在 + 50 年） */
+const PERMANENT_YEARS = 50
+
+/** 一次性套餐买的「永久」：期末是开通时 + 100 年的哨兵 */
+export function isPermanent(periodEnd: string | null, now: Date): boolean {
+  if (!periodEnd) return false
+  const horizon = new Date(now.getTime())
+  horizon.setFullYear(horizon.getFullYear() + PERMANENT_YEARS)
+  return new Date(periodEnd).getTime() > horizon.getTime()
+}
+
+/** 订阅卡与列表的到期文案：永久的一次性不写天数 */
+export function subExpiryView(periodEnd: string | null, now: Date): { text: string; tone: Tone } {
+  return isPermanent(periodEnd, now) ? { text: '永久有效', tone: 'neutral' } : expiryView(periodEnd, now)
+}
+
+// ===========================================================================
+// 风控：近 7 天登录 IP 数（画像 ips[].last 在近 7 天内的去重 IP 数，前端算）
+// ===========================================================================
+const LOGIN_IP_WINDOW_DAYS = 7
+
+export function loginIps7d(ips: UserProfile['ips'], now: Date): number {
+  const since = now.getTime() - LOGIN_IP_WINDOW_DAYS * DAY
+  return new Set(ips.filter((r) => new Date(r.last).getTime() >= since).map((r) => r.ip)).size
+}
+
+/** 4 个以上值得看一眼（设计稿标警示色） */
+export const LOGIN_IPS_WARN = 4
+
+// ===========================================================================
+// 调整余额：「增加 / 扣减」单选 + 正金额（元，最多两位小数）→ 带符号的分；不合法或为 0 返回 null
+// ===========================================================================
+export type BalanceDirection = 'plus' | 'minus'
+
+export function balanceCents(direction: BalanceDirection, input: string): number | null {
+  const text = input.trim().replace(/^¥/, '')
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) return null
+  const cents = parseYuan(text)
+  if (cents === null) return null
+  return direction === 'minus' ? -cents : cents
+}
+
+// ===========================================================================
+// 加流量：POST v1/subscriptions/{id}/traffic-pack（路径沿用旧名），按 GB 填、提交字节
+// ===========================================================================
+const GIB = 1024 ** 3
+
+/** 一次最多 10240 GB（后端上限 10 TiB，fields.bytes） */
+export const GRANT_GB_MAX = 10240
+export const GRANT_GB_PRESETS = [10, 50, 100] as const
+
+/** GB 数：1 到 10240 的整数，换成字节；否则 null */
+export function parseGrantGB(input: string): number | null {
+  const v = input.trim()
+  if (!/^\d{1,5}$/.test(v)) return null
+  const n = Number(v)
+  return n >= 1 && n <= GRANT_GB_MAX ? n * GIB : null
+}
+
+/** 加流量的原因 5–500 字（后端 fields.reason） */
+export function grantReasonProblem(reason: string): string | null {
+  const n = [...reason.trim()].length
+  if (n < REASON_MIN) return `请写清加流量的原因，至少 ${REASON_MIN} 个字`
+  if (n > NOTE_MAX) return `原因不超过 ${NOTE_MAX} 个字`
+  return null
 }

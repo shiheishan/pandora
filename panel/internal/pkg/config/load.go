@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -20,12 +22,44 @@ var secretKeys = []string{
 	"secrets.master_key",
 }
 
-// Load 从可选配置文件与 PANDORA_ 环境变量加载并校验配置。
-func Load(path string) (*Config, error) {
+// DefaultBackupDir 是 backup.dir 的缺省值；未配置 backup.dir 时使用。系统状态页与 pandora backup dir 读同一目录。
+const DefaultBackupDir = "/var/backups/pandora"
+
+// newViper 起一个按 PANDORA_ 前缀读环境变量的 viper（键里的 . 换成 _）。
+func newViper() *viper.Viper {
 	v := viper.New()
 	v.SetEnvPrefix("PANDORA")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	return v
+}
+
+// LoadBackupDir 只读 backup.dir（配置文件中的值，PANDORA_BACKUP_DIR 可覆盖；均未设置时用 DefaultBackupDir）。
+// 不校验数据库、Redis 与密钥，供仅做备份的命令使用。
+func LoadBackupDir(configPath string) (string, error) {
+	v := newViper()
+	v.SetDefault("backup.dir", DefaultBackupDir)
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			return "", fmt.Errorf("读取配置文件: %w", err)
+		}
+	}
+	dir := strings.TrimSpace(v.GetString("backup.dir"))
+	switch {
+	case dir == "":
+		return "", errors.New("backup.dir 为空：没有配置备份目录")
+	case !path.IsAbs(dir) || path.Clean(dir) != dir:
+		return "", fmt.Errorf("backup.dir 必须是规范的绝对路径：%s", dir)
+	case dir == "/":
+		return "", errors.New("backup.dir 不能是 /")
+	}
+	return dir, nil
+}
+
+// Load 从可选配置文件与 PANDORA_ 环境变量加载并校验配置。
+func Load(path string) (*Config, error) {
+	v := newViper()
 
 	defaults(v)
 
@@ -99,7 +133,6 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("database.url", "")
 	v.SetDefault("database.migration_url", "")
 	v.SetDefault("database.max_conns", 30)
-	v.SetDefault("database.min_conns", 2)
 
 	v.SetDefault("redis.url", "")
 	v.SetDefault("redis.pool_size", 32)
@@ -141,7 +174,7 @@ func defaults(v *viper.Viper) {
 
 	v.SetDefault("pdnd.dist_dir", "/opt/pandora/pdnd-dist")
 
-	v.SetDefault("backup.dir", "/var/backups/pandora")
+	v.SetDefault("backup.dir", DefaultBackupDir)
 
 	v.SetDefault("geoip.ipv4_db", "/opt/pandora/geoip/ip2region_v4.xdb")
 	v.SetDefault("geoip.ipv6_db", "")

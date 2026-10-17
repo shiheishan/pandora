@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -27,13 +28,19 @@ import (
 // fakeSvc 只实现用例用到的方法；其余方法走嵌入的 nil 接口，被调到会 panic（说明路由接错了）。
 type fakeSvc struct {
 	Service
-	start      service.RegistrationStart
-	lastFilter service.UserFilter
-	rows       []service.UserRow
-	changed    bool
+	start       service.RegistrationStart
+	lastFilter  service.UserFilter
+	rows        []service.UserRow
+	changed     bool
+	groupStatus []string
 }
 
-func (f *fakeSvc) StartRegistration(context.Context, string, string) (service.RegistrationStart, error) {
+func (f *fakeSvc) SetGroupStatus(_ context.Context, id uuid.UUID, disabled bool) error {
+	f.groupStatus = append(f.groupStatus, fmt.Sprintf("%s:%t", id, disabled))
+	return nil
+}
+
+func (f *fakeSvc) StartRegistration(context.Context, string, string, string) (service.RegistrationStart, error) {
 	return f.start, nil
 }
 
@@ -55,7 +62,7 @@ func (f *fakeSvc) ListUsers(_ context.Context, fl service.UserFilter, _, _ int) 
 func (f *fakeSvc) AdminListGroups(context.Context) ([]service.Group, error) {
 	return []service.Group{{
 		ID:   uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-		Code: "default", Name: "默认", Description: "", Users: 1,
+		Code: "default", Name: "默认", Description: "", Users: 1, Status: "active",
 	}}, nil
 }
 
@@ -74,37 +81,32 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 	sub := service.AdminSub{
 		ID: subID, Label: &label, PlanName: "基础套餐", PlanVersion: 2, Status: "active",
 		PeriodStart: periodStart, PeriodEnd: periodEnd,
-		Amount: decimal.RequireFromString("12.34"), Currency: "CNY",
+		Amount: decimal.RequireFromString("12.34"),
 		Quotas: []service.AdminQuota{{
 			Metric: "traffic.bytes", Limit: &lim, Consumed: 42, Remaining: &lim,
 		}},
 		DeviceLimitOverride: &devLim, PlanMaxDevices: &planMax, OnlineDevices: 1,
-		PackRemainingBytes: 99,
 	}
 	current := sub
 	return service.UserDetail{
 		UserRow: service.UserRow{
 			ID: id, Email: "u@example.test", Status: "active", RiskLevel: "normal",
-			GroupName: "默认", Currency: "CNY",
-			Balance: decimal.RequireFromString("1.00"), SubscriptionCount: 1,
+			GroupName: "默认",
+			Balance:   decimal.RequireFromString("1.00"), SubscriptionCount: 1,
 			Current: &current,
 		},
 		EmailVerified: true, IsAdmin: false, ReferralCount: 3, OrderCount: 7,
 		Subscriptions: []service.AdminSub{sub},
 		RecentOrders: []service.AdminOrderRow{{
 			ID: orderID, OrderNo: "ORD-1", UserEmail: "u@example.test", Kind: "new", Status: "paid",
-			Currency: "CNY",
-			Total:    decimal.RequireFromString("12.34"), Payable: decimal.RequireFromString("12.34"),
+			Total: decimal.RequireFromString("12.34"), Payable: decimal.RequireFromString("12.34"),
 			Paid: decimal.RequireFromString("12.34"), BalanceApplied: decimal.Zero,
 			CreatedAt: paidAt, PaidAt: &paidAt,
 			ProviderCode: &prov, ProviderName: &provName,
 			PlanName: "基础套餐", Interval: "month", IntervalCount: 1, ItemCount: 1, Manual: false,
 		}},
-		PaidTotals: []service.CurrencyAmount{{
-			Currency: "CNY", Amount: decimal.RequireFromString("12.34"),
-		}},
-		Telegram:            &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
-		UnattachedPackBytes: 0,
+		PaidTotal: decimal.RequireFromString("12.34"),
+		Telegram:  &service.TelegramRef{Username: "testuser", BoundAt: paidAt},
 	}, nil
 }
 
@@ -160,6 +162,7 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/me", "GET /v1/me/invite",
 		"POST /v1/auth/password-reset/complete", "POST /v1/auth/password-reset/start",
 		"POST /v1/auth/register/complete", "POST /v1/auth/register/start",
+		"POST /v1/invite/visit", "POST /v1/me/invite/codes",
 		"POST /v1/me/password",
 	}
 	if strings.Join(pub, "\n") != strings.Join(wantPub, "\n") {
@@ -174,8 +177,11 @@ func TestRoutes(t *testing.T) {
 		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
 		"POST /v1/ip-clusters/:key/disable-accounts", "POST /v1/ip-clusters/:key/review",
 		"POST /v1/me/password", "POST /v1/user-groups", "POST /v1/user-groups/:id",
-		"POST /v1/users/:id/group", "POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
-		"POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
+		"POST /v1/user-groups/:id/status",
+		"POST /v1/users/:id/delete", "POST /v1/users/:id/email",
+		"POST /v1/users/:id/group", "POST /v1/users/:id/note", "POST /v1/users/:id/referrer",
+		"POST /v1/users/:id/reset-password", "POST /v1/users/:id/status",
+		"POST /v1/users/bulk/ban", "POST /v1/users/bulk/generate", "POST /v1/users/bulk/preview",
 	}
 	if strings.Join(adm, "\n") != strings.Join(wantAdm, "\n") {
 		t.Fatalf("后台路由:\n%s", strings.Join(adm, "\n"))
@@ -306,18 +312,12 @@ func TestUserDetailStats(t *testing.T) {
 	}
 	got := decodeMap(t, w.Body.Bytes())
 	stats, _ := got["stats"].(map[string]any)
-	assertKeys(t, stats, "order_count", "paid_totals", "referral_count")
+	assertKeys(t, stats, "order_count", "paid_total", "referral_count")
 	if stats["referral_count"] != float64(3) || stats["order_count"] != float64(7) {
 		t.Fatalf("stats %v", stats)
 	}
-	paid, _ := stats["paid_totals"].([]any)
-	if len(paid) != 1 {
-		t.Fatalf("paid_totals %v", paid)
-	}
-	pt0, _ := paid[0].(map[string]any)
-	assertKeys(t, pt0, "amount", "currency")
-	if pt0["currency"] != "CNY" || pt0["amount"] != float64(1234) {
-		t.Fatalf("paid total %v", pt0)
+	if stats["paid_total"] != float64(1234) {
+		t.Fatalf("paid_total %v", stats["paid_total"])
 	}
 }
 
@@ -335,12 +335,12 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	f := &fakeSvc{rows: []service.UserRow{
 		{
 			ID: withCurrent, Email: "with@example.test", Status: "active", RiskLevel: "normal",
-			GroupName: "g", Currency: "CNY", Balance: decimal.RequireFromString("9.99"),
+			GroupName: "g", Balance: decimal.RequireFromString("9.99"),
 			SubscriptionCount: 1, Current: curSub,
 		},
 		{
 			ID: noCurrent, Email: "none@example.test", Status: "active", RiskLevel: "normal",
-			GroupName: "g", Currency: "CNY", Balance: decimal.Zero,
+			GroupName: "g", Balance: decimal.Zero,
 			SubscriptionCount: 0, Current: nil,
 		},
 	}}
@@ -357,7 +357,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	}
 	rowKeys := []string{
 		"id", "email", "display_name", "status", "risk_level", "group_name", "group_id",
-		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "currency", "current_subscription",
+		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "current_subscription",
 	}
 	for i, u := range users {
 		m, _ := u.(map[string]any)
@@ -390,29 +390,29 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	det := decodeMap(t, w.Body.Bytes())
 	detailExtra := []string{
 		"email_verified", "is_admin", "referrer", "stats", "subscriptions", "recent_orders",
-		"telegram", "unattached_pack_bytes",
+		"telegram", "admin_note", "deleted_at",
 	}
 	assertKeys(t, det, append(rowKeys, detailExtra...)...)
 	stats, _ := det["stats"].(map[string]any)
-	assertKeys(t, stats, "paid_totals", "order_count", "referral_count")
+	assertKeys(t, stats, "paid_total", "order_count", "referral_count")
 	tg, _ := det["telegram"].(map[string]any)
 	assertKeys(t, tg, "username", "bound_at")
 	subs, _ := det["subscriptions"].([]any)
 	s0, _ := subs[0].(map[string]any)
 	assertKeys(t, s0,
 		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
-		"amount", "currency", "auto_renew", "quotas", "device_limit_override", "plan_max_devices",
-		"online_devices", "pack_remaining_bytes",
+		"amount", "quotas", "device_limit_override", "plan_max_devices",
+		"online_devices",
 	)
 	if s0["amount"] != float64(1234) {
 		t.Fatalf("subscription amount %v", s0["amount"])
 	}
 	q0, _ := s0["quotas"].([]any)[0].(map[string]any)
-	assertKeys(t, q0, "metric", "limit", "consumed", "remaining")
+	assertKeys(t, q0, "metric", "period", "limit", "consumed", "remaining")
 	ordKeys := []string{
-		"id", "order_no", "user_email", "kind", "status", "currency", "total_amount", "payable_amount",
-		"paid_amount", "refunded_amount", "balance_applied", "created_at", "paid_at", "provider_code",
-		"provider_name", "plan_name", "interval", "interval_count", "item_count", "manual",
+		"id", "order_no", "user_email", "kind", "status", "total_amount", "payable_amount",
+		"paid_amount", "balance_applied", "created_at", "paid_at", "provider_code",
+		"provider_name", "method", "plan_name", "interval", "interval_count", "item_count", "manual",
 	}
 	ro, _ := det["recent_orders"].([]any)[0].(map[string]any)
 	assertKeys(t, ro, ordKeys...)
@@ -427,12 +427,52 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	gr := decodeMap(t, w.Body.Bytes())
 	groups, _ := gr["groups"].([]any)
 	g0, _ := groups[0].(map[string]any)
-	assertKeys(t, g0, "id", "code", "name", "description", "users", "plans", "prices", "coupons", "exclusive_pools")
+	assertKeys(t, g0, "id", "code", "name", "description", "users", "status", "plans", "coupons", "exclusive_pools")
+	if g0["status"] != "active" {
+		t.Fatalf("group status %v", g0["status"])
+	}
 	ep, _ := g0["exclusive_pools"].([]any)
 	if ep == nil {
 		t.Fatal("exclusive_pools 不应为 null")
 	}
 	if len(ep) != 0 {
 		t.Fatalf("exclusive_pools %v", ep)
+	}
+}
+
+func TestSetUserGroupStatus(t *testing.T) {
+	f := &fakeSvc{}
+	e := newEngine(f, true, nil)
+
+	// 成功启停
+	w := do(e, http.MethodPost, "/v1/user-groups/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/status", `{"disabled":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	resp := decodeMap(t, w.Body.Bytes())
+	if resp["ok"] != true {
+		t.Fatalf("want ok=true, got %v", resp["ok"])
+	}
+	wantCall := []string{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:true"}
+	if strings.Join(f.groupStatus, ",") != strings.Join(wantCall, ",") {
+		t.Fatalf("groupStatus calls %v, want %v", f.groupStatus, wantCall)
+	}
+
+	// 缺少 disabled 字段期望 422
+	w = do(e, http.MethodPost, "/v1/user-groups/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/status", `{}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d %s", w.Code, w.Body)
+	}
+
+	// 多余字段期望 400
+	w = do(e, http.MethodPost, "/v1/user-groups/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/status", `{"disabled":false,"x":1}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d %s", w.Code, w.Body)
+	}
+
+	// 路径 id 换成 not-a-uuid 期望 404
+	w = do(e, http.MethodPost, "/v1/user-groups/not-a-uuid/status", `{"disabled":true}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d %s", w.Code, w.Body)
 	}
 }

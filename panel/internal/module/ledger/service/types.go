@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -61,10 +60,11 @@ func (t AccountType) DebitNormal() bool {
 
 // 平台科目的常用归属。
 const (
-	RefMain         = "main"          // platform_revenue、late_payment_suspense
-	RefManualAdjust = "manual_adjust" // suspense：后台人工调账
-	RefGift         = "gift"          // platform_promo_expense：礼品卡赠送
-	RefPayout       = "payout"        // channel_cash：佣金提现打款
+	RefMain         = "main"              // platform_revenue、late_payment_suspense
+	RefManualAdjust = "manual_adjust"     // suspense：后台人工调账
+	RefGift         = "gift"              // platform_promo_expense：礼品卡赠送
+	RefPayout       = "payout"            // channel_cash：佣金提现打款
+	RefSurcharge    = "payment_surcharge" // platform_revenue：向用户加收的支付手续费
 )
 
 // Kind 是交易类型，与库里 CHECK 一致。
@@ -130,7 +130,7 @@ const (
 	Credit Direction = "credit"
 )
 
-// AccountRef 指定一个科目：用户类给 UserID（Ref 留空），平台类给 Ref（UserID 留零值）。币种由所在交易决定。
+// AccountRef 指定一个科目：用户类给 UserID（Ref 留空），平台类给 Ref（UserID 留零值）。
 type AccountRef struct {
 	Type   AccountType
 	UserID uuid.UUID
@@ -157,7 +157,6 @@ type Leg struct {
 // Posting 是一笔待记的交易。SourceType 与 SourceID 要么都给、要么都不给。
 type Posting struct {
 	Kind       Kind
-	Currency   money.Currency
 	SourceType string
 	SourceID   uuid.UUID
 	Memo       string
@@ -181,6 +180,10 @@ const (
 
 // ErrInsufficientBalance 是用户类科目余额不够扣。
 var ErrInsufficientBalance = errs.Newf(errs.Conflict, "余额不足")
+
+// ErrBalanceConstraint 是写余额撞上库里的不透支约束（预检漏掉的兜底）：语句已失败、调用方事务已作废，必须回滚。
+// 它总是和 ErrInsufficientBalance 一起出现在包装链里；调用方要先判它，判到就不能再在同一事务里写。
+var ErrBalanceConstraint = errors.New("ledger: 写余额撞上库里的不透支约束，事务已作废")
 
 // ErrDuplicatePosting 是同一来源的同类交易已经记过（如一张订单的第二笔 order_paid）。
 var ErrDuplicatePosting = errs.Newf(errs.Conflict, "这笔账已经记过了")

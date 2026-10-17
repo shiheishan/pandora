@@ -13,7 +13,6 @@ import (
 // AdjustmentRow 是调整列表的一行；Reversed 表示该行已被冲正。
 type AdjustmentRow struct {
 	ID          uuid.UUID       `gorm:"column:id"`
-	Currency    string          `gorm:"column:currency"`
 	Amount      decimal.Decimal `gorm:"column:amount"`
 	Reason      string          `gorm:"column:reason"`
 	EffectiveOn string          `gorm:"column:effective_on"`
@@ -23,26 +22,19 @@ type AdjustmentRow struct {
 	Reversed    bool            `gorm:"column:reversed"`
 }
 
-// AdjustmentDayRow 是（币种, 生效日）的调整合计。
+// AdjustmentDayRow 是某生效日的调整合计。
 type AdjustmentDayRow struct {
-	Currency string          `gorm:"column:currency"`
-	Day      string          `gorm:"column:day"`
-	Amount   decimal.Decimal `gorm:"column:amount"`
-}
-
-// AdjustmentTotalRow 是某币种全部调整的合计。
-type AdjustmentTotalRow struct {
-	Currency string          `gorm:"column:currency"`
-	Amount   decimal.Decimal `gorm:"column:amount"`
+	Day    string          `gorm:"column:day"`
+	Amount decimal.Decimal `gorm:"column:amount"`
 }
 
 // InsertAdjustment 插入一行调整或冲正，并回填 id、created_at。
 func (r *Repo) InsertAdjustment(ctx context.Context, a *model.Adjustment) error {
 	row := r.d.Conn(ctx).Raw(`
-INSERT INTO revenue_report_adjustments (currency, amount, reason, effective_on, reversal_of, created_by)
-VALUES (?, ?, ?, ?::date, ?, ?)
-RETURNING id, created_at`,
-		a.Currency, a.Amount, a.Reason, a.EffectiveOn, a.ReversalOf, a.CreatedBy,
+	INSERT INTO revenue_report_adjustments (amount, reason, effective_on, reversal_of, created_by)
+	VALUES (?, ?, ?::date, ?, ?)
+	RETURNING id, created_at`,
+		a.Amount, a.Reason, a.EffectiveOn, a.ReversalOf, a.CreatedBy,
 	).Row()
 	if err := row.Scan(&a.ID, &a.CreatedAt); err != nil {
 		return mapErr(err)
@@ -54,10 +46,10 @@ RETURNING id, created_at`,
 func (r *Repo) GetAdjustment(ctx context.Context, id uuid.UUID) (model.Adjustment, bool, error) {
 	var rows []AdjustmentRow
 	err := r.d.Conn(ctx).Raw(`
-SELECT id, currency, amount, reason, to_char(effective_on, 'YYYY-MM-DD') AS effective_on,
-       reversal_of, created_by, created_at
-  FROM revenue_report_adjustments
- WHERE id = ?`, id).Scan(&rows).Error
+	SELECT id, amount, reason, to_char(effective_on, 'YYYY-MM-DD') AS effective_on,
+	       reversal_of, created_by, created_at
+	  FROM revenue_report_adjustments
+	 WHERE id = ?`, id).Scan(&rows).Error
 	if err != nil {
 		return model.Adjustment{}, false, mapErr(err)
 	}
@@ -67,7 +59,6 @@ SELECT id, currency, amount, reason, to_char(effective_on, 'YYYY-MM-DD') AS effe
 	r0 := rows[0]
 	return model.Adjustment{
 		ID:          r0.ID,
-		Currency:    r0.Currency,
 		Amount:      r0.Amount,
 		Reason:      r0.Reason,
 		EffectiveOn: r0.EffectiveOn,
@@ -98,17 +89,16 @@ func (r *Repo) HasReversal(ctx context.Context, id uuid.UUID) (bool, error) {
 	return exists, nil
 }
 
-// ListAdjustments 按登记时间倒序列出调整行；currency 为空表示全部币种。
-func (r *Repo) ListAdjustments(ctx context.Context, currency string, limit int) ([]AdjustmentRow, error) {
+// ListAdjustments 按登记时间倒序列出调整行。
+func (r *Repo) ListAdjustments(ctx context.Context, limit int) ([]AdjustmentRow, error) {
 	var out []AdjustmentRow
 	err := r.d.Conn(ctx).Raw(`
-SELECT a.id, a.currency, a.amount, a.reason, to_char(a.effective_on, 'YYYY-MM-DD') AS effective_on,
-       a.reversal_of, a.created_by, a.created_at,
-       EXISTS (SELECT 1 FROM revenue_report_adjustments r WHERE r.reversal_of = a.id) AS reversed
-  FROM revenue_report_adjustments a
- WHERE (?::text = '' OR a.currency = ?)
- ORDER BY a.created_at DESC, a.id DESC
- LIMIT ?`, currency, currency, limit).Scan(&out).Error
+	SELECT a.id, a.amount, a.reason, to_char(a.effective_on, 'YYYY-MM-DD') AS effective_on,
+	       a.reversal_of, a.created_by, a.created_at,
+	       EXISTS (SELECT 1 FROM revenue_report_adjustments r WHERE r.reversal_of = a.id) AS reversed
+	  FROM revenue_report_adjustments a
+	 ORDER BY a.created_at DESC, a.id DESC
+	 LIMIT ?`, limit).Scan(&out).Error
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -118,15 +108,15 @@ SELECT a.id, a.currency, a.amount, a.reason, to_char(a.effective_on, 'YYYY-MM-DD
 	return out, nil
 }
 
-// AdjustmentSumsByDay 汇总生效日在 [fromDay, toDay) 内按币种与生效日的调整金额。
+// AdjustmentSumsByDay 汇总生效日在 [fromDay, toDay) 内按生效日的调整金额。
 func (r *Repo) AdjustmentSumsByDay(ctx context.Context, fromDay, toDay string) ([]AdjustmentDayRow, error) {
 	var out []AdjustmentDayRow
 	err := r.d.Conn(ctx).Raw(`
-SELECT currency, to_char(effective_on, 'YYYY-MM-DD') AS day, sum(amount) AS amount
-  FROM revenue_report_adjustments
- WHERE effective_on >= ?::date AND effective_on < ?::date
- GROUP BY currency, effective_on
- ORDER BY currency, effective_on`, fromDay, toDay).Scan(&out).Error
+	SELECT to_char(effective_on, 'YYYY-MM-DD') AS day, sum(amount) AS amount
+	  FROM revenue_report_adjustments
+	 WHERE effective_on >= ?::date AND effective_on < ?::date
+	 GROUP BY effective_on
+	 ORDER BY effective_on`, fromDay, toDay).Scan(&out).Error
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -136,19 +126,14 @@ SELECT currency, to_char(effective_on, 'YYYY-MM-DD') AS day, sum(amount) AS amou
 	return out, nil
 }
 
-// AdjustmentTotals 按币种汇总全部调整金额。
-func (r *Repo) AdjustmentTotals(ctx context.Context) ([]AdjustmentTotalRow, error) {
-	var out []AdjustmentTotalRow
-	err := r.d.Conn(ctx).Raw(`
-SELECT currency, sum(amount) AS amount
-  FROM revenue_report_adjustments
- GROUP BY currency
- ORDER BY currency`).Scan(&out).Error
-	if err != nil {
-		return nil, mapErr(err)
+// AdjustmentTotals 汇总全部调整金额。
+func (r *Repo) AdjustmentTotals(ctx context.Context) (decimal.Decimal, error) {
+	row := r.d.Conn(ctx).Raw(`
+	SELECT coalesce(sum(amount), 0) AS amount
+	  FROM revenue_report_adjustments`).Row()
+	var total decimal.Decimal
+	if err := row.Scan(&total); err != nil {
+		return decimal.Zero, mapErr(err)
 	}
-	if out == nil {
-		return []AdjustmentTotalRow{}, nil
-	}
-	return out, nil
+	return total, nil
 }

@@ -16,7 +16,7 @@ import (
 var categories = []Category{
 	{Code: "general", Name: "一般咨询"},
 	{Code: "technical", Name: "连接与技术"},
-	{Code: "subscription", Name: "订阅与套餐"},
+	{Code: "subscription", Name: "套餐与链接"},
 	{Code: "billing", Name: "账单与支付"},
 	{Code: "account", Name: "账号与安全"},
 	{Code: "abuse", Name: "举报与投诉"},
@@ -206,7 +206,7 @@ var agentSettable = map[string]bool{
 	StatusResolved: true, StatusClosed: true, StatusEscalated: true, StatusPendingAgent: true,
 }
 
-// agentStatusCols 算客服把工单从 t 当前状态改成 to 时要写的列（与旧代码同口径）：
+// agentStatusCols 算客服把工单从 t 当前状态改成 to 时要写的列：
 //   - resolved：resolved_at 保留已有、没有则 now；closed：保留 resolved_at；其它清空
 //   - closed：closed_at 保留已有、没有则 now；其它清空
 //   - closed_reason：转出 closed 时清空；原本就是 closed 时保留原因（没有则 agent_closed）；否则 agent_closed

@@ -1,39 +1,43 @@
 /* ===========================================================================
  * 语义色 · 浅色
  *
- * 前 33 个与设计稿模块文件的 html:root 逐字一致（tests/tokens.test.ts 守住）；
- * 「规范补充」一段来自 设计规范.dc.html 组件区的 L 对象，模块文件里是写死的色值。
+ * 10-16 起是门户样稿 v5 的「森林绿」，与 design-tokens.ts 的 COLOR_TOKENS 逐值一致
+ *（tests/tokens.test.ts 守住）。后台的黑白灰（样稿 v4）写在 roles.css 的
+ * html[data-app='admin'] 两块里，不改这里。
  * 主题只有 light / dark 两档，由 <html data-theme> 决定，默认 light（theme-boot.js）。
  * ========================================================================= */
 :root {
   color-scheme: light;
 
-  --bg: #f5f4f0;
+  --bg: #f4f5f2;
   --surface: #fff;
-  --surface-2: #f9f8f5;
-  --surface-3: #efede8;
-  --border: #e7e5df;
-  --border-strong: #dcd9d1;
-  --border-hover: #c9c6bd;
-  --text: #1c1c1f;
-  --text-2: #62615c;
-  --text-3: #6e6c66;
+  --surface-2: #f6f8f6;
+  --surface-3: #eef1ee;
+  --border: #e4e8e5;
+  --border-strong: #d5dcd7;
+  --border-hover: #b9c3bc;
+  --text: #141715;
+  --text-2: #6a706b;
+  --text-3: #969b96;
 
-  --brand: #b9442b;
-  --brand-hover: #a33a23;
-  --brand-ink: #8c3019;
-  --brand-soft: #f6e4de;
-  --brand-tint: #fbf3ef;
+  --brand: #2c5a3f;
+  --brand-hover: #244c35;
+  --brand-ink: #1f3d2b;
+  --brand-soft: #dfe8e1;
+  --brand-tint: #f3f7f4;
   --on-brand: #fff;
+  --brand-deep: #1f3d2b;
+  --brand-line: #b4c8ba;
+  --brand-mark: #4cbb72;
 
   --ok: #1f7a4f;
   --ok-soft: #e3f3ea;
   --ok-line: #c9f0d8;
-  --warn: #9a5c00;
-  --warn-soft: #fbf0dc;
+  --warn: #8a5a00;
+  --warn-soft: #fbf1dc;
   --warn-line: #f0d9b0;
-  --danger: #b3263a;
-  --danger-soft: #f8e1e3;
+  --danger: #a3283a;
+  --danger-soft: #f9e4e6;
   --danger-line: #eec3c8;
   --danger-tint: #fdf3f3;
   --info: #34507c;
@@ -41,19 +45,17 @@
   --info-line: #cdd6e4;
 
   --on-ink: #fff;
-  --hdr: rgba(245, 244, 240, 0.9);
-  --scrim: rgba(20, 20, 24, 0.4);
-  --shadow: 0 16px 36px -14px rgba(28, 28, 31, 0.25);
+  --hdr: rgba(244, 245, 242, 0.9);
+  --scrim: rgba(20, 40, 30, 0.28);
+  --shadow: 0 24px 48px -20px rgba(20, 40, 30, 0.5);
+  --shade: #14281e;
+  --lift: 0 0 0 1px rgba(20, 40, 30, 0.035), 0 30px 60px -32px rgba(20, 40, 30, 0.22), 0 6px 16px -8px rgba(20, 40, 30, 0.09);
 
   /* --- 规范补充 ----------------------------------------------------------- */
-  /* 危险实心按钮上的字 */
   --on-danger: #fff;
-  /* Toast 是反色底（浅色模式墨底），状态圆点取深色模式的状态色才看得清 */
   --toast-ok: #6fcf9b;
   --toast-danger: #f07a86;
-  /* 分段控件选中项：规范里唯一一档非浮层阴影 */
-  --shadow-segment: 0 1px 2px rgba(20, 20, 24, 0.08);
-  /* 后台侧栏两种模式下都是深底，上面的字色因此不随主题翻转 */
+  --shadow-segment: 0 2px 6px -2px rgba(20, 40, 30, 0.25);
   --sidebar: #151518;
   --sidebar-active: #26262a;
   --sidebar-text: #ecebe7;
@@ -69,23 +71,26 @@
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --bg: #111113;
-  --surface: #1a1a1d;
-  --surface-2: #1f1f22;
-  --surface-3: #26262a;
-  --border: #2b2b2f;
-  --border-strong: #37373c;
-  --border-hover: #4a4a50;
-  --text: #ecebe7;
-  --text-2: #9a988f;
-  --text-3: #8a8880;
+  --bg: #0e1210;
+  --surface: #161b18;
+  --surface-2: #1a201c;
+  --surface-3: #202722;
+  --border: #262e29;
+  --border-strong: #2f3832;
+  --border-hover: #46524a;
+  --text: #e7ebe7;
+  --text-2: #9ba59e;
+  --text-3: #7a847d;
 
-  --brand: #e46e52;
-  --brand-hover: #ec8267;
-  --brand-ink: #f2a58f;
-  --brand-soft: #3a231c;
-  --brand-tint: #201816;
-  --on-brand: #170d0a;
+  --brand: #5cbf83;
+  --brand-hover: #72cc95;
+  --brand-ink: #a5dcb8;
+  --brand-soft: #1d3125;
+  --brand-tint: #141b16;
+  --on-brand: #06120b;
+  --brand-deep: #3f9c66;
+  --brand-line: #2f4c3a;
+  --brand-mark: #4cbb72;
 
   --ok: #6fcf9b;
   --ok-soft: #15271e;
@@ -101,15 +106,17 @@
   --info-soft: #172031;
   --info-line: #2a3a52;
 
-  --on-ink: #111113;
-  --hdr: rgba(17, 17, 19, 0.88);
+  --on-ink: #0e1210;
+  --hdr: rgba(14, 18, 16, 0.88);
   --scrim: rgba(0, 0, 0, 0.55);
-  --shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+  --shadow: 0 24px 48px -20px rgba(0, 0, 0, 0.7);
+  --shade: #000;
+  --lift: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 30px 60px -32px rgba(0, 0, 0, 0.7), 0 6px 16px -8px rgba(0, 0, 0, 0.4);
 
   --on-danger: #1a0f12;
   --toast-ok: #1f7a4f;
   --toast-danger: #b3263a;
-  --shadow-segment: 0 1px 2px rgba(20, 20, 24, 0.08);
+  --shadow-segment: 0 2px 6px -2px rgba(0, 0, 0, 0.5);
   --sidebar: #0a0a0b;
   --sidebar-active: #1f1f22;
   --sidebar-text: #ecebe7;
@@ -126,6 +133,12 @@
   --font-sans: 'Geist', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
   /* Mono 只给要逐字核对的内容：订单号、邀请码、订阅地址、IP、节点名、命令行 */
   --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  /* 门户正文（样稿 v5）：系统字体，中文 PingFang SC 优先 */
+  --font-system: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  /* 门户的大号数字、金额、Logo、链接尾号（字体在 display-fonts.css，只有门户入口引入） */
+  --font-display: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+  /* 门户的档位名（套餐名、一份的名字）：拉丁字母走 Courier Prime，中文走 Noto Serif SC 900 */
+  --font-serif: 'Courier Prime', 'Noto Serif SC', 'Songti SC', serif;
 
   /* --- 字号 · 字重 · 字距：规范 03 的八档 --------------------------------- */
   --fs-display: 36px; /* 仅营销与空状态 */

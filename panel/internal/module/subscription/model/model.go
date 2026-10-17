@@ -22,7 +22,6 @@ type Subscription struct {
 	CurrentPeriodStart    time.Time       `gorm:"column:current_period_start"`
 	CurrentPeriodEnd      time.Time       `gorm:"column:current_period_end"`
 	RenewalClosedAt       *time.Time      `gorm:"column:renewal_closed_at"`
-	SnapshotCurrency      string          `gorm:"column:snapshot_currency"`
 	SnapshotAmount        decimal.Decimal `gorm:"column:snapshot_amount;type:numeric(20,2)"`
 	SnapshotInterval      string          `gorm:"column:snapshot_interval"`
 	SnapshotIntervalCount int             `gorm:"column:snapshot_interval_count"`
@@ -77,7 +76,7 @@ type Credential struct {
 // TableName 固定表名。
 func (Credential) TableName() string { return "subscription_credentials" }
 
-// QuotaBalance 是 quota_balances 表的一行。LimitValue 为 nil 表示不限；Remaining 是库里的生成列。
+// QuotaBalance 是 quota_balances 表的一行。LimitValue 为 nil 表示不限；Remaining 是库里的生成列（limit_value + bonus_value − consumed）。
 type QuotaBalance struct {
 	ID             uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
 	SubscriptionID uuid.UUID  `gorm:"column:subscription_id;type:uuid"`
@@ -86,46 +85,16 @@ type QuotaBalance struct {
 	PeriodStart    time.Time  `gorm:"column:period_start"`
 	PeriodEnd      *time.Time `gorm:"column:period_end"`
 	LimitValue     *int64     `gorm:"column:limit_value"`
-	Consumed       int64      `gorm:"column:consumed"`
-	Remaining      *int64     `gorm:"column:remaining;<-:false"`
-	CreatedAt      time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time  `gorm:"column:updated_at;autoUpdateTime"`
+	// BonusValue 是本期额外送的量（礼品卡、后台加流量、盲盒奖品）：订阅套餐的周期行滚动时清零，一次性套餐的 total 行一直留着
+	BonusValue int64     `gorm:"column:bonus_value"`
+	Consumed   int64     `gorm:"column:consumed"`
+	Remaining  *int64    `gorm:"column:remaining;<-:false"`
+	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt  time.Time `gorm:"column:updated_at;autoUpdateTime"`
 }
 
 // TableName 固定表名。
 func (QuotaBalance) TableName() string { return "quota_balances" }
-
-// PackGrant 是 traffic_pack_grants 表的一行。SubscriptionID 为 nil 表示未分配。
-type PackGrant struct {
-	ID             uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	UserID         uuid.UUID  `gorm:"column:user_id;type:uuid"`
-	SubscriptionID *uuid.UUID `gorm:"column:subscription_id;type:uuid"`
-	Source         string     `gorm:"column:source"`
-	SourceID       uuid.UUID  `gorm:"column:source_id;type:uuid"`
-	GrantedBytes   int64      `gorm:"column:granted_bytes"`
-	ConsumedBytes  int64      `gorm:"column:consumed_bytes"`
-	CreatedAt      time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time  `gorm:"column:updated_at;autoUpdateTime"`
-}
-
-// TableName 固定表名。
-func (PackGrant) TableName() string { return "traffic_pack_grants" }
-
-// PackTransfer 是 traffic_pack_transfers 表的一行（只追加）。
-type PackTransfer struct {
-	ID                 uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	GrantID            uuid.UUID  `gorm:"column:grant_id;type:uuid"`
-	UserID             uuid.UUID  `gorm:"column:user_id;type:uuid"`
-	FromSubscriptionID *uuid.UUID `gorm:"column:from_subscription_id;type:uuid"`
-	ToSubscriptionID   uuid.UUID  `gorm:"column:to_subscription_id;type:uuid"`
-	RemainingBytes     int64      `gorm:"column:remaining_bytes"`
-	ActorKind          string     `gorm:"column:actor_kind"`
-	ActorID            *uuid.UUID `gorm:"column:actor_id;type:uuid"`
-	CreatedAt          time.Time  `gorm:"column:created_at;autoCreateTime"`
-}
-
-// TableName 固定表名。
-func (PackTransfer) TableName() string { return "traffic_pack_transfers" }
 
 // ResetLog 是 traffic_reset_logs 表的一行（只追加）。
 type ResetLog struct {
@@ -164,15 +133,12 @@ type FetchLog struct {
 // TableName 固定表名。
 func (FetchLog) TableName() string { return "subscription_fetch_log" }
 
-// UsageDaily 是 subscription_usage_daily 表的一行：一份订阅一个自然日（站点时区）的计费后字节数。
-type UsageDaily struct {
-	ID             uuid.UUID `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
-	SubscriptionID uuid.UUID `gorm:"column:subscription_id;type:uuid"`
-	Day            time.Time `gorm:"column:day;type:date"`
-	Bytes          int64     `gorm:"column:bytes"`
-	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+// SubscriptionTemplate 是 subscription_templates 表的一行：一种订阅格式的后台自定义模板（没有行就用内置模板）。
+type SubscriptionTemplate struct {
+	Format    string    `gorm:"column:format;primaryKey"`
+	Content   string    `gorm:"column:content"`
+	UpdatedAt time.Time `gorm:"column:updated_at"`
 }
 
 // TableName 固定表名。
-func (UsageDaily) TableName() string { return "subscription_usage_daily" }
+func (SubscriptionTemplate) TableName() string { return "subscription_templates" }

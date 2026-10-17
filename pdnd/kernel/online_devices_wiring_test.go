@@ -9,7 +9,6 @@ package kernel
 
 import (
 	"bufio"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -26,7 +25,6 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/aegispanel/nodeagent/core"
-	singcore "github.com/aegispanel/nodeagent/core/sing"
 )
 
 // deviceWiringCase 描述一个协议的入站怎么配、客户端怎么连。
@@ -171,8 +169,6 @@ func devicesOf(t *testing.T, a Adapter) *onlineDevices {
 }
 
 func deviceWiringTCPCases() []deviceWiringCase {
-	ss2022PSK := make([]byte, 16)
-	_, _ = rand.Read(ss2022PSK)
 	return []deviceWiringCase{
 		{name: "vless", proto: "vless", uuid: "6b1f6f2e-2a43-4c38-9f36-6f7f3c0a7101",
 			raw: func(*testing.T) map[string]any { return map[string]any{"network": "tcp"} }, open: lifecycleOpen(dialLifecycleVLESS)},
@@ -183,10 +179,10 @@ func deviceWiringTCPCases() []deviceWiringCase {
 			raw: func(*testing.T) map[string]any { return map[string]any{"method": "aes-128-gcm"} }, open: lifecycleOpen(dialLifecycleSS)},
 		{name: "shadowsocks2022", proto: "shadowsocks", uuid: "device-wiring-ss2022",
 			raw: func(*testing.T) map[string]any {
-				return map[string]any{"method": "2022-blake3-aes-128-gcm", "password": base64.StdEncoding.EncodeToString(ss2022PSK)}
+				return map[string]any{"method": "2022-blake3-aes-128-gcm", "password": base64.StdEncoding.EncodeToString(ss2022TestIPSK(16))}
 			},
-			open: lifecycleOpen(func(port int, _ core.User, target *net.TCPAddr) (net.Conn, error) {
-				return dialDeviceWiringSS2022(port, ss2022PSK, target)
+			open: lifecycleOpen(func(port int, user core.User, target *net.TCPAddr) (net.Conn, error) {
+				return dialDeviceWiringSS2022(port, user.UUID, target)
 			})},
 		{name: "socks", proto: "socks", uuid: "device-wiring-socks", open: lifecycleOpen(dialDeviceWiringSOCKS5)},
 		{name: "http", proto: "http", uuid: "device-wiring-http", open: lifecycleOpen(dialDeviceWiringHTTPConnect)},
@@ -221,12 +217,12 @@ func deviceWiringTLSRaw(base map[string]any) func(t *testing.T) map[string]any {
 	}
 }
 
-func dialDeviceWiringSS2022(port int, psk []byte, target *net.TCPAddr) (net.Conn, error) {
+func dialDeviceWiringSS2022(port int, uuid string, target *net.TCPAddr) (net.Conn, error) {
 	raw, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
 	if err != nil {
 		return nil, err
 	}
-	method, err := ss2022ref.New("2022-blake3-aes-128-gcm", [][]byte{psk}, nil)
+	method, err := ss2022ref.New("2022-blake3-aes-128-gcm", [][]byte{ss2022TestIPSK(16), ss2022UserPSK(uuid, 16)}, nil)
 	if err != nil {
 		_ = raw.Close()
 		return nil, err
@@ -352,7 +348,7 @@ func openDeviceWiringNaive(env deviceWiringEnv) (io.Closer, error) {
 		_ = raw.Close()
 		return nil, fmt.Errorf("status=%s", resp.Status)
 	}
-	conn := singcore.NewNaiveClientConn(resp.Body, pipeWriter, naiveTestFlusher{}, raw.RemoteAddr())
+	conn := newNaiveTestClientConn(resp.Body, pipeWriter, naiveTestFlusher{}, raw.RemoteAddr())
 	if err := echoOnce(conn, "device-wiring"); err != nil {
 		_ = conn.Close()
 		_ = raw.Close()

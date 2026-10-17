@@ -99,7 +99,6 @@ type Database struct {
 	// MigrationURL 只在 migrate 子命令里使用（表属主角色）。
 	MigrationURL Secret `mapstructure:"migration_url"`
 	MaxConns     int    `mapstructure:"max_conns"`
-	MinConns     int    `mapstructure:"min_conns"`
 }
 
 type Redis struct {

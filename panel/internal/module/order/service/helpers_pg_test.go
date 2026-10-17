@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +31,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/order/model"
 	orderrepo "github.com/aegispanel/aegis/internal/module/order/repo"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/demo"
+	"github.com/aegispanel/aegis/internal/module/payment/provider/epay"
 	paymentrepo "github.com/aegispanel/aegis/internal/module/payment/repo"
 	paymentsvc "github.com/aegispanel/aegis/internal/module/payment/service"
 	promorepo "github.com/aegispanel/aegis/internal/module/promo/repo"
@@ -49,15 +50,18 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
-// demoSecret 是测试 demo 渠道的签名密钥（虚构）。
-const demoSecret = "order-pg-test-secret"
+// testEpayPID 是测试易支付渠道的商户号（虚构）。
+const testEpayPID = "1001"
+
+// testEpayKey 是测试易支付渠道的商户密钥（虚构）。
+const testEpayKey = "epay-test-key"
 
 // gib 是 1 GiB。
 const gib = int64(1) << 30
 
 // orderCommitTables 是真提交用例前后要清的表（CASCADE 带走订单行、预留、订阅子表等）。
 var orderCommitTables = []string{
-	"orders", "plan_purchase_counters",
+	"orders",
 	"late_payment_cases", "payment_events", "payments", "payment_intents",
 	"balance_holds", "coupon_redemptions", "subscriptions",
 	"ledger_entries", "ledger_transactions", "ledger_accounts",
@@ -65,8 +69,26 @@ var orderCommitTables = []string{
 
 // fakeUsers 代替 identity：邮箱、用户组（恒无组）与按邮箱搜用户。
 type fakeUsers struct {
-	mu     sync.Mutex
-	emails map[uuid.UUID]string
+	mu      sync.Mutex
+	emails  map[uuid.UUID]string
+	deleted map[uuid.UUID]bool // markDeleted 标记的已注销账号
+}
+
+// IsDeleted 报告 markDeleted 标过的账号。
+func (f *fakeUsers) IsDeleted(_ context.Context, id uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[id], nil
+}
+
+// markDeleted 把账号标成已注销。
+func (f *fakeUsers) markDeleted(id uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted == nil {
+		f.deleted = map[uuid.UUID]bool{}
+	}
+	f.deleted[id] = true
 }
 
 func (f *fakeUsers) Emails(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
@@ -112,7 +134,7 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 	return missing, nil
 }
 
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (string, decimal.Decimal, error) {
+func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
 	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
 	if p, ok := authn.From(ctx); ok {
 		uid := p.UserID
@@ -120,17 +142,9 @@ func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UU
 	}
 	o, err := a.c.Offer(ctx, priceID, req)
 	if err != nil {
-		return "", decimal.Zero, errs.New(errs.NotFound)
+		return decimal.Zero, errs.New(errs.NotFound)
 	}
-	return string(o.Price.Currency), o.Price.UnitAmount, nil
-}
-
-func (a promoCatalog) PackSubtotal(ctx context.Context, packID uuid.UUID) (string, decimal.Decimal, error) {
-	p, err := a.c.PackOffer(ctx, packID, false)
-	if err != nil {
-		return "", decimal.Zero, errs.New(errs.NotFound)
-	}
-	return string(p.Currency), p.UnitAmount, nil
+	return o.Price.UnitAmount, nil
 }
 
 // env 只经闭包取连接：service 包的测试不 import pkg/db（depguard）。
@@ -191,9 +205,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	txm := tx.NewManager(d)
 	users := &fakeUsers{emails: map[uuid.UUID]string{}}
 	settings := settingssvc.New(settingsrepo.New(d), txm, sealer, rdb, auditSvc)
-	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, settings, auditSvc)
+	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), txm, auditSvc)
 	catalogSvc := catalogsvc.New(catalogrepo.New(d), txm, auditSvc, users)
-	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc, settings)
+	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc)
 	promoSvc.UseUsers(users)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, users, sealer)
@@ -291,11 +305,11 @@ func asAdmin(ctx context.Context, admin uuid.UUID) context.Context {
 	return reqid.With(ctx, reqid.New())
 }
 
-// mkPlan 用 SQL 建一个在售套餐（一个已发布版本，带 100 GiB 周期流量配额）与一个 CNY 价格；stock、limit 为 nil 表示不限。
+// mkPlan 用 SQL 建一个在售的订阅套餐（一个已发布版本，带 100 GiB 周期流量配额）与一个价格（interval 一期）。
 // 目录的后台建套餐要走草稿、发布与发布闸门，测试只要在售状态，所以直接写库（同 subscription 的测试）。
-func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64, interval string, stock, limit *int) (planID, versionID, priceID uuid.UUID) {
+func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64, interval string) (planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	if err := e.row(ctx, `INSERT INTO plans (code, name) VALUES (?, ?) RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind) VALUES (?, ?, 'subscription') RETURNING id`,
 		"o-"+randHex(12), "测试套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
@@ -306,31 +320,43 @@ func (e *env) mkPlan(t *testing.T, ctx context.Context, unitCents int64, interva
 	e.mustExec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, ?, ?)`,
 		versionID, catalogsvc.MetricTraffic, "cycle", 100*gib)
 	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
-	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ?, stock_total = ?, purchase_limit_per_user = ? WHERE id = ?`,
-		versionID, stock, limit, planID)
-	if err := e.row(ctx, `INSERT INTO prices (plan_id, currency, unit_amount, billing_interval, interval_count) VALUES (?, 'CNY', ?, ?, 1) RETURNING id`,
+	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count) VALUES (?, 'subscription', ?, ?, 1) RETURNING id`,
 		planID, money.FromCents(unitCents), interval).Scan(&priceID); err != nil {
 		t.Fatal(err)
 	}
 	return planID, versionID, priceID
 }
 
-// mkPack 用 SQL 建一个在售的 CNY 流量包。
-func (e *env) mkPack(t *testing.T, ctx context.Context, unitCents int64, bytes int64) uuid.UUID {
+// mkOneTimePlan 用 SQL 建一个在售的一次性套餐（不许续费；一个已发布版本，total 流量 totalBytes）与它唯一的价格；
+// validityDays 为 nil 表示永久。
+func (e *env) mkOneTimePlan(t *testing.T, ctx context.Context, unitCents, totalBytes int64, validityDays *int) (planID, versionID, priceID uuid.UUID) {
 	t.Helper()
-	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO traffic_packs (name, traffic_bytes, currency, unit_amount) VALUES (?, ?, 'CNY', ?) RETURNING id`,
-		"测试流量包-"+randHex(4), bytes, money.FromCents(unitCents)).Scan(&id); err != nil {
+	if err := e.row(ctx, `INSERT INTO plans (code, name, kind, allow_renewal) VALUES (?, ?, 'one_time', false) RETURNING id`,
+		"o-"+randHex(12), "一次性套餐-"+randHex(4)).Scan(&planID); err != nil {
 		t.Fatal(err)
 	}
-	return id
+	if err := e.row(ctx, `INSERT INTO plan_versions (plan_id, version, max_devices) VALUES (?, 1, 3) RETURNING id`,
+		planID).Scan(&versionID); err != nil {
+		t.Fatal(err)
+	}
+	e.mustExec(t, ctx, `INSERT INTO quota_definitions (plan_version_id, metric, period, limit_value) VALUES (?, ?, ?, ?)`,
+		versionID, catalogsvc.MetricTraffic, "total", totalBytes)
+	e.mustExec(t, ctx, `UPDATE plan_versions SET status = 'published', frozen_at = now() WHERE id = ?`, versionID)
+	e.mustExec(t, ctx, `UPDATE plans SET status = 'active', current_version_id = ? WHERE id = ?`, versionID, planID)
+	if err := e.row(ctx, `INSERT INTO prices (plan_id, plan_kind, unit_amount, billing_interval, interval_count, validity_days)
+		VALUES (?, 'one_time', ?, 'one_time', 1, ?) RETURNING id`,
+		planID, money.FromCents(unitCents), validityDays).Scan(&priceID); err != nil {
+		t.Fatal(err)
+	}
+	return planID, versionID, priceID
 }
 
-// mkCoupon 用 SQL 建一张 CNY 立减券（不限套餐、每人一次）。
+// mkCoupon 用 SQL 建一张立减券（不限套餐、每人一次）。
 func (e *env) mkCoupon(t *testing.T, ctx context.Context, code string, amountOffCents int64) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
-	if err := e.row(ctx, `INSERT INTO coupons (code, name, amount_off, currency) VALUES (?, ?, ?, 'CNY') RETURNING id`,
+	if err := e.row(ctx, `INSERT INTO coupons (code, name, amount_off) VALUES (?, ?, ?) RETURNING id`,
 		code, "测试券", money.FromCents(amountOffCents)).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
@@ -345,8 +371,7 @@ func (e *env) giveBalance(t *testing.T, ctx context.Context, user uuid.UUID, cen
 	t.Helper()
 	amt := money.FromCents(cents)
 	_, err := e.ledger.Post(ctx, ledgersvc.Posting{
-		Kind:     ledgersvc.KindBalanceTopup,
-		Currency: money.CNY,
+		Kind: ledgersvc.KindBalanceTopup,
 		Legs: []ledgersvc.Leg{
 			{Account: ledgersvc.PlatformAccount(ledgersvc.ChannelCash, "test"), Direction: ledgersvc.Debit, Amount: amt},
 			{Account: ledgersvc.UserAccount(ledgersvc.UserBalance, user), Direction: ledgersvc.Credit, Amount: amt},
@@ -357,26 +382,25 @@ func (e *env) giveBalance(t *testing.T, ctx context.Context, user uuid.UUID, cen
 	}
 }
 
-// balanceOf 取用户可用余额（CNY）。
+// balanceOf 取用户可用余额。
 func (e *env) balanceOf(t *testing.T, ctx context.Context, user uuid.UUID) decimal.Decimal {
 	t.Helper()
-	b, err := e.ledger.Balance(ctx, user, money.CNY)
+	b, err := e.ledger.Balance(ctx, user)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return b
 }
 
-// mkDemoProvider 用 SQL 插一条在收款的 demo_hmac 渠道（最低额 0.01）。
-// payment 的 CreateProvider 只允许 epay，demo 渠道只能直接写库；凭据用同一把 sealer 按 payment 的 AAD 封存。
-func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) {
+// mkEpayProvider 用 SQL 插一条指向 baseURL 的 epay 渠道（允许内网地址，只在测试里），查单会打到 baseURL。
+func (e *env) mkEpayProvider(t *testing.T, ctx context.Context, code, baseURL string) {
 	t.Helper()
 	sealer, err := crypto.NewSealer(bytes.Repeat([]byte{7}, 32), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.Must(uuid.NewV7())
-	plain, err := json.Marshal(map[string]string{"key": demoSecret})
+	plain, err := json.Marshal(map[string]string{"merchant_id": testEpayPID, "key": testEpayKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,32 +409,47 @@ func (e *env) mkDemoProvider(t *testing.T, ctx context.Context, code string) {
 		t.Fatal(err)
 	}
 	e.mustExec(t, ctx, `
-INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, currencies, base_url, min_amount, enabled, accepting_new)
-VALUES (?, ?, 'demo_hmac', 'Demo', ?, '["CNY"]'::jsonb, 'https://checkout.example.test', 0.01, true, true)`,
-		id, code, sealed)
+INSERT INTO payment_providers (id, code, adapter, display_name, credentials_sealed, base_url, methods, default_method,
+                               allow_private_host, min_amount, enabled, accepting_new)
+VALUES (?, ?, 'epay', '易支付测试', ?, ?, '["alipay"]'::jsonb, 'alipay', true, 0.01, true, true)`,
+		id, code, sealed, baseURL)
 }
 
-// demoCode 生成一个不撞的渠道代码。
-func demoCode() string { return "demo-" + randHex(8) }
-
-// demoInbound 构造 demo 渠道签好名的回调（同 payment 测试的同名函数）。
-func demoInbound(eventID, eventType, paymentRef, orderNo string, cents int64) provider.Inbound {
-	body, _ := json.Marshal(map[string]any{
-		"event_id":   eventID,
-		"event_type": eventType,
-		"payment_id": paymentRef,
-		"order_no":   orderNo,
-		"amount":     cents,
-		"currency":   "CNY",
-		"fee":        0,
-		"method":     "alipay",
-	})
-	h := http.Header{}
-	h.Set("X-Aegis-Signature", demo.Sign([]byte(demoSecret), eventID, eventType, paymentRef, orderNo, cents, 0, "CNY"))
-	return provider.Inbound{Method: http.MethodPost, Header: h, Body: body}
+// mkPayProvider 插一条在收款的易支付渠道；回调由 epayInbound 签名直接推给 payment，不会访问 baseURL。
+func (e *env) mkPayProvider(t *testing.T, ctx context.Context, code string) {
+	t.Helper()
+	e.mkEpayProvider(t, ctx, code, "https://pay.example.test")
 }
 
-// payAndNotify 以订单主人身份发起支付，再按应付金额推一笔 demo 成功回调；返回回执。
+// payCode 生成一个不撞的渠道代码。
+func payCode() string { return "epay-" + randHex(8) }
+
+// epayInbound 构造易支付成功回调（GET 查询串 + MD5 签名）；同一 paymentRef 重推得到同一个事件号。
+func epayInbound(paymentRef, outTradeNo string, cents int64) provider.Inbound {
+	params := map[string]string{
+		"pid":          testEpayPID,
+		"trade_no":     paymentRef,
+		"out_trade_no": outTradeNo,
+		"type":         "alipay",
+		"name":         "测试订单",
+		"money":        money.FormatProvider(money.FromCents(cents)),
+		"trade_status": "TRADE_SUCCESS",
+	}
+	params["sign"] = epay.Sign(params, testEpayKey)
+	params["sign_type"] = "MD5"
+	q := url.Values{}
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	return provider.Inbound{Method: http.MethodGet, Query: q}
+}
+
+// ackOK 判断易支付回执是否表示已接受：HTTP 恒为 200，看正文 success / fail。
+func ackOK(ack provider.AckOutput) bool {
+	return ack.HTTPStatus == http.StatusOK && string(ack.Body) == "success"
+}
+
+// payAndNotify 以订单主人身份发起支付，再按应付金额推一笔易支付成功回调；返回回执。
 func (e *env) payAndNotify(t *testing.T, ctx context.Context, user, orderID uuid.UUID, code, ref string) provider.AckOutput {
 	t.Helper()
 	intent, err := e.svc.Pay(asUser(ctx, user), PayInput{OrderID: orderID, Provider: code})
@@ -421,7 +460,7 @@ func (e *env) payAndNotify(t *testing.T, ctx context.Context, user, orderID uuid
 	if err != nil {
 		t.Fatal(err)
 	}
-	ack, err := e.payments.HandleWebhook(ctx, code, demoInbound("evt-"+ref, "payment.succeeded", ref, intent.OutTradeNo, cents))
+	ack, err := e.payments.HandleWebhook(ctx, code, epayInbound(ref, intent.OutTradeNo, cents))
 	if err != nil {
 		t.Fatalf("回调: %v", err)
 	}
@@ -458,29 +497,6 @@ func (e *env) reservationState(t *testing.T, ctx context.Context, orderID uuid.U
 		t.Fatal(err)
 	}
 	return st
-}
-
-// stock 读套餐的已预留与已售。
-func (e *env) stock(t *testing.T, ctx context.Context, planID uuid.UUID) (reserved, sold int) {
-	t.Helper()
-	if err := e.row(ctx, `SELECT stock_reserved, stock_sold FROM plans WHERE id = ?`, planID).Scan(&reserved, &sold); err != nil {
-		t.Fatal(err)
-	}
-	return reserved, sold
-}
-
-// counter 读限购计数（没有行时为 0、0）。
-func (e *env) counter(t *testing.T, ctx context.Context, planID, user uuid.UUID) (purchased, reserved int) {
-	t.Helper()
-	err := e.row(ctx, `SELECT purchased, reserved FROM plan_purchase_counters WHERE plan_id = ? AND user_id = ?`, planID, user).
-		Scan(&purchased, &reserved)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return purchased, reserved
 }
 
 // strCol 读一个可空文本（没有行或为 NULL 时回空串）。
@@ -558,13 +574,13 @@ func (e *env) buyNew(t *testing.T, ctx context.Context, user, planID, priceID uu
 	return c
 }
 
-// provision 直接给用户开一份订阅（续费、流量包用例的前置），价格快照指向 priceID。
+// provision 直接给用户开一份订阅（续费、换套餐用例的前置），价格快照指向 priceID（月付）。
 func (e *env) provision(t *testing.T, ctx context.Context, user, planID, versionID, priceID uuid.UUID, cents int64) subsvc.Subscription {
 	t.Helper()
 	pid := priceID
 	sub, err := e.subs.Provision(ctx, subsvc.Provision{
 		UserID: user, PlanID: planID, PlanVersionID: versionID,
-		Price: subsvc.PriceSnapshot{PriceID: &pid, Currency: money.CNY, Amount: money.FromCents(cents), Interval: "month", IntervalCount: 1},
+		Price: subsvc.PriceSnapshot{PriceID: &pid, Amount: money.FromCents(cents), Interval: "month", IntervalCount: 1},
 		Actor: subsvc.Actor{Kind: subsvc.ActorSystem},
 	})
 	if err != nil {

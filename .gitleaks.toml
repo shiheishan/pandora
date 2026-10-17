@@ -21,6 +21,20 @@ keywords = ["ops_"]
   [[rules.allowlists]]
   regexes = ['''ops_0123456789abcdef0123456789abcdef''']
 
+# 付费 UI 资源的授权 key：开发机上的 MCP 配置（项目根 .mcp.json 的 env）和 .npmrc 会带它们。
+# 默认规则只在 `_authToken=` 这类赋值里认得出，JSON 里的 REACTBITS_LICENSE_KEY 拦不住（10-15 实测），按前缀单独拦。
+[[rules]]
+id = "reactbits-license-key"
+description = "React Bits Pro license key"
+regex = '''reactbits_[A-Za-z0-9]{12,}'''
+keywords = ["reactbits_"]
+
+[[rules]]
+id = "collectui-npm-key"
+description = "CollectUI npm proxy key"
+regex = '''hginpm_[A-Za-z0-9]{12,}'''
+keywords = ["hginpm_"]
+
 # ---------------------------------------------------------------------------
 # 已逐条核实的误报，按完整值放行（不放行整个文件：同一文件里将来出现的真密钥照样拦）。
 # 幂等标签、接口路径、协议常量名，以及 CLIENT-AUTH-01 冻结契约文档里的测试向量

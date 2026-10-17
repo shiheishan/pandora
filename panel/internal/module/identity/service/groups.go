@@ -36,6 +36,7 @@ func (s *Service) ListGroups(ctx context.Context) ([]Group, error) {
 			Name:        r.Name,
 			Description: desc,
 			Users:       r.Users,
+			Status:      r.Status,
 		})
 	}
 	return out, nil
@@ -62,7 +63,6 @@ func (s *Service) AdminListGroups(ctx context.Context) ([]Group, error) {
 			continue
 		}
 		out[i].Plans = u.Plans
-		out[i].Prices = u.Prices
 		out[i].Coupons = u.Coupons
 		if u.ExclusivePools == nil {
 			out[i].ExclusivePools = []PoolRef{}
@@ -79,7 +79,7 @@ func (s *Service) CreateGroup(ctx context.Context, code, name, description strin
 	if err != nil {
 		return uuid.Nil, err
 	}
-	g := model.UserGroup{Code: code, Name: name, Description: descPtr}
+	g := model.UserGroup{Code: code, Name: name, Description: descPtr, Status: GroupActive}
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.repo.InsertGroup(ctx, &g); err != nil {
 			if errors.Is(err, repo.ErrDuplicate) {
@@ -123,7 +123,31 @@ func (s *Service) UpdateGroup(ctx context.Context, id uuid.UUID, name, descripti
 	})
 }
 
-// DeleteGroup 删除一个没有用户、也没被别处引用的用户组；不存在回 404。
+// SetGroupStatus 停用或启用用户组；不存在回 404。幂等：已是目标状态也返回成功（照样记一条审计）。
+// 停用只挡新成员（AssignGroup、批量生成），已有成员看到的套餐、专属价、节点池、订阅域名都不变。
+func (s *Service) SetGroupStatus(ctx context.Context, id uuid.UUID, disabled bool) error {
+	status := GroupActive
+	if disabled {
+		status = GroupDisabled
+	}
+	return s.tx.Do(ctx, func(ctx context.Context) error {
+		ok, err := s.repo.SetGroupStatus(ctx, id, status)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errs.New(errs.NotFound)
+		}
+		return s.writeAudit(ctx, auditsvc.Event{
+			Action:       ActionUserGroupStatusChanged,
+			ResourceType: ResourceUserGroup,
+			ResourceID:   &id,
+			Data:         map[string]any{"status": status},
+		})
+	})
+}
+
+// DeleteGroup 删除一个没有用户、也没被节点池、套餐可见名单、优惠券引用的用户组；不存在回 404。
 func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 	return s.tx.Do(ctx, func(ctx context.Context) error {
 		ok, err := s.repo.LockGroup(ctx, id)
@@ -140,15 +164,12 @@ func (s *Service) DeleteGroup(ctx context.Context, id uuid.UUID) error {
 		if n > 0 {
 			return errs.Newf(errs.Conflict, "这个分组下还有用户，先把他们移出去")
 		}
-		// 套餐可见名单对组是级联删除，外键兜不住：删了套餐就对谁都不可见，所以先查引用（与旧版同口径）
+		// 套餐可见名单对组是级联删除，外键兜不住：删了套餐就对谁都不可见，所以先查引用
 		if err := s.ensureGroupUnused(ctx, id); err != nil {
 			return err
 		}
 		ok, err = s.repo.DeleteGroup(ctx, id)
 		if err != nil {
-			if errors.Is(err, repo.ErrForeignKey) {
-				return errs.Newf(errs.Conflict, "这个分组还被价格、优惠券或节点池引用，先解除")
-			}
 			return err
 		}
 		if !ok {
@@ -217,7 +238,7 @@ func groupSlug(name string) string {
 	return s
 }
 
-// ensureGroupUnused 在删组前拒绝仍被节点池、套餐可见名单、组专属价格、优惠券引用的组。
+// ensureGroupUnused 删组前拒绝仍被节点池、套餐可见名单、优惠券引用的组。
 func (s *Service) ensureGroupUnused(ctx context.Context, id uuid.UUID) error {
 	gu, err := s.needGroupUsage()
 	if err != nil {
@@ -237,8 +258,6 @@ func (s *Service) ensureGroupUnused(ctx context.Context, id uuid.UUID) error {
 		return errs.Newf(errs.Conflict, "节点池"+strings.Join(names, "、")+"限定了这个分组，先把它从这些池的名单里移除")
 	case u.Plans > 0:
 		return errs.Newf(errs.Conflict, "还有套餐按这个分组控制可见性，先解除")
-	case u.Prices > 0:
-		return errs.Newf(errs.Conflict, "还有分组专属价格挂在这里，先删掉那些价格")
 	case u.Coupons > 0:
 		return errs.Newf(errs.Conflict, "还有优惠券限定了这个分组，先解除")
 	}

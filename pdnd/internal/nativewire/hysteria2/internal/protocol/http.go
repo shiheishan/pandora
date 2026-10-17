@@ -44,19 +44,6 @@ func AuthRequestToHeader(h http.Header, req AuthRequest) {
 	h.Set(CommonHeaderPadding, authRequestPadding.String())
 }
 
-func AuthResponseFromHeader(h http.Header) AuthResponse {
-	resp := AuthResponse{}
-	resp.UDPEnabled, _ = strconv.ParseBool(h.Get(ResponseHeaderUDPEnabled))
-	rxStr := h.Get(CommonHeaderCCRX)
-	if rxStr == "auto" {
-		// Special case for server requesting client to use bandwidth detection
-		resp.RxAuto = true
-	} else {
-		resp.Rx, _ = strconv.ParseUint(rxStr, 10, 64)
-	}
-	return resp
-}
-
 func AuthResponseToHeader(h http.Header, resp AuthResponse) {
 	h.Set(ResponseHeaderUDPEnabled, strconv.FormatBool(resp.UDPEnabled))
 	if resp.RxAuto {

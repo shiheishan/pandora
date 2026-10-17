@@ -36,7 +36,7 @@ const (
 	maxDeliveries      = 200 // 投递记录条数上限
 )
 
-// 审计（动作名沿用旧代码）。
+// 审计动作名。
 const (
 	ActionHookSave   = "plugin.hook.save"
 	ActionHookDelete = "plugin.hook.delete"
@@ -55,6 +55,7 @@ type EventInfo struct {
 // Events 是可订阅事件的白名单（放在代码里：打错一个字母的钩子永远不会触发，而且没有地方会提示）。
 var Events = []EventInfo{
 	{"user.registered", "用户完成注册"},
+	{"user.deleted", "用户账号已注销"},
 	{"order.created", "订单创建"},
 	{"order.paid", "订单支付成功"},
 	{"order.cancelled", "订单取消"},

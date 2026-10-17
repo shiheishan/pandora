@@ -1,24 +1,14 @@
 #!/usr/bin/env bash
-# 易支付端到端（新栈 pandora）：自建渠道与套餐 → 注册下单 → 收银台验签 → 防篡改回调 →
+# 易支付端到端：自建渠道与套餐 → 注册下单 → 收银台验签 → 防篡改回调 →
 # 幂等入账 → 账本与凭据保护。
 #
-# 与旧版（aegis / 预置 epay 渠道 / healthz / tenant）步骤对照：
-#   旧 0 查 tenants、库里 epay 渠道 → 新 0：DISPOSABLE + readyz + 后台自建渠道与可服务节点 + plans/complete
-#   旧 2 从门户目录挑 CNY 套餐 → 新 2：只用本脚本建的 plan_id / price_id
-#   旧 3 固定 provider=epay → 新 3：provider=<自建 code>；在途意图仅 requires_action（无 created/processing）
-#   旧 4 回调 /webhooks/payments/epay → 新 4：/webhooks/payments/<code>
-#   旧 5–6 幂等与账本 → 新 5–6：ledger_transactions 带 source_type='order'；库内金额元、JSON 分
-#   旧 7 credentials_encrypted + AEGIS_PUBLIC_LOG → 新 7：credentials_sealed + SERVE_LOG
-#
-# 删掉的旧断言及原因：
-#   - tenants / tenant_id：新栈单租户、无 RLS
-#   - signed_amount、app.verify_ledger_all()：新栈分录无 signed_amount，漂移用 DriftAccounts 口径 SQL
-#   - payments.amount 与 payable_amount（分）直接相等：库里 numeric(20,2) 为元
-#   - 写死 EPAY_KEY / EPAY_PID / BASE：夹具密钥与商户号脚本内生成，门户用 PUB
+# 口径：渠道（code 由脚本生成，回调走 /webhooks/payments/<code>）、套餐、可服务节点都由本脚本经后台自建，
+# 商户号与密钥现生成；在途意图只有 requires_action；库内金额是元（numeric(20,2)）、JSON 是分；
+# 账本漂移用 DriftAccounts 口径 SQL。
 #
 # 仍用 SQL 的步骤及原因：
 #   - 在途意图数、payment_events 幂等键、账本配平与漂移、凭据密文不含明文：核对库内事实，无等价只读 API
-#   - 可服务节点：e2e job 无节点端，发布套餐需 DeliverableNodeCond（见 p7e2e-common）
+#   - 可服务节点：e2e job 无节点端，发布套餐需 DeliverableNodeCond
 #
 # 环境：PUB、ADM、PSQL、ADMIN_EMAIL、ADMIN_PASS（必填）；EPAY_E2E_DISPOSABLE=YES_DELETE_FIXTURES（必填）。
 # 可选 SERVE_LOG：CI 指向 serve 日志文件，检查是否泄露渠道密钥。
@@ -48,6 +38,9 @@ json() { curl -sS -H 'Content-Type: application/json' "$@"; }
 DB_NAME=$(db 'SELECT current_database()')
 [[ "$DB_NAME" =~ (^|[-_])(test|e2e)([-_]|$) ]] \
   || { echo '[FATAL] database name must contain a standalone test/e2e segment' >&2; exit 1; }
+# 注册 IP 限额是后台设置（缺省每 IP 每分钟 10 次），连着注册会撞 429：一次性库上先关掉（见 lib/signup.sh）
+. "$(dirname "$0")/lib/signup.sh"
+relax_signup_ip_limit
 
 STAMP="$(date +%s)$RANDOM"
 EPAY_CODE="epay-${STAMP}"
@@ -167,16 +160,16 @@ tg=$(code -X POST "$ADM/v1/payment-providers/${EPAY_CODE}/toggle" -H "$AH" -H 'C
 [ "$tg" = "200" ] && ok "渠道 accepting_new=true" || { bad "toggle 失败" "HTTP ${tg}"; exit 1; }
 
 admin_reauth || true
-rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans/complete" -H "$AH" -H 'Content-Type: application/json' \
+rpc=$(curl -sS -w '\n%{http_code}' -X POST "$ADM/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: epay-plan-${STAMP}" \
-  -d "{\"code\":\"epay-plan-${STAMP}\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_gb\":1,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990,\"currency\":\"CNY\",\"trial_days\":0}],\"publish\":true}")
+  -d "{\"kind\":\"subscription\",\"name\":\"Epay Plan ${STAMP}\",\"visibility\":\"public\",\"traffic_bytes\":1073741824,\"pool_ids\":[\"${POOL_ID}\"],\"prices\":[{\"billing_interval\":\"month\",\"interval_count\":1,\"unit_amount\":990}],\"publish\":true}")
 rpc_body=${rpc%$'\n'*}; rpc_code=${rpc##*$'\n'}
 PLAN_ID=$(echo "$rpc_body" | jqr "['plan']['id']")
-PRICE_ID=$(echo "$rpc_body" | jqr "['price_ids'][0]")
+PRICE_ID=$(echo "$rpc_body" | jqr "['plan']['prices'][0]['id']")
 PLAN_RV=$(echo "$rpc_body" | jqr "['plan']['row_version']")
 [ "$rpc_code" = "201" ] && [ -n "$PLAN_ID" ] && [ -n "$PRICE_ID" ] \
   && ok "套餐已发布 plan=${PLAN_ID} price=${PRICE_ID}" \
-  || { bad "plans/complete 失败" "HTTP ${rpc_code} ${rpc_body}"; exit 1; }
+  || { bad "建套餐失败" "HTTP ${rpc_code} ${rpc_body}"; exit 1; }
 
 #-------------------------------------------------------------------------------
 sec "1. 注册并登录"
@@ -208,9 +201,9 @@ r4h=$(curl -sS -w '\n%{http_code}' -X POST "$PUB/v1/orders" -H "$AUTH" -H 'Conte
   -d "{\"plan_id\":\"${PLAN_ID}\",\"price_id\":\"${PRICE_ID}\",\"use_balance\":0}")
 r4=${r4h%$'\n'*}; r4c=${r4h##*$'\n'}
 ORDER_ID=$(echo "$r4" | jqr "['order_id']"); ORDER_NO=$(echo "$r4" | jqr "['order_no']")
-PAYABLE=$(echo "$r4" | jqr "['payable_amount']"); CURRENCY=$(echo "$r4" | jqr "['currency']")
+PAYABLE=$(echo "$r4" | jqr "['payable_amount']")
 [ "$r4c" = "201" ] && [ -n "$ORDER_ID" ] && [ "$PAYABLE" = "990" ] \
-  && ok "订单已创建 ${ORDER_NO} 应付 ${PAYABLE} ${CURRENCY}（201）" \
+  && ok "订单已创建 ${ORDER_NO} 应付 ${PAYABLE} 分（201）" \
   || bad "下单失败" "HTTP ${r4c} ${r4}"
 
 MONEY=$(python3 -c "print(f'{int(${PAYABLE})//100}.{int(${PAYABLE})%100:02d}')")

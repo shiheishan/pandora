@@ -12,7 +12,7 @@ export function bytesParts(bytes: number): [string, string] {
 }
 
 /** 距离某时刻还有几天（向上取整，过去为 0）。 */
-export function daysUntil(at: string | Date, now: Date = new Date()): number {
+function daysUntil(at: string | Date, now: Date = new Date()): number {
   const t = typeof at === 'string' ? new Date(at).getTime() : at.getTime()
   return Math.max(0, Math.ceil((t - now.getTime()) / DAY_MS))
 }
@@ -45,7 +45,7 @@ export const shortDate = (at: string | Date, timeZone?: string) => formatDate(at
 const HOUR_MS = 3_600_000
 
 /** 时刻 YYYY-MM-DD HH:mm，时区口径同 formatDate（切日时区，拿不到退回浏览器本地时区）。 */
-export function formatMinute(at: string | Date, timeZone?: string): string {
+function formatMinute(at: string | Date, timeZone?: string): string {
   const d = typeof at === 'string' ? new Date(at) : at
   if (timeZone) {
     try {
@@ -59,7 +59,7 @@ export function formatMinute(at: string | Date, timeZone?: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export interface ExpiryInfo {
+interface ExpiryInfo {
   days: number
   /** 剩余小时，向上取整；已到期为 0 */
   hours: number
@@ -83,7 +83,7 @@ export function expiryInfo(periodEnd: string | null, now: Date = new Date(), tim
   return { days, hours, date, urgent: expired || days <= 7, expired, label }
 }
 
-export type UsageLevel = 'ok' | 'warn' | 'danger'
+type UsageLevel = 'ok' | 'warn' | 'danger'
 
 /** 设计稿口径：已用 ≥ 95% 危险、≥ 80% 警示 */
 export const usageLevel = (ratio: number): UsageLevel => (ratio >= 0.95 ? 'danger' : ratio >= 0.8 ? 'warn' : 'ok')
@@ -92,16 +92,17 @@ export const usageLevel = (ratio: number): UsageLevel => (ratio >= 0.95 ? 'dange
 // 流量额度：quotas[] 里 metric = traffic.bytes 的那一行。现有接口不带周期字段，
 // 待补字段上线后同一指标可能有多行，取周期覆盖当前时刻的那行。
 // ---------------------------------------------------------------------------
-export interface QuotaLike {
+interface QuotaLike {
   metric: string
   limit: number | null
   consumed: number
   remaining: number | null
+  bonus_bytes?: number
   period_start?: string | null
   period_end?: string | null
 }
 
-export const TRAFFIC_METRIC = 'traffic.bytes'
+const TRAFFIC_METRIC = 'traffic.bytes'
 
 export function pickTrafficQuota<Q extends QuotaLike>(quotas: readonly Q[], now: Date = new Date()): Q | null {
   const rows = quotas.filter((q) => q.metric === TRAFFIC_METRIC)
@@ -114,43 +115,46 @@ export function pickTrafficQuota<Q extends QuotaLike>(quotas: readonly Q[], now:
 
 export interface TrafficSummary {
   used: number
-  /** 本期总量 = 已用 + 剩余；null = 不限 */
+  /** 上限 + 送的；null = 不限 */
   total: number | null
-  /** 套餐剩余（不含流量包）；null = 不限 */
+  /** 还能用；null = 不限 */
   remaining: number | null
-  /** 流量包余量，挂在用户身上，套餐扣完后才扣（5.A D-E-1） */
-  pack: number
+  /** 送的流量 */
+  bonus: number
   /** 已用 / 总量，不限时为 0 */
   ratio: number
 }
 
-/** 契约映射：已用 = consumed；总量 = consumed + remaining；剩余 = remaining（null 为不限）。 */
-export function trafficSummary(quota: QuotaLike | null, packBytes = 0): TrafficSummary | null {
+/** 契约映射：total = limit + bonus_bytes（limit 为 null 则不限）；remaining = max(0, total - consumed)。 */
+export function trafficSummary(quota: QuotaLike | null): TrafficSummary | null {
   if (!quota) return null
-  const remaining = quota.remaining === null ? null : Math.max(0, quota.remaining)
-  const total = remaining === null ? null : quota.consumed + remaining
-  const ratio = total ? Math.min(1, quota.consumed / total) : total === 0 ? 1 : 0
-  return { used: quota.consumed, total, remaining, pack: Math.max(0, packBytes), ratio }
+  const bonus = quota.bonus_bytes ?? 0
+  if (quota.limit === null) {
+    return { used: quota.consumed, total: null, remaining: null, bonus, ratio: 0 }
+  }
+  const total = quota.limit + bonus
+  const remaining = Math.max(0, total - quota.consumed)
+  const ratio = total > 0 ? Math.min(1, quota.consumed / total) : 1
+  return { used: quota.consumed, total, remaining, bonus, ratio }
 }
 
 /**
- * 下次重置时刻：strategy=never 不重置；next_reset_at 优先（服务端取最新流量额度行的周期末，可为 null），其次是额度行的周期末，
+ * 下次重置时刻：一次性套餐不重置；否则 next_reset_at 优先，其次是额度行的周期末，
  * 再其次是按日用量接口的 period_end（它的窗口就是当前流量周期，修订 R47）。
  */
 export function resetAtOf(
-  sub: { quota_reset_strategy?: string; next_reset_at?: string | null },
+  sub: { plan_kind?: string; next_reset_at?: string | null },
   quota: { period_end?: string | null } | null,
   usage: { period_end: string | null } | undefined,
 ): string | null {
-  if (sub.quota_reset_strategy === 'never') return null
+  if (sub.plan_kind === 'one_time') return null
   return sub.next_reset_at ?? quota?.period_end ?? usage?.period_end ?? null
 }
 
 // ---------------------------------------------------------------------------
-// 预测：「按目前的速度…」。套餐扣完再扣流量包，所以可用量 = 套餐剩余 + 流量包；
-// 预计到重置时用量 ≥ (总量 + 流量包) 的 95% 视为不够用，给「买流量包 →」。
+// 预测：「按目前的速度…」。可用量 = 套餐剩余；不够用时文案保持「…比重置早。」
 // ---------------------------------------------------------------------------
-export interface Projection {
+interface Projection {
   text: string
   short: boolean
 }
@@ -158,11 +162,11 @@ export interface Projection {
 export function projectUsage(summary: TrafficSummary, avgDailyBytes: number, resetAt: string | null, now: Date = new Date()): Projection {
   if (summary.total === null) return { text: '本期流量不限量。', short: false }
   if (avgDailyBytes <= 0) return { text: '本期还没有产生用量。', short: false }
-  const left = (summary.remaining ?? 0) + summary.pack
+  const left = summary.remaining ?? 0
   const runout = Math.floor(left / avgDailyBytes)
   if (!resetAt) return { text: `按目前的速度，约 ${runout} 天后用完。`, short: runout <= 7 }
   const projected = summary.used + avgDailyBytes * daysUntil(resetAt, now)
-  if (projected >= (summary.total + summary.pack) * 0.95) {
+  if (projected >= (summary.total ?? 0) * 0.95) {
     return { text: `按目前的速度，约 ${runout} 天后用完，比重置早。`, short: true }
   }
   return { text: `按目前的速度，本期预计用到 ${formatBytes(Math.round(projected))}，够用。`, short: false }
@@ -172,7 +176,7 @@ export function projectUsage(summary: TrafficSummary, avgDailyBytes: number, res
 // 本期用量柱：days[] 是到今天为止（含今天）的每日字节，日期是接口所用时区的
 // YYYY-MM-DD；period_end 之前剩下的日子画成灰色矮柱「未到」。
 // ---------------------------------------------------------------------------
-export interface UsageBar {
+interface UsageBar {
   date: string
   /** null = 未到 */
   bytes: number | null
@@ -181,7 +185,7 @@ export interface UsageBar {
   height: number
 }
 
-export interface UsageBars {
+interface UsageBars {
   bars: UsageBar[]
   start: string
   /** 右端标签：有周期末为「MM-DD 重置」 */

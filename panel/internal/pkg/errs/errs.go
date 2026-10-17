@@ -1,7 +1,7 @@
 // Package errs 是对外错误的唯一定义：封闭的错误码表、HTTP 状态和中性文案。
 //
 // 对外只给码和中文文案，内部原因只进日志。前端 core/api.ts 的 SERVER_ERROR_CODES
-// 与 Codes() 没有测试对齐，新增码两处同改。
+// 与 Codes() 由 TestServerErrorCodesMatchFrontend 对齐，新增码两处同改。
 package errs
 
 import (
@@ -23,10 +23,12 @@ const (
 	QuoteChanged     Code = "quote_changed"
 	OrderPending     Code = "order_pending"
 	OrderLapsed      Code = "order_lapsed"
-	ValidationFailed Code = "validation_failed"
-	RateLimited      Code = "rate_limited"
-	Internal         Code = "internal_error"
-	Unavailable      Code = "service_unavailable"
+	// PaymentInProgress 是同一张单上一次发起支付还在去渠道建单（订单仍可付，稍后重发）。
+	PaymentInProgress Code = "payment_in_progress"
+	ValidationFailed  Code = "validation_failed"
+	RateLimited       Code = "rate_limited"
+	Internal          Code = "internal_error"
+	Unavailable       Code = "service_unavailable"
 )
 
 type spec struct {
@@ -35,20 +37,21 @@ type spec struct {
 }
 
 var specs = map[Code]spec{
-	BadRequest:       {http.StatusBadRequest, "请求格式不正确"},
-	Unauthorized:     {http.StatusUnauthorized, "凭据无效或已过期"},
-	Forbidden:        {http.StatusForbidden, "没有权限执行此操作"},
-	ReauthRequired:   {http.StatusForbidden, "此操作需要重新验证身份"},
-	NotFound:         {http.StatusNotFound, "资源不存在或无权访问"},
-	Conflict:         {http.StatusConflict, "数据已被修改，请刷新后重试"},
-	IdempotencyReuse: {http.StatusConflict, "同一个幂等键不能用于不同的请求"},
-	QuoteChanged:     {http.StatusConflict, "价格已更新，请重新确认"},
-	OrderPending:     {http.StatusConflict, "已有一张待支付的订单"},
-	OrderLapsed:      {http.StatusConflict, "订单已过付款期限"},
-	ValidationFailed: {http.StatusUnprocessableEntity, "请求参数校验未通过"},
-	RateLimited:      {http.StatusTooManyRequests, "操作太频繁，请稍后再试"},
-	Internal:         {http.StatusInternalServerError, "服务暂时不可用，请稍后重试"},
-	Unavailable:      {http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试"},
+	BadRequest:        {http.StatusBadRequest, "请求格式不正确"},
+	Unauthorized:      {http.StatusUnauthorized, "凭据无效或已过期"},
+	Forbidden:         {http.StatusForbidden, "没有权限执行此操作"},
+	ReauthRequired:    {http.StatusForbidden, "此操作需要重新验证身份"},
+	NotFound:          {http.StatusNotFound, "资源不存在或无权访问"},
+	Conflict:          {http.StatusConflict, "数据已被修改，请刷新后重试"},
+	IdempotencyReuse:  {http.StatusConflict, "同一个幂等键不能用于不同的请求"},
+	QuoteChanged:      {http.StatusConflict, "价格已更新，请重新确认"},
+	OrderPending:      {http.StatusConflict, "已有一张待支付的订单"},
+	OrderLapsed:       {http.StatusConflict, "订单已过付款期限"},
+	PaymentInProgress: {http.StatusConflict, "支付正在发起，请稍候"},
+	ValidationFailed:  {http.StatusUnprocessableEntity, "请求参数校验未通过"},
+	RateLimited:       {http.StatusTooManyRequests, "操作太频繁，请稍后再试"},
+	Internal:          {http.StatusInternalServerError, "服务暂时不可用，请稍后重试"},
+	Unavailable:       {http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试"},
 }
 
 // Codes 返回全部对外错误码，供对齐测试使用。

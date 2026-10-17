@@ -19,7 +19,7 @@ import (
 // channelQueryTimeout 是单次渠道查询的上限。
 const channelQueryTimeout = 10 * time.Second
 
-// patrolConfig 是巡检的节流参数（含义见旧 PaymentQueryPatrol）。
+// patrolConfig 是巡检的节流参数（各字段含义见下面 defaultPatrol 的注释）。
 type patrolConfig struct {
 	FirstDelay   time.Duration
 	MaxAttempts  int
@@ -40,7 +40,7 @@ var defaultPatrol = patrolConfig{
 // queryMinGap 是两次巡检查单的最小间隔。
 const queryMinGap = time.Minute
 
-// nextQueryAt 照旧 nextPaymentQueryAt 逐行搬（指数退避 + 过期前最后一查）。
+// nextQueryAt 算下一次巡检查单的时间：指数退避，过期前留最后一查。
 func nextQueryAt(now time.Time, attempts int, expires *time.Time, p patrolConfig) time.Time {
 	if attempts < 1 {
 		attempts = 1
@@ -192,20 +192,19 @@ func (s *Service) queryRef(ctx context.Context, orderID uuid.UUID, ref repo.Quer
 			OutTradeNo:        ref.OutTradeNo,
 			Amount:            chRes.Amount,
 			Fee:               decimal.Zero,
-			Currency:          chRes.Currency,
 			Method:            chRes.Method,
 			Raw:               map[string]string{"source": "active_query", "method": chRes.Method},
 			SignatureVerified: true,
 			FeeUnknown:        true,
 		}, payHook)
-		if errors.Is(rerr, ErrAmountMismatch) {
-			// 渠道说已付、金额却和意图对不上：比普通失败严重，要人看
-			plog.From(ctx).Error("查单结果与支付意图金额不符，未入账",
+		if errors.Is(rerr, ErrAmountMismatch) || errors.Is(rerr, ErrProviderRefMismatch) {
+			// 渠道说已付、金额或渠道单号却和意图对不上：比普通失败严重，要人看
+			plog.From(ctx).Error("查单结果与支付意图不符（金额或渠道单号），未入账",
 				zap.String("order_id", orderID.String()),
 				zap.String("provider", ref.ProviderCode),
 				zap.String("out_trade_no", ref.OutTradeNo),
-				zap.String("channel_amount", chRes.Amount.StringFixed(2)),
-				zap.String("currency", string(chRes.Currency)))
+				zap.String("channel_ref", chRes.PaymentRef),
+				zap.String("channel_amount", chRes.Amount.StringFixed(2)))
 		}
 		if rerr != nil {
 			return out, false, rerr

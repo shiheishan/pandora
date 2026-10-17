@@ -17,10 +17,11 @@ import (
 // toUser 把 model.User 转成对外的 User。
 func toUser(u model.User) User {
 	return User{
-		ID:        u.ID,
-		Email:     u.Email,
-		Status:    u.Status,
-		CreatedAt: u.CreatedAt,
+		ID:          u.ID,
+		Email:       u.Email,
+		Status:      u.Status,
+		CreatedAt:   u.CreatedAt,
+		UserGroupID: u.UserGroupID,
 	}
 }
 
@@ -85,7 +86,7 @@ func (s *Service) Authenticate(ctx context.Context, audience, email, password st
 		release()
 		return toUser(cred.User), ErrInvalidCredentials
 	}
-	if cred.Status != model.UserActive {
+	if cred.Status != StatusActive {
 		release()
 		return toUser(cred.User), ErrAccountInactive
 	}
@@ -146,7 +147,7 @@ func (s *Service) VerifyPassword(ctx context.Context, audience string, userID uu
 		release()
 		return ErrInvalidCredentials
 	}
-	if cred.Status != model.UserActive {
+	if cred.Status != StatusActive {
 		release()
 		return ErrAccountInactive
 	}
@@ -207,7 +208,7 @@ func (s *Service) Profile(ctx context.Context, id uuid.UUID) (Profile, error) {
 // CreateUser 建一个有口令的用户（给命令行建管理员用）：口令按后台人员的 12 位规则校验；邮箱已存在回 409。
 func (s *Service) CreateUser(ctx context.Context, email, password string) (User, error) {
 	email = normalizeEmail(email)
-	if !ValidEmail(email) {
+	if !ValidEmail(email) || reservedEmail(email) {
 		return User{}, errEmailInvalid()
 	}
 	if err := validatePassword(password, true); err != nil {
@@ -227,7 +228,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (User,
 	now := s.now()
 	u := model.User{
 		Email:           email,
-		Status:          model.UserActive,
+		Status:          StatusActive,
 		EmailVerifiedAt: &now,
 	}
 

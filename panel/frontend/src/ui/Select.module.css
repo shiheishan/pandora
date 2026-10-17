@@ -1,0 +1,123 @@
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trigger[aria-expanded='true'] {
+  border-color: var(--text-3);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.placeholder {
+  color: var(--text-3);
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.list {
+  position: fixed;
+  z-index: 301;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--popover-border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: var(--popover-shadow);
+  animation: slideDown 0.12s ease-out;
+}
+
+.up {
+  animation: slideUp 0.12s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.option {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body-sm);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.optionLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active {
+  background: var(--surface-3);
+}
+
+.selected {
+  background: var(--surface-2);
+  font-weight: var(--fw-medium);
+}
+
+.disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.disabled.active {
+  background: transparent;
+}
+
+.check {
+  flex: none;
+  color: currentColor;
+}

@@ -1,0 +1,42 @@
+/* 订阅域名卡片（Card flush）内部的辅助样式：添加行、作用范围灰字、错误提示 */
+
+/* 盒子里第一行：域名输入框 + 作用范围下拉 + 添加 */
+.addRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 域名输入框占满剩余宽度 */
+.addInput {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 作用范围列：组名后面的灰字（「· 仅 用户组 VIP」） */
+.scopeHint {
+  color: var(--text-3);
+}
+
+/* 手机上作用范围列收起，挪到域名下面一行 */
+.scopeSub {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+}
+
+/* 添加行下方、表格上方的错误提示 */
+.alertWrap {
+  padding: var(--space-12) var(--space-16) 0;
+}
+
+@media (max-width: 639px) {
+  .addRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

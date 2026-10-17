@@ -78,7 +78,6 @@ type RedemptionRow struct {
 	UserID         uuid.UUID       `gorm:"column:user_id"`
 	OrderNo        string          `gorm:"column:order_no"`
 	DiscountAmount decimal.Decimal `gorm:"column:discount_amount"`
-	Currency       string          `gorm:"column:currency"`
 	Status         string          `gorm:"column:status"`
 	CreatedAt      time.Time       `gorm:"column:created_at"`
 }
@@ -87,7 +86,7 @@ type RedemptionRow struct {
 func (r *Repo) RedemptionsByCoupon(ctx context.Context, couponID uuid.UUID, limit int) ([]RedemptionRow, error) {
 	var rows []RedemptionRow
 	err := r.d.Conn(ctx).Raw(
-		`SELECT user_id, order_no, discount_amount, currency, status, created_at
+		`SELECT user_id, order_no, discount_amount, status, created_at
 		FROM coupon_redemptions WHERE coupon_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
 		couponID, limit,
 	).Scan(&rows).Error

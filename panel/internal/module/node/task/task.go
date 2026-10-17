@@ -1,4 +1,4 @@
-// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定。
+// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定、节点流量按重置日清零、过期 ECH 密钥清理。
 package task
 
 import (
@@ -19,6 +19,12 @@ const TypeRetention = "retention:node"
 // TypeDevicesStrict 是 strict 设备模式的重新判定任务类型。
 const TypeDevicesStrict = "devices:strict"
 
+// TypeTrafficReset 是节点流量按重置日清零的任务类型。
+const TypeTrafficReset = "node:traffic_reset"
+
+// TypeECHPurge 是过期 ECH 密钥清理任务类型。
+const TypeECHPurge = "node:ech_purge"
+
 const (
 	purgeBatch = 5000
 	maxBatches = 200
@@ -29,6 +35,10 @@ type Service interface {
 	PurgeRetention(ctx context.Context, table string, now time.Time, batch int) (int64, error)
 	// RecheckStrictDevices：strict 模式下重算超限订阅集合，变了推进名单纪元；loose 时什么都不做。
 	RecheckStrictDevices(ctx context.Context) error
+	// ResetDueNodeTraffic：对设了重置日的节点按周期起点清零用量。
+	ResetDueNodeTraffic(ctx context.Context) (int, error)
+	// PurgeRetiredECHKeys：删除过渡期已过的旧 ECH 密钥。
+	PurgeRetiredECHKeys(ctx context.Context) (int64, error)
 }
 
 // Module 注册 node 相关的 asynq 任务与定时调度。
@@ -46,13 +56,15 @@ func New(svc Service) *Module {
 func (m *Module) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TypeRetention, m.retention)
 	mux.HandleFunc(TypeDevicesStrict, m.devicesStrict)
+	mux.HandleFunc(TypeTrafficReset, m.trafficReset)
+	mux.HandleFunc(TypeECHPurge, m.echPurge)
 }
 
-// Periodic 声明节点数据保留期清理（每天凌晨）与 strict 设备判定（每分钟）。
+// Periodic 声明节点数据保留期清理（每天凌晨）、strict 设备判定（每分钟）、节点流量重置（每 5 分钟）与过期 ECH 密钥清理（每小时）。
 func (m *Module) Periodic() []jobs.Periodic {
 	return []jobs.Periodic{
 		{
-			Cronspec: "41 3 * * *",
+			Cronspec: "44 3 * * *",
 			Type:     TypeRetention,
 			Opts: []asynq.Option{
 				asynq.Queue("low"),
@@ -71,6 +83,26 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.Unique(50 * time.Second),
 			},
 		},
+		{
+			Cronspec: "@every 5m",
+			Type:     TypeTrafficReset,
+			Opts: []asynq.Option{
+				asynq.Queue("low"),
+				asynq.MaxRetry(0),
+				asynq.Timeout(1 * time.Minute),
+				asynq.Unique(4 * time.Minute),
+			},
+		},
+		{
+			Cronspec: "@every 1h",
+			Type:     TypeECHPurge,
+			Opts: []asynq.Option{
+				asynq.Queue("low"),
+				asynq.MaxRetry(0),
+				asynq.Timeout(1 * time.Minute),
+				asynq.Unique(50 * time.Minute),
+			},
+		},
 	}
 }
 
@@ -80,19 +112,14 @@ func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 	var total int64
 
 	for _, table := range service.RetentionTables {
-		var tableDeleted int64
-		for batch := 0; batch < maxBatches; batch++ {
-			if err := ctx.Err(); err != nil {
+		tableDeleted, err := jobs.PurgeInBatches(ctx, purgeBatch, maxBatches, func(ctx context.Context, limit int) (int64, error) {
+			return m.svc.PurgeRetention(ctx, table, now, limit)
+		})
+		if err != nil {
+			if ctx.Err() != nil {
 				return err
 			}
-			n, err := m.svc.PurgeRetention(ctx, table, now, purgeBatch)
-			if err != nil {
-				return fmt.Errorf("节点数据保留期清理 %s: %w", table, err)
-			}
-			tableDeleted += n
-			if n < int64(purgeBatch) {
-				break
-			}
+			return fmt.Errorf("节点数据保留期清理 %s: %w", table, err)
 		}
 		perTable[table] = tableDeleted
 		total += tableDeleted
@@ -111,6 +138,22 @@ func (m *Module) retention(ctx context.Context, _ *asynq.Task) error {
 func (m *Module) devicesStrict(ctx context.Context, _ *asynq.Task) error {
 	if err := m.svc.RecheckStrictDevices(ctx); err != nil {
 		return fmt.Errorf("strict 设备判定: %w", err)
+	}
+	return nil
+}
+
+// trafficReset 调 service 对到期节点流量清零；出错原样包装返回。
+func (m *Module) trafficReset(ctx context.Context, _ *asynq.Task) error {
+	if _, err := m.svc.ResetDueNodeTraffic(ctx); err != nil {
+		return fmt.Errorf("节点流量按重置日清零: %w", err)
+	}
+	return nil
+}
+
+// echPurge 调 service 清理过期 ECH 密钥。
+func (m *Module) echPurge(ctx context.Context, _ *asynq.Task) error {
+	if _, err := m.svc.PurgeRetiredECHKeys(ctx); err != nil {
+		return fmt.Errorf("清理过期 ECH 密钥: %w", err)
 	}
 	return nil
 }

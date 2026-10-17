@@ -46,15 +46,6 @@ func (r *Repo) RecentGenerationJobs(ctx context.Context, limit int) ([]model.Use
 	return rows, nil
 }
 
-// GroupExists 判断用户组是否存在。
-func (r *Repo) GroupExists(ctx context.Context, id uuid.UUID) (bool, error) {
-	var exists bool
-	err := r.d.Conn(ctx).Raw(
-		"SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = ?)", id,
-	).Scan(&exists).Error
-	return exists, err
-}
-
 // ClaimGenerationJob 认领任务：queued 或租约已过期的 running。
 func (r *Repo) ClaimGenerationJob(ctx context.Context, id uuid.UUID, lease time.Duration) (model.UserGenerationJob, bool, error) {
 	var j model.UserGenerationJob

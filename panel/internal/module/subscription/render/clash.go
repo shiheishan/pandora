@@ -13,56 +13,101 @@ package render
 // trojan、socks5、http 与 ws / grpc 两种传输，见 nodeToClash 的 premium 分支。
 
 import (
+	"cmp"
+	"encoding/base64"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-func renderClash(nodes []Node, uuid string, premium bool) ([]byte, string, int) {
-	var proxies []map[string]any
-	var names []string
+const defaultClashTemplate = "mixed-port: 7890\nallow-lan: false\nmode: rule\nlog-level: info\n\n{{proxies}}\n\nproxy-groups:\n{{proxy_groups}}\n\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n"
 
-	for _, n := range nodes {
-		p, _ := nodeToClash(n, uuid, premium)
+// renderClash 渲染 Clash 系配置（Clash Meta / Premium / Stash）。
+// 支持后台自定义模板（rc.tmpl 为空时使用内置 defaultClashTemplate），通过占位符替换生成。
+// 信息节点（剩余流量等）排在最前，仅进手动选择组（节点选择），不进自动选择组（自动选择）；
+// 当没有真实节点时，不输出信息节点，节点数只计真实节点。
+func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
+	convert := func(n Node) map[string]any {
+		if kind == clashStash {
+			p, _ := nodeToStash(n, rc.uuid)
+			return p
+		}
+		p, _ := nodeToClash(n, rc.uuid, kind == clashPremium)
+		return p
+	}
+
+	infoNodes, realNodes := rc.splitInfo()
+
+	realProxies := make([]map[string]any, 0, len(realNodes))
+	realNames := make([]string, 0, len(realNodes))
+	for _, n := range realNodes {
+		p := convert(n)
 		if p == nil {
 			continue
 		}
-		proxies = append(proxies, p)
-		names = append(names, n.Name)
+		realProxies = append(realProxies, p)
+		realNames = append(realNames, n.Name)
 	}
 
-	var b strings.Builder
-	b.WriteString("mixed-port: 7890\nallow-lan: false\nmode: rule\nlog-level: info\n\n")
-	if len(proxies) == 0 {
-		b.WriteString("proxies: []\n")
+	// 一个真实节点都写不出时信息节点也不写
+	var infoProxies []map[string]any
+	var infoNames []string
+	if len(realProxies) > 0 {
+		for _, n := range infoNodes {
+			p := convert(n)
+			if p == nil {
+				continue
+			}
+			infoProxies = append(infoProxies, p)
+			infoNames = append(infoNames, n.Name)
+		}
+	}
+
+	// 直接写进一个缓冲：每条节点单独拼成字符串再连接，200 个节点的订阅每次拉取要多分配几百 KB
+	var w yamlWriter
+	if len(realProxies) == 0 {
+		w.b.WriteString("proxies: []")
 	} else {
-		b.WriteString("proxies:\n")
+		w.b.WriteString("proxies:")
+		for _, list := range [][]map[string]any{infoProxies, realProxies} {
+			for _, p := range list {
+				w.b.WriteString("\n  - ")
+				w.inline(p)
+			}
+		}
 	}
-	for _, p := range proxies {
-		b.WriteString("  - " + inlineYAML(p) + "\n")
-	}
+	proxiesVal := w.b.String()
 
-	// 策略组：一个自动选优、一个手动。没有策略组的订阅在 Clash 里
-	// 只是一堆节点，用户没法切换，等于不可用。
-	//
-	// 一个节点都没有时（没有可下发节点，或全被跳过），url-test 组的空 proxies
-	// 会让 mihomo 报 `use` or `proxies` missing、整份配置被拒。这时只留一个
-	// 指向 DIRECT 的手动组：配置仍然合法，规则照常引用「节点选择」。
-	b.WriteString("\nproxy-groups:\n")
-	if len(names) == 0 {
-		b.WriteString("  - {name: 节点选择, type: select, proxies: [DIRECT]}\n")
+	var proxyGroupsVal string
+	var proxyNamesVal string
+
+	if len(realProxies) == 0 {
+		proxyGroupsVal = "  - {name: 节点选择, type: select, proxies: [DIRECT]}"
+		proxyNamesVal = "DIRECT"
 	} else {
-		b.WriteString("  - {name: 自动选择, type: url-test, url: 'http://www.gstatic.com/generate_204', interval: 300, proxies: [")
-		b.WriteString(strings.Join(quoteAll(names), ", "))
-		b.WriteString("]}\n")
-		b.WriteString("  - {name: 节点选择, type: select, proxies: [自动选择, ")
-		b.WriteString(strings.Join(quoteAll(names), ", "))
-		b.WriteString("]}\n")
+		proxyNamesVal = joinQuoted(realNames)
+		selectNames := proxyNamesVal
+		if len(infoNames) > 0 {
+			selectNames = joinQuoted(infoNames) + ", " + proxyNamesVal
+		}
+		proxyGroupsVal = "  - {name: 自动选择, type: url-test, url: 'http://www.gstatic.com/generate_204', interval: 300, proxies: [" +
+			proxyNamesVal + "]}\n" +
+			"  - {name: 节点选择, type: select, proxies: [自动选择, " + selectNames + "]}"
 	}
-	b.WriteString("\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n")
 
-	return []byte(b.String()), "text/yaml; charset=utf-8", len(proxies)
+	tmpl := rc.tmpl
+	if tmpl == "" {
+		tmpl = defaultClashTemplate
+	}
+
+	body := fillTemplate(tmpl, map[string]string{
+		phProxies:     proxiesVal,
+		phProxyGroups: proxyGroupsVal,
+		phProxyNames:  proxyNamesVal,
+	})
+
+	return body, "text/yaml; charset=utf-8", len(realProxies)
 }
 
 // nodeToClash 返回一条 proxy；不能渲染时返回 nil 和跳过原因。
@@ -96,16 +141,14 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		setClashStream(p, n, o, premium)
 
 	case "shadowsocks":
+		pw, reason := ssPassword(n.Config, uuid)
+		if reason != "" {
+			return nil, reason
+		}
 		p["type"] = "ss"
-		p["password"] = uuid
+		p["password"] = pw
 		p["cipher"] = ssMethod(n.Config)
-		// 节点端的 Shadowsocks 一个入站只听一种传输（pdnd kernel/shadowsocks.go:Start：
-		// network=udp 只开 UDP 口，否则只开 TCP 口），TCP 路径也不认 UDP-over-TCP；
-		// 面板的 schema 不许配 network，所以下发的 ss 节点都只听 TCP。写 udp:true 的话
-		// 客户端会把 DNS、游戏这些 UDP 发到一个没人听的端口，静默失败；写 false 让客户端
-		// 走别的路。node-e2e（2026-10-08）里 mihomo 的 ss「UDP 通」是 mihomo 报
-		// 「UDP is not supported」后改走了 DIRECT，不是经节点通的。
-		p["udp"] = false
+		// 节点端的 Shadowsocks 同一端口 TCP、UDP 都听，udp 沿用上面的缺省 true
 
 	case "hysteria2":
 		p["type"] = "hysteria2"
@@ -147,7 +190,7 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "ss"
 		p["password"] = uuid
 		p["cipher"] = ssMethod(n.Config)
-		// ShadowTLS 只有 TCP，内层 Shadowsocks 也只听 TCP（同上）
+		// ShadowTLS 只承载 TCP，UDP 不经它走
 		p["udp"] = false
 		// plugin-opts 的字段名按 mihomo 的 shadowTLSOption（obfs: tag）核对：
 		// password / host / version / alpn 等，没有 enable —— 多给一个未知字段
@@ -186,6 +229,17 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 	default:
 		return nil, n.Type + " 在 Clash 里没有对应类型"
 	}
+	if !premium && len(n.ECHConfigList) > 0 {
+		switch n.Type {
+		case "vless", "vmess", "trojan":
+			o := parseStream(n, uuid)
+			if o.TLS && !o.Reality {
+				p["ech-opts"] = clashECHOpts(n.ECHConfigList)
+			}
+		case "anytls":
+			p["ech-opts"] = clashECHOpts(n.ECHConfigList)
+		}
+	}
 	return p, ""
 }
 
@@ -193,7 +247,12 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 // 代理，整份 YAML 加载失败，所以宁可少给。
 func clashPremiumUnsupported(n Node) string {
 	switch n.Type {
-	case "shadowsocks", "socks", "http":
+	case "shadowsocks":
+		if isSS2022(ssMethod(n.Config)) {
+			return "Clash Premium 不支持 Shadowsocks 2022"
+		}
+		return ""
+	case "socks", "http":
 		return ""
 	case "vmess", "trojan":
 		o := parseStream(n, "")
@@ -296,6 +355,14 @@ func setClashSNI(p map[string]any, nodeType, sni string) {
 	p["servername"] = sni
 }
 
+// clashECHOpts 是 mihomo 的 ech-opts：enable 与 ECHConfigList 的 base64。
+func clashECHOpts(list []byte) map[string]any {
+	return map[string]any{
+		"enable": true,
+		"config": base64.StdEncoding.EncodeToString(list),
+	}
+}
+
 // setClashTLSHints：hysteria2 / tuic / anytls 的 SNI 叫 sni。
 func setClashTLSHints(p map[string]any, h tlsHints) {
 	if h.SNI != "" {
@@ -312,32 +379,60 @@ func setClashTLSHints(p map[string]any, h tlsHints) {
 // 行内写法足以覆盖，省掉一个依赖。键排序是为了输出稳定 ——
 // map 遍历随机的话，同一份订阅每次拉取内容都不同，客户端会以为配置变了。
 func inlineYAML(m map[string]any) string {
+	var w yamlWriter
+	w.inline(m)
+	return w.b.String()
+}
+
+// yamlWriter 把行内 YAML 直接写进一个缓冲；q 是加引号用的暂存，免得每个字符串单独分配。
+type yamlWriter struct {
+	b strings.Builder
+	q []byte
+}
+
+func (w *yamlWriter) quote(s string) {
+	w.q = strconv.AppendQuote(w.q[:0], s)
+	w.b.Write(w.q)
+}
+
+func (w *yamlWriter) inline(m map[string]any) {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
-	// name / type / server / port 放前面，读起来更像人写的配置
-	sort.SliceStable(keys, func(i, j int) bool {
-		return yamlKeyRank(keys[i]) < yamlKeyRank(keys[j])
+	// name / type / server / port 放前面，读起来更像人写的配置；其余按键名排
+	slices.SortFunc(keys, func(a, b string) int {
+		if c := cmp.Compare(yamlKeyRank(a), yamlKeyRank(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
 	})
 
-	parts := make([]string, 0, len(m))
-	for _, k := range keys {
-		parts = append(parts, yamlKey(k)+": "+yamlValue(m[k]))
+	w.b.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			w.b.WriteString(", ")
+		}
+		if yamlPlainKey(k) {
+			w.b.WriteString(k)
+		} else {
+			w.quote(k)
+		}
+		w.b.WriteString(": ")
+		w.value(m[k])
 	}
-	return "{" + strings.Join(parts, ", ") + "}"
+	w.b.WriteByte('}')
 }
 
-// yamlKey 只给需要的键加引号（headers 里的 Host 等都是普通标识符）。
-func yamlKey(k string) string {
+// yamlPlainKey 报告键能否不加引号（headers 里的 Host 等都是普通标识符）。
+func yamlPlainKey(k string) bool {
 	for _, r := range k {
 		plain := r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
 		if !plain {
-			return strconv.Quote(k)
+			return false
 		}
 	}
-	return k
+	return true
 }
 
 func yamlKeyRank(k string) int {
@@ -355,27 +450,39 @@ func yamlKeyRank(k string) int {
 	}
 }
 
-func yamlValue(v any) string {
+func (w *yamlWriter) value(v any) {
 	switch t := v.(type) {
 	case string:
-		return strconv.Quote(t)
+		w.quote(t)
 	case bool:
-		return strconv.FormatBool(t)
+		w.b.WriteString(strconv.FormatBool(t))
 	case int:
-		return strconv.Itoa(t)
+		w.q = strconv.AppendInt(w.q[:0], int64(t), 10)
+		w.b.Write(w.q)
 	case []string:
-		return "[" + strings.Join(quoteAll(t), ", ") + "]"
+		w.b.WriteByte('[')
+		for i, s := range t {
+			if i > 0 {
+				w.b.WriteString(", ")
+			}
+			w.quote(s)
+		}
+		w.b.WriteByte(']')
 	case map[string]any:
-		return inlineYAML(t)
+		w.inline(t)
 	default:
-		return fmt.Sprintf("%q", fmt.Sprint(t))
+		w.b.WriteString(fmt.Sprintf("%q", fmt.Sprint(t)))
 	}
 }
 
-func quoteAll(items []string) []string {
-	out := make([]string, len(items))
+// joinQuoted 把名字逐个加引号、用 ", " 连起来（策略组的 proxies 列表）。
+func joinQuoted(items []string) string {
+	var w yamlWriter
 	for i, s := range items {
-		out[i] = strconv.Quote(s)
+		if i > 0 {
+			w.b.WriteString(", ")
+		}
+		w.quote(s)
 	}
-	return out
+	return w.b.String()
 }

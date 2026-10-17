@@ -8,13 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 券状态（库里可设的两种）。
-const (
-	CouponActive = "active"
-	CouponPaused = "paused"
-)
-
-// 占用状态。
+// 占用状态：repo 写库时用；service 用 service/types.go 里同值的常量。
 const (
 	RedemptionHeld     = "held"
 	RedemptionCaptured = "captured"
@@ -28,7 +22,6 @@ type Coupon struct {
 	Name                  string           `gorm:"column:name"`
 	AmountOff             *decimal.Decimal `gorm:"column:amount_off"`
 	PercentOffBP          *int64           `gorm:"column:percent_off_bp"`
-	Currency              string           `gorm:"column:currency"`
 	MaxDiscount           *decimal.Decimal `gorm:"column:max_discount"`
 	MinOrderAmount        decimal.Decimal  `gorm:"column:min_order_amount"`
 	MaxRedemptions        *int             `gorm:"column:max_redemptions"`
@@ -64,7 +57,6 @@ type Redemption struct {
 	OrderID        uuid.UUID       `gorm:"column:order_id;type:uuid"`
 	OrderNo        string          `gorm:"column:order_no"`
 	DiscountAmount decimal.Decimal `gorm:"column:discount_amount"`
-	Currency       string          `gorm:"column:currency"`
 	Status         string          `gorm:"column:status"`
 	ReleaseReason  *string         `gorm:"column:release_reason"`
 	CapturedAt     *time.Time      `gorm:"column:captured_at"`

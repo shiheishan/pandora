@@ -1,6 +1,6 @@
 package service
 
-// 订阅拉取的 PG 集成测试。走到 live 或过期提示的用例会调渲染（render 包），p4-render 合入前会 panic。
+// 订阅拉取的 PG 集成测试。
 
 import (
 	"bytes"
@@ -44,15 +44,15 @@ func TestPullOK(t *testing.T) {
 	}
 
 	setConsumed(t, de.env, ctx, sub.ID, MetricTraffic, PeriodCycle, 1*gib)
-	de.exec(t, ctx, `INSERT INTO traffic_pack_grants (user_id, subscription_id, source, source_id, granted_bytes)
-		VALUES (?, ?, 'admin', gen_random_uuid(), ?)`, sub.UserID, sub.ID, 2*gib)
+	de.exec(t, ctx, `UPDATE quota_balances SET bonus_value = ? WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		2*gib, sub.ID, MetricTraffic, PeriodCycle)
 
 	res2, err := pull(de, ctx, token, testPrefix)
 	if err != nil {
 		t.Fatalf("第二次拉取: %v", err)
 	}
 	if res2.Userinfo.Total != 12*gib || res2.Userinfo.Download != 1*gib {
-		t.Fatalf("Userinfo 含包与用量: %+v", res2.Userinfo)
+		t.Fatalf("Userinfo 含送的量与用量: %+v", res2.Userinfo)
 	}
 
 	var fetchCount int
@@ -80,6 +80,27 @@ func TestPullOK(t *testing.T) {
 	q := qs[len(qs)-1]
 	if q.SubscriptionID != sub.ID || q.UserID != sub.UserID || q.PlanVersionID != sub.PlanVersionID || q.UserGroupID != nil {
 		t.Fatalf("节点查询条件: %+v sub=%+v", q, sub)
+	}
+}
+
+// TestPullUsesOwnerGroup：线路按订阅主人的用户组取，组来自 Owners 的同一次读取
+// （替身 Users.UserGroupID 恒为 nil，查询条件里带上了组就说明没有另读）。
+func TestPullUsesOwnerGroup(t *testing.T) {
+	de, ctx, user, sub, token := setupPull(t)
+	group := uuid.New()
+	de.owners.setGroup(user, &group)
+	if _, err := pull(de, ctx, token, testPrefix); err != nil {
+		t.Fatalf("拉取: %v", err)
+	}
+	de.nodes.mu.Lock()
+	qs := de.nodes.queries
+	de.nodes.mu.Unlock()
+	if len(qs) == 0 {
+		t.Fatal("没有查线路")
+	}
+	q := qs[len(qs)-1]
+	if q.UserGroupID == nil || *q.UserGroupID != group || q.PlanVersionID != sub.PlanVersionID {
+		t.Fatalf("节点查询条件: %+v，期望组 %s", q, group)
 	}
 }
 

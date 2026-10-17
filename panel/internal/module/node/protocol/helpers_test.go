@@ -80,33 +80,14 @@ func TestHelperSchemasSortedAndMeta(t *testing.T) {
 }
 
 func TestHelperListenL4Constants(t *testing.T) {
-	if ListenTCP != "tcp" || ListenUDP != "udp" {
-		t.Fatalf("ListenTCP=%q ListenUDP=%q", ListenTCP, ListenUDP)
+	if ListenTCP != "tcp" || ListenUDP != "udp" || ListenTCPUDP != "tcp+udp" {
+		t.Fatalf("ListenTCP=%q ListenUDP=%q ListenTCPUDP=%q", ListenTCP, ListenUDP, ListenTCPUDP)
 	}
 }
 
 func TestHelperPortClaimLabel(t *testing.T) {
 	if got := PortClaimLabel(443, ListenTCP); got != "443/TCP" {
 		t.Fatalf("got %q", got)
-	}
-}
-
-// --- 2. EffectiveKernel ---
-
-func TestHelperEffectiveKernel(t *testing.T) {
-	cases := map[string]string{
-		"":               "auto",
-		"  ":             "auto",
-		"sing-box":       "auto",
-		"xray-core":      "auto",
-		"auto":           "auto",
-		"pandora-native": "pandora-native",
-		"foo":            "foo",
-	}
-	for in, want := range cases {
-		if got := EffectiveKernel(in); got != want {
-			t.Errorf("EffectiveKernel(%q)=%q want %q", in, got, want)
-		}
 	}
 }
 
@@ -519,29 +500,17 @@ func TestHelperNormalizedNetwork(t *testing.T) {
 	}
 }
 
-func TestHelperValidateKernelChoice(t *testing.T) {
-	fields := map[string]string{}
-	validateKernelChoice(fields, "")
-	validateKernelChoice(fields, "auto")
-	validateKernelChoice(fields, "pandora-native")
-	if len(fields) != 0 {
-		t.Fatalf("accepted: %#v", fields)
-	}
-	fields = map[string]string{}
-	validateKernelChoice(fields, "sing-box")
-	if fields["kernel"] != kernelFieldMessage {
-		t.Fatalf("legacy write: %#v", fields)
-	}
-}
-
 // --- 10. listenL4 补 ---
 
 func TestHelperListenL4Hy2SSNil(t *testing.T) {
 	if ListenL4("hy2", nil) != ListenUDP {
 		t.Fatal("hy2")
 	}
-	if ListenL4("ss", json.RawMessage(`{"network":"udp"}`)) != ListenUDP {
-		t.Fatal("ss udp")
+	if ListenL4("ss", json.RawMessage(`{"network":"udp"}`)) != ListenTCPUDP {
+		t.Fatal("ss tcp+udp")
+	}
+	if ListenL4("shadowsocks", nil) != ListenTCPUDP {
+		t.Fatal("shadowsocks nil")
 	}
 	if ListenL4("vless", nil) != ListenTCP {
 		t.Fatal("nil raw")

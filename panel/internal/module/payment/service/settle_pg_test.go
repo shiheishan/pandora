@@ -10,15 +10,14 @@ import (
 
 	ledgersvc "github.com/aegispanel/aegis/internal/module/ledger/service"
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/google/uuid"
 )
 
 // 验签失败的回调只留白名单字段，每个字段截断，总量不超过 2 KiB。
 func TestWebhookUnverifiedEvidenceWhitelisted(t *testing.T) {
 	e, ctx := newEnv(t)
-	code := "demo-ev-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-ev-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 
 	huge := strings.Repeat("x", 5000)
 	body, _ := json.Marshal(map[string]any{
@@ -27,7 +26,6 @@ func TestWebhookUnverifiedEvidenceWhitelisted(t *testing.T) {
 		"payment_id": "pay-" + huge,
 		"order_no":   "ORD-" + huge,
 		"amount":     990,
-		"currency":   "CNY",
 		"raw": map[string]any{
 			"out_trade_no": "T" + huge,
 			"trade_status": "TRADE_SUCCESS",
@@ -78,14 +76,14 @@ WHERE p.code = ? AND NOT e.signature_verified`, code).Scan(&raw, &size); err != 
 	}
 }
 
-// 回调卡在 Settler 等订单锁时，另一个事务先锁住订单再调 CreateIntent：不能死锁。
+// 回调卡在 Settler 等订单锁时，另一个事务先锁住订单再调 BeginIntent：不能死锁。
 // 回调事务插 payments 时外键检查对意图行加了 KEY SHARE；LockActiveIntent 用 NO KEY UPDATE 与它兼容。
 // 订单锁用 advisory 锁模拟。
 func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
-	code := "demo-dl-" + uuid.New().String()[:8]
-	_ = e.mkDemoProvider(t, ctx, code)
+	code := "fake-dl-" + uuid.New().String()[:8]
+	_ = e.mkFakeProvider(t, ctx, code)
 	orderID, orderNo := e.mkOrder(t, ctx, user)
 	intent := e.createIntent(t, ctx, code, orderID, orderNo, user, "9.90")
 	orderLock := "order:" + orderID.String()
@@ -108,6 +106,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	bGo := make(chan struct{})
 	bDone := make(chan error, 1)
 	var bRes IntentResult
+	var bDraft IntentDraft
 	go func() {
 		bDone <- e.txm.Do(ctx, func(ctx context.Context) error {
 			if err := e.exec(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, orderLock); err != nil {
@@ -121,12 +120,11 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 				return ctx.Err()
 			}
 			var err error
-			bRes, err = e.svc.CreateIntent(ctx, CreateIntentInput{
+			bDraft, err = e.svc.BeginIntent(ctx, CreateIntentInput{
 				OrderID:      orderID,
 				OrderNo:      orderNo,
 				UserID:       user,
 				Amount:       dec("9.90"),
-				Currency:     money.CNY,
 				ProviderCode: code,
 				Title:        "测试订单",
 				ClientIP:     "203.0.113.1",
@@ -140,7 +138,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	var aAck provider.AckOutput
 	go func() {
 		var err error
-		aAck, err = e.svc.HandleWebhook(ctx, code, demoInbound("evt-dl-1", "payment.succeeded", "pay-dl-1", intent.OutTradeNo, 990))
+		aAck, err = e.svc.HandleWebhook(ctx, code, fakeInbound("evt-dl-1", "payment.succeeded", "pay-dl-1", intent.OutTradeNo, 990))
 		aDone <- err
 	}()
 
@@ -154,7 +152,11 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 	close(bGo)
 
 	if err := <-bDone; err != nil {
-		t.Fatalf("锁订单后 CreateIntent 失败（死锁？）: %v", err)
+		t.Fatalf("锁订单后 BeginIntent 失败（死锁？）: %v", err)
+	}
+	bRes, completeErr := e.svc.CompleteIntent(ctx, bDraft)
+	if completeErr != nil {
+		t.Fatalf("CompleteIntent: %v", completeErr)
 	}
 	if err := <-aDone; err != nil {
 		t.Fatalf("回调失败（死锁？）: %v", err)
@@ -163,7 +165,7 @@ func TestWebhookSettleVsCreateIntentNoDeadlock(t *testing.T) {
 		t.Fatalf("回调应 200: %d %s", aAck.HTTPStatus, string(aAck.Body))
 	}
 	if bRes.OutTradeNo == "" {
-		t.Fatal("CreateIntent 应返回意图")
+		t.Fatal("BeginIntent/CompleteIntent 应返回意图")
 	}
 	if e.count(t, ctx, `SELECT count(*) FROM payments WHERE order_id = ?`, orderID) != 1 {
 		t.Fatal("应入账 1 笔")

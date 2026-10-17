@@ -9,16 +9,18 @@ import (
 
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
-	"github.com/aegispanel/aegis/internal/pkg/money"
 )
 
-// 订单种类（库里 CHECK 同一集合）。KindUpgrade 是换套餐（升级与降级都用它，方向由金额决定）。
+// 订单种类（库里 CHECK 同一集合）。KindUpgrade 是换套餐（升级与降级、跨类型「换掉」都用它，方向由金额决定）。
 const (
 	KindNew     = "new"
 	KindRenewal = "renewal"
-	KindAddon   = "addon"
 	KindTopup   = "topup"
 	KindUpgrade = "upgrade"
+	// KindStack 是一次性套餐再买同一个、选「叠加到这一份」：总流量加上、天数顺延（subscription.Stack）
+	KindStack = "stack"
+	// KindTrafficReset 是用户自己买的「流量重置」：付款后把目标订阅当期已用流量清零（xb-order #32）
+	KindTrafficReset = "traffic_reset"
 )
 
 // 订单状态：库里只写这五种。StatusPaid 只在结算事务内短暂出现（随后同一事务转 fulfilled）。
@@ -30,11 +32,9 @@ const (
 	StatusExpired   = "expired"
 )
 
-// FilterStatuses 是列表筛选接受的状态（前端 ORDER_STATUSES 全集）：其中 draft、processing、
-// partially_refunded、refunded 库里不会有，筛它们得到空列表；不在这里的回 400。
+// FilterStatuses 是列表筛选接受的状态（前端 ORDER_STATUSES 全集，即库里的 5 态）；不在这里的回 400。
 var FilterStatuses = []string{
-	"draft", StatusPending, "processing", StatusPaid, StatusFulfilled,
-	StatusCancelled, StatusExpired, "partially_refunded", "refunded",
+	StatusPending, StatusPaid, StatusFulfilled, StatusCancelled, StatusExpired,
 }
 
 // 预留状态。
@@ -44,11 +44,10 @@ const (
 	ReservationReleased = "released"
 )
 
-// 预留流水的事件种类。
+// 预留流水的事件种类。释放只有超时（expire）与取消（cancel）两条路。
 const (
 	EventReserve = "reserve"
 	EventCapture = "capture"
-	EventRelease = "release"
 	EventExpire  = "expire"
 	EventCancel  = "cancel"
 )
@@ -63,11 +62,13 @@ const (
 
 // 取消、超时的原因：都写进预留的 release_reason；只有取消写订单的 cancel_reason（超时不写）。
 const (
-	ReasonUserCancelled = "user_cancelled"
-	ReasonExpired       = "expired"
+	ReasonUserCancelled  = "user_cancelled"
+	ReasonExpired        = "expired"
+	ReasonAccountDeleted = "account_deleted" // 后台注销账号时一并取消（CancelUserPending）
+	ReasonPlanArchived   = "plan_archived"   // 套餐归档后才到账：不开通，钱转余额，订单关掉（CloseArchivedOrder）
 )
 
-// 审计动作名（沿用旧代码）与资源类型。
+// 审计动作名与资源类型。
 const (
 	ActionOrderCreated      = "order.created"
 	ActionRenewalCreated    = "subscription.renewal_created"
@@ -81,7 +82,7 @@ const (
 	ResourceOrder           = "order"
 )
 
-// 时间与金额口径（与旧代码一致）。
+// 时间与金额口径。
 const (
 	// PaymentWindow 是建单到付款期限的时长。
 	PaymentWindow = 30 * time.Minute
@@ -95,31 +96,45 @@ const (
 	// ExpireBatchDefault、ExpireBatchMax 是超时释放一轮处理的订单数。
 	ExpireBatchDefault = 50
 	ExpireBatchMax     = 500
-	// maxQuoteRows 是换套餐报价最多展开的订阅数与目标套餐数（旧代码同值）。
+	// maxQuoteRows 是换套餐报价最多展开的订阅数与目标套餐数。
 	maxQuoteRows = 20
 	// referenceMaxRunes 是线下凭证号的最大字数。
 	referenceMaxRunes = 128
 )
 
-// 对外的固定错误（文案沿用旧代码）。同一个变量只读共享，调用方可以 errors.Is 比较。
+// 对外的固定错误。同一个变量只读共享，调用方可以 errors.Is 比较。
 var (
 	ErrNotFound           = errs.New(errs.NotFound)
 	ErrSamePlanUseRenewal = errs.Newf(errs.Conflict, "你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变")
-	ErrPurchaseLimit      = errs.Newf(errs.Conflict, "已达到该套餐的限购次数")
-	ErrOpenChange         = errs.Newf(errs.Conflict, "这条订阅还有未完成的续费或变更套餐订单，请先支付或取消")
-	ErrQuoteChanged       = errs.Newf(errs.QuoteChanged, "金额刚变了，请再确认一次")
-	ErrBelowMinimum       = errs.Newf(errs.ValidationFailed, "应付金额低于支付渠道的最低付款额，请先充值或使用余额支付")
-	ErrAlreadyPaid        = errs.Newf(errs.Conflict, "订单已支付，不能取消")
-	ErrStateChanged       = errs.Newf(errs.Conflict, "订单状态已变化，请刷新后再操作")
-	ErrNotPayable         = errs.Newf(errs.Conflict, "该订单当前状态不可支付")
+	// ErrSamePlanUseStack 是一次性套餐已有同一个、没选「另开一份」：让用户选叠加到原来那一份还是另开一份
+	ErrSamePlanUseStack = errs.Newf(errs.Conflict, "你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份")
+	ErrOpenChange       = errs.Newf(errs.Conflict, "这份套餐还有未完成的续费、叠加或换套餐订单，请先付款或取消")
+	ErrQuoteChanged     = errs.Newf(errs.QuoteChanged, "金额刚变了，请再确认一次")
+	ErrBelowMinimum     = errs.Newf(errs.ValidationFailed, "应付金额低于支付渠道的最低付款额，请先充值或使用余额支付")
+	ErrAlreadyPaid      = errs.Newf(errs.Conflict, "订单已支付，不能取消")
+	ErrStateChanged     = errs.Newf(errs.Conflict, "订单状态已变化，请刷新后再操作")
+	ErrNotPayable       = errs.Newf(errs.Conflict, "该订单当前状态不可支付")
+	// ErrPlanRetired 是订单行套餐已归档（归档前下的待付单）：不再发起付款。
+	// 用 order_lapsed（409，「这张单不能再付、只能取消」）而不是普通 conflict：
+	// 门户对普通 409 会刷新订单、仍待付就报「被新的发起取代」，盖掉这句话；
+	// fields.reason 让门户把按钮写成「取消这张订单」而不是「重新下单」。Fields 只读共享。
+	ErrPlanRetired        = &errs.Error{Code: errs.OrderLapsed, Message: "套餐已停售，不能再付款，可以取消这张订单", Fields: map[string]string{"reason": "plan_archived"}}
 	ErrNoExternalPayment  = errs.Newf(errs.Conflict, "该订单无需外部支付")
 	ErrPaymentLapsed      = errs.Newf(errs.OrderLapsed, "这张订单已超过付款期限，请取消后重新下单")
 	ErrMarkPaidZero       = errs.Newf(errs.Conflict, "这张订单不需要支付")
 	ErrUnknownStatus      = errs.Newf(errs.BadRequest, "不支持的订单状态")
-	ErrPlanChangeSamePlan = errs.Newf(errs.Conflict, "与当前套餐相同，请使用续费")
-	ErrPlanChangeCurrency = errs.Newf(errs.Conflict, "变更套餐不能更换币种")
-	// errProrationMixedCurrency：不同币种的钱加不到一起，也就没有「剩余价值」可言
-	errProrationMixedCurrency = errs.Newf(errs.Conflict, "这条订阅本周期的付费订单币种不一致，无法折算")
+	ErrPlanChangeSamePlan = errs.Newf(errs.Conflict, "与当前套餐相同，请使用续费或叠加")
+	// ErrResetNotSold 是这份订阅的套餐不卖流量重置（Plan.ResetPrice 为空）
+	ErrResetNotSold = errs.Newf(errs.Conflict, "这个套餐不提供流量重置")
+	// ErrResetLimitReached、ErrResetLimitReachedOneTime 是本周期（订阅套餐）或有效期内（一次性套餐）的付费重置次数已到套餐上限。
+	// 对外码是 conflict，fields.reason = reset_limit_reached 供前端区分
+	ErrResetLimitReached = &errs.Error{Code: errs.Conflict, Message: "本周期的流量重置次数已用完",
+		Fields: map[string]string{"reason": "reset_limit_reached"}}
+	ErrResetLimitReachedOneTime = &errs.Error{Code: errs.Conflict, Message: "有效期内的流量重置次数已用完",
+		Fields: map[string]string{"reason": "reset_limit_reached"}}
+	// ErrResetPeriodSwitching 是作依据的限额流量配额这一期已结束、滚动任务还没把它推到下一期（至多约 10 分钟）：
+	// 这时清的是已结束那一期的用量，不卖。报价也回它（不是空数组），门户据此提示稍后再来。文案避开门户禁用词「周期」
+	ErrResetPeriodSwitching = errs.Newf(errs.Conflict, "本期流量刚结束，正在换到下一期，请几分钟后再来重置")
 	// errManualBelowMinimum 是后台待支付单应付低于最低额：用户付不了。带 fields.settlement，后台据它落到「结算方式」上
 	errManualBelowMinimum = &errs.Error{Code: errs.ValidationFailed, Message: manualBelowMinimumMessage,
 		Fields: map[string]string{"settlement": manualBelowMinimumMessage}}
@@ -156,14 +171,14 @@ type Checkout struct {
 // Created 是建单的结果（门户 201 响应的内容）。Status 为 pending_payment，或零元单、线下已收款当场履约后的 fulfilled。
 // Total 是免掉零头之后的订单总额（与库里 total_amount 一致）。Change 只在换套餐单上非 nil。
 type Created struct {
-	OrderID        uuid.UUID
-	OrderNo        string
-	Currency       money.Currency
-	Total          decimal.Decimal
+	OrderID uuid.UUID
+	OrderNo string
+	Total   decimal.Decimal
+	// Discount 是券折扣（人工赠送是全额，与库里 discount_amount 一致）
 	Discount       decimal.Decimal
 	BalanceApplied decimal.Decimal
 	Payable        decimal.Decimal
-	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 照旧含它
+	// Waived 是免掉的零头（只有门户换套餐会有）；对外的 discount_amount 也含它
 	Waived decimal.Decimal
 	Status string
 	Change *ChangeAmounts
@@ -183,7 +198,7 @@ type CreatedReply func(Created) (idemsvc.Response, error)
 type NewOrderInput struct {
 	PlanID  uuid.UUID
 	PriceID uuid.UUID
-	// NewCopy 为真是「另买一份」：已有可续的同款也照样新开
+	// NewCopy 为真是「另买一份」：已有可续的同款订阅套餐、或可叠加的同款一次性套餐，也照样新开
 	NewCopy bool
 	// Label 是新那一份的备注名（规范化见 subscription.NormalizeLabel）
 	Label string
@@ -191,7 +206,7 @@ type NewOrderInput struct {
 	Reply CreatedReply
 }
 
-// RenewalOrderInput 是门户续费（POST /v1/me/subscriptions/{id}/renew）。
+// RenewalOrderInput 是门户续费（POST /v1/me/subscriptions/{id}/renew）。只许订阅套餐。
 type RenewalOrderInput struct {
 	SubscriptionID uuid.UUID
 	// PriceID 为 nil 时续订阅当前的价格档
@@ -200,33 +215,39 @@ type RenewalOrderInput struct {
 	Reply CreatedReply
 }
 
-// PackOrderInput 是门户流量包下单（POST /v1/me/traffic-pack-orders）。
-type PackOrderInput struct {
-	PackID         uuid.UUID
+// StackOrderInput 是门户叠加（POST /v1/me/subscriptions/{id}/stack）：一次性套餐再买同一个，加到这一份上。
+type StackOrderInput struct {
+	SubscriptionID uuid.UUID
+	// PriceID 为 nil 时取这个套餐当前唯一的在售价
+	PriceID *uuid.UUID
+	Checkout
+	Reply CreatedReply
+}
+
+// ResetOrderInput 是门户买流量重置（POST /v1/me/subscriptions/{id}/traffic-reset）。
+type ResetOrderInput struct {
 	SubscriptionID uuid.UUID
 	Checkout
 	Reply CreatedReply
 }
 
-// TopupInput 是门户充值（POST /v1/me/topups）。Currency 为空时取 CNY（旧代码口径）。
+// TopupInput 是门户充值（POST /v1/me/topups）。
 type TopupInput struct {
-	Amount   decimal.Decimal
-	Currency money.Currency
-	Reply    TopupReply
+	Amount decimal.Decimal
+	Reply  TopupReply
 }
 
 // TopupCreated 是充值建单的结果。
 type TopupCreated struct {
-	OrderID  uuid.UUID
-	OrderNo  string
-	Amount   decimal.Decimal
-	Currency money.Currency
+	OrderID uuid.UUID
+	OrderNo string
+	Amount  decimal.Decimal
 }
 
 // TopupReply 同 CreatedReply，用于充值。
 type TopupReply func(TopupCreated) (idemsvc.Response, error)
 
-// BalancePlan 是一单用多少余额、还要在线付多少（旧 purchase.Balance 的 decimal 版）。
+// BalancePlan 是一单用多少余额、还要在线付多少。
 type BalancePlan struct {
 	// Applied 用掉的余额
 	Applied decimal.Decimal
@@ -236,7 +257,7 @@ type BalancePlan struct {
 	Kept decimal.Decimal
 	// Forced 应付本身低于最低额且余额够付：只能全用余额付
 	Forced bool
-	// BelowMinimum 应付低于最低额、用尽余额仍付不了（旧 Short）；只有换套餐零头能免
+	// BelowMinimum 应付低于最低额、用尽余额仍付不了；只有换套餐零头能免
 	BelowMinimum bool
 	// SmallDue 剩下的零头已免掉（只有换套餐）
 	SmallDue bool
@@ -244,48 +265,51 @@ type BalancePlan struct {
 	Waived decimal.Decimal
 }
 
-// QuoteInput 是门户统一报价（POST /v1/me/checkout/quote）。Action 取 new、renew、pack；change 第二期才支持。
+// QuoteInput 是门户统一报价（POST /v1/me/checkout/quote）。Action 取 new、renew、stack、change、reset
+// （renew、stack、reset 要 SubscriptionID）。
 type QuoteInput struct {
 	Action         string
 	SubscriptionID *uuid.UUID
 	PlanID         *uuid.UUID
-	PackID         *uuid.UUID
 	CouponCode     string
 	NewCopy        bool
 }
 
 // 报价动作。
 const (
-	QuoteNew    = "new"
-	QuoteRenew  = "renew"
-	QuotePack   = "pack"
+	QuoteNew   = "new"
+	QuoteRenew = "renew"
+	// QuoteStack 是一次性套餐叠加到这一份：一条（套餐唯一的在售价），期末按 subscription.StackEnd 算
+	QuoteStack  = "stack"
 	QuoteChange = "change"
+	// QuoteReset 是买流量重置：这份订阅不卖重置时 Quotes 为空
+	QuoteReset = "reset"
 )
 
 // QuoteResult 是报价响应：Balance 是报价时的可用余额，MinPayment 是能在线付的最低额。
 type QuoteResult struct {
 	AsOf       time.Time
-	Currency   money.Currency
 	Balance    decimal.Decimal
 	MinPayment decimal.Decimal
 	Quotes     []Quote
 }
 
-// Quote 是一条报价：一个（订阅，套餐或流量包，价格档）组合。
+// Quote 是一条报价：一个（订阅，套餐，价格档）组合。
 type Quote struct {
 	SubscriptionID *uuid.UUID
 	PlanID         *uuid.UUID
-	PackID         *uuid.UUID
 	PriceID        *uuid.UUID
-	Currency       money.Currency
 	Interval       string
 	IntervalCount  int
-	Subtotal       decimal.Decimal
-	Discount       decimal.Decimal
+	// ValidityDays 是一次性价的有效天数（nil = 永久，订阅价也为 nil）
+	ValidityDays *int
+	Subtotal     decimal.Decimal
+	// Discount 是券折扣
+	Discount decimal.Decimal
 	// CouponCode 是生效的优惠码；CouponError 是优惠码不能用的中文原因（不让整个报价失败）
 	CouponCode  *string
 	CouponError *string
-	// Credit 是换套餐时原套餐剩余价值（其余动作为 0）；CreditDetail 是「怎么算的」，只有换套餐且原订阅有周期时非 nil
+	// Credit 是换套餐时原套餐剩余价值（其余动作为 0）；CreditDetail 是「怎么算的」，只有换套餐时非 nil
 	Credit         decimal.Decimal
 	CreditDetail   *CreditDetail
 	Total          decimal.Decimal
@@ -363,7 +387,6 @@ type OrderRow struct {
 	UserID            uuid.UUID
 	Kind              string
 	Status            string
-	Currency          money.Currency
 	Subtotal          decimal.Decimal
 	Discount          decimal.Decimal
 	ProrationCredit   decimal.Decimal
@@ -394,18 +417,15 @@ type ItemRow struct {
 	PriceID       *uuid.UUID
 	PlanID        *uuid.UUID
 	PlanVersionID *uuid.UUID
-	TrafficPackID *uuid.UUID
 	Name          string
 	PlanVersion   *int
 	Interval      *string
 	IntervalCount *int
-	TrafficBytes  *int64
 	Entitlements  string
 	Quotas        string
 	Quantity      int
 	UnitAmount    decimal.Decimal
 	LineAmount    decimal.Decimal
-	Currency      money.Currency
 	CreatedAt     time.Time
 }
 
@@ -433,9 +453,9 @@ type MyOrderView struct {
 }
 
 // MyOrderCounts 是「我的订单」顶部的分组计数（按全部订单，不受状态筛选影响）：
-// Open 待支付，Paid 已支付或已履约，Closed 已取消或已过期，Refunded 恒为 0（Q2 不做退款）。
+// Open 待支付，Paid 已支付或已履约，Closed 已取消或已过期。
 type MyOrderCounts struct {
-	Open, Paid, Closed, Refunded int64
+	Open, Paid, Closed int64
 }
 
 // MyOrderList 是「我的订单」的一页。
@@ -449,7 +469,6 @@ type MyOrderList struct {
 type PaymentLine struct {
 	Status       string
 	Amount       decimal.Decimal
-	Currency     money.Currency
 	CreatedAt    time.Time
 	Method       *string
 	ProviderName string
@@ -462,6 +481,9 @@ type MyOrderDetail struct {
 	Payments              []PaymentLine
 	CouponCode            *string
 	SubscriptionPeriodEnd *time.Time
+	// SurchargeKept 是套餐归档转余额（cancel_reason=plan_archived）时扣下不退的支付手续费合计；
+	// 其余订单为 0。门户据此决定写「付的钱已转入」还是「应付金额已转入（手续费不退）」。
+	SurchargeKept decimal.Decimal
 }
 
 // AdminOrderView 是后台订单列表的一行。
@@ -475,6 +497,8 @@ type AdminOrderView struct {
 	Manual        bool
 	ProviderCode  *string
 	ProviderName  *string
+	// Method 是成功那笔收款的支付方式（payment 的支付摘要给）；没有收款为 nil
+	Method *string
 }
 
 // AdminOrderList 是后台订单列表的一页。
@@ -496,7 +520,6 @@ type PaidOrder struct {
 	OrderNo   string
 	UserID    uuid.UUID
 	Kind      string
-	Currency  money.Currency
 	Total     decimal.Decimal
 	Paid      decimal.Decimal
 	PaidAt    time.Time
@@ -504,12 +527,35 @@ type PaidOrder struct {
 }
 
 // PaidHook 是结算成功后的可选回调（commission 在第四波实现）。在结算事务里调用：返回错误整笔结算回滚。
-// 调用时机沿用旧代码计佣的口径：只在收款结算（SettlePayment：渠道到账、后台标记已付）把订单转为 paid 时调用，
-// 且 Kind 不是 topup、Total > 0。零应付的单（余额全额付、全额折扣）建单时当场履约，旧代码不计佣，这里也不调用。
+// 调用时机：只在收款结算（SettlePayment：渠道到账、后台标记已付）把订单转为 paid 时调用，
+// 且 Kind 不是 topup、Total > 0。零应付的单（余额全额付、全额折扣）建单时当场履约，不计佣（产品决定），这里也不调用。
 //
 // 锁序约定：调用时本事务已持有订单、目标订阅、套餐 / 券与本单的账务科目（含平台收入科目 platform_revenue）。
 // 实现方（commission）要锁的科目（推荐人余额、佣金科目等）必须排在平台收入科目之后锁，
 // 不得先锁自己的科目再等平台收入，也不得回头锁套餐、券、订阅，否则会与别的结算成环（40P01）。
 type PaidHook interface {
 	OnOrderPaid(ctx context.Context, o PaidOrder) error
+}
+
+// 落点（GET /v1/me/checkout/landings?plan_id=）：买某个套餐时这单能落到哪里，由用户选。
+const (
+	// LandingNew 是新开一份（POST /orders；已有同款时带 new_copy）
+	LandingNew = "new"
+	// LandingRenew 是续到同款订阅套餐的那一份（POST /me/subscriptions/{id}/renew）
+	LandingRenew = "renew"
+	// LandingStack 是叠加到同款一次性套餐的那一份（POST /me/subscriptions/{id}/stack）
+	LandingStack = "stack"
+	// LandingChange 是换掉另一份（POST /me/subscriptions/{id}/change-plan，带抵扣）
+	LandingChange = "change"
+)
+
+// Landing 是一个落点选项。SubscriptionID 只在 renew、stack、change 时非 nil。
+type Landing struct {
+	Mode           string
+	SubscriptionID *uuid.UUID
+}
+
+// Landings 是买 planID 的全部落点：new 恒在最前；同款订阅套餐给 renew，同款一次性套餐给 stack，别的未停用的给 change。
+type Landings struct {
+	Options []Landing
 }

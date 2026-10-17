@@ -77,6 +77,29 @@ func (s *Service) Evaluate(ctx context.Context, code string, t Target) (*Applied
 	return s.apply(ctx, c, t)
 }
 
+// Lock 在调用方的建单事务里先把券行锁住（SELECT … FOR UPDATE），order 在插订单之前调。
+// 原因（防 40P01）：订单的 coupon_id 外键检查会对券行加 FOR KEY SHARE；若先插订单、再由 Reserve 把券行锁成 FOR UPDATE，
+// 两个用同一张券并发建单的事务会各拿着 KEY SHARE 等对方放（锁升级死锁）。先锁券，同券建单就在这里排队。
+// 码为空时什么都不做；字符集外或券不存在时直接回 ErrCouponNotFound（与 Evaluate 同一个错误），
+// 免得锁时没有、随后 Evaluate 却读到刚建的券，又回到先 KEY SHARE 后升级的顺序。
+func (s *Service) Lock(ctx context.Context, code string) error {
+	code = NormalizeCode(code)
+	if code == "" {
+		return nil
+	}
+	if !validCode(code) {
+		return ErrCouponNotFound
+	}
+	_, ok, err := s.repo.LockCouponByCode(ctx, code)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrCouponNotFound
+	}
+	return nil
+}
+
 // Reserve 在下单事务里占用一张券。
 func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef) (*Applied, error) {
 	code = NormalizeCode(code)
@@ -114,8 +137,7 @@ func (s *Service) Reserve(ctx context.Context, code string, t Target, o OrderRef
 			OrderID:        o.ID,
 			OrderNo:        strings.TrimSpace(o.No),
 			DiscountAmount: a.Discount,
-			Currency:       c.Currency,
-			Status:         model.RedemptionHeld,
+			Status:         RedemptionHeld,
 		})
 		if err != nil {
 			return err
@@ -161,7 +183,7 @@ func (s *Service) Release(ctx context.Context, orderID uuid.UUID, reason string)
 		if !CanTransition(RedemptionHeld, RedemptionReleased) {
 			return errs.Wrap(errs.Internal, errors.New("promo: 非法占用状态转换"))
 		}
-		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, model.RedemptionReleased, reasonPtr)
+		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, RedemptionReleased, reasonPtr)
 		if err != nil {
 			return err
 		}
@@ -185,7 +207,7 @@ func (s *Service) Capture(ctx context.Context, orderID uuid.UUID) error {
 		if !CanTransition(RedemptionHeld, RedemptionCaptured) {
 			return errs.Wrap(errs.Internal, errors.New("promo: 非法占用状态转换"))
 		}
-		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, model.RedemptionCaptured, nil)
+		couponID, ok, err := s.repo.FinishHeld(ctx, orderID, RedemptionCaptured, nil)
 		if err != nil {
 			return err
 		}
@@ -208,7 +230,7 @@ func (s *Service) Codes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]str
 	return s.repo.CouponCodes(ctx, ids)
 }
 
-// Preview 门户试算套餐或流量包应付金额。
+// Preview 门户试算套餐应付金额。
 func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, item PreviewItem) (Preview, error) {
 	if c := NormalizeCode(code); c != "" && !validCode(c) {
 		return Preview{}, ErrCouponNotFound
@@ -218,28 +240,15 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 		return Preview{}, err
 	}
 
-	var planID *uuid.UUID
-	var cur string
-	var amt decimal.Decimal
-
-	if item.PackID != nil {
-		cur, amt, err = cat.PackSubtotal(ctx, *item.PackID)
-		planID = nil
-	} else {
-		if item.PlanID == nil || item.PriceID == nil {
-			return Preview{}, errs.New(errs.NotFound)
-		}
-		cur, amt, err = cat.PriceSubtotal(ctx, *item.PlanID, *item.PriceID)
-		planID = item.PlanID
-	}
+	amt, err := cat.PriceSubtotal(ctx, item.PlanID, item.PriceID)
 	if err != nil {
 		return Preview{}, err
 	}
 
+	planID := item.PlanID
 	applied, err := s.Evaluate(ctx, code, Target{
 		UserID:   userID,
-		PlanID:   planID,
-		Currency: cur,
+		PlanID:   &planID,
 		Subtotal: amt,
 	})
 	if err != nil {
@@ -254,7 +263,6 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, it
 		Subtotal: amt,
 		Discount: discount,
 		Payable:  amt.Sub(discount),
-		Currency: cur,
 		Applied:  applied,
 	}, nil
 }

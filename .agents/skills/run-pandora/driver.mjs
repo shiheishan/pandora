@@ -22,8 +22,8 @@ mkdirSync(out, { recursive: true })
 const cmd = args[0] ?? 'shots'
 
 const APPS = {
-  admin: { port: 5182, mode: 'dev:admin', email: 'admin@pandora.dev', pages: ['', '#/users', '#/nodes'] },
-  portal: { port: 5181, mode: 'dev:portal', email: 'user@pandora.dev', pages: ['', '#/plans'] },
+  admin: { port: 5182, mode: 'dev:admin', email: 'admin@example.test', pages: ['', '#/users', '#/nodes'] },
+  portal: { port: 5181, mode: 'dev:portal', email: 'user@example.test', pages: ['', '#/plans'] },
 }
 const PASS = 'pandora-dev-pass'
 

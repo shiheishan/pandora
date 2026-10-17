@@ -4,7 +4,7 @@ package service
 //
 // 读 E2E_OUT/fixtures_index.json，对每个夹具调用 buildNodeConfigDoc，写出 node_config.json 与
 // node_config_errors.json。这是面板经 gRPC 下发给节点的配置文档（协议字段经 KernelConfig 摊平，
-// 加 server_port、kernel、protocol）；节点端原样当 InboundConfig.Raw。无路由层（layers 传 nil）。
+// 加 server_port、protocol）；节点端原样当 InboundConfig.Raw。无路由层（layers 传 nil）。
 // 依赖 buildNodeConfigDoc、NodeConfigDoc。
 
 import (
@@ -36,7 +36,7 @@ func TestE2ENodeConfig(t *testing.T) {
 	res := map[string]json.RawMessage{}
 	errs := map[string]string{}
 	for id, f := range fx {
-		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, "pandora-native", string(f.Config), nil)
+		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, string(f.Config), nil, nil, e2ePSK{})
 		if err != nil {
 			errs[id] = err.Error()
 			continue
@@ -61,4 +61,16 @@ func e2eWriteNodeConfig(t *testing.T, path string, body []byte) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// e2ePSK 是 E2E 用的固定 SS2022 服务端密钥：第 i 字节 = i+1，与渲染 overlay 的 e2eSS2022Password 同值，
+// 这样订阅里的 iPSK 与下发给节点的对得上（真实环境由主密钥按节点 HKDF 派生）。
+type e2ePSK struct{}
+
+func (e2ePSK) Derive(_ string, n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(i + 1)
+	}
+	return b
 }

@@ -1,6 +1,6 @@
 package service
 
-// 本文件归 p5-inventory：服务器与节点后台编排的对外类型与共用的错误构造。
+// 服务器与节点后台编排的对外类型与共用的错误构造。
 // 对外方法的参数与返回值只用这里的类型，不暴露 model。
 
 import (
@@ -103,7 +103,6 @@ type ServerNode struct {
 	DisplayName       *string
 	ServerHost        *string
 	ServerPort        *int
-	Kernel            string
 	TrafficRate       decimal.Decimal
 	ConfigValidatedAt *time.Time
 	// LastHeartbeatAt 取所在服务器的心跳（心跳是服务器级的）
@@ -127,7 +126,6 @@ type AdminNode struct {
 	NodeType              *string
 	ServerHost            *string
 	ServerPort            *int
-	Kernel                string
 	TrafficRate           decimal.Decimal
 	DisplayName           *string
 	CountryCode           *string
@@ -137,11 +135,28 @@ type AdminNode struct {
 	SortOrder             int
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+	// Tags 是规范化后的标签，永不为 nil
+	Tags []string
+	// Traffic 是每周期流量上限与本周期用量
+	Traffic NodeTrafficLimit
+	// RateSchedule 是时段倍率（按开始时刻升序），永不为 nil
+	RateSchedule []RateRangeInput
 	// Warnings 是只提示、不拒绝的说明（保留端口、存量协议不满足现行规则、上线后不服务任何人）；没有时为 nil
 	Warnings []string
 }
 
+// NodeTrafficLimit 是节点的每周期流量上限与本周期用量（迁移 00045）。LimitBytes 为 nil 不限；ResetDay 为 nil 不自动重置；
+// UsedBytes 是本周期实际字节（不乘倍率）；ResetAt 是本周期用量起算时刻；ExceededAt 非空 = 已超限、停止下发。
+type NodeTrafficLimit struct {
+	LimitBytes *int64
+	ResetDay   *int
+	UsedBytes  int64
+	ResetAt    time.Time
+	ExceededAt *time.Time
+}
+
 // NodeInput 是新建节点的输入。TrafficRate 为 nil 取 1.00；PoolID 为 nil 不划池。
+// Tags、TrafficLimitBytes、TrafficResetDay、TrafficRateSchedule 都可不给（没有标签、不限、不自动重置、没有时段倍率）。
 type NodeInput struct {
 	Name           string
 	ServerID       uuid.UUID
@@ -149,12 +164,28 @@ type NodeInput struct {
 	NodeType       string
 	ServerHost     string
 	ServerPort     int
-	Kernel         string
 	TrafficRate    *decimal.Decimal
 	DisplayName    string
 	CountryCode    string
 	ProtocolConfig json.RawMessage
 	SortOrder      int
+
+	Tags                []string
+	TrafficLimitBytes   *int64
+	TrafficResetDay     *int
+	TrafficRateSchedule []RateRangeInput
+}
+
+// OptionalInt64 区分「没给」与「给了 null」：Set 为 false 不改；Set 且 Value 为 nil 表示清空。
+type OptionalInt64 struct {
+	Set   bool
+	Value *int64
+}
+
+// OptionalInt 区分「没给」与「给了 null」：Set 为 false 不改；Set 且 Value 为 nil 表示清空。
+type OptionalInt struct {
+	Set   bool
+	Value *int
 }
 
 // OptionalUUID 区分「没给」与「给了 null」：Set 为 false 不改；Set 且 Value 为 nil 表示清空。
@@ -177,15 +208,22 @@ type NodePatch struct {
 	NodeType       *string
 	ServerHost     *string
 	ServerPort     *int
-	Kernel         *string
 	TrafficRate    *decimal.Decimal
 	DisplayName    *string
 	CountryCode    OptionalString
 	ProtocolConfig json.RawMessage
+
+	// Tags 为 nil 不改，给了就整体替换（空切片 = 清空）
+	Tags *[]string
+	// TrafficLimitBytes / TrafficResetDay：Set 且 Value 为 nil = 不限 / 不自动重置
+	TrafficLimitBytes OptionalInt64
+	TrafficResetDay   OptionalInt
+	// TrafficRateSchedule 为 nil 不改，给了就整体替换（空切片 = 清空）
+	TrafficRateSchedule *[]RateRangeInput
 }
 
 // NodeCopyInput 是复制节点的输入：TargetServerID、PoolID 为 nil 沿用原节点；Name 为空取「原名-copy」；
-// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 第二波（路由）才生效。
+// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 时连节点私有路由与所在路由组一起复制。
 type NodeCopyInput struct {
 	RowVersion     int64
 	Name           string
@@ -223,6 +261,27 @@ type NodeStatusBatch struct {
 	Reason        string
 }
 
+// NodeBatchEdit 是批量修改节点（#50）：Items 带乐观锁版本；Set 里给了的字段才改。整批一个事务，
+// 对每个节点走与单个 PATCH 相同的校验与纪元（patchNodeTx）；ServingStatus 非空时先按 BatchNodeStatus 的口径改状态。
+// 任一节点不合法整批回滚，错误里带是哪个节点、哪个字段。
+type NodeBatchEdit struct {
+	Items  []NodeVersionRef
+	Set    NodeBatchFields
+	Reason string
+}
+
+// NodeBatchFields 是批量修改可改的字段（与 Xboard batchUpdate 取交集后再加本项目的上限、标签、时段倍率）：
+// 池、倍率、标签、服务状态、流量上限与重置日、时段倍率。语义与 NodePatch 的同名字段相同；全都没给回 422。
+type NodeBatchFields struct {
+	PoolID              OptionalUUID
+	TrafficRate         *decimal.Decimal
+	Tags                *[]string
+	ServingStatus       string
+	TrafficLimitBytes   OptionalInt64
+	TrafficResetDay     OptionalInt
+	TrafficRateSchedule *[]RateRangeInput
+}
+
 // RealityKeypair 是新生成的一对 REALITY 密钥与一个随机 short_id（私钥只在这一次返回）。
 type RealityKeypair struct {
 	PrivateKey string
@@ -242,6 +301,8 @@ type NodeQuery struct {
 	State string
 	// Search 在名称、展示名、服务器名、国家、协议、地址、编号里按子串找（不分大小写），最长 120 字
 	Search string
+	// Tag 非空时只列带这个标签的节点（精确匹配规范化后的标签）
+	Tag string
 	// ID 非空时只取这一个节点，并带上 Detail
 	ID     *uuid.UUID
 	Limit  int
@@ -305,8 +366,20 @@ type NodeRow struct {
 	MetricsAt  *time.Time
 	// IdentitySerial 是所在服务器当前 active 身份的 seq；没有为 nil
 	IdentitySerial *int64
+	// Movable：能不能迁移到别的服务器（nodeMovableState，只看节点自己）
+	Movable bool
 	// GrantedPlans 是绑定了节点所在池的套餐名（去重、升序），永不为 nil
 	GrantedPlans []string
+	// Tags 是节点标签，永不为 nil
+	Tags []string
+	// Traffic 是每周期流量上限与本周期用量
+	Traffic NodeTrafficLimit
+	// RateSchedule 是时段倍率（按开始时刻升序），永不为 nil
+	RateSchedule []RateRangeInput
+	// RelayCount 是挂在这个节点下的中转条目数（含停用的）
+	RelayCount int
+	// ECHEnabled 是节点有当前 ECH 密钥（是否真的生效还要看协议，见节点的 ECH 详情）
+	ECHEnabled bool
 	// Detail 只在 NodeQuery.ID 非空（单取）时填
 	Detail *NodeDetail
 }
@@ -314,7 +387,6 @@ type NodeRow struct {
 // NodeDetail 是单取时才带的编辑字段；ProtocolConfig 已抹掉敏感值。
 type NodeDetail struct {
 	TrafficRate           decimal.Decimal
-	Kernel                string
 	ProtocolConfig        json.RawMessage
 	ProtocolSchemaVersion int
 	ConfigValidatedAt     *time.Time

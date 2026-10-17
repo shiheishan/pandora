@@ -1,91 +1,452 @@
 .page {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
   background: var(--bg);
 }
 
-.brand {
+.card {
+  width: 100%;
+  max-width: 1320px;
+  min-height: min(720px, calc(100vh - 48px));
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* --- 左栏（表单） -------------------------------------------------------- */
+.leftSide {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 48px;
-  background: var(--sidebar);
-  color: var(--sidebar-text);
+  gap: 48px;
+  padding: 36px 56px;
 }
 
-.logo {
+.brandRow {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  font-size: 15px;
-  --logo-dot: var(--sidebar-brand);
+  animation: enter 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.pitch {
-  max-width: 420px;
-}
-
-.headline {
-  font-size: 34px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-  text-wrap: pretty;
-}
-
-.release {
-  margin-top: 14px;
-  color: var(--sidebar-text-2);
-  font-size: var(--fs-body);
-  line-height: 1.7;
-}
-
-.footnote {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--sidebar-text-3);
-}
-
-.formSide {
+.brandLogoBox {
   display: grid;
   place-items: center;
-  padding: 48px;
+  width: 32px;
+  height: 32px;
+  background: var(--text);
+  color: var(--bg);
+  flex: none;
 }
 
-.form {
-  --h-control: 38px;
+.brandName {
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.formWrap {
+  flex: 1;
   width: 100%;
   max-width: 360px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  justify-content: center;
+}
+
+.header {
+  margin-bottom: 32px;
+  animation: enter 0.6s 0.07s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-size: 28px;
   font-weight: var(--fw-semibold);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+  color: var(--text);
 }
 
 .subtitle {
-  margin: 4px 0 0;
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--text-2);
 }
 
-.submit {
-  height: 40px;
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: enter 0.6s 0.14s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.inputWrap {
+  position: relative;
+  display: flex;
+}
+
+.input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.inputWithToggle {
+  padding-right: 46px;
+}
+
+.input:hover {
+  border-color: var(--border-hover);
+}
+
+.input:focus {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.inputInvalid {
+  border-color: var(--danger);
+}
+
+.inputInvalid:hover {
+  border-color: var(--danger);
+}
+
+.inputInvalid:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.togglePwBtn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.togglePwBtn:hover {
+  color: var(--text);
+}
+
+.togglePwBtn:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.errorText {
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.formError {
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.submitBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  margin-top: 6px;
+  border: 0;
+  background: var(--text);
+  color: var(--on-ink);
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  opacity: 1;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s;
+}
+
+.submitBtn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.submitBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 24%, transparent);
+}
+
+.submitBtn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.submitBtn:hover:not(:disabled) .arrowIcon {
+  transform: translateX(3px);
+}
+
+.arrowIcon {
+  flex: none;
+  display: inline-flex;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--on-ink) 35%, transparent);
+  border-top-color: var(--on-ink);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* --- 右栏（纯装饰） ------------------------------------------------------ */
+.rightSide {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 560px;
+  border-left: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  overflow: hidden;
+  animation: fadeIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.decorCanvas {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.decorStage {
+  position: relative;
+  flex: none;
+  width: 520px;
+  height: 520px;
+}
+
+.ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.ring160 {
+  width: 160px;
+  height: 160px;
+}
+
+.ring280 {
+  width: 280px;
+  height: 280px;
+}
+
+.ring400 {
+  width: 400px;
+  height: 400px;
+}
+
+.ring520 {
+  width: 520px;
+  height: 520px;
+}
+
+.dashRing {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 340px;
+  height: 340px;
+  transform: translate(-50%, -50%);
+  border: 1px dashed var(--border-hover);
+  border-radius: 50%;
+  animation: spin 90s linear infinite;
+}
+
+.centerLogoBox {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.floatingChip {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.chipInner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--text) 6%, transparent);
+  animation: float 5.5s ease-in-out infinite;
+}
+
+.chipIcon {
+  flex: none;
+  display: inline-flex;
+}
+
+.chip1 {
+  left: 50%;
+  top: calc(50% - 140px);
+}
+
+.chip1 .chipInner {
+  animation-delay: 0s;
+}
+
+.chip2 {
+  left: calc(50% + 150px);
+  top: calc(50% + 44px);
+}
+
+.chip2 .chipInner {
+  animation-delay: 1.4s;
+}
+
+.chip3 {
+  left: calc(50% - 124px);
+  top: calc(50% + 112px);
+}
+
+.chip3 .chipInner {
+  animation-delay: 2.8s;
+}
+
+.asideFooter {
+  padding: 32px 40px;
+  border-top: 1px solid var(--border-strong);
+}
+
+.asideText {
+  margin: 0;
+  max-width: 440px;
+  font-size: 17px;
+  font-weight: var(--fw-medium);
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.asideRelease {
+  margin: 14px 0 0;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* --- 响应式与动画 -------------------------------------------------------- */
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
 }
 
 @media (max-width: 959px) {
-  .page {
+  .card {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .brand {
+  .rightSide {
     display: none;
   }
 
-  .formSide {
-    padding: 48px var(--gutter);
+  .leftSide {
+    padding: 36px var(--gutter);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
   }
 }

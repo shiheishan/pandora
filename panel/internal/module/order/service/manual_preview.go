@@ -1,8 +1,8 @@
 package service
 
-// 后台开单预览（对照旧 ManualOrderOptions）：落点规则同 planPlacements，每一项按建单同样的规则先试一遍——
-// 目录（续一期 UseRenewal、换套餐 UseChange 不看可见性，另开一份 UseNew 按这个用户看可见性）、未完结的续费或变更单、
-// 本期币种——开不了的项在 Unavailable 上写明建单会回的那句话，默认值不落在开不了的项上。
+// 后台开单预览：落点规则同 planPlacements，每一项按建单同样的规则先试一遍——
+// 目录（续一期 UseRenewal、叠加 UseStack、换套餐 UseChange 不看可见性，另开一份 UseNew 按这个用户看可见性）、未完结的续费、叠加或变更单——
+// 开不了的项在 Unavailable 上写明建单会回的那句话，默认值不落在开不了的项上。
 // 折算基数、未完结单都按批读（候选最多 maxCandidates 份）。
 
 import (
@@ -12,11 +12,12 @@ import (
 	"github.com/shopspring/decimal"
 
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
+	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
 // previewPrice 是预览用的价格档：给了且属于这个套餐就用它（ok 为真，报应付）；
-// 周期取它，没给取套餐最早建的在售价格，都没有按一个月（对照旧 offerPeriod）。
+// 周期取它，没给取套餐最早建的在售价格，都没有按一个月。
 func previewPrice(plan catalogsvc.PlanDetail, priceID *uuid.UUID) (catalogsvc.Price, string, int, bool) {
 	if priceID != nil {
 		for _, pr := range plan.Prices {
@@ -70,6 +71,8 @@ func (s *Service) catalogRefusals(ctx context.Context, in ManualPreviewInput, op
 		switch op.Kind {
 		case PlacementRenew:
 			req.Use, req.Manual = catalogsvc.UseRenewal, true
+		case PlacementStack:
+			req.Use, req.Manual = catalogsvc.UseStack, true
 		case PlacementChange:
 			req.Use, req.Manual = catalogsvc.UseChange, true
 		default:
@@ -103,7 +106,7 @@ func (s *Service) ManualPreview(ctx context.Context, in ManualPreviewInput) (Man
 	price, interval, count, priced := previewPrice(plan, in.PriceID)
 	out := ManualPreview{Options: []Placement{}, MinPayment: decimal.Zero}
 	if priced {
-		if out.MinPayment, err = s.payments.MinPayment(ctx, price.Currency); err != nil {
+		if out.MinPayment, err = s.payments.MinPayment(ctx); err != nil {
 			return ManualPreview{}, err
 		}
 	}
@@ -112,7 +115,7 @@ func (s *Service) ManualPreview(ctx context.Context, in ManualPreviewInput) (Man
 		return ManualPreview{}, err
 	}
 	cands := candidatesFrom(us)
-	opts, def := planPlacements(in.PlanID, cands, in.EntrySubscriptionID)
+	opts, def := planPlacements(in.PlanID, plan.Kind, cands, in.EntrySubscriptionID)
 
 	refused, err := s.catalogRefusals(ctx, in, opts)
 	if err != nil {
@@ -131,49 +134,41 @@ func (s *Service) ManualPreview(ctx context.Context, in ManualPreviewInput) (Man
 		subIDs = append(subIDs, *op.SubscriptionID)
 		if op.Kind == PlacementChange {
 			c := byID[*op.SubscriptionID]
-			changeSrcs = append(changeSrcs, basisSource{Sub: c.Sub, Quotas: c.Quotas})
+			changeSrcs = append(changeSrcs, basisSource{Sub: c.Sub, Kind: c.PlanKind, Quotas: c.Quotas})
 		}
 	}
 	open, err := s.repo.OpenChangeSubscriptions(ctx, subIDs)
 	if err != nil {
 		return ManualPreview{}, err
 	}
-	bases, mixed, err := s.loadBases(ctx, changeSrcs)
+	bases, err := s.loadBases(ctx, changeSrcs)
 	if err != nil {
 		return ManualPreview{}, err
 	}
 
 	now := s.clock()
+	snapshot := subsvc.PriceSnapshot{Interval: interval, IntervalCount: count}
+	if priced {
+		snapshot.PriceID = &price.ID
+		snapshot.Amount = price.UnitAmount
+		snapshot.ValidityDays = price.ValidityDays
+	}
 	for _, op := range opts {
-		end := newPeriodEnd(op, now, interval, count)
+		end := newPeriodEnd(op, now, snapshot)
 		op.NewPeriodEnd = &end
 		op.Credit, op.Due = decimal.Zero, decimal.Zero
 		op.Unavailable = refused[op.Kind]
 		if op.SubscriptionID != nil && open[*op.SubscriptionID] && op.Unavailable == "" {
 			op.Unavailable = ErrOpenChange.Message
 		}
-		currencyOK := true
 		if op.Kind == PlacementChange && op.SubscriptionID != nil {
-			if mixed[*op.SubscriptionID] {
-				if op.Unavailable == "" {
-					op.Unavailable = errProrationMixedCurrency.Message
-				}
-			} else {
-				b := bases[*op.SubscriptionID]
-				op.Credit, _ = prorationCredit(b, now)
-				op.Currency = b.Currency
-				op.GiftDaysLost = giftedDaysLeft(b, now)
-				if priced && b.Currency != "" && b.Currency != price.Currency {
-					currencyOK = false
-					if op.Unavailable == "" {
-						op.Unavailable = ErrPlanChangeCurrency.Message
-					}
-				}
-			}
+			b := bases[*op.SubscriptionID]
+			op.Credit, _ = prorationCredit(b, now)
+			op.GiftDaysLost = giftedDaysLeft(b, now)
 		}
 		if priced {
 			credit := decimal.Zero
-			if op.Kind == PlacementChange && currencyOK {
+			if op.Kind == PlacementChange {
 				credit = op.Credit
 			}
 			op.Due = OrderTotal(price.UnitAmount, decimal.Zero, credit)
