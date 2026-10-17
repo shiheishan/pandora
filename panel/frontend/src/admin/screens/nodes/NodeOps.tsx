@@ -1,7 +1,9 @@
+import { PauseCircleIcon, PlayCircleIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, useToast } from '../../../ui'
+import { Callout, DangerRow } from '../../kit'
 import css from './detail.module.css'
 import { activationHint, canActivate } from './logic'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes } from './queries'
@@ -9,7 +11,7 @@ import { adminNodeSchema, batchStatusResponse, okResponse, type NodeRow } from '
 
 type Pending = 'toggle' | 'retire' | 'revoke' | null
 
-/** 弹窗头部：上线 / 停用 */
+/** 详情页头部：上线 / 停用 */
 export function NodeHeaderAction({ node }: { node: NodeRow }) {
   const api = useApi()
   const toast = useToast()
@@ -58,7 +60,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 
   if (canActivate(node)) {
     return (
-      <Button size="sm" busy={busy} onClick={() => activate.mutate()}>
+      <Button size="sm" variant="secondary" icon={PlayCircleIcon} busy={busy} onClick={() => activate.mutate()}>
         上线节点
       </Button>
     )
@@ -66,7 +68,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 
   if (node.serving_status === 'disabled') {
     return (
-      <Button size="sm" busy={busy} onClick={() => toggle.mutate('active')}>
+      <Button size="sm" variant="secondary" icon={PlayCircleIcon} busy={busy} onClick={() => toggle.mutate('active')}>
         上线节点
       </Button>
     )
@@ -75,7 +77,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
   if (node.serving_status === 'active') {
     return (
       <>
-        <Button size="sm" busy={busy} onClick={() => setConfirmToggle(true)}>
+        <Button size="sm" variant="secondary" icon={PauseCircleIcon} busy={busy} onClick={() => setConfirmToggle(true)}>
           停用节点
         </Button>
         <ConfirmModal
@@ -97,7 +99,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 }
 
 /** 「身份与操作」页签：吊销、退役 */
-export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void }) {
+export function NodeOps({ node }: { node: NodeRow }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -123,8 +125,8 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
     onSuccess: () => {
       retireIntent.reset()
       toast('已退役：不再下发，历史流量与审计保留')
+      // 留在详情页，列表失效后页面自然显示已退役
       void invalidate()
-      onGone()
     },
     onError: (e) => {
       if (endsIntent(e)) retireIntent.reset()
@@ -134,39 +136,27 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   })
 
   return (
-    <section className={css.section}>
-      <h4 className={css.opsTitle}>节点操作</h4>
-      <div className={css.rowTable}>
-        {retired ? (
-          <div className={css.opRow}>
-            <div className={css.opText}>
-              <span className={css.opTitle}>节点已退役</span>
-              <span className={css.opDesc}>退役不可恢复，只保留历史流量记录。</span>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className={css.opRow}>
-              <div className={css.opText}>
-                <span className={`${css.opTitle} ${css.opTitleDanger}`}>吊销节点身份</span>
-                <span className={css.opDesc}>节点会被拒绝接入，要重新签发安装令牌并注册才能恢复。用于机器被入侵或转让。</span>
-              </div>
-              <Button size="sm" className={css.dangerOutline} busy={revoke.isPending} onClick={() => setConfirm('revoke')}>
-                吊销
-              </Button>
-            </div>
-            <div className={css.opRow}>
-              <div className={css.opText}>
-                <span className={`${css.opTitle} ${css.opTitleDanger}`}>退役节点</span>
-                <span className={css.opDesc}>从所有订阅移除、吊销身份，不可恢复；历史流量与审计保留。</span>
-              </div>
-              <Button size="sm" className={css.dangerOutline} busy={retire.isPending} onClick={() => setConfirm('retire')}>
-                退役
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
+    <div className={css.stack}>
+      {retired ? (
+        <Callout>节点已退役：退役后不可恢复，只保留历史流量与审计记录。</Callout>
+      ) : (
+        <>
+          <DangerRow
+            title="吊销身份"
+            description="节点端立刻停服，要在服务器上重新安装才能恢复。用于机器被入侵或转让。"
+            actionLabel="吊销身份"
+            busy={revoke.isPending}
+            onAction={() => setConfirm('revoke')}
+          />
+          <DangerRow
+            title="退役"
+            description="不再下发给用户、吊销身份；退役后不可恢复，历史流量与审计保留。"
+            actionLabel="退役"
+            busy={retire.isPending}
+            onAction={() => setConfirm('retire')}
+          />
+        </>
+      )}
 
       <ConfirmModal
         open={confirm === 'revoke'}
@@ -183,7 +173,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       <ConfirmModal
         open={confirm === 'retire'}
         title={`退役「${node.name}」？`}
-        body="退役会吊销节点身份、停止下发，不能再启用；历史流量与审计保留。"
+        body="退役会吊销节点身份、停止下发，退役后不可恢复；历史流量与审计保留。"
         confirmLabel="退役"
         tone="danger"
         onConfirm={() => {
@@ -192,6 +182,6 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
         }}
         onCancel={() => setConfirm(null)}
       />
-    </section>
+    </div>
   )
 }

@@ -1,18 +1,32 @@
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
+import { MoreHorizontalIcon, PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Modal, QueryView, Tag, useToast } from '../../../ui'
-import { canDeleteServer, createServerBody, deleteServerNotice, emptyServerForm, nodesByServer, quickToggle, SERVER_STATUS, serverDot, serverMeters, validateServerForm } from './infra'
+import { Button, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
+import { PageActions, StatusDot } from '../../kit'
+import {
+  createServerBody,
+  deleteServerNotice,
+  emptyServerForm,
+  nodesByServer,
+  quickToggle,
+  SERVER_STATUS,
+  serverDeleteBlock,
+  serverMeters,
+  serverNotes,
+  serverSubtitle,
+  validateServerForm,
+} from './infra'
 import x from './infra.module.css'
 import css from './nodes.module.css'
 import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
 import { serverSchema, type Server } from './schemas'
-import { Meters, ServerDetail, ServerFields } from './ServerDrawer'
+import { Meters, serverStatusTone, ServerFields } from './ServerDetailPage'
 import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
 
-export function ServersTab({ rest }: { rest: string[] }) {
+export function ServersTab() {
   const servers = useServers()
   const nodes = useNodes()
   const [adding, setAdding] = useState(false)
@@ -24,17 +38,15 @@ export function ServersTab({ rest }: { rest: string[] }) {
   const remove = useDeleteServer((gone) => setInstall((cur) => (cur?.serverId === gone.id ? null : cur)))
   const tags = useMemo(() => nodesByServer(nodes.data?.nodes ?? []), [nodes.data])
 
-  const openId = rest[0] ?? null
-  const open = servers.data?.find((s) => s.id === openId) ?? null
-
   return (
     <div className={css.stack}>
-      <div className={x.bar}>
-        <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
-        <span className={css.spacer} />
-        <Button variant="primary" onClick={() => setAdding(true)}>
+      <PageActions>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setAdding(true)}>
           添加服务器
         </Button>
+      </PageActions>
+      <div className={x.bar}>
+        <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
       </div>
 
       <QueryView
@@ -52,7 +64,7 @@ export function ServersTab({ rest }: { rest: string[] }) {
                 nodes={tags.get(s.id) ?? []}
                 busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
                 onOpen={() => navigate(`/nodes/servers/${s.id}`)}
-                onToken={s.status !== 'retired' ? () => token.mutate(s) : null}
+                onToken={() => token.mutate(s)}
                 onToggle={(t) => status.mutate({ server: s, to: t.to, done: t.done })}
                 onRemove={() => setRemoving(s)}
               />
@@ -61,7 +73,6 @@ export function ServersTab({ rest }: { rest: string[] }) {
         )}
       </QueryView>
 
-      <ServerDetail server={open} nodes={open ? tags.get(open.id) ?? [] : []} onClose={() => navigate('/nodes/servers')} />
       {install && <InstallModal secret={install} onClose={() => setInstall(null)} />}
       <AddServer
         open={adding}
@@ -100,54 +111,57 @@ function ServerCard({
   nodes: readonly string[]
   busy: boolean
   onOpen: () => void
-  onToken: (() => void) | null
+  onToken: () => void
   onToggle: (t: NonNullable<ReturnType<typeof quickToggle>>) => void
   onRemove: () => void
 }) {
   const toggle = quickToggle(s.status)
   const status = SERVER_STATUS[s.status]
+  const meters = serverMeters(s)
+  const allMetersNull = meters.every((m) => m.percent === null)
+  const notes = serverNotes(s)
+  const block = serverDeleteBlock(s)
   return (
     <section className={`${x.card} ${s.status === 'retired' ? x.cardRetired : ''}`} aria-label={`服务器 ${s.name}`}>
-      <button type="button" className={x.cardHead} onClick={onOpen} aria-label={`打开服务器 ${s.name} 详情`}>
-        <span className={`${x.dot8} ${css[`dot_${serverDot(s)}`]}`} aria-hidden="true" />
-        <span className={x.cardTitle}>
-          <span className={`${x.cardName} ${css.ellipsis}`}>{s.name}</span>
-          <span className={`${css.faint} ${css.ellipsis}`}>
-            {s.region ?? '地区待识别'} · {s.public_ipv4 ?? '—'}
-          </span>
-        </span>
+      {/* 头：状态点包等宽名称 + 状态标签 + 右上角「…」打开详情（整头不再是按钮） */}
+      <div className={x.ch}>
+        <StatusDot tone={serverStatusTone(s)}>
+          <span className={css.mono}>{s.name}</span>
+        </StatusDot>
         {s.status !== 'ready' && <Tag tone={status.tone}>{status.label}</Tag>}
-        <span className={x.agent}>{s.agent_version ?? '未连接'}</span>
-      </button>
-      <Meters meters={serverMeters(s)} />
-      {nodes.length > 0 && (
-        <div className={x.chips}>
-          {nodes.map((n) => (
-            <span key={n} className={x.chip}>
-              {n}
-            </span>
-          ))}
+        <span className={css.spacer} />
+        <IconButton label={`${s.name} 详情`} icon={MoreHorizontalIcon} size="sm" onClick={onOpen} />
+      </div>
+      <div className={x.cs}>{serverSubtitle(s)}</div>
+      {allMetersNull ? <div className={css.faint}>装好 agent 后这里显示占用</div> : <Meters meters={meters} />}
+      <div className={x.chips}>
+        {nodes.length > 0 ? (
+          nodes.map((n) => <Tag key={n}>{n}</Tag>)
+        ) : (
+          <span className={css.faint}>没有在役节点</span>
+        )}
+      </div>
+      {notes.map((n) => (
+        <div key={n} className={x.note}>
+          {n}
         </div>
-      )}
-      <div className={x.capacity}>
-        <span>
+      ))}
+      <div className={x.cf}>
+        <span className={css.mono}>
           在役 {s.serving_node_count} / 容量 {s.capacity_nodes}
         </span>
-        {s.never_seen_node_count > 0 && <span className={x.neverSeen}>有 {s.never_seen_node_count} 个节点标了在役但从未心跳（多半没装 agent）</span>}
-      </div>
-      <div className={x.cardActions}>
-        {onToken && (
-          <Button size="xs" disabled={busy} onClick={onToken}>
+        <span className={css.spacer} />
+        {s.status !== 'retired' && (
+          <Button size="sm" variant="secondary" disabled={busy} onClick={onToken}>
             安装令牌
           </Button>
         )}
         {toggle && (
-          <Button size="xs" disabled={busy} onClick={() => onToggle(toggle)}>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => onToggle(toggle)}>
             {toggle.label}
           </Button>
         )}
-        <span className={css.spacer} />
-        <Button size="xs" variant="ghost" className={canDeleteServer(s) ? x.dangerText : undefined} disabled={!canDeleteServer(s) || busy} title={canDeleteServer(s) ? undefined : '只能删除草稿或已退役的服务器，先在详情「操作」里退役'} onClick={onRemove}>
+        <Button size="sm" variant="secondary" disabled={block !== null || busy} title={block ?? undefined} onClick={onRemove}>
           删除
         </Button>
       </div>

@@ -19,7 +19,7 @@ const NODE_METRICS_REFRESH_MS = 30_000
 
 /**
  * 节点列表：一次取到后端上限 1000 条，并且总带 include_retired=1——
- * 「全部」里藏掉已退役是前端筛选的事；刚退役的节点抽屉还开着，要能继续删除它。
+ * 「全部」里藏掉已退役是前端筛选的事；刚退役的节点详情页还要能继续显示。
  * 服务器卡片与路由组成员也用这一份（超过 1000 个节点时只覆盖前 1000 个）
  */
 export function useNodes() {
@@ -60,7 +60,7 @@ export function useNodePage(p: { state: string; q: string; tag: string; offset: 
 }
 
 /**
- * 单个节点连同编辑字段（protocol_config 等，GET v1/nodes?id=）：抽屉的协议表单用它，
+ * 单个节点连同编辑字段（protocol_config 等，GET v1/nodes?id=）：详情页以它为准、协议表单用它，
  * 也兜住列表里没加载到的节点（地址直接指到第 1001 个以后）。不存在时为 null
  */
 export function useNodeDetail(id: string | null) {
@@ -142,7 +142,7 @@ export function useGlobalRouting() {
   return useQuery({ queryKey: [...NK, 'global-routing'], queryFn: ({ signal }) => api.get('v1/nodes/routing', globalRoutingSchema, { signal }) })
 }
 
-/** 路由组列表（00096）：路由标签的组切换条与节点抽屉的「所属路由组」都用它；成员名跟着节点变，挂 nodes.changed */
+/** 路由组列表（00096）：路由标签的组切换条与节点详情的「所属路由组」都用它；成员名跟着节点变，挂 nodes.changed */
 export function useRouteGroups() {
   const api = useApi()
   return useQuery({

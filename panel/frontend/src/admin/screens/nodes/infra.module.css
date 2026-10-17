@@ -4,6 +4,7 @@
   align-items: center;
   gap: var(--space-8);
   color: var(--text-2);
+  font-size: 13px;
 }
 
 /* ---- 安装弹窗 ---- */
@@ -90,39 +91,7 @@
   font-size: 12px;
 }
 
-/* ---- 服务器详情弹窗（键值行、操作） ---- */
-.detailRows {
-  display: flex;
-  flex-direction: column;
-}
-
-.detailRow {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-12);
-  padding: 6px 0;
-  border-bottom: 1px solid var(--surface-3);
-}
-
-.detailKey {
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-.detailVal {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-align: right;
-  word-break: break-all;
-}
-
-.detailFootActions {
-  display: flex;
-  gap: var(--space-8);
-}
-
+/* ---- 服务器编辑弹窗 ---- */
 .editModalActions {
   display: flex;
   justify-content: flex-end;
@@ -130,11 +99,11 @@
   margin-top: var(--space-16);
 }
 
-/* ---- 服务器卡片 ---- */
+/* ---- 服务器与节点池卡片（样稿 .cards / .card） ---- */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
 }
 
 .card {
@@ -142,9 +111,9 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 16px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
@@ -152,79 +121,47 @@
   opacity: 0.7;
 }
 
-.cardHead {
+/* 卡片头（样稿 .ch）：状态点 + 名称 / 标签 */
+.ch {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.cardHead:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 3px;
-  border-radius: 4px;
-}
-
-.cardHead:hover .cardName {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.cardTitle {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+  gap: 8px;
   min-width: 0;
 }
 
-.cardName {
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.ch b {
+  font-weight: var(--fw-medium);
 }
 
-.dot8 {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.agent {
-  flex: none;
-  padding: 1px 5px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+/* 卡片副标题（样稿 .cs）：紧跟头部，往上收一点 */
+.cs {
+  margin-top: -8px;
   color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12.5px;
 }
 
+/* 占用条（样稿 .meters / .meter）：三行「标签｜进度条｜百分比」 */
 .meters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 6px;
 }
 
-.meterHead {
-  display: flex;
-  justify-content: space-between;
+.meter {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.meter > span:last-child {
+  text-align: right;
 }
 
 .meterTrack {
   height: 4px;
-  margin-top: 4px;
   overflow: hidden;
   border-radius: 2px;
   background: var(--surface-3);
@@ -232,9 +169,9 @@
 
 .meterFill {
   display: block;
-  height: 4px;
+  height: 100%;
   border-radius: 2px;
-  background: var(--text);
+  background: var(--text-2);
 }
 
 .meter_warm {
@@ -251,87 +188,48 @@
   gap: 6px;
 }
 
-.chip {
-  padding: 1px 8px;
-  border-radius: 5px;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.capacity {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.neverSeen {
+/* 提示行（样稿 .note）：警告色小字 */
+.note {
   color: var(--warn);
+  font-size: 12.5px;
 }
 
-.cardActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.dangerText {
-  color: var(--danger);
-}
-
-/* ---- 节点池 ---- */
-.pools {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pool {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr) 160px;
-  gap: 16px;
-  align-items: start;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-
-@media (max-width: 639px) {
-  .pool {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
-
-  .pool > * {
-    min-width: 0;
-  }
-
-  .poolPlans {
-    align-items: flex-start;
-    text-align: left;
-  }
-}
-
-.poolName {
-  font-weight: var(--fw-semibold);
-}
-
-.poolMeta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
+/* 节点行首的国家代码（样稿 .nn .cc） */
+.cc {
+  flex: none;
+  width: 18px;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
+/* 卡片底栏（样稿 .cf）：上边线，压到卡片底部 */
+.cf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* 「绑定套餐」一行（样稿 .kv2） */
+.kv2 {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.kv2 > span:first-child {
+  flex: none;
+  width: 56px;
+  color: var(--text-3);
+}
+
+/* 节点池成员 chip（点开节点详情） */
 .memberChip {
   padding: 2px 8px;
   border: 1px solid var(--border);
@@ -350,66 +248,13 @@
   border-color: var(--border-hover);
 }
 
-.poolPlans {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  text-align: right;
-}
-
-.poolActions {
-  display: flex;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-/* ---- 路由 ---- */
-.routing {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-/* 960 附近内容区只有 700 左右，两栏会把匹配值挤成几个字：改为规则在上、出站在下 */
-@media (max-width: 1100px) {
-  .routing {
-    grid-template-columns: minmax(0, 1fr);
+@media (max-width: 639px) {
+  .cards {
+    grid-template-columns: 1fr;
   }
 }
 
-.routingPanel {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-
-.panelHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.panelTitle {
-  margin: 0;
-  font-size: var(--fs-body);
-  font-weight: var(--fw-semibold);
-}
-
-.panelBody {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 16px;
-}
-
+/* ---- 路由组页（NodeRouteGroups）的内置规则 / 出站行 ---- */
 .builtin {
   display: flex;
   align-items: center;
@@ -425,27 +270,6 @@
   font-weight: var(--fw-medium);
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.outErr {
-  margin: -4px 0 4px;
-  color: var(--danger);
-  font-size: var(--fs-caption);
-}
-
-.dirty {
-  margin-bottom: 8px;
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.publish {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-}
-
-.publishButton {
-  width: 100%;
 }
 
 /* 节点池弹窗的「仅限用户组」多选（R104） */

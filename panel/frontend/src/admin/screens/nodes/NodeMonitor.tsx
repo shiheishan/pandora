@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
 import { QueryView } from '../../../ui'
 import css from './detail.module.css'
-import { bandwidthBuckets, heartbeatLabel } from './logic'
+import { bandwidthBuckets, bandwidthPeak, heartbeatLabel } from './logic'
 import { useNodeMetrics } from './queries'
 import type { NodeRow } from './schemas'
 
@@ -95,9 +95,13 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
   const curMbps = buckets[cur]?.mbps
   const curDisplay = curMbps == null ? '无数据' : `${curMbps} Mbps`
 
+  // 标题小字：有数据时报峰值（Mbps · 峰值 N · HH:00），没有只写 Mbps
+  const peak = useMemo(() => bandwidthPeak(buckets), [buckets])
+  const peakLabel = peak ? `Mbps · 峰值 ${peak.mbps} · ${String(peak.hour).padStart(2, '0')}:00` : 'Mbps'
+
   return (
     <div>
-      <div className={css.kpis}>
+      <div className={`${css.kpis} ${css.kpisBoxed}`}>
         <div className={css.kpi} title={`在线 IP ${formatCount(node.online_ips)}`}>
           <div className={css.kpiLabel}>在线用户</div>
           <div className={css.kpiValue}>{node.online_users ? formatCount(node.online_users) : '—'}</div>
@@ -116,9 +120,12 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
         </div>
       </div>
 
-      <div className={css.chartBlock}>
+      <div className={`${css.chartBlock} ${css.chartBoxed}`}>
         <div className={css.chartHead}>
-          <span className={css.chartTitle}>近 24 小时带宽</span>
+          <span className={css.chartTitle}>
+            近 24 小时带宽
+            <small className={css.chartSub}>{peakLabel}</small>
+          </span>
           <span className={css.chartCur}>
             <span className={css.chartCurLine} aria-hidden="true" />
             <span className={css.chartCurLabel}>{hoverLabel(cur)}</span>
@@ -142,13 +149,13 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
                 <svg className={css.plotSvg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
                   <defs>
                     <linearGradient id={`ndTrafficFill-${node.id}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--text)" stopOpacity={0.12} />
-                      <stop offset="100%" stopColor="var(--text)" stopOpacity={0} />
+                      <stop offset="0%" stopColor="var(--info)" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="var(--info)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   {areaPath && <path d={areaPath} fill={`url(#ndTrafficFill-${node.id})`} />}
                   {linePath && (
-                    <path d={linePath} fill="none" stroke="var(--text)" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                    <path d={linePath} fill="none" stroke="var(--info)" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                   )}
                 </svg>
                 {hover != null && (

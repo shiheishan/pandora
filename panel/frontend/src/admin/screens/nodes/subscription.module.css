@@ -1,32 +1,10 @@
+/* 订阅下发页共用样式。附加设置卡（SubscriptionTab.tsx）用 stack / extrasActions / faint；
+   订阅模板表（SubscriptionTemplates.tsx）用 clients / cell2。 */
+
 .stack {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
-}
-
-.section {
-  padding-top: var(--space-16);
-  border-top: 1px solid var(--text);
-}
-
-.sectionHead {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  margin-bottom: var(--space-12);
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: inherit;
-  font-weight: var(--fw-semibold);
-}
-
-.sectionHint {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: 1.6;
 }
 
 .faint {
@@ -35,81 +13,25 @@
   line-height: 1.6;
 }
 
-.extrasFields {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-}
-
-.extrasField {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .extrasActions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-8);
-  margin-top: var(--space-16);
+  width: 100%;
 }
 
-.formatList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.formatRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr) auto;
-  gap: var(--space-12);
+/* 模板表客户端列：名称 + （fallback 行的）「默认」标签 */
+.clients {
+  display: inline-flex;
   align-items: center;
-  padding: var(--space-12) 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.formatRow:first-child {
-  padding-top: 0;
-}
-
-.formatRow:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.formatClients {
-  font-weight: var(--fw-medium);
+  gap: var(--space-8);
   min-width: 0;
 }
 
-.formatUa {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.formatName {
-  min-width: 0;
+/* 模板表次级文字列（UA 关键词、格式）：--text-2 */
+.cell2 {
   color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.formatTag {
-  justify-self: end;
-}
-
-@media (max-width: 639px) {
-  .formatRow {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .formatTag {
-    justify-self: start;
-  }
+  min-width: 0;
 }

@@ -18,9 +18,13 @@ import {
   poolGroupsChanged,
   poolGroupsLabel,
   quickToggle,
+  serverDeleteBlock,
   serverDot,
   serverFormFrom,
   serverMeters,
+  serverNodeLines,
+  serverNotes,
+  serverSubtitle,
   validateServerForm,
 } from './infra'
 import { nodeRowSchema, poolsResponse, serverSchema, serversResponse, type NodeRow, type Server } from './schemas'
@@ -153,6 +157,33 @@ describe('server status', () => {
     expect(canDeleteServer(server({ status: 'maintenance' }))).toBe(false)
     expect(deleteServerNotice(server({ node_count: 3 }))).toContain('名下 3 个节点会一起下线')
     expect(deleteServerNotice(server({ node_count: 0 }))).toContain('名下没有节点')
+  })
+
+  it('serverDeleteBlock, serverSubtitle, serverNotes and serverNodeLines', () => {
+    expect(serverDeleteBlock(server({ status: 'ready' }))).toBe('只有草稿或已退役的服务器能删除')
+    expect(serverDeleteBlock(server({ status: 'draft' }))).toBeNull()
+    expect(serverSubtitle({ region: '香港', public_ipv4: '192.0.2.8', agent_version: '1.8.2' })).toBe('香港 · 192.0.2.8 · agent 1.8.2')
+    expect(serverSubtitle({ region: null, public_ipv4: null, agent_version: null })).toBe('地区待识别 · 未连接')
+    const now = new Date('2026-09-24T10:05:00Z')
+    const notes = serverNotes(
+      {
+        status: 'ready',
+        status_reason: '磁盘告警',
+        heartbeat_online: false,
+        last_heartbeat_at: '2026-09-24T10:00:00Z',
+        never_seen_node_count: 2,
+      },
+      now,
+    )
+    expect(notes).toEqual(['原因：磁盘告警', '心跳 5 分钟前，可能已断开', '2 个在役节点从未心跳（多半没装 agent）'])
+    expect(serverNotes({ status: 'ready', status_reason: null, heartbeat_online: false, last_heartbeat_at: null, never_seen_node_count: 0 }, now)).toEqual([
+      '还没有收到心跳',
+    ])
+    const lines = serverNodeLines(
+      [node({ id: 'a', server_id: 's1' }), node({ id: 'b', server_id: 's1', serving_status: 'retired' }), node({ id: 'c', server_id: 's2' })],
+      's1',
+    )
+    expect(lines.map((n) => n.id)).toEqual(['a'])
   })
 })
 

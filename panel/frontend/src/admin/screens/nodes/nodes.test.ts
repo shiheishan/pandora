@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { NODE_PROTOCOL_SCHEMAS } from '../../../../dev/mock/admin/node-schemas'
 import {
   bandwidthBuckets,
+  bandwidthPeak,
   basicFromRow,
   batchPlan,
   canTransition,
@@ -12,12 +13,15 @@ import {
   isStable,
   mapProtocolErrors,
   moveItem,
+  nodeCounts,
   nodeState,
   orderItems,
+  parseNodeFilter,
   patchBody,
   protocolChanged,
   protocolFields,
   protocolNotices,
+  protocolSummary,
   enumOptions,
   fieldVisible,
   protocolDefaults,
@@ -349,8 +353,9 @@ describe('basic info and PATCH', () => {
     expect(e.server_port).toBe('1–65535')
   })
 
-  it('requires a pool on create and edit', () => {
+  it('requires a pool on create only', () => {
     expect(validateBasic({ ...filled, poolId: '' }, true)).toEqual({ pool_id: NO_POOL_HINT })
+    expect(validateBasic({ ...filled, poolId: '' }, false).pool_id).toBeUndefined()
   })
 
   it('emptyBasic defaults port to 443', () => {
@@ -459,6 +464,74 @@ describe('bandwidth', () => {
     expect(b[23]).toEqual({ hour: 10, mbps: 16 })
     expect(b[22]).toEqual({ hour: 9, mbps: 1 })
     expect(b[0]!.mbps).toBeNull()
+  })
+
+  it('bandwidthPeak picks max mbps and earliest hour on tie', () => {
+    expect(bandwidthPeak([{ hour: 1, mbps: null }, { hour: 2, mbps: null }])).toBeNull()
+    expect(bandwidthPeak([{ hour: 3, mbps: 0 }])).toBeNull()
+    expect(bandwidthPeak([{ hour: 5, mbps: 2 }, { hour: 8, mbps: 10 }, { hour: 3, mbps: 10 }])).toEqual({ mbps: 10, hour: 3 })
+  })
+})
+
+describe('parseNodeFilter and nodeCounts', () => {
+  it('parseNodeFilter maps known values and defaults to all', () => {
+    expect(parseNodeFilter('online')).toBe('online')
+    expect(parseNodeFilter(null)).toBe('all')
+    expect(parseNodeFilter('x')).toBe('all')
+  })
+
+  it('nodeCounts excludes retired and counts online via nodeState', () => {
+    const rows = [
+      row({ serving_status: 'active', stale: false }),
+      row({ id: 'n2', serving_status: 'active', stale: true }),
+      row({ id: 'n3', serving_status: 'retired', stale: false }),
+      row({ id: 'n4', serving_status: 'disabled', stale: false }),
+    ]
+    expect(nodeCounts(rows)).toEqual({ total: 3, online: 1 })
+  })
+})
+
+describe('protocolSummary', () => {
+  const ssSummarySchema = miniSchema({
+    node_type: 'shadowsocks',
+    allowed_properties: ['cipher', 'password', 'note_adv', 'flow', 'flag'],
+    enums: { cipher: ['aes-256-gcm'], flow: ['plain'] },
+    property_types: { flag: 'boolean' },
+    fields: [
+      { path: 'cipher', label: '加密', option_labels: { 'aes-256-gcm': 'AES-256-GCM' } },
+      { path: 'password', label: '密码' },
+      { path: 'note_adv', label: '备注', advanced: true },
+      { path: 'flow', label: '流控', show_if: { cipher: ['aes-256-gcm'] } },
+      { path: 'flag', label: 'UDP', default: true },
+    ],
+  })
+
+  it('builds rows from schema with visibility, secrets and types', () => {
+    const node = row({
+      node_type: 'shadowsocks',
+      server_port: 8388,
+      protocol_config: { cipher: 'aes-256-gcm', password: 'x', flow: 'plain', flag: true },
+    })
+    const rows = protocolSummary(ssSummarySchema, node)
+    expect(rows[0]).toEqual({ label: '协议', value: 'Shadowsocks' })
+    expect(rows[1]).toEqual({ label: '监听端口', value: '8388' })
+    expect(rows.find((r) => r.label === '密码')).toEqual({ label: '密码', value: '不回显', muted: true })
+    expect(rows.find((r) => r.label === '加密')).toEqual({ label: '加密', value: 'AES-256-GCM' })
+    expect(rows.find((r) => r.label === 'UDP')).toEqual({ label: 'UDP', value: '开启' })
+    expect(rows.some((r) => r.label === '备注')).toBe(false)
+    expect(rows.some((r) => r.label === '流控')).toBe(true)
+  })
+
+  it('hides fields when show_if fails and only two rows without schema', () => {
+    const hidden = row({
+      node_type: 'shadowsocks',
+      server_port: null,
+      protocol_config: { cipher: 'other' },
+    })
+    const rows = protocolSummary(ssSummarySchema, hidden)
+    expect(rows.some((r) => r.label === '流控')).toBe(false)
+    expect(rows[1]).toEqual({ label: '监听端口', value: '未设置', muted: true })
+    expect(protocolSummary(undefined, row({ node_type: 'vless', server_port: 443 }))).toHaveLength(2)
   })
 })
 

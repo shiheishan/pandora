@@ -46,6 +46,7 @@ export interface DomainGroupBody {
 
 export interface DomainRow {
   groupId: string
+  groupName: string
   host: string
   baseUrl: string
   scope: string
@@ -94,7 +95,7 @@ export function flattenDomains(cfg: DomainConfig, userGroups: ReadonlyArray<{ id
   for (const g of cfg.groups) {
     const scope = scopeForGroup(g, cfg.groups, userGroups)
     for (const d of g.domains) {
-      rows.push({ groupId: g.id, host: hostOf(d.base_url), baseUrl: d.base_url, scope })
+      rows.push({ groupId: g.id, groupName: g.name, host: hostOf(d.base_url), baseUrl: d.base_url, scope })
     }
   }
   return rows
@@ -134,6 +135,7 @@ function uniqueDefaultName(existingNames: string[]): string {
 export function addDomainBody(
   cfg: DomainConfig,
   input: string,
+  groupId?: string,
 ): { body: { groups: DomainGroupBody[] }; host: string } | { error: string } {
   const host = parseHost(input)
   if (!host) return { error: '填一个域名，如 sub.example.com' }
@@ -142,6 +144,20 @@ export function addDomainBody(
   const baseUrl = `https://${host}`
   const limits = cfg.limits
   const body = toBody(cfg)
+  const targetId = groupId?.trim()
+  if (targetId) {
+    const idx = cfg.groups.findIndex((g) => g.id === targetId)
+    if (idx >= 0) {
+      const gName = cfg.groups[idx]!.name
+      const g = body.groups[idx]!
+      if (g.domains.length >= limits.domains_per_group) {
+        return { error: `「${gName}」组最多 ${limits.domains_per_group} 个域名` }
+      }
+      g.domains.push({ base_url: baseUrl, weight: 1 })
+      return { body, host }
+    }
+  }
+
   const defaultIdx = body.groups.findIndex((g) => g.is_default)
 
   if (defaultIdx >= 0) {
@@ -159,6 +175,24 @@ export function addDomainBody(
   const name = uniqueDefaultName(body.groups.map((g) => g.name))
   body.groups.push({ name, is_default: true, domains: [{ base_url: baseUrl, weight: 1 }], user_group_ids: [] })
   return { body, host }
+}
+
+/** 「作用范围」下拉：每个现有组一项，value 是组 id，缺省组 label 用组名，其他组 `${组名} · ${scopeForGroup(...)}`；没有缺省组时最前面加 { value: '', label: '缺省（新建）' } */
+export function domainScopeOptions(
+  cfg: DomainConfig,
+  userGroups: ReadonlyArray<{ id: string; name: string }>,
+): Array<{ value: string; label: string }> {
+  const hasDefault = cfg.groups.some((g) => g.is_default)
+  const opts = cfg.groups.map((g) => ({
+    value: g.id,
+    label: g.is_default ? g.name : `${g.name} · ${scopeForGroup(g, cfg.groups, userGroups)}`,
+  }))
+  return hasDefault ? opts : [{ value: '', label: '缺省（新建）' }, ...opts]
+}
+
+/** 下拉初值：缺省组的 id，没有缺省组为 '' */
+export function defaultScopeValue(cfg: DomainConfig): string {
+  return cfg.groups.find((g) => g.is_default)?.id ?? ''
 }
 
 /** 移除一个域名；dropsGroup 为真表示这是该组最后一个，组一起删 */
