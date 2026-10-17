@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { formatMoney } from '../../../core/format'
-import { Button, ConfirmModal, Input, Modal, QueryView, Select, Switch, Tabs, Tag, useToast, type TabItem } from '../../../ui'
+import { Button, ConfirmModal, Input, QueryView, Select, Switch, Tag, useToast } from '../../../ui'
+import { Callout, DangerRow, DetailPage, KvList, KvRow, Row, RowList, SectionTitle, SideFact, SideFacts } from '../../kit'
 import { usePlan, usePlanPools, type PlanDetail } from './api'
 import css from './Detail.module.css'
 import { BasicModal, OnceModal, ResetModal, SalesModal, UsageModal, usePlanWrite } from './EditModals'
 import {
   activeTierPrice,
   ARCHIVE_BODY,
+  basicFacts,
   detailTabs,
   draftVersion,
   isLive,
@@ -30,16 +32,22 @@ import {
   type TierKey,
 } from './model'
 
-export function PlanDetailModal({
+/** 按 mono / muted 标志拼值文本的类；两个都没有时回 undefined，避免空 className */
+function valClass(row: { mono?: boolean; muted?: boolean }): string | undefined {
+  return [row.mono ? css.mono : undefined, row.muted ? css.muted : undefined].filter(Boolean).join(' ') || undefined
+}
+
+/** 套餐详情整页（样稿 .dpage）：地址 /plans/<id>[/<tab>]，返回链接与页签由外层的 index.tsx 给 */
+export function PlanDetailPage({
   id,
   tab,
+  back,
   onTab,
-  onClose,
 }: {
-  id: string | null
+  id: string
   tab: DetailTab
+  back: { href: string; label: string }
   onTab: (t: DetailTab) => void
-  onClose: () => void
 }) {
   const detail = usePlan(id)
   const plan = detail.data
@@ -50,14 +58,6 @@ export function PlanDetailModal({
   const [editGroup, setEditGroup] = useState<OverviewGroupKey | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [publishN, setPublishN] = useState<number | null>(null)
-
-  const tabs = plan ? detailTabs(plan) : []
-  const activeTab = tabs.some((t) => t.value === tab) ? tab : 'overview'
-  const tabItems: TabItem<DetailTab>[] = tabs.map((t) => ({
-    value: t.value,
-    label: t.label,
-    badge: t.count !== undefined ? t.count : undefined,
-  }))
 
   const handleArchive = async () => {
     if (!plan) return
@@ -83,56 +83,101 @@ export function PlanDetailModal({
     }
   }
 
+  // 数据没回来（加载中 / 出错 / 404）：只画骨架，「不存在或已删除」与重试交给 QueryView
+  if (!plan) {
+    return (
+      <DetailPage back={back} title="套餐">
+        <QueryView query={detail} rows={6} empty={null}>
+          {() => null}
+        </QueryView>
+      </DetailPage>
+    )
+  }
+
+  const live = isLive(plan)
+  const tabs = detailTabs(plan)
+  const activeTab = tabs.some((t) => t.value === tab) ? tab : 'overview'
+  const statusView = PLAN_STATUS_VIEW[plan.status]
+  const publishConfirm = publishN !== null ? publishCopy(plan, publishN) : null
+
   return (
-    <Modal
-      open={id !== null}
-      onClose={onClose}
-      size={680}
-      tall
-      title={plan ? plan.name : '载入中…'}
-      headExtra={
-        plan ? (
+    <>
+      <DetailPage
+        back={back}
+        title={plan.name}
+        meta={
           <>
-            <Tag tone={PLAN_STATUS_VIEW[plan.status].tone}>{PLAN_STATUS_VIEW[plan.status].label}</Tag>
-            {plan.recommended && <Tag tone="brand">推荐</Tag>}
-            {plan.status === 'draft' && draft && (
-              <Button variant="primary" size="sm" disabled={busy} onClick={() => setPublishN(draft.version)}>
-                {`发布 v${draft.version}`}
-              </Button>
-            )}
+            <Tag tone={statusView.tone}>{statusView.label}</Tag>
+            {plan.recommended && <Tag tone="info">推荐</Tag>}
+            <span>{planSubtitle(plan)}</span>
           </>
-        ) : undefined
-      }
-      subtitle={plan ? planSubtitle(plan) : undefined}
-    >
-      <QueryView query={detail} rows={6} empty="不存在或已删除">
-        {(p) => (
-          <div className={css.bodyStack}>
-            <Tabs label="套餐详情" items={tabItems} value={activeTab} onChange={onTab} />
-            {activeTab === 'overview' && (
-              <OverviewTab plan={p} onEdit={(key) => setEditGroup(key)} onArchive={() => setArchiveOpen(true)} />
-            )}
-            {activeTab === 'prices' && <PricesTab plan={p} busy={busy} run={run} />}
-            {activeTab === 'pools' && <PoolsTab plan={p} busy={busy} run={run} />}
-            {activeTab === 'versions' && (
-              <VersionsTab
-                plan={p}
-                busy={busy}
-                onPublish={(n) => setPublishN(n)}
-                onNewVersion={() => setEditGroup('usage')}
-              />
-            )}
+        }
+        actions={
+          live && draft ? (
+            <Button variant="primary" size="sm" disabled={busy} onClick={() => setPublishN(draft.version)}>
+              {`发布 v${draft.version}`}
+            </Button>
+          ) : undefined
+        }
+        tabs={{
+          label: '套餐详情',
+          items: tabs.map((t) => ({ value: t.value, label: t.label, badge: t.count })),
+          value: activeTab,
+          onChange: onTab,
+        }}
+        side={
+          <div className={css.stack}>
+            <SectionTitle
+              action={
+                live ? (
+                  <Button variant="link" size="xs" onClick={() => setEditGroup('basic')}>
+                    编辑
+                  </Button>
+                ) : undefined
+              }
+            >
+              基本资料
+            </SectionTitle>
+            <SideFacts label="基本资料">
+              {basicFacts(plan).map((f) => (
+                <SideFact key={f.k} label={f.k}>
+                  <span className={valClass(f)}>{f.v}</span>
+                  {f.hint && <span className={css.muted}> · {f.hint}</span>}
+                </SideFact>
+              ))}
+            </SideFacts>
           </div>
+        }
+      >
+        {activeTab === 'overview' && (
+          <OverviewTab
+            plan={plan}
+            live={live}
+            busy={busy}
+            onEdit={setEditGroup}
+            onArchive={() => setArchiveOpen(true)}
+            onTab={onTab}
+          />
         )}
-      </QueryView>
+        {activeTab === 'prices' && <PricesTab plan={plan} busy={busy} run={run} />}
+        {activeTab === 'pools' && <PoolsTab plan={plan} busy={busy} run={run} />}
+        {activeTab === 'versions' && (
+          <VersionsTab
+            plan={plan}
+            busy={busy}
+            onPublish={(n) => setPublishN(n)}
+            onNewVersion={() => setEditGroup('usage')}
+          />
+        )}
+      </DetailPage>
 
-      {plan && editGroup === 'basic' && <BasicModal open plan={plan} onClose={() => setEditGroup(null)} />}
-      {plan && editGroup === 'usage' && <UsageModal open plan={plan} onClose={() => setEditGroup(null)} />}
-      {plan && editGroup === 'sales' && <SalesModal open plan={plan} onClose={() => setEditGroup(null)} />}
-      {plan && editGroup === 'reset' && <ResetModal open plan={plan} onClose={() => setEditGroup(null)} />}
-      {plan && editGroup === 'once' && <OnceModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {editGroup === 'basic' && <BasicModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {editGroup === 'usage' && <UsageModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {editGroup === 'sales' && <SalesModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {editGroup === 'reset' && <ResetModal open plan={plan} onClose={() => setEditGroup(null)} />}
+      {editGroup === 'once' && <OnceModal open plan={plan} onClose={() => setEditGroup(null)} />}
 
-      {plan && archiveOpen && (
+      {archiveOpen && (
         <ConfirmModal
           open
           tone="danger"
@@ -144,83 +189,87 @@ export function PlanDetailModal({
         />
       )}
 
-      {plan && publishN !== null && (
+      {publishConfirm && (
         <ConfirmModal
           open
-          title={publishCopy(plan, publishN).title}
-          body={publishCopy(plan, publishN).body}
+          title={publishConfirm.title}
+          body={publishConfirm.body}
           confirmLabel="发布"
           onCancel={() => setPublishN(null)}
           onConfirm={handlePublish}
         />
       )}
-    </Modal>
+    </>
   )
 }
 
+/** 概览：提示条 + 各组只读键值 + 归档危险行 */
 function OverviewTab({
   plan,
+  live,
+  busy,
   onEdit,
   onArchive,
+  onTab,
 }: {
   plan: PlanDetail
+  live: boolean
+  busy: boolean
   onEdit: (key: OverviewGroupKey) => void
   onArchive: () => void
+  onTab: (t: DetailTab) => void
 }) {
-  const notes = overviewNotes(plan)
-  const groups = overviewGroups(plan)
-  const live = isLive(plan)
-
   return (
-    <div className={css.bodyStack}>
-      {notes.length > 0 && (
-        <div className={css.notes}>
-          {notes.map((note) => (
-            <div key={note} className={css.note}>
-              <span className={css.noteDot} aria-hidden="true" />
-              <span>{note}</span>
-            </div>
-          ))}
-        </div>
-      )}
+    <>
+      {overviewNotes(plan).map((n) => {
+        const action = n.action
+        return (
+          <Callout
+            key={n.text}
+            action={action ? <Button size="sm" onClick={() => onTab(action.tab)}>{action.label}</Button> : undefined}
+          >
+            {n.text}
+          </Callout>
+        )
+      })}
 
-      {groups.map((group) => (
-        <section key={group.key} className={css.section}>
-          <div className={css.sectionHeader}>
-            <h3 className={css.sectionTitle}>{group.title}</h3>
-            {live && (
-              <Button size="sm" onClick={() => onEdit(group.key)}>
-                编辑
-              </Button>
-            )}
-          </div>
-          {group.rows.map((row) => {
-            const valClass = [css.kvVal, row.mono && css.mono, row.muted && css.muted].filter(Boolean).join(' ')
-            return (
-              <div key={row.k} className={css.kvRow}>
-                <span className={css.kvKey}>{row.k}</span>
-                <span className={valClass}>{row.v}</span>
-              </div>
-            )
-          })}
+      {overviewGroups(plan).map((group) => (
+        <section key={group.key}>
+          <SectionTitle
+            action={
+              live ? (
+                <Button variant="link" size="xs" onClick={() => onEdit(group.key)}>
+                  编辑
+                </Button>
+              ) : undefined
+            }
+          >
+            {group.title}
+          </SectionTitle>
+          <KvList>
+            {group.rows.map((row) => (
+              <KvRow key={row.k} label={row.k}>
+                <span className={valClass(row)}>{row.v}</span>
+              </KvRow>
+            ))}
+          </KvList>
         </section>
       ))}
 
       {live && (
-        <div className={css.archiveRow}>
-          <div className={css.archiveInfo}>
-            <span className={css.archiveTitle}>归档这个套餐</span>
-            <span className={css.mutedSmall}>用户端不再展示、不能新购，老用户不能续费；不可恢复</span>
-          </div>
-          <Button size="sm" variant="secondary" className={css.dangerBtn} onClick={onArchive}>
-            归档
-          </Button>
-        </div>
+        <DangerRow
+          title="归档这个套餐"
+          description="用户端不再展示、不能新购，老用户不能续费；不可恢复"
+          actionLabel="归档"
+          disabled={busy}
+          onAction={onArchive}
+        />
       )}
-    </div>
+    </>
   )
 }
 
+/** 价格（只有订阅套餐有这个页签）：在售与已停售的各档，live 时底部添加价格 */
 function PricesTab({
   plan,
   busy,
@@ -278,55 +327,75 @@ function PricesTab({
   const tierOptions = TIERS.map((t) => ({ value: t.key, label: t.label }))
 
   return (
-    <section className={css.section}>
-      <div className={css.sectionHeader}>
-        <h3 className={css.sectionTitle}>在售价格</h3>
-      </div>
-      {rows.map((row) => (
-        <div key={row.id} className={[css.priceRow, !row.active && css.dimmed].filter(Boolean).join(' ')}>
-          <span className={css.kvKey}>{row.label}</span>
-          <span className={css.mono}>{row.amount}</span>
-          {row.active && live ? (
-            <Button size="xs" variant="ghost" disabled={busy} onClick={() => void handleStop(row.tier)}>
-              停售
-            </Button>
-          ) : row.active ? null : (
-            <span className={css.mutedSmall}>已停售</span>
-          )}
-        </div>
-      ))}
+    <>
+      <section>
+        <SectionTitle>在售价格</SectionTitle>
+        <KvList>
+          {rows.map((row) => (
+            <KvRow
+              key={row.id}
+              label={row.label}
+              muted={!row.active}
+              action={
+                row.active && live ? (
+                  <Button
+                    variant="link"
+                    size="xs"
+                    className={css.dangerLink}
+                    disabled={busy}
+                    onClick={() => void handleStop(row.tier)}
+                  >
+                    停售
+                  </Button>
+                ) : !row.active ? (
+                  <span className={css.mutedSmall}>已停售</span>
+                ) : undefined
+              }
+            >
+              <span className={css.mono}>{row.amount}</span>
+              {row.note !== '' && <span className={css.muted}> · {row.note}</span>}
+            </KvRow>
+          ))}
+        </KvList>
+      </section>
       {live && (
-        <div className={css.priceAddRow}>
-          <Select
-            label="计费周期"
-            options={tierOptions}
-            value={newTier}
-            onChange={(e) => {
-              setNewTier(e.target.value as TierKey)
-              setAddError(undefined)
-            }}
-          />
-          <Input
-            mono
-            inputMode="decimal"
-            placeholder="价格（元）"
-            value={newAmount}
-            onChange={(e) => {
-              setNewAmount(e.target.value)
-              setAddError(undefined)
-            }}
-            hint={hint}
-            error={addError}
-          />
-          <Button variant="primary" size="sm" disabled={busy} onClick={() => void handleAdd()}>
-            添加价格
-          </Button>
-        </div>
+        <section>
+          <div className={css.addRow}>
+            <Select
+              aria-label="计费周期"
+              fieldClassName={css.addTier}
+              options={tierOptions}
+              value={newTier}
+              onChange={(e) => {
+                setNewTier(e.target.value as TierKey)
+                setAddError(undefined)
+              }}
+            />
+            <Input
+              mono
+              fieldClassName={css.addAmount}
+              inputMode="decimal"
+              aria-label="价格（元）"
+              placeholder="价格（元）"
+              value={newAmount}
+              onChange={(e) => {
+                setNewAmount(e.target.value)
+                setAddError(undefined)
+              }}
+              hint={hint}
+              error={addError}
+            />
+            <Button size="sm" disabled={busy} onClick={() => void handleAdd()}>
+              添加价格
+            </Button>
+          </div>
+        </section>
       )}
-    </section>
+    </>
   )
 }
 
+/** 线路：按详情里的 pool_ids 画开关，改动立即生效 */
 function PoolsTab({
   plan,
   busy,
@@ -349,45 +418,39 @@ function PoolsTab({
   }
 
   return (
-    <section className={css.section}>
-      <div className={css.sectionHeader}>
-        <h3 className={css.sectionTitle}>可用线路</h3>
-        <span className={css.mutedSmall}>{`已选 ${plan.pool_ids.length} 个 · 改动立即生效`}</span>
-      </div>
-
+    <section>
+      <SectionTitle hint={`已选 ${plan.pool_ids.length} 个 · 改动立即生效`}>可用线路</SectionTitle>
       <QueryView query={poolsQuery} rows={4} empty={null} isEmpty={() => false}>
         {(pools) => {
           const warning = live ? poolBindingWarning(pools, plan.pool_ids) : null
           return (
-            <div className={css.stack}>
-              {warning && (
-                <div className={css.note}>
-                  <span className={css.noteDot} aria-hidden="true" />
-                  <span>{warning}</span>
-                </div>
-              )}
+            <>
+              {warning && <Callout>{warning}</Callout>}
               {pools.length === 0 ? (
-                <div className={css.mutedSmall}>还没有可用的节点池，先到「节点 › 节点池」建一个。</div>
+                <p className={css.mutedSmall}>还没有可用的节点池，先到「节点 › 节点池」建一个。</p>
               ) : (
-                pools.map((pool) => {
-                  const on = plan.pool_ids.includes(pool.id)
-                  return (
-                    <div key={pool.id} className={css.poolRow}>
-                      <div className={css.poolInfo}>
-                        <span className={css.poolName}>{pool.name}</span>
-                        <span className={css.mutedSmall}>{poolMeta(pool)}</span>
-                      </div>
-                      <Switch
-                        aria-label={pool.name}
-                        checked={on}
-                        disabled={busy || !live}
-                        onChange={() => void handleToggle(pool.id, pool.name, on)}
+                <RowList label="可用线路">
+                  {pools.map((pool) => {
+                    const on = plan.pool_ids.includes(pool.id)
+                    return (
+                      <Row
+                        key={pool.id}
+                        title={pool.name}
+                        meta={poolMeta(pool)}
+                        actions={
+                          <Switch
+                            aria-label={pool.name}
+                            checked={on}
+                            disabled={busy || !live}
+                            onChange={() => void handleToggle(pool.id, pool.name, on)}
+                          />
+                        }
                       />
-                    </div>
-                  )
-                })
+                    )
+                  })}
+                </RowList>
               )}
-            </div>
+            </>
           )
         }}
       </QueryView>
@@ -395,6 +458,7 @@ function PoolsTab({
   )
 }
 
+/** 版本记录：草稿可发布，live 时可新建版本（打开用量弹窗） */
 function VersionsTab({
   plan,
   busy,
@@ -411,40 +475,45 @@ function VersionsTab({
   const live = isLive(plan)
 
   return (
-    <section className={css.section}>
-      <div className={css.sectionHeader}>
-        <h3 className={css.sectionTitle}>版本记录</h3>
-        {live && (
-          <Button
-            size="sm"
-            disabled={draft !== undefined}
-            title={draft ? `已有草稿 v${draft.version}，先发布它` : undefined}
-            onClick={onNewVersion}
-          >
-            新建版本
-          </Button>
-        )}
-      </div>
-      {rows.map((row) => (
-        <div key={row.id} className={css.versionRow}>
-          <span className={css.versionN}>{`v${row.n}`}</span>
-          <div className={css.versionMeta}>
-            <div className={css.versionHeader}>
-              <Tag tone={row.tone}>{row.label}</Tag>
-              <span className={css.versionDate}>{row.at}</span>
-            </div>
-            <div className={css.versionSummary}>
-              {row.summary}
-              {row.by ? ` · ${row.by}` : ''}
-            </div>
-          </div>
-          {row.isDraft && (
-            <Button variant="primary" size="xs" disabled={busy} onClick={() => onPublish(row.n)}>
-              发布
+    <section>
+      <SectionTitle
+        action={
+          live ? (
+            <Button
+              size="sm"
+              disabled={draft !== undefined}
+              title={draft ? `已有草稿 v${draft.version}，先发布它` : undefined}
+              onClick={onNewVersion}
+            >
+              新建版本
             </Button>
-          )}
-        </div>
-      ))}
+          ) : undefined
+        }
+      >
+        版本记录
+      </SectionTitle>
+      <RowList label="版本记录">
+        {rows.map((row) => (
+          <Row
+            key={row.id}
+            lead={
+              <span className={css.versionLead}>
+                <b className={css.versionN}>{`v${row.n}`}</b>
+                <Tag tone={row.tone}>{row.label}</Tag>
+              </span>
+            }
+            title={row.summary}
+            meta={`${row.at}${row.by ? ` · ${row.by}` : ''}`}
+            actions={
+              row.isDraft && live ? (
+                <Button variant="primary" size="sm" disabled={busy} onClick={() => onPublish(row.n)}>
+                  发布
+                </Button>
+              ) : undefined
+            }
+          />
+        ))}
+      </RowList>
     </section>
   )
 }

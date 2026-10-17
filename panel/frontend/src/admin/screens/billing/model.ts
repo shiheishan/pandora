@@ -65,11 +65,6 @@ function sourceLabel(o: Pick<OrderDetail, 'manual_reason' | 'created_by_email'>)
   return `人工开单 · ${o.created_by_email ?? '已删除的管理员'}`
 }
 
-/** 订单详情弹窗副标题 */
-export function orderSubtitle(o: Pick<OrderDetail, 'status' | 'manual_reason'>): string {
-  return `${ORDER_STATUS_VIEW[o.status].label} · ${o.manual_reason === null ? '用户端下单' : '人工开单'}`
-}
-
 const PENDING: readonly OrderStatus[] = ['pending_payment']
 
 /** 标记已支付：后端只收 pending_payment，且应付大于 0 */
@@ -116,25 +111,78 @@ export function cancelReasonLabel(reason: string): string {
   return CANCEL_REASON_LABELS[reason] ?? reason
 }
 
-export function orderFacts(o: OrderDetail): Array<[string, string]> {
+/** 详情主栏「金额」块：内容、金额、优惠（>0 才有）、余额抵扣（恒有）、应付（恒有）、实收（>0 才有） */
+export function orderAmountFacts(o: OrderDetail): Array<[string, string]> {
   const money = (n: number) => formatMoney(n)
   const facts: Array<[string, string]> = [
-    ['用户', o.user_email],
     ['内容', orderWhat(o)],
     ['金额', money(o.total_amount)],
   ]
   if (o.discount_amount > 0) facts.push(['优惠', `− ${money(o.discount_amount)}`])
-  if (o.balance_applied > 0) facts.push(['余额抵扣', money(o.balance_applied)])
+  facts.push(['余额抵扣', money(o.balance_applied)])
   facts.push(['应付', money(o.payable_amount)])
   if (o.paid_amount > 0) facts.push(['实收', money(o.paid_amount)])
-  facts.push(['渠道', channelLabel(o, o.manual_reason !== null)], ['来源', sourceLabel(o)])
-  if (o.manual_reason) facts.push(['开单原因', o.manual_reason])
-  if (PENDING.includes(o.status) && o.expires_at) facts.push(['支付截止', formatDateTime(o.expires_at)])
-  if (o.paid_at) facts.push(['支付时间', formatDateTime(o.paid_at)])
-  if (o.cancelled_at) facts.push(['取消时间', formatDateTime(o.cancelled_at)])
-  if (o.expired_at) facts.push(['过期时间', formatDateTime(o.expired_at)])
-  if (o.cancel_reason) facts.push(['取消原因', cancelReasonLabel(o.cancel_reason)])
   return facts
+}
+
+export interface SideFactView {
+  k: string
+  v: string
+  hint?: string
+  userLink?: boolean
+}
+
+/** 详情右栏：用户、渠道、来源、下单时间、支付截止、开单原因、支付 / 取消 / 过期时间、取消原因 */
+export function orderSideFacts(o: OrderDetail, now: Date): SideFactView[] {
+  const facts: SideFactView[] = [
+    { k: '用户', v: o.user_email, userLink: true },
+    { k: '渠道', v: channelLabel(o, o.manual_reason !== null) },
+    { k: '来源', v: sourceLabel(o) },
+    { k: '下单时间', v: formatDateTime(o.created_at) },
+  ]
+  if (PENDING.includes(o.status) && o.expires_at) {
+    facts.push({ k: '支付截止', v: formatDateTime(o.expires_at), hint: deadlineLeft(o.expires_at, now) })
+  }
+  if (o.manual_reason) facts.push({ k: '开单原因', v: o.manual_reason })
+  if (o.paid_at) facts.push({ k: '支付时间', v: formatDateTime(o.paid_at) })
+  if (o.cancelled_at) facts.push({ k: '取消时间', v: formatDateTime(o.cancelled_at) })
+  if (o.expired_at) facts.push({ k: '过期时间', v: formatDateTime(o.expired_at) })
+  if (o.cancel_reason) facts.push({ k: '取消原因', v: cancelReasonLabel(o.cancel_reason) })
+  return facts
+}
+
+/** 详情页头副行：来源 · 多久前，如「用户端下单 · 4 分钟前」「人工开单 · 10-15」 */
+export function orderMeta(o: Pick<OrderDetail, 'manual_reason' | 'created_at'>, now: Date): string {
+  return `${o.manual_reason === null ? '用户端下单' : '人工开单'} · ${ago(o.created_at, now)}`
+}
+
+/** 支付截止的剩余时间：「还剩 26 分钟」「还剩 1 小时 5 分钟」「还剩 2 小时」；已过为「已过截止时间」 */
+export function deadlineLeft(expiresAt: string, now: Date): string {
+  const ms = new Date(expiresAt).getTime() - now.getTime()
+  if (ms <= 0) return '已过截止时间'
+  const minutes = Math.ceil(ms / 60000)
+  if (minutes < 60) return `还剩 ${minutes} 分钟`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `还剩 ${h} 小时${m ? ` ${m} 分钟` : ''}`
+}
+
+/** 标记已支付第二步确认框的正文 */
+export function markPaidConfirm(o: Pick<OrderDetail, 'order_no' | 'payable_amount' | 'kind'>, reference: string): string {
+  const tail =
+    o.kind === 'topup'
+      ? '余额立即入账。'
+      : o.kind === 'traffic_reset'
+        ? '这一份的本期流量将立即清零。'
+        : '订阅将立即开通。'
+  return `${o.order_no} · ${formatMoney(o.payable_amount)}，凭证 ${reference.trim()}。${tail}同一张凭证不能用于别的订单。`
+}
+
+/** 标记已支付成功的提示 */
+export function markPaidToast(kind: OrderDetail['kind']): string {
+  if (kind === 'topup') return '已标记为已支付，余额已入账'
+  if (kind === 'traffic_reset') return '已标记为已支付，本期流量已清零'
+  return '已标记为已支付，订阅已开通'
 }
 
 // ---------------------------------------------------------------------------
@@ -428,19 +476,29 @@ function ago(at: string, now: Date): string {
   return /^\d+ (分钟|小时)$/.test(rel) ? `${rel}前` : rel
 }
 
+/** 渠道名后的标签：收单状态 + 缺的配置；offline 没有标签 */
+export function providerTags(p: Provider): Array<{ label: string; tone: Tone }> {
+  if (isOffline(p)) return []
+  const tags: Array<{ label: string; tone: Tone }> = []
+  const mode = providerMode(p)
+  if (mode === 'on') tags.push({ label: '收新单中', tone: 'ok' })
+  else if (mode === 'paused') tags.push({ label: '已停止新单', tone: 'warn' })
+  else tags.push({ label: '已完全停用', tone: 'danger' })
+  if (!p.has_credentials) tags.push({ label: '未配置凭据', tone: 'warn' })
+  if (p.adapter === 'btcpay' && !p.has_webhook_secret) tags.push({ label: '未配置 Webhook 密钥', tone: 'warn' })
+  return tags
+}
+
 export function providerNote(p: Provider, now: Date): { text: string; tone: Tone } {
   if (isOffline(p)) return { text: '系统内置：人工开单「线下已收款」与「标记已支付」的入账都记在这里，结账页不显示', tone: 'neutral' }
   const mode = providerMode(p)
   const parts: string[] = []
-  if (mode === 'off') parts.push('已完全停用，回调也不处理')
-  if (mode === 'paused') parts.push('已停止新单，进行中的支付仍会回调')
-  if (!p.has_credentials) parts.push('未配置凭据')
-  if (p.adapter === 'btcpay' && !p.has_webhook_secret) parts.push('未配置 Webhook 密钥')
+  if (mode === 'off') parts.push('回调也不处理')
   if (p.min_amount > 0) parts.push(`最低付款 ${formatMoney(p.min_amount)}`)
   const fee = feeLabel(p)
   if (fee) parts.push(fee)
   parts.push(p.last_callback_at ? `最近回调 ${ago(p.last_callback_at, now)}` : '尚无回调')
-  const tone: Tone = mode === 'off' ? 'danger' : !p.has_credentials || mode === 'paused' || (p.adapter === 'btcpay' && !p.has_webhook_secret) ? 'warn' : 'neutral'
+  const tone: Tone = mode === 'off' ? 'danger' : 'neutral'
   return { text: parts.join(' · '), tone }
 }
 

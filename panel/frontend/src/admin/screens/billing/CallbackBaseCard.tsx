@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, Input, QueryView, useToast } from '../../../ui'
+import { KvList, KvRow } from '../../kit'
 import { useFailure } from '../../actions'
 import { paymentSettingsSchema, useInvalidateBilling, usePaymentSettings } from './api'
 import css from './Billing.module.css'
@@ -37,11 +38,26 @@ function CallbackBaseForm({ saved }: { saved: { notify_base_url: string; effecti
   })
 
   return (
-    <Card title="回调地址">
-      <div className={css.stack}>
-        <p className={css.small}>
-          现在生效：<span className={css.mono}>{saved.effective_base}/v1/webhooks/payments/&lt;渠道编码&gt;</span>
-        </p>
+    <Card
+      title="回调地址"
+      subtitle="支付渠道把结果通知到这里"
+      footer={
+        <>
+          <span className={css.small}>
+            改了以后新发起的支付用新地址；之前发起、还没回调的支付仍回调到原来的地址，原地址在这段时间要继续能访问（没到账的由主动查单补记）。BTCPay 的 Webhook 地址要到 BTCPay 商店里同步改。
+          </span>
+          <Button size="sm" disabled={!dirty} busy={save.isPending} onClick={() => save.mutate()}>
+            保存
+          </Button>
+        </>
+      }
+    >
+      <div className={css.callbackBody}>
+        <KvList>
+          <KvRow label="现在生效">
+            <span className={css.mono}>{saved.effective_base}/v1/webhooks/payments/&lt;渠道编码&gt;</span>
+          </KvRow>
+        </KvList>
         <Input
           label="回调地址前缀"
           mono
@@ -55,15 +71,6 @@ function CallbackBaseForm({ saved }: { saved: { notify_base_url: string; effecti
           error={errors.notify_base_url}
           disabled={save.isPending}
         />
-        <div className={css.toolbar}>
-          <span className={css.spacer} />
-          <Button size="sm" variant="primary" disabled={!dirty} busy={save.isPending} onClick={() => save.mutate()}>
-            保存
-          </Button>
-        </div>
-        <p className={css.small}>
-          改了以后新发起的支付用新地址；之前发起、还没回调的支付仍回调到原来的地址，原地址在这段时间要继续能访问（没到账的由主动查单补记）。BTCPay 的 Webhook 地址要到 BTCPay 商店里同步改。
-        </p>
       </div>
     </Card>
   )

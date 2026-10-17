@@ -34,8 +34,12 @@ import {
   methodLabel,
   minAmountHint,
   minAmountText,
-  orderFacts,
-  orderSubtitle,
+  deadlineLeft,
+  markPaidConfirm,
+  markPaidToast,
+  orderAmountFacts,
+  orderMeta,
+  orderSideFacts,
   payChannel,
   paymentLines,
   parseFeeFixed,
@@ -51,6 +55,7 @@ import {
   providerStats,
   queriedView,
   providerNote,
+  providerTags,
   rateLabel,
   reasonProblem,
   referenceProblem,
@@ -142,28 +147,67 @@ describe('orders', () => {
       ...over,
     })
 
-  it('builds the drawer facts with source and manual channel', () => {
-    const facts = new Map(orderFacts(detail()))
-    expect(facts.get('来源')).toBe('人工开单 · ops@example.test')
-    expect(facts.get('渠道')).toBe('人工')
-    expect(facts.get('内容')).toBe('专业版 · 月付')
-    expect(facts.get('优惠')).toBe('− ¥45.00')
-    expect(facts.get('开单原因')).toBe('补偿一个月服务')
-    expect(facts.has('其中会员折扣')).toBe(false)
-    expect(facts.has('币种')).toBe(false)
-    const portal = new Map(orderFacts(detail({ manual_reason: null, created_by_email: null, status: 'pending_payment', expires_at: '2026-09-23T10:30:00Z' })))
-    expect(portal.get('来源')).toBe('用户端下单')
-    expect(portal.get('渠道')).toBe('—')
-    expect(portal.has('支付截止')).toBe(true)
-    expect(new Map(orderFacts(detail({ created_by_email: null }))).get('来源')).toBe('人工开单 · 已删除的管理员')
-    const gone = new Map(orderFacts(detail({ status: 'cancelled', cancelled_at: '2026-09-23T11:00:00Z', cancel_reason: 'account_deleted' })))
+  it('builds amount and side facts with source and manual channel', () => {
+    const amount = new Map(orderAmountFacts(detail()))
+    expect(amount.get('内容')).toBe('专业版 · 月付')
+    expect(amount.get('优惠')).toBe('− ¥45.00')
+    expect(amount.get('余额抵扣')).toBe('¥0.00')
+    expect(amount.has('其中会员折扣')).toBe(false)
+    expect(amount.has('币种')).toBe(false)
+
+    const side = orderSideFacts(detail(), new Date('2026-09-23T10:00:00Z'))
+    const sideMap = new Map(side.map((f) => [f.k, f.v]))
+    expect(sideMap.get('来源')).toBe('人工开单 · ops@example.test')
+    expect(sideMap.get('渠道')).toBe('人工')
+    expect(sideMap.get('开单原因')).toBe('补偿一个月服务')
+    const userFact = side.find((f) => f.k === '用户')
+    expect(userFact?.userLink).toBe(true)
+
+    const now = new Date('2026-09-23T10:04:00Z')
+    const portalSide = orderSideFacts(
+      detail({ manual_reason: null, created_by_email: null, status: 'pending_payment', expires_at: '2026-09-23T10:30:00Z' }),
+      now,
+    )
+    const portalMap = new Map(portalSide.map((f) => [f.k, f.v]))
+    expect(portalMap.get('来源')).toBe('用户端下单')
+    expect(portalMap.get('渠道')).toBe('—')
+    const deadline = portalSide.find((f) => f.k === '支付截止')
+    expect(deadline).toBeDefined()
+    expect(deadline?.hint).toBe('还剩 26 分钟')
+
+    expect(new Map(orderSideFacts(detail({ created_by_email: null }), now).map((f) => [f.k, f.v])).get('来源')).toBe(
+      '人工开单 · 已删除的管理员',
+    )
+    const gone = new Map(orderSideFacts(detail({ status: 'cancelled', cancelled_at: '2026-09-23T11:00:00Z', cancel_reason: 'account_deleted' }), now).map((f) => [f.k, f.v]))
     expect(gone.get('取消原因')).toBe('账号已注销')
-    expect(new Map(orderFacts(detail({ cancel_reason: '用户来信要求取消' }))).get('取消原因')).toBe('用户来信要求取消')
+    expect(new Map(orderSideFacts(detail({ cancel_reason: '用户来信要求取消' }), now).map((f) => [f.k, f.v])).get('取消原因')).toBe('用户来信要求取消')
   })
 
-  it('builds order subtitle for portal vs manual', () => {
-    expect(orderSubtitle(detail({ status: 'fulfilled', manual_reason: null }))).toBe('已支付 · 用户端下单')
-    expect(orderSubtitle(detail({ status: 'pending_payment', manual_reason: '对公开单' }))).toBe('待支付 · 人工开单')
+  it('builds order meta for portal vs manual', () => {
+    const now = new Date('2026-09-23T10:04:00Z')
+    expect(orderMeta(detail({ manual_reason: null, created_at: '2026-09-23T10:00:00Z' }), now)).toBe('用户端下单 · 4 分钟前')
+    expect(orderMeta(detail({ manual_reason: '对公开单', created_at: '2026-09-23T10:00:00Z' }), now)).toBe('人工开单 · 4 分钟前')
+  })
+
+  it('words payment deadline remaining time', () => {
+    const now = new Date('2026-09-23T10:00:00Z')
+    expect(deadlineLeft('2026-09-23T10:26:00Z', now)).toBe('还剩 26 分钟')
+    expect(deadlineLeft('2026-09-23T11:05:00Z', now)).toBe('还剩 1 小时 5 分钟')
+    expect(deadlineLeft('2026-09-23T12:00:00Z', now)).toBe('还剩 2 小时')
+    expect(deadlineLeft('2026-09-23T10:00:30Z', now)).toBe('还剩 1 分钟')
+    expect(deadlineLeft('2026-09-23T09:59:00Z', now)).toBe('已过截止时间')
+  })
+
+  it('builds mark-paid confirm and toast copy', () => {
+    const base = { order_no: 'PD1', payable_amount: 1000 }
+    expect(markPaidConfirm({ ...base, kind: 'new' }, ' ICBC-1 ')).toBe(
+      'PD1 · ¥10.00，凭证 ICBC-1。订阅将立即开通。同一张凭证不能用于别的订单。',
+    )
+    expect(markPaidConfirm({ ...base, kind: 'topup' }, 'R1')).toContain('余额立即入账。')
+    expect(markPaidConfirm({ ...base, kind: 'traffic_reset' }, 'R1')).toContain('这一份的本期流量将立即清零。')
+    expect(markPaidToast('topup')).toBe('已标记为已支付，余额已入账')
+    expect(markPaidToast('traffic_reset')).toBe('已标记为已支付，本期流量已清零')
+    expect(markPaidToast('new')).toBe('已标记为已支付，订阅已开通')
   })
 
   it('merges intents with their payments and offline receipts into one list', () => {
@@ -330,11 +374,26 @@ describe('late payments, providers and adjustments', () => {
     expect(todayLabel(581200)).toBe('¥5,812.00')
     expect(rateLabel(0.9724)).toBe('97.2%')
     expect(rateLabel(null)).toBe('—')
-    expect(providerNote(provider({ accepting_new: false, has_credentials: false }), now)).toEqual({ text: '已停止新单，进行中的支付仍会回调 · 未配置凭据 · 最低付款 ¥1.00 · 尚无回调', tone: 'warn' })
+    expect(providerNote(provider({ accepting_new: false, has_credentials: false }), now)).toEqual({ text: '最低付款 ¥1.00 · 尚无回调', tone: 'neutral' })
     expect(providerNote(provider({ last_callback_at: '2026-09-24T11:50:00Z' }), now)).toEqual({ text: '最低付款 ¥1.00 · 最近回调 10 分钟前', tone: 'neutral' })
     expect(providerNote(provider({ min_amount: 0, last_callback_at: '2026-09-24T11:50:00Z' }), now).text).toBe('最近回调 10 分钟前')
     expect(providerNote(provider({ enabled: false }), now).tone).toBe('danger')
+    expect(providerNote(provider({ enabled: false }), now).text.startsWith('回调也不处理')).toBe(true)
     expect(providerNote(provider({ code: 'offline' }), now).text).toContain('系统内置')
+  })
+
+  it('builds provider status tags for the channel table', () => {
+    expect(providerTags(provider({}))).toEqual([{ label: '收新单中', tone: 'ok' }])
+    expect(providerTags(provider({ accepting_new: false, has_credentials: false }))).toEqual([
+      { label: '已停止新单', tone: 'warn' },
+      { label: '未配置凭据', tone: 'warn' },
+    ])
+    expect(providerTags(provider({ enabled: false }))).toEqual([{ label: '已完全停用', tone: 'danger' }])
+    expect(providerTags(provider({ adapter: 'btcpay', has_webhook_secret: false }))).toEqual([
+      { label: '收新单中', tone: 'ok' },
+      { label: '未配置 Webhook 密钥', tone: 'warn' },
+    ])
+    expect(providerTags(provider({ code: 'offline' }))).toEqual([])
   })
 
   it('aggregates provider stats excluding offline', () => {

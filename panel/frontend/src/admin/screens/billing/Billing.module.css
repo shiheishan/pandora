@@ -4,7 +4,7 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-16);
+  gap: 12px;
 }
 
 .spacer {
@@ -25,14 +25,9 @@
   font-size: var(--fs-caption);
 }
 
-/* R95 / R114：人工单标识，跟在订单号后 */
-.manualTag {
-  margin-left: 6px;
-  vertical-align: 1px;
-}
-
 .num {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .stack {
@@ -49,10 +44,12 @@
 }
 
 .link {
-  color: var(--link);
-  text-decoration: var(--link-decoration);
-  text-decoration-color: var(--link-underline);
-  text-underline-offset: 3px;
+  color: var(--info);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: none;
 }
 
 .tone_ok {
@@ -84,106 +81,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-8);
-}
-
-/* 按用户筛选的标签：「只看 某人 ×」 */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--h-control-sm);
-  padding: 0 4px 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-}
-
-.chipClose {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-.chipClose:hover {
-  background: var(--surface-3);
-}
-
-.tableBox {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-  overflow: hidden;
-}
-
-/* 表格最小宽：订单照设计稿七列之和，960 宽时在卡片内横向滚动；待处理到账五列放得下 */
-.tableBox table {
-  min-width: 640px;
-}
-
-.wide table {
-  min-width: 820px;
-}
-
-/* ===========================================================================
- * 订单详情弹窗
- * ========================================================================= */
-.detailSection {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  margin-top: 10px;
-}
-
-.detailSection:first-child {
-  margin-top: 0;
-}
-
-.detailSectionTitle {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-}
-
-.detailRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 6px 0;
-  font-size: 13px;
-}
-
-.detailLabel {
-  flex: none;
-  color: var(--text-3);
-}
-
-.detailValue {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  min-width: 0;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-.listFooter {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.boxText {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
 }
 
 /* ===========================================================================
@@ -344,49 +241,64 @@
 /* ===========================================================================
  * 待处理到账
  * ========================================================================= */
-/* 区块标题（收入调整的表头里还在用） */
-.bannerTitle {
+/* 筛选条右侧的一行合计 / 统计（样稿 .tsum） */
+.tsum {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.tsum b {
+  color: var(--text);
   font-weight: 600;
 }
 
-/* 右上合计：小字 + 等宽较大的数字 */
-.pendingTotal {
+.sub2 {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* 回调地址卡体内：现在生效 + 前缀输入 */
+.callbackBody {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-}
-
-.pendingTotalValue {
-  font-family: var(--font-mono);
-  font-size: 16px;
-  font-weight: 600;
+  gap: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* ===========================================================================
  * 支付渠道
  * ========================================================================= */
-/* 顶部统计：数字加粗等宽 + 文字，项间距 16px */
-.providerStats {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-}
-
-.statNum {
-  font-family: var(--font-mono);
-  font-weight: 600;
-}
-
 .providerName {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.providerName b {
   font-weight: 500;
 }
 
-/* 操作格：开关 + 收单 + 编辑 + 停用，靠右排 */
+.providerLines {
+  margin-top: 4px;
+  /* 回调地址是一长串没有断点的网址，任意处折行，不把表撑出屏宽 */
+  overflow-wrap: anywhere;
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.providerLines > * {
+  display: block;
+}
+
+/* 操作格：收新单开关 + 编辑 + 停用，靠右排 */
 .rowActions {
   display: flex;
   align-items: center;
@@ -397,30 +309,12 @@
 /* ===========================================================================
  * 收入调整
  * ========================================================================= */
-.adjCard {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.adjHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-}
 
 /* 行内表单：960 宽时原因框收窄，按钮放不下就换到下一行 */
 .adjForm {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--space-8);
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
@@ -439,43 +333,16 @@
   width: 150px;
 }
 
-/* 只有列表横向滚动，表头与表单不跟着走 */
-.adjList {
-  overflow-x: auto;
-}
-
-/* 登记人 · 时间叠在原因下面（设计稿是单列，960 宽放不下五列） */
-.adjRow {
-  display: grid;
-  grid-template-columns: minmax(200px, 1fr) 96px 120px 52px;
-  gap: var(--space-12);
-  align-items: center;
-  min-width: 540px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--surface-2);
-}
-
-.adjHeader {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  border-bottom-color: var(--border);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.right {
-  text-align: right;
-}
-
+/* 行内灰字操作，悬停变红（样稿 .link-d） */
 .textAction {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--danger);
-  font: inherit;
-  font-size: var(--fs-caption);
-  text-align: right;
+  all: unset;
   cursor: pointer;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.textAction:hover {
+  color: var(--danger);
 }
 
 .textAction:disabled {
@@ -509,4 +376,25 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-8);
+}
+
+/* 只在手机（≤639）显示：被 hideOnMobile 收起的列，把要紧的信息挪到留下的格里（样稿 .m-only） */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+  }
+}
+
+.mOnlyInline {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnlyInline {
+    display: inline;
+  }
 }

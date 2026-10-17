@@ -30,10 +30,10 @@ export function ArrearsTab({ now }: { now: Date }) {
       header: '用户 · 原因',
       render: (c) => (
         <span className={css.stack}>
-          <a className={`${css.link} ${css.ellipsis}`} href={href(`/users/list/${encodeURIComponent(c.user_id)}`)}>
+          <a className={css.link} href={href(`/users/list/${encodeURIComponent(c.user_id)}`)}>
             {c.user_email}
           </a>
-          <span className={`${css.small} ${css.ellipsis}`}>{lateReason(c)}</span>
+          <span className={css.sub2}>{lateReason(c)}</span>
         </span>
       ),
     },
@@ -41,6 +41,7 @@ export function ArrearsTab({ now }: { now: Date }) {
     {
       key: 'age',
       header: '账龄',
+      hideOnMobile: true,
       width: '72px',
       align: 'right',
       render: (c) => {
@@ -55,6 +56,7 @@ export function ArrearsTab({ now }: { now: Date }) {
     {
       key: 'status',
       header: '状态',
+      hideOnMobile: true,
       width: '100px',
       render: (c) => {
         const v = LATE_STATUS_VIEW[c.status]
@@ -72,7 +74,7 @@ export function ArrearsTab({ now }: { now: Date }) {
       align: 'right',
       render: (c) =>
         c.status === 'suspense' ? (
-          <Button size="xs" onClick={() => setApplying(c)}>
+          <Button size="sm" onClick={() => setApplying(c)}>
             转入余额
           </Button>
         ) : null,
@@ -83,9 +85,8 @@ export function ArrearsTab({ now }: { now: Date }) {
     <div className={css.page}>
       <Toolbar
         end={
-          <span className={css.pendingTotal}>
-            <span className={css.small}>待处理合计</span>
-            <span className={css.pendingTotalValue}>{late.data ? formatMoney(late.data.pending_amount) : '…'}</span>
+          <span className={css.tsum}>
+            待处理合计 <b className={css.num}>{late.data ? formatMoney(late.data.pending_amount) : '…'}</b>
           </span>
         }
       >
@@ -96,23 +97,38 @@ export function ArrearsTab({ now }: { now: Date }) {
           onChange={(f) => go({ filter: f, offset: 0 })}
         />
       </Toolbar>
-      <div className={css.tableBox}>
-        <QueryView
-          query={late}
-          rows={4}
-          isEmpty={(d) => d.cases.length === 0}
-          empty={
-            <Empty
-              bare
-              title={filter === 'suspense' ? '没有待处理的到账' : filter === 'applied' ? '还没有转入余额的记录' : '没有待处理到账'}
-              description="系统会把晚到或多扣的钱记在这里，等你处理。"
+      <QueryView
+        query={late}
+        rows={4}
+        isEmpty={(d) => d.cases.length === 0}
+        empty={
+          <Empty
+            bare
+            title={filter === 'suspense' ? '没有待处理的到账' : filter === 'applied' ? '还没有转入余额的记录' : '没有待处理到账'}
+            description="系统会把晚到或多扣的钱记在这里，等你处理。"
+          />
+        }
+      >
+        {(d) => {
+          const total = d.total
+          const showCount = total <= LATE_PAGE
+          return (
+            <Table
+              label="待处理到账列表"
+              columns={columns}
+              rows={d.cases}
+              rowKey={(c) => c.id}
+              boxed
+              footer={
+                <>
+                  {showCount && <span>共 {total} 条</span>}
+                  <Pager inline total={total} limit={LATE_PAGE} offset={offset} onChange={(o) => go({ offset: o })} />
+                </>
+              }
             />
-          }
-        >
-          {(d) => <Table label="待处理到账列表" columns={columns} rows={d.cases} rowKey={(c) => c.id} />}
-        </QueryView>
-      </div>
-      <Pager total={late.data?.total ?? 0} limit={LATE_PAGE} offset={offset} onChange={(o) => go({ offset: o })} />
+          )
+        }}
+      </QueryView>
       {applying && <ApplyDialog key={applying.id} c={applying} onClose={() => setApplying(null)} />}
     </div>
   )
