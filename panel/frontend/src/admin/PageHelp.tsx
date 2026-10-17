@@ -27,11 +27,11 @@ export function PageHelpTip({ help }: { help: PageHelp }) {
         aria-describedby={tooltipId}
         aria-expanded={open}
         aria-label={help.label}
+        title={help.label}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
       >
-        <HugeiconsIcon icon={HelpCircleIcon} size={14} strokeWidth={2} aria-hidden="true" />
-        <span className={css.label}>{help.label}</span>
+        <HugeiconsIcon icon={HelpCircleIcon} size={16} strokeWidth={1.6} aria-hidden="true" />
       </button>
 
       <div role="tooltip" id={tooltipId} className={`${css.tooltip}${open ? ` ${css.open}` : ''}`}>
