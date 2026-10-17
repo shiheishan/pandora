@@ -1,11 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Input, Modal, Select, Switch, Tag, TextArea, useToast } from '../../../ui'
 import {
   BASIC_STEP_KEYS,
-  NO_POOL_HINT,
   PROTOCOL_ORDER,
   REALITY_KEYS,
   REGIONS,
@@ -45,7 +44,6 @@ function basicDirty(row: NodeDetail, b: BasicForm): boolean {
   const before = basicFromRow(row)
   return (
     b.name.trim() !== before.name ||
-    b.poolId !== before.poolId ||
     b.nodeType !== before.nodeType ||
     b.host.trim() !== before.host ||
     b.port !== before.port ||
@@ -582,13 +580,12 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
   )
 }
 
-export function NodeForm({ node, onSaved }: { node: NodeDetail; onSaved: (saved: AdminNode) => void }) {
+export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; onSaved: (saved: AdminNode) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const schemas = useProtocolSchemas()
-  const pools = usePools()
 
   const [basic, setBasic] = useState<BasicForm>(() => basicFromRow(node))
   const schema = schemas.data?.find((s) => s.node_type === basic.nodeType)
@@ -608,6 +605,11 @@ export function NodeForm({ node, onSaved }: { node: NodeDetail; onSaved: (saved:
   const legacy = node.node_type && !stable.some((s) => s.node_type === node.node_type)
 
   const dirty = basicDirty(node, basic) || protocolChanged(fields, initial, current, liveCleared, schema?.property_types)
+
+  // 把「有未保存的修改」报给外层（详情弹窗用它决定关闭前要不要确认）
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
 
   const set = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => setBasic((b) => ({ ...b, [key]: v }))
   const setValue = (path: string, v: string) => {
@@ -704,16 +706,6 @@ export function NodeForm({ node, onSaved }: { node: NodeDetail; onSaved: (saved:
           />
           <Input label="地址" mono value={basic.host} onChange={(e) => set('host', e.target.value)} error={errors.server_host} disabled={disabled} />
           <Input label="端口" mono inputMode="numeric" value={basic.port} onChange={(e) => set('port', e.target.value)} error={errors.server_port} disabled={disabled} />
-          <Select
-            label="节点池"
-            placeholder={pools.data && pools.data.length === 0 ? '还没有节点池，先到「节点池」新建' : '选择节点池'}
-            hint={NO_POOL_HINT}
-            value={basic.poolId}
-            error={errors.pool_id}
-            disabled={disabled}
-            onChange={(e) => set('poolId', e.target.value)}
-            options={(pools.data ?? []).map((p) => ({ value: p.id, label: p.name, disabled: p.status === 'disabled' }))}
-          />
           <Input label="流量倍率" mono inputMode="decimal" value={basic.rate} onChange={(e) => set('rate', e.target.value)} error={errors.traffic_rate} disabled={disabled} />
           <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="服务器不能在这里换" disabled readOnly fieldClassName={css.span2} />
           <Select

@@ -13,20 +13,28 @@ paths:
 - 隐藏的字段（`show_if` 不满足）不写进 `protocol_config`、不校验必填；「有没有改动」按两次 `toProtocolConfig` 的结果比，只改隐藏字段不算改动。布尔字段表单值是 'true' / 'false'。
 - 字段说明来自 schema 的 `hints`（回落、证书目录、REALITY 多值等），不在前端写死；`property_types` 的 `list`（REALITY 的 server_name / short_id）按逗号分隔录入，一个值存字符串、多个存数组。zod 里 `property_types` 是闭合枚举，后端加新类型要同步改 `schemas.ts`，否则整份 schema 解析失败。
 - 新建时的默认值来自后端 `default`（`logic.protocolDefaults`）；字段间联动只有一处：`logic.withProtocolDefaults`（VLESS + REALITY + tcp 默认 `xtls-rprx-vision`，离开该组合清掉 Vision）；表单顶部提示在 `protocolNotices`（不加密的 CDN 传输要套 CDN 或 TLS、裸 tcp 会被拒）。
-- 内核只给 auto / pandora-native；存量 sing-box / xray-core 载入显示为自动，只在这次保存会重新校验协议（改协议、地址、端口）时随 PATCH 带上新值，只改名字不带（`patchBody`）。
 
 生命周期与服务器：
 
 - 10-16 设计稿删掉了节点的复制、迁移、删除与「发布配置」入口（后端接口仍在，前端不再调用），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。
-- 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。
-- 节点详情是 760 宽弹窗（文件名仍是 `NodeDrawer.tsx`），4 个页签 概览 / 协议参数 / 路由与流量 / 身份与操作，地址 `/nodes/nodes/<id>/<metrics|proto|settings|ops>`；上线 / 停用在弹窗头部（`NodeOps.tsx` 的 `NodeHeaderAction`），「身份与操作」只剩吊销身份与退役。概览是 4 格指标加近 24 小时带宽曲线（探针数据，Mbps）。「路由与流量」是三块只读摘要，「编辑」各开一个弹窗装现成的编辑器（`NodeRouting`、`NodeTraffic`、`NodeAccess`）。
-- 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点抽屉还要能继续删除。
-- 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用抽屉「操作 › 上线」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。
+- 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。编辑时 NodeForm 不再有节点池（`validateBasic` 只在新建时要求节点池）。
+- 节点详情是整页（`NodeDetailPage.tsx`，kit `DetailPage`；外框 `DETAIL_ROUTES` 已登记 `nodes:nodes`），4 个页签 概览 / 协议参数 / 路由与流量 / 身份与操作（`DETAIL_TABS`），地址 `/nodes/nodes/<id>/<metrics|proto|settings|ops>`；`index.tsx` 按 `rest[0]` 分发到列表或详情。数据以 `useNodeDetail` 为主，列表缓存里有这一行时先拿来秒出，404 交给 QueryView。返回链接与切页签都带上列表的查询串（筛选不丢）。
+- 页头：地区码 + 名称 + StatusDot，副行 地址 · 协议 · 服务器；右侧上线 / 停用（`NodeOps.tsx` 的 `NodeHeaderAction`，停用要确认）。右栏 SideFacts 六项：服务器（链到服务器详情）、地区（去掉「HK · 」前缀）、节点池、是否下发、本周期用量、运行状态（`runState`）。样稿的「内核」后端没有，不显示。
+- 概览是 4 格指标加近 24 小时带宽曲线（探针数据，Mbps），标题带「峰值 X · HH:00」（`logic.bandwidthPeak`）。
+- 「协议参数」是只读键值摘要（`logic.protocolSummary`：按后端 schema 的中文名与 `option_labels` 生成，敏感字段写「不回显」，隐藏字段不列），「编辑」开 760 弹窗装 NodeForm（`NodeProtocol.tsx`）；弹窗里有未保存修改时关闭要确认（NodeForm 的 `onDirtyChange`）。
+- 「路由与流量」是三块只读摘要（路由 / 流量与标签 / 访问，`NodeSettings.tsx`），「编辑」各开一个弹窗装现成的编辑器（`NodeRouting`、`NodeTraffic`、`NodeAccess`）。节点池选择在「访问」弹窗里单独保存（`NodePoolSection`，PATCH 只带 `row_version` 与 `pool_id`）；ECH 也在「访问」。
+- 「身份与操作」：`NodeIdentity`（kit KvList + CopyButton）+ DangerRow 吊销身份 / 退役（确认框、二次认证照旧）。退役后留在详情页显示已退役，文案「退役后不可恢复」，不写「可以删除」。
+- 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点详情页还要能继续显示。
+- 列表的筛选 `f`、搜索 `q`、标签 `tag` 都在地址查询串里（`logic.parseNodeFilter`；replace 回写，搜索框本地状态 + 300ms 防抖写回）；勾选后实心 BulkBar（kit）替换筛选行；标签筛选是 Menu；页脚常驻「共 N 个节点 · M 个在线」（`logic.nodeCounts`），超过一页走服务端分页时换成 `<Pager inline>`；「新建节点」在 PageActions；≤639 次要列隐藏，名称下折一行摘要。
+- 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用详情页头「上线节点」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。
 - 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判。
 - 批量启停整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员（`batchPlan`）。
-- 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；详情弹窗（`ServerDrawer.tsx` 的 `ServerDetail`）只读键值 + 编辑名称、容量、备注 + 退役（服务中的要先标记维护）与删除；`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
+- 服务器卡片（`ServersTab.tsx`）：头是 StatusDot 包等宽名称、非 ready 跟状态 Tag、右上角 IconButton「…」进详情；副行合并地区 · IP · agent 版本（`infra.serverSubtitle`）；`status_reason` 与心跳过期提示来自 `infra.serverNotes`；删除是次要按钮，不能删时禁用并在 title 说明原因（`infra.serverDeleteBlock`）。
+- 服务器详情是整页 `/nodes/servers/<id>`（`ServerDetailPage.tsx`）：页头名称 + 状态，副行同卡片；主栏占用（没数据时「装好 agent 后这里显示占用」）与这台服务器上的节点（用节点列表按 `server_id` 过滤，`infra.serverNodeLines`，没有就「没有在役节点」）；右栏键值（含 `status_reason`、心跳）；改名称 / 容量 / 备注照旧弹窗；退役与删除用 DangerRow（不能删时禁用说明）。
+- 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；退役要先标记维护；`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
+- 节点池卡片（`PoolsTab.tsx`）没绑套餐时写「没有绑定套餐，暂时不服务任何用户」；「新建节点池」「添加服务器」都在 PageActions。
 - 签安装令牌只有服务器卡片一个入口（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`），签好后弹安装弹窗（只给一条安装命令，令牌就在命令里、脚本不另要；关闭即不再显示，别再加「粘贴令牌」那一步）；节点详情「身份与操作」只显示节点 ID、身份、证书指纹（`identity.fingerprint_sha256`）与服务器待用令牌数，不签发令牌、没有单节点令牌（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
 
 运行状态与端口（w4deliver）：
@@ -40,7 +48,7 @@ paths:
 节点补齐 Xboard（迁移 00045；后端口径见 `module-node.md` 的同名一节）：
 
 - 校验与上限照后端写在 `xb.ts`（标签 10 个 × 16 字、时段 12 段、重置日 1–31、批量 100、中转 20），文案与后端逐字相同，`xb.test.ts` 钉住；后端改了这里一起改。
-- 抽屉「流量与标签」（`NodeTraffic.tsx`）一次 PATCH 只带改了的字段：标签整体替换、`traffic_limit_bytes` / `traffic_reset_day` 给 `null` 是清空、时段整体替换。上限输入按 GiB（1024³），倍率按输入原文存成编辑稿（`RateRangeDraft`），提交前转回。
+- 详情「流量与标签」（`NodeTraffic.tsx`）一次 PATCH 只带改了的字段：标签整体替换、`traffic_limit_bytes` / `traffic_reset_day` 给 `null` 是清空、时段整体替换。上限输入按 GiB（1024³），倍率按输入原文存成编辑稿（`RateRangeDraft`），提交前转回。
 - 手动重置用量、批量修改、ECH 开启/轮换要重认证（api 层自动弹框，取消时 `useFailure` 静默）并带幂等键；ECH 停用只重认证。
 - 中转（「中转与 ECH」页）只有名称、地址、端口、SNI、Host、启用、排序；其余继承父节点，不占端口、不下发配置。列表接口返回 `{ relays, sni_hint }`，`sni_hint` 非空时显示在说明下方和 SNI 输入框的提示里（REALITY 父节点只能填 server_names 之一，IP 地址父节点要填 SNI）。与「路由」页的链式出站是两回事，界面上的说明不要混写。
 - ECH 能不能开以后端 `GET v1/nodes/{id}/ech` 的 `supported` / `unsupported_reason` 为准，前端不按协议另判；轮换后旧钥再下发 7 天（`retired_keys`）。停用的确认框写明会删光全部密钥、拿旧订阅的客户端在重新拉取前连不上。

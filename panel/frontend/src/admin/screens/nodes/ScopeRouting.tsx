@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useState, type ReactNode } from 'react'
 import { Button, Input, Select, TextArea, useToast } from '../../../ui'
 import { OUTBOUND_TYPES, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, rulesUsing, type OutboundRow, type RuleRow } from './logic'
@@ -98,7 +99,7 @@ export function ScopeRoutingEditor({
       <section className={css.section} aria-label="出站">
         <div className={css.sectionHead}>
           <h3 className={css.sectionTitle}>出站</h3>
-          <Button size="sm" disabled={busy} onClick={() => (setDraft(emptyDraft()), setDraftError(null), setAdding(true))}>
+          <Button size="sm" icon={PlusSignIcon} disabled={busy} onClick={() => (setDraft(emptyDraft()), setDraftError(null), setAdding(true))}>
             添加出站
           </Button>
         </div>

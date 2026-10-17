@@ -1,5 +1,6 @@
 import { formatDateTime } from '../../../core/format'
-import { QueryView, Tag, useToast } from '../../../ui'
+import { QueryView } from '../../../ui'
+import { CopyButton, KvList, KvRow, SectionTitle } from '../../kit'
 import css from './detail.module.css'
 import { useNodeIdentity } from './queries'
 import type { NodeRow } from './schemas'
@@ -12,68 +13,53 @@ const IDENTITY_STATUS: Readonly<Record<string, [string, 'ok' | 'warn' | 'danger'
 }
 
 export function NodeIdentity({ node }: { node: NodeRow }) {
-  const toast = useToast()
   const identity = useNodeIdentity(node.id)
 
-  const copy = (value: string, key: string) =>
-    navigator.clipboard.writeText(value).then(
-      () => toast(`已复制${key}`),
-      () => toast('浏览器不允许写剪贴板，请手动选中复制', 'danger'),
-    )
-
   return (
-    <section className={css.section}>
-      <h4 className={css.sectionTitle}>身份与令牌</h4>
+    <div className={css.stack}>
+      <SectionTitle>身份</SectionTitle>
       <QueryView query={identity} rows={3} isEmpty={() => false} empty={null}>
         {(d) => (
-          <div className={css.rowTable}>
-            <div className={css.infoRow}>
-              <span className={css.infoKey}>节点 ID</span>
-              <span className={`${css.mono} ${css.breakAll}`}>{node.id}</span>
-              <button type="button" className={css.copyBtn} onClick={() => void copy(node.id, '节点 ID')}>
-                复制
-              </button>
-            </div>
-            <div className={css.infoRow}>
-              <span className={css.infoKey}>节点身份</span>
-              <div className={css.infoVal}>
-                {d.identity ? (
-                  <>
-                    <span className={css.valLine}>
-                      <span className={css.mono}>#{d.identity.serial}</span>
-                      <Tag tone={IDENTITY_STATUS[d.identity.status]?.[1] ?? 'neutral'}>{IDENTITY_STATUS[d.identity.status]?.[0] ?? d.identity.status}</Tag>
+          <KvList boxed labelWidth={128}>
+            <KvRow
+              label="节点 ID"
+              action={<CopyButton value={node.id} label="复制节点 ID" />}
+            >
+              <span className={css.mono}>{node.id}</span>
+            </KvRow>
+            <KvRow label="身份">
+              {d.identity ? (
+                <span className={css.infoVal}>
+                  <span>
+                    <span className={IDENTITY_STATUS[d.identity.status]?.[1] === 'ok' ? css.okText : undefined}>
+                      {IDENTITY_STATUS[d.identity.status]?.[0] ?? d.identity.status}
                     </span>
-                    <span className={css.faint}>
-                      签发 {formatDateTime(d.identity.issued_at)} · 到期 {formatDateTime(d.identity.expires_at)}
-                      {d.identity.revoked_at ? ` · 吊销 ${formatDateTime(d.identity.revoked_at)}` : ''}
-                    </span>
-                  </>
-                ) : (
-                  '还没有身份（节点从未接入）'
-                )}
-              </div>
-              <span />
-            </div>
-            <div className={css.infoRow}>
-              <span className={css.infoKey}>证书指纹</span>
-              <span className={`${css.mono} ${css.breakAll}`}>{d.identity?.fingerprint_sha256 ?? '—'}</span>
-              {d.identity?.fingerprint_sha256 ? (
-                <button type="button" className={css.copyBtn} onClick={() => void copy(d.identity!.fingerprint_sha256, '证书指纹')}>
-                  复制
-                </button>
+                    {` · #${d.identity.serial}`}
+                  </span>
+                  <span className={css.faint}>
+                    签发 {formatDateTime(d.identity.issued_at)} · 到期 {formatDateTime(d.identity.expires_at)}
+                    {d.identity.revoked_at ? ` · 吊销 ${formatDateTime(d.identity.revoked_at)}` : ''}
+                  </span>
+                </span>
               ) : (
-                <span />
+                '还没有身份（节点从未接入）'
               )}
-            </div>
-            <div className={css.infoRow}>
-              <span className={css.infoKey}>服务器待用安装令牌</span>
-              <span>{d.bootstrap_tokens_pending} 个未用未过期</span>
-              <span />
-            </div>
-          </div>
+            </KvRow>
+            <KvRow
+              label="证书指纹"
+              action={d.identity?.fingerprint_sha256 ? <CopyButton value={d.identity.fingerprint_sha256} label="复制证书指纹" /> : undefined}
+            >
+              <span className={`${css.mono} ${css.breakAll}`}>{d.identity?.fingerprint_sha256 ?? '—'}</span>
+            </KvRow>
+            <KvRow label="服务器待用令牌">
+              <span className={css.infoVal}>
+                {`${d.bootstrap_tokens_pending} 个`}
+                <span className={css.faint}>安装令牌按服务器签发，到「服务器」页给所在服务器签发</span>
+              </span>
+            </KvRow>
+          </KvList>
         )}
       </QueryView>
-      <p className={css.sectionNote}>安装令牌按服务器签发：到「服务器」页给这台节点所在的服务器签发。</p>
-    </section>
+    </div>
   )
 }

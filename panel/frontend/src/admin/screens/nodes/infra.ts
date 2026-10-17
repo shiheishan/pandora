@@ -1,4 +1,4 @@
-import { protocolLabel, type Tone } from './logic'
+import { heartbeatLabel, protocolLabel, type Tone } from './logic'
 import type { NodeRow, Pool, PoolStatus, Server, ServerStatus } from './schemas'
 
 // ---------------------------------------------------------------------------
@@ -52,6 +52,44 @@ export function quickToggle(status: ServerStatus): QuickToggle | null {
 
 /** 只有草稿或已退役能删（后端 409「服务器仍在服务，请先在『状态』里退役」） */
 export const canDeleteServer = (s: Pick<Server, 'status'>) => s.status === 'draft' || s.status === 'retired'
+
+/** 删除按钮禁用时的说明：能删返回 null，否则「只有草稿或已退役的服务器能删除」 */
+export function serverDeleteBlock(s: Pick<Server, 'status'>): string | null {
+  return canDeleteServer(s) ? null : '只有草稿或已退役的服务器能删除'
+}
+
+/** 卡片与详情副行：「地区 · IP · agent 版本」；没有 IP 省掉那一段；没有 agent 写「未连接」，有则「agent 1.8.2」 */
+export function serverSubtitle(s: Pick<Server, 'region' | 'public_ipv4' | 'agent_version'>): string {
+  const region = s.region?.trim() || '地区待识别'
+  const parts = [region]
+  if (s.public_ipv4?.trim()) parts.push(s.public_ipv4.trim())
+  parts.push(s.agent_version?.trim() ? `agent ${s.agent_version.trim()}` : '未连接')
+  return parts.join(' · ')
+}
+
+/**
+ * 卡片与详情的提示行（按顺序）：
+ * status_reason 非空 → `原因：${status_reason}`；
+ * status 为 ready 且 heartbeat_online 为 false → 有 last_heartbeat_at 时 `心跳 ${heartbeatLabel(at, now)}，可能已断开`，没有时「还没有收到心跳」；
+ * never_seen_node_count > 0 → `${n} 个在役节点从未心跳（多半没装 agent）`
+ */
+export function serverNotes(
+  s: Pick<Server, 'status' | 'status_reason' | 'heartbeat_online' | 'last_heartbeat_at' | 'never_seen_node_count'>,
+  now?: Date,
+): string[] {
+  const out: string[] = []
+  if (s.status_reason?.trim()) out.push(`原因：${s.status_reason.trim()}`)
+  if (s.status === 'ready' && !s.heartbeat_online) {
+    out.push(s.last_heartbeat_at ? `心跳 ${heartbeatLabel(s.last_heartbeat_at, now)}，可能已断开` : '还没有收到心跳')
+  }
+  if (s.never_seen_node_count > 0) out.push(`${s.never_seen_node_count} 个在役节点从未心跳（多半没装 agent）`)
+  return out
+}
+
+/** 服务器详情的节点列表：server_id 等于 serverId 且未退役，保持原顺序 */
+export function serverNodeLines<T extends Pick<NodeRow, 'server_id' | 'serving_status'>>(nodes: readonly T[], serverId: string): T[] {
+  return nodes.filter((n) => n.server_id === serverId && n.serving_status !== 'retired')
+}
 
 /** 删除后果：后端不拒绝名下节点，而是级联静默（契约改写了设计的「先迁移或删除」）；资格另见 canDeleteServer */
 export function deleteServerNotice(s: Pick<Server, 'node_count'>): string {

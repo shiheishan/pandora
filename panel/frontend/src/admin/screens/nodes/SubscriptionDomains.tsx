@@ -1,11 +1,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Input, QueryView, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Input, QueryView, Select, Table, useToast } from '../../../ui'
 import {
   addDomainBody,
+  defaultScopeValue,
   domainConfigSchema,
+  domainScopeOptions,
   flattenDomains,
   hostOf,
   removeDomainBody,
@@ -55,9 +57,14 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
   const [inputError, setInputError] = useState<string | undefined>()
   const [alert, setAlert] = useState<string | undefined>()
   const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(null)
+  const [pickedScope, setScope] = useState(() => defaultScopeValue(saved))
 
-  const ugForScope = userGroups.map((g) => ({ id: g.id, name: g.name }))
-  const rows = flattenDomains(saved, ugForScope)
+  const ugForScope = useMemo(() => userGroups.map((g) => ({ id: g.id, name: g.name })), [userGroups])
+  const scopeOptions = useMemo(() => domainScopeOptions(saved, ugForScope), [saved, ugForScope])
+  const rows = useMemo(() => flattenDomains(saved, ugForScope), [saved, ugForScope])
+
+  // 保存后配置刷新：当前选的作用范围已不在选项里（如组刚被整组删掉）时退回缺省值
+  const scope = scopeOptions.some((o) => o.value === pickedScope) ? pickedScope : defaultScopeValue(saved)
 
   const save = useMutation({
     mutationFn: (body: { groups: DomainGroupBody[] }) => api.put('v1/subscription-domains', domainConfigSchema, { body }),
@@ -76,7 +83,7 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
   }
 
   const add = () => {
-    const out = addDomainBody(saved, input)
+    const out = addDomainBody(saved, input, scope)
     if ('error' in out) {
       setInputError(out.error)
       return
@@ -97,8 +104,8 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
     const host = hostOf(baseUrl)
     if (dropsGroup) {
       const g = saved.groups.find((x) => x.id === groupId)
-      const scope = g ? scopeForGroup(g, saved.groups, ugForScope) : ''
-      setPendingRemove({ groupId, baseUrl, host, groupName, scope, isDefault: g?.is_default ?? false })
+      const scopeText = g ? scopeForGroup(g, saved.groups, ugForScope) : ''
+      setPendingRemove({ groupId, baseUrl, host, groupName, scope: scopeText, isDefault: g?.is_default ?? false })
       return
     }
     setAlert(undefined)
@@ -119,64 +126,81 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
     } catch (e) {
       onSaveError(e)
     } finally {
-      // 出错也关掉确认框，错误显示在段头下方
+      // 出错也关掉确认框，错误显示在添加行下方
       setPendingRemove(null)
     }
   }
 
   return (
-    <section className={css.section} aria-label="订阅域名">
-      <div className={css.head}>
-        <div className={css.headText}>
-          <h3 className={css.title}>订阅域名</h3>
-          <p className={css.hint}>用户复制的订阅地址用这些域名；被墙时换一个即可，不用改节点</p>
-        </div>
-        <div className={css.addRow}>
-          <Input
-            aria-label="新域名"
-            mono
-            size="sm"
-            placeholder="sub.example.com"
-            value={input}
-            disabled={disabled}
-            error={inputError}
-            fieldClassName={css.addInput}
-            onChange={(e) => {
-              setInput(e.target.value)
-              if (inputError) setInputError(undefined)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                add()
-              }
-            }}
-          />
-          <Button size="sm" variant="primary" disabled={disabled} busy={save.isPending} onClick={add}>
-            添加
-          </Button>
-        </div>
+    <Card title="订阅域名" subtitle="用户的订阅链接用这些域名" flush>
+      <div className={css.addRow}>
+        <Input
+          aria-label="新域名"
+          mono
+          size="sm"
+          placeholder="sub.example.com"
+          value={input}
+          disabled={disabled}
+          error={inputError}
+          fieldClassName={css.addInput}
+          onChange={(e) => {
+            setInput(e.target.value)
+            if (inputError) setInputError(undefined)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              add()
+            }
+          }}
+        />
+        <Select
+          aria-label="作用范围"
+          size="sm"
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          options={scopeOptions}
+        />
+        <Button size="sm" disabled={disabled} busy={save.isPending} onClick={add}>
+          添加
+        </Button>
       </div>
       {alert && (
-        <div className={nodesCss.errorBox} role="alert">
-          {alert}
+        <div className={css.alertWrap}>
+          <div className={nodesCss.errorBox} role="alert">
+            {alert}
+          </div>
         </div>
       )}
-      {rows.length === 0 ? (
-        <p className={css.empty}>还没有订阅域名，订阅链接用面板对外地址。</p>
-      ) : (
-        <ul className={css.list}>
-          {rows.map((row) => (
-            <li key={`${row.groupId}:${row.baseUrl}`} className={css.row}>
-              <span className={css.host}>{row.host}</span>
-              <span className={css.scope}>{row.scope}</span>
-              <Button size="sm" disabled={disabled} onClick={() => remove(row.groupId, row.baseUrl)}>
+      <Table
+        label="订阅域名"
+        rows={rows}
+        rowKey={(r) => `${r.groupId}:${r.baseUrl}`}
+        empty="还没有订阅域名，订阅链接用面板对外地址。"
+        columns={[
+          { key: 'host', header: '域名', mono: true, render: (row) => row.host },
+          {
+            key: 'scope',
+            header: '作用范围',
+            render: (row) => (
+              <span>
+                {row.groupName}
+                <span className={css.scopeHint}> · {row.scope}</span>
+              </span>
+            ),
+          },
+          {
+            key: 'actions',
+            header: '',
+            align: 'right',
+            render: (row) => (
+              <Button size="sm" variant="link" disabled={disabled} onClick={() => remove(row.groupId, row.baseUrl)}>
                 移除
               </Button>
-            </li>
-          ))}
-        </ul>
-      )}
+            ),
+          },
+        ]}
+      />
       <ConfirmModal
         open={pendingRemove !== null}
         title={pendingRemove ? `移除 ${pendingRemove.host}？` : ''}
@@ -192,6 +216,6 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
         onConfirm={confirmRemove}
         onCancel={() => setPendingRemove(null)}
       />
-    </section>
+    </Card>
   )
 }

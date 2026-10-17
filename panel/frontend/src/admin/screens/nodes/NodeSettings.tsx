@@ -1,16 +1,19 @@
+import { PencilEdit01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useState } from 'react'
-import { Button, Modal, QueryView, Tag } from '../../../ui'
-import { NodeAccess } from './NodeAccess'
+import { KvList, KvRow, SectionTitle } from '../../kit'
+import { formatBytes } from '../../../core/format'
+import { Button, Modal, QueryView } from '../../../ui'
 import css from './detail.module.css'
 import { ruleSummary } from './logic'
+import { NodeAccess } from './NodeAccess'
 import { NodeRouting } from './NodeRouting'
 import { NodeTraffic } from './NodeTraffic'
 import { useNodeRouting } from './queries'
 import type { NodeRow } from './schemas'
-import { trafficPercent, trafficUsageLabel } from './xb'
 
 type EditKind = 'routing' | 'traffic' | 'access' | null
 
+/** 「路由与流量」页签：路由、流量与标签、访问三块只读摘要，「编辑」各开一个弹窗装现成的编辑器 */
 export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: number | null }) {
   const routing = useNodeRouting(node.id)
   const [edit, setEdit] = useState<EditKind>(null)
@@ -20,13 +23,16 @@ export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: numb
 
   return (
     <div className={css.stack}>
-      <section className={css.section}>
-        <div className={css.sectionHead}>
-          <h4 className={css.sectionTitle}>路由</h4>
-          <Button size="sm" disabled={retired} onClick={() => setEdit('routing')}>
-            编辑
-          </Button>
-        </div>
+      <section>
+        <SectionTitle
+          action={
+            <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setEdit('routing')}>
+              编辑
+            </Button>
+          }
+        >
+          路由
+        </SectionTitle>
         <QueryView query={routing} rows={3} isEmpty={() => false} empty={null}>
           {(d) => {
             const groupNames = d.groups.map((g) => g.name)
@@ -34,103 +40,79 @@ export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: numb
             const rules = d.routes.filter((r) => r.enabled)
             const rulePreview = rules.slice(0, 3).map((r) => ruleSummary(r)).join('、')
             return (
-              <div className={css.rowTable}>
-                <div className={css.infoRow}>
-                  <span className={css.infoKey}>路由组</span>
-                  <span>{groupNames.length ? groupNames.join('、') : '未加入路由组'}</span>
-                  <span />
-                </div>
-                <div className={css.infoRow}>
-                  <span className={css.infoKey}>出站</span>
-                  <span className={css.mono}>{outboundTags.length ? outboundTags.join('、') : '沿用路由组与全局'}</span>
-                  <span />
-                </div>
-                <div className={css.infoRow}>
-                  <span className={css.infoKey}>分流规则</span>
-                  <span>
-                    {rules.length ? `${rules.length} 条 · ${rulePreview}${rules.length > 3 ? '…' : ''}` : '沿用路由组与全局规则'}
-                  </span>
-                  <span />
-                </div>
-              </div>
+              <KvList boxed>
+                <KvRow label="所属路由组">{groupNames.length ? groupNames.join('、') : '未加入路由组'}</KvRow>
+                <KvRow label="节点私有出站">
+                  {outboundTags.length ? (
+                    <span className={css.mono}>{outboundTags.join('、')}</span>
+                  ) : (
+                    <span className={css.faint}>沿用路由组与全局</span>
+                  )}
+                </KvRow>
+                <KvRow label="节点私有规则">
+                  {rules.length ? (
+                    `${rules.length} 条 · ${rulePreview}${rules.length > 3 ? '…' : ''}`
+                  ) : (
+                    <>
+                      0 条<span className={css.faint}> · 按路由组与全局规则走</span>
+                    </>
+                  )}
+                </KvRow>
+              </KvList>
             )
           }}
         </QueryView>
-        <p className={css.sectionNote}>节点私有规则排在所在路由组与全局规则之前；全局规则在「路由」页签维护。</p>
       </section>
 
-      <section className={css.section}>
-        <div className={css.sectionHead}>
-          <h4 className={css.sectionTitle}>流量与标签</h4>
-          <Button size="sm" disabled={retired} onClick={() => setEdit('traffic')}>
-            编辑
-          </Button>
-        </div>
-        <div className={css.rowTable}>
-          <div className={css.infoRow}>
-            <span className={css.infoKey}>本周期用量</span>
-            <div className={css.infoVal}>
-              <span className={css.valLine}>
-                {node.traffic.limit_bytes === null ? '不限量' : trafficUsageLabel(node.traffic)}
-                {node.traffic.exceeded_at && <Tag tone="danger">超限</Tag>}
+      <section>
+        <SectionTitle
+          action={
+            <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setEdit('traffic')}>
+              编辑
+            </Button>
+          }
+        >
+          流量与标签
+        </SectionTitle>
+        <KvList boxed>
+          <KvRow label="流量上限">{node.traffic.limit_bytes === null ? '不限' : formatBytes(node.traffic.limit_bytes)}</KvRow>
+          <KvRow label="重置日">{node.traffic.reset_day != null ? `每月 ${node.traffic.reset_day} 日` : '不自动重置'}</KvRow>
+          <KvRow label="计费倍率">
+            {baseRate == null ? '—' : `基础 ${baseRate}×`}
+            {node.traffic_rate_schedule.length > 0 && (
+              <span className={css.faint}>
+                {' '}
+                · {node.traffic_rate_schedule.length} 段时段倍率，如 {node.traffic_rate_schedule[0]!.start}–
+                {node.traffic_rate_schedule[0]!.end} ×{node.traffic_rate_schedule[0]!.rate}
               </span>
-              {node.traffic.limit_bytes != null && (() => {
-                const pct = trafficPercent(node.traffic)
-                if (pct == null) return null
-                return (
-                  <span className={css.progress}>
-                    <span className={`${css.progressFill} ${pct >= 90 ? css.progressWarn : ''}`} style={{ width: `${pct}%` }} />
-                  </span>
-                )
-              })()}
-            </div>
-            <span />
-          </div>
-          <div className={css.infoRow}>
-            <span className={css.infoKey}>计费倍率</span>
-            <span>
-              {baseRate == null ? '—' : `${baseRate}×`}
-              {node.traffic_rate_schedule.length > 0 ? ` · ${node.traffic_rate_schedule.length} 个时段倍率` : ''}
-            </span>
-            <span />
-          </div>
-          <div className={css.infoRow}>
-            <span className={css.infoKey}>标签</span>
-            {node.tags.length ? (
-              <span className={css.chips}>
-                {node.tags.map((t) => (
-                  <span key={t} className={css.chip}>{t}</span>
-                ))}
-              </span>
-            ) : (
-              <span>—</span>
             )}
-            <span />
-          </div>
-        </div>
-        <p className={css.sectionNote}>超出上限后节点停止下发，下个周期自动恢复。</p>
+          </KvRow>
+          <KvRow label="标签">{node.tags.length ? node.tags.join('、') : '—'}</KvRow>
+        </KvList>
       </section>
 
-      <section className={css.section}>
-        <div className={css.sectionHead}>
-          <h4 className={css.sectionTitle}>中转与 ECH</h4>
-          <Button size="sm" disabled={retired} onClick={() => setEdit('access')}>
-            编辑
-          </Button>
-        </div>
-        <div className={css.rowTable}>
-          <div className={css.infoRow}>
-            <span className={css.infoKey}>中转</span>
-            <span>{node.relay_count === 0 ? '无' : `${node.relay_count} 条`}</span>
-            <span />
-          </div>
-          <div className={css.infoRow}>
-            <span className={css.infoKey}>ECH</span>
-            <span>{node.ech_enabled ? '已开启' : '未开启'}</span>
-            <span />
-          </div>
-        </div>
-        <p className={css.sectionNote}>ECH 需要客户端支持；不支持的客户端会回退到普通 TLS。</p>
+      <section>
+        <SectionTitle
+          action={
+            <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setEdit('access')}>
+              编辑
+            </Button>
+          }
+        >
+          访问
+        </SectionTitle>
+        <KvList boxed>
+          <KvRow label="节点池">
+            {node.pool_name ?? (
+              <>
+                <span className={css.faint}>未划入节点池</span>
+                <span className={css.faint}> · 不服务任何用户</span>
+              </>
+            )}
+          </KvRow>
+          <KvRow label="中转">{node.relay_count === 0 ? '无' : `${node.relay_count} 条`}</KvRow>
+          <KvRow label="ECH">{node.ech_enabled ? '已开启' : '未开启'}</KvRow>
+        </KvList>
       </section>
 
       <Modal open={edit === 'routing'} onClose={close} size={760} tall divided title={`编辑路由 · ${node.name}`} bodyClassName={css.modalBody}>
@@ -143,7 +125,7 @@ export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: numb
           <NodeTraffic node={node} baseRate={baseRate} />
         </div>
       </Modal>
-      <Modal open={edit === 'access'} onClose={close} size={760} tall divided title={`编辑中转与 ECH · ${node.name}`} bodyClassName={css.modalBody}>
+      <Modal open={edit === 'access'} onClose={close} size={760} tall divided title={`编辑访问 · ${node.name}`} bodyClassName={css.modalBody}>
         <div className={css.scroll}>
           <NodeAccess node={node} />
         </div>

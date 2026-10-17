@@ -1,9 +1,11 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, FilterTabs, QueryView, Toolbar, useToast } from '../../../ui'
+import { PageActions } from '../../kit'
 import { GroupFormModal, RouteGroupPanel } from './RouteGroupPanel'
 import { ScopeRoutingEditor, type RoutingPayload } from './ScopeRouting'
 import css from './nodes.module.css'
@@ -25,13 +27,12 @@ export function RoutingTab({ rest }: { rest: readonly string[] }) {
 
   return (
     <div className={css.stack}>
-      <Toolbar
-        end={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            新建路由组
-          </Button>
-        }
-      >
+      <PageActions>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setCreating(true)}>
+          新建路由组
+        </Button>
+      </PageActions>
+      <Toolbar>
         <FilterTabs<string>
           label="路由范围"
           value={scope}

@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
@@ -103,7 +104,7 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
   )
 }
 
-/** 出站行编辑器：标签 + 类型 + settings JSON + 删除（抽屉够宽，逐行平铺；全局路由页右栏窄，改用列表 + 弹窗） */
+/** 出站行编辑器：标签 + 类型 + settings JSON + 删除（编辑弹窗够宽，逐行平铺；全局路由页右栏窄，改用列表 + 弹窗） */
 function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: OutboundRow[]; errors: Record<number, string>; disabled: boolean; onChange: (rows: OutboundRow[]) => void; emptyHint: string }) {
   const update = (i: number, patch: Partial<OutboundRow>) => onChange(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   return (
@@ -123,8 +124,8 @@ function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: O
       ))}
       {!disabled && (
         <div>
-          <Button size="sm" onClick={() => onChange([...rows, { tag: '', type: 'shadowsocks', settings: '{}' }])}>
-            ＋ 添加出站
+          <Button size="sm" icon={PlusSignIcon} onClick={() => onChange([...rows, { tag: '', type: 'shadowsocks', settings: '{}' }])}>
+            添加出站
           </Button>
         </div>
       )}
@@ -135,7 +136,7 @@ function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: O
 /** 「添加规则」：放在规则段头（设计稿）；末尾是兜底时插到兜底之前 */
 export function AddRuleButton({ rows, disabled, onChange }: { rows: RuleRow[]; disabled: boolean; onChange: (rows: RuleRow[]) => void }) {
   return (
-    <Button size="sm" disabled={disabled} onClick={() => onChange(insertRule(rows, newRule()))}>
+    <Button size="sm" icon={PlusSignIcon} disabled={disabled} onClick={() => onChange(insertRule(rows, newRule()))}>
       添加规则
     </Button>
   )
@@ -174,6 +175,16 @@ export function RuleRows({
   return (
     <div className={css.rules}>
       {rows.length === 0 && <Empty bare title="没有规则" description={emptyHint} />}
+      {rows.length > 0 && (
+        <div className={`${css.ruleRow} ${css.ruleHead}`} aria-hidden="true">
+          <span className={css.rNo}>#</span>
+          <span className={css.rKind}>匹配类型</span>
+          <span className={css.rValue}>内容</span>
+          <span className={css.rOut}>出站</span>
+          <span className={css.rNote}>备注</span>
+          <span className={`${css.ruleTools} ${css.rTools}`}>顺序</span>
+        </div>
+      )}
       {rows.map((r, i) => (
         <div key={i} className={css.ruleRow}>
           <span className={`${css.mono} ${css.faint} ${css.rNo}`}>{i + 1}</span>
@@ -189,6 +200,7 @@ export function RuleRows({
             </>
           )}
           <Select aria-label="出站" size="sm" fieldClassName={css.rOut} placeholder="选择出站" value={r.outbound} disabled={disabled} onChange={(e) => update(i, { outbound: e.target.value })} options={outbounds.map(([value, label]) => ({ value, label }))} />
+          <span className={`${css.rNote} ${css.faint} ${css.ellipsis}`} title={r.note || undefined}>{r.note || '—'}</span>
           <span className={`${css.ruleTools} ${css.rTools}`}>
             <Button size="xs" variant="ghost" aria-label={`第 ${i + 1} 条上移`} disabled={disabled || i === 0} onClick={() => move(i, -1)}>
               ↑
