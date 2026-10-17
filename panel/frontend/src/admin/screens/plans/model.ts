@@ -231,7 +231,7 @@ export function detailTabs(p: PlanDetail): Array<{ value: DetailTab; label: stri
 }
 
 export function planSubtitle(p: PlanDetail): string {
-  return `${KIND_LABELS[p.kind]} · ${p.code} · ${formatCount(p.active_subscriptions)} 个有效订阅`
+  return `${KIND_LABELS[p.kind]} · ${formatCount(p.active_subscriptions)} 个有效订阅`
 }
 
 export const isLive = (p: PlanDetail): boolean => p.status !== 'archived'
@@ -244,29 +244,43 @@ export function currentVersion(p: PlanDetail): VersionRow | undefined {
   return p.versions.find((v) => v.status === 'published' && v.version === p.version)
 }
 
+export type OverviewNote = { text: string; action?: { label: string; tab: DetailTab } }
+
 /** 概览顶部的提示，按严重程度排序 */
-export function overviewNotes(p: PlanDetail): string[] {
-  const out: string[] = []
+export function overviewNotes(p: PlanDetail): OverviewNote[] {
+  const out: OverviewNote[] = []
   if (p.status === 'archived') {
-    out.push('已归档：用户端不再展示、不能新购，老用户不能续费，已有订阅到期后结束。')
+    out.push({ text: '已归档：用户端不再展示、不能新购，老用户不能续费，已有订阅到期后结束。' })
   } else {
     if (p.pool_ids.length === 0) {
-      out.push('还没有绑定线路：买了这个套餐的用户会拿到一份空订阅。到「线路」里选择节点池。')
+      out.push({
+        text: '还没有绑定线路：买了这个套餐的用户会拿到一份空订阅。到「线路」里选择节点池。',
+        action: { label: '去线路', tab: 'pools' },
+      })
     } else if (p.node_count === 0) {
-      out.push('绑定的节点池里没有可下发的节点：这个套餐的订阅里将是 0 个节点。')
+      out.push({
+        text: '绑定的节点池里没有可下发的节点：这个套餐的订阅里将是 0 个节点。',
+        action: { label: '去线路', tab: 'pools' },
+      })
     }
   }
   if (p.status !== 'archived' && !p.allow_new_purchase) {
-    out.push(p.kind === 'subscription' ? '已关闭新购：用户端看得到但买不了，已有订阅照常续费。' : '已关闭新购：用户端看得到但买不了，已买的照常用到期。')
+    out.push({
+      text:
+        p.kind === 'subscription'
+          ? '已关闭新购：用户端看得到但买不了，已有订阅照常续费。'
+          : '已关闭新购：用户端看得到但买不了，已买的照常用到期。',
+    })
   }
   const draft = draftVersion(p)
   if (draft) {
+    const publish = { label: '去发布', tab: 'versions' as const }
     if (p.status === 'draft') {
-      out.push(`还没上架：发布草稿 v${draft.version} 后开始售卖。`)
+      out.push({ text: `还没上架：发布草稿 v${draft.version} 后开始售卖。`, action: publish })
     } else if (p.kind === 'subscription') {
-      out.push(`有一个未发布的草稿 v${draft.version}：发布后新购使用它，老用户下个周期切换。`)
+      out.push({ text: `有一个未发布的草稿 v${draft.version}：发布后新购使用它，老用户下个周期切换。`, action: publish })
     } else {
-      out.push(`有一个未发布的草稿 v${draft.version}：发布后新购使用它，已买的不受影响。`)
+      out.push({ text: `有一个未发布的草稿 v${draft.version}：发布后新购使用它，已买的不受影响。`, action: publish })
     }
   }
   return out
@@ -274,19 +288,24 @@ export function overviewNotes(p: PlanDetail): string[] {
 
 export type OverviewGroupKey = 'basic' | 'usage' | 'reset' | 'sales' | 'once'
 
+/** 右栏「基本资料」：名称、代码、说明、类型 */
+export function basicFacts(p: PlanDetail): Array<{ k: string; v: string; mono?: boolean; muted?: boolean; hint?: string }> {
+  return [
+    { k: '名称', v: p.name },
+    { k: '代码', v: p.code, mono: true },
+    p.description ? { k: '说明', v: p.description } : { k: '说明', v: '未填写', muted: true },
+    {
+      k: '类型',
+      v: KIND_LABELS[p.kind],
+      hint: p.kind === 'subscription' ? '按时间算，每周期清零' : '按流量算，用完即止',
+    },
+  ]
+}
+
 /** 概览的分组只读展示 */
 export function overviewGroups(p: PlanDetail): Array<{ key: OverviewGroupKey; title: string; rows: Array<{ k: string; v: string; mono?: boolean; muted?: boolean }> }> {
   const draft = draftVersion(p)
   const groups: Array<{ key: OverviewGroupKey; title: string; rows: Array<{ k: string; v: string; mono?: boolean; muted?: boolean }> }> = [
-    {
-      key: 'basic',
-      title: '基本资料',
-      rows: [
-        { k: '名称', v: p.name },
-        { k: '代码', v: p.code, mono: true },
-        ...(p.description ? [{ k: '说明', v: p.description }] : [{ k: '说明', v: '未填写', muted: true }]),
-      ],
-    },
     {
       key: 'usage',
       title: '用量',
@@ -321,12 +340,9 @@ export function overviewGroups(p: PlanDetail): Array<{ key: OverviewGroupKey; ti
       k: '可见范围',
       v: p.visibility === 'group' ? `${VISIBILITY_LABELS.group} · ${p.visible_group_ids.length} 个用户组` : VISIBILITY_LABELS[p.visibility],
     },
-    {
-      k: p.kind === 'subscription' ? '新购 / 续费 / 变更' : '新购 / 变更',
-      v: (p.kind === 'subscription' ? [p.allow_new_purchase, p.allow_renewal, p.allow_upgrade] : [p.allow_new_purchase, p.allow_upgrade])
-        .map((on) => (on ? '允许' : '关闭'))
-        .join(' · '),
-    },
+    { k: '新购', v: p.allow_new_purchase ? '允许' : '关闭' },
+    ...(p.kind === 'subscription' ? [{ k: '续费', v: p.allow_renewal ? '允许' : '关闭' }] : []),
+    { k: '从其他套餐变更', v: p.allow_upgrade ? '允许' : '关闭' },
     { k: '推荐标记', v: p.recommended ? '已标为推荐' : '无' },
   ]
   groups.push({ key: 'sales', title: '销售', rows: salesRows })
@@ -345,15 +361,33 @@ export function overviewGroups(p: PlanDetail): Array<{ key: OverviewGroupKey; ti
   return groups
 }
 
+/** 价格行的「折合每月 ¥x，省 y%」：months ≤ 1 或 amount ≤ 0 时为空串；monthAmount 是当前在售月付价（没有为 null） */
+export function perMonthNote(amount: number, months: number, monthAmount: number | null): string {
+  if (months <= 1 || amount <= 0) return ''
+  let out = `折合每月 ${formatMoney(Math.round(amount / months))}`
+  if (monthAmount !== null && monthAmount > 0) {
+    const pct = Math.round((1 - amount / (monthAmount * months)) * 100)
+    if (pct >= 1) out += `，省 ${pct}%`
+  }
+  return out
+}
+
 /** 价格列表：在售的按 TIERS 顺序在前，已归档的按 created_at 降序在后 */
-export function priceListRows(p: PlanDetail): Array<{ id: string; label: string; amount: string; active: boolean; tier: TierKey | null }> {
-  const rowOf = (pr: PriceRow, active: boolean) => ({
-    id: pr.id,
-    label: periodLabel(pr.billing_interval, pr.interval_count),
-    amount: formatMoney(pr.unit_amount),
-    active,
-    tier: tierOf(pr.billing_interval, pr.interval_count),
-  })
+export function priceListRows(p: PlanDetail): Array<{ id: string; label: string; amount: string; active: boolean; tier: TierKey | null; note: string }> {
+  const monthAmount = activeTierPrice(p, 'month:1')?.unit_amount ?? null
+  const rowOf = (pr: PriceRow, active: boolean) => {
+    const tier = tierOf(pr.billing_interval, pr.interval_count)
+    const months = tier ? TIERS.find((t) => t.key === tier)!.months : 1
+    const note = active && tier !== null ? perMonthNote(pr.unit_amount, months, monthAmount) : ''
+    return {
+      id: pr.id,
+      label: periodLabel(pr.billing_interval, pr.interval_count),
+      amount: formatMoney(pr.unit_amount),
+      active,
+      tier,
+      note,
+    }
+  }
   const live = activePrices(p.prices).map((pr) => rowOf(pr, true))
   const archived = p.prices
     .filter((pr) => pr.status !== 'active')
