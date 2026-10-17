@@ -23,7 +23,7 @@ export function ticketStatus(t: Pick<TicketRow, 'status' | 'closed_reason'>): { 
     case 'escalated':
       return { label: '等待回复', tone: 'warn' }
     case 'pending_user':
-      return { label: '客服已回复', tone: 'info' }
+      return { label: '客服已回复', tone: 'brand' }
     case 'resolved':
       return { label: '已解决', tone: 'neutral' }
     case 'closed':
@@ -55,6 +55,16 @@ export function messageTime(at: string, now: Date = new Date()): string {
   if (d.toDateString() === now.toDateString()) return hm
   const md = `${p(d.getMonth() + 1)}-${p(d.getDate())}`
   return d.getFullYear() === now.getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}-${md} ${hm}`
+}
+
+/** 列表行右上角的时间（样稿 .ti-m time）：今天只写时分，今年写月-日，更早写年-月-日（浏览器本地时区） */
+export function listTime(at: string, now: Date = new Date()): string {
+  const d = new Date(at)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  if (d.toDateString() === now.toDateString()) return `${p(d.getHours())}:${p(d.getMinutes())}`
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}-${md}`
 }
 
 // ---------------------------------------------------------------------------
