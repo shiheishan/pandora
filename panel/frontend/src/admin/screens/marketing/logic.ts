@@ -107,7 +107,7 @@ export function planScopeLabel(ids: readonly string[], plans: readonly Plan[] | 
 export function couponState(status: string): { switchable: boolean; on: boolean; tag: { label: string; tone: Tone } | null } {
   if (status === 'active') return { switchable: true, on: true, tag: null }
   if (status === 'paused') return { switchable: true, on: false, tag: null }
-  if (status === 'expired') return { switchable: false, on: false, tag: { label: '已过期', tone: 'warn' } }
+  if (status === 'expired') return { switchable: false, on: false, tag: { label: '已过期', tone: 'neutral' } }
   if (status === 'exhausted') return { switchable: false, on: false, tag: { label: '已用完', tone: 'neutral' } }
   return { switchable: false, on: false, tag: { label: status, tone: 'neutral' } }
 }

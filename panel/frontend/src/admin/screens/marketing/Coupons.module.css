@@ -4,117 +4,66 @@
   gap: 16px;
 }
 
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.tableWrap {
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-top: 1px solid var(--text);
-  border-bottom: 1px solid var(--border-strong);
-}
-
-.tableInner {
-  min-width: 640px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) 96px minmax(0, 1fr) 80px 120px 48px;
-  gap: 12px;
-  align-items: center;
-}
-
-.head {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-strong);
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-.row {
-  width: 100%;
-  padding: 10px 0;
-  border: 0;
-  border-top: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.row:first-of-type {
-  border-top: 0;
-}
-
-.row:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: -2px;
-}
-
-.row:hover {
-  background: var(--surface-2);
+/* 已过期、已用完等不可切换状态的整行淡显（样稿 tr.dimrow） */
+.dimRow td {
+  opacity: 0.5;
 }
 
 .codeCell {
   min-width: 0;
 }
 
-.codeText {
+.codeMain {
   display: block;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
 }
 
-.nameText {
+.codeSub {
   display: block;
   overflow: hidden;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.offText {
-  white-space: nowrap;
+/* 优惠文案允许换行（立减 + 封顶等可能不止一段） */
+.offCell {
+  white-space: normal;
 }
 
-.planText {
-  overflow: hidden;
+.cellDim {
   color: var(--text-2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.monoRight {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-align: right;
-}
-
-.periodText {
-  overflow: hidden;
+.numCell {
   color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.switchCell {
+.toggleCell {
   display: flex;
   justify-content: flex-end;
+}
+
+/* 表尾（样稿 .tfoot）：左计数、右分页 */
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.footerSpacer {
+  flex: 1;
+}
+
+.pageLabel {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .empty {
@@ -178,16 +127,6 @@
   text-decoration: line-through;
 }
 
-.fieldHint {
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-.fieldError {
-  font-size: 12px;
-  color: var(--danger);
-}
-
 .faint {
   color: var(--text-3);
   font-size: 12px;
@@ -209,10 +148,6 @@
   background: var(--surface-3);
   font-family: var(--font-mono);
   font-size: 12px;
-}
-
-.right {
-  text-align: right;
 }
 
 .fieldCol {
