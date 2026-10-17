@@ -373,16 +373,27 @@
   display: inline-flex;
 }
 
+/* 手机：一条规则叠成三行（序号 + 匹配类型 + 工具 / 匹配值 / 出站），表头不显示 */
 @media (max-width: 639px) {
   .ruleRow {
     grid-template-areas:
-      'no kind value out tools'
-      '. err err err err';
-    grid-template-columns: 20px 120px minmax(0, 1fr) 160px auto;
+      'no kind tools'
+      '. value value'
+      '. out out'
+      '. err err';
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+  }
+
+  .ruleHead {
+    display: none;
   }
 
   .rNote {
     display: none;
+  }
+
+  .rLegacy {
+    grid-column: kind-start / kind-end;
   }
 }
 

@@ -82,7 +82,7 @@
 .chartCurLine {
   width: 14px;
   height: 2px;
-  background: var(--text);
+  background: var(--info);
 }
 
 .chartCurLabel {
@@ -217,6 +217,8 @@
 .pageCc {
   display: inline-block;
   width: 22px;
+  margin-right: 8px;
+  vertical-align: 3px;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: 12px;

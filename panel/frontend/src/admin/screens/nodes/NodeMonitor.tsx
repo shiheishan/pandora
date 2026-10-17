@@ -149,13 +149,13 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
                 <svg className={css.plotSvg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
                   <defs>
                     <linearGradient id={`ndTrafficFill-${node.id}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--text)" stopOpacity={0.12} />
-                      <stop offset="100%" stopColor="var(--text)" stopOpacity={0} />
+                      <stop offset="0%" stopColor="var(--info)" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="var(--info)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   {areaPath && <path d={areaPath} fill={`url(#ndTrafficFill-${node.id})`} />}
                   {linePath && (
-                    <path d={linePath} fill="none" stroke="var(--text)" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                    <path d={linePath} fill="none" stroke="var(--info)" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                   )}
                 </svg>
                 {hover != null && (

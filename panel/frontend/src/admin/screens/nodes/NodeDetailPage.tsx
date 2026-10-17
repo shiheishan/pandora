@@ -66,8 +66,12 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
   return (
     <DetailPage
       back={back}
-      lead={row.country_code ? <span className={css.pageCc}>{row.country_code}</span> : undefined}
-      title={row.name}
+      title={
+        <>
+          {row.country_code && <span className={css.pageCc}>{row.country_code}</span>}
+          {row.name}
+        </>
+      }
       meta={
         <>
           <StatusDot tone={statusDotTone(state.tone)}>{state.note === '草稿' ? '草稿' : state.label}</StatusDot>
