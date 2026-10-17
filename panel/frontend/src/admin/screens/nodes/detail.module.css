@@ -1,9 +1,4 @@
-/* 节点详情弹窗（760） */
-
-.detailModal {
-  height: min(720px, calc(100vh - 48px));
-  max-height: min(720px, calc(100vh - 48px));
-}
+/* 详情页里的编辑弹窗（760）：内容区自己滚动 */
 
 .modalBody {
   display: flex;
@@ -13,12 +8,6 @@
   gap: 0 !important;
 }
 
-.tabsBar {
-  flex: none;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border);
-}
-
 .scroll {
   flex: 1;
   min-height: 0;
@@ -26,57 +15,9 @@
   padding: 24px;
 }
 
-.titleWrap {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.cc {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 28px;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: var(--fw-semibold);
-}
-
-.titleName {
-  font-weight: inherit;
-}
-
-.statusTags {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
 .subMono {
   font-family: var(--font-mono);
   font-size: 12px;
-}
-
-.deliveryNote {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.configWarning {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: var(--space-12);
-  font-size: var(--fs-caption);
 }
 
 /* 概览：四格指标 */
@@ -240,52 +181,12 @@
   font-size: var(--fs-caption);
 }
 
-/* 分区与信息行 */
+/* 分区与键值 */
 
 .stack {
   display: flex;
   flex-direction: column;
   gap: var(--space-20);
-}
-
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sectionHead {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sectionTitle {
-  flex: 1;
-  margin: 0;
-  font-size: 14px;
-  font-weight: var(--fw-semibold);
-  color: var(--text);
-}
-
-.rowTable {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--text);
-}
-
-.infoRow {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) auto;
-  gap: 20px;
-  align-items: center;
-  min-height: 44px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.infoKey {
-  color: var(--text-2);
 }
 
 .infoVal {
@@ -304,114 +205,13 @@
   overflow-wrap: anywhere;
 }
 
-.valLine {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.progress {
-  display: block;
-  max-width: 280px;
-  height: 4px;
-  background: var(--surface-3);
-}
-
-.progressFill {
-  display: block;
-  height: 100%;
-  background: var(--text);
-}
-
-.progressWarn {
-  background: var(--warn);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.chip {
-  padding: 1px 8px;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-size: 12px;
-}
-
-.sectionNote {
-  color: var(--text-3);
-  font-size: 12px;
-  text-wrap: pretty;
-}
-
-.copyBtn {
-  height: 26px;
-  padding: 0 10px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  box-shadow: inset 0 -1px 0 var(--text);
-  cursor: pointer;
-}
-
-/* 节点操作 */
-
-.opsTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: var(--fw-semibold);
-}
-
-.opRow {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.opText {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.opTitle {
-  font-weight: 500;
-  color: var(--text);
-}
-
-.opTitleDanger {
-  color: var(--danger);
-}
-
-.opDesc {
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-.dangerOutline {
-  border-color: var(--danger) !important;
-  color: var(--danger) !important;
-}
-
 @media (max-width: 639px) {
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .infoRow {
-    grid-template-columns: 96px minmax(0, 1fr) auto;
-  }
 }
 
-/* 整页详情（NodeDetailPage）新增 */
+/* 整页详情（NodeDetailPage） */
 
 /* 标题前的地区码（样稿 .rc） */
 .pageCc {

@@ -254,52 +254,7 @@
   }
 }
 
-/* ---- 路由 ---- */
-.routing {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-/* 960 附近内容区只有 700 左右，两栏会把匹配值挤成几个字：改为规则在上、出站在下 */
-@media (max-width: 1100px) {
-  .routing {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.routingPanel {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-
-.panelHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.panelTitle {
-  margin: 0;
-  font-size: var(--fs-body);
-  font-weight: var(--fw-semibold);
-}
-
-.panelBody {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 16px;
-}
-
+/* ---- 路由组页（NodeRouteGroups）的内置规则 / 出站行 ---- */
 .builtin {
   display: flex;
   align-items: center;
@@ -315,27 +270,6 @@
   font-weight: var(--fw-medium);
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.outErr {
-  margin: -4px 0 4px;
-  color: var(--danger);
-  font-size: var(--fs-caption);
-}
-
-.dirty {
-  margin-bottom: 8px;
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.publish {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-}
-
-.publishButton {
-  width: 100%;
 }
 
 /* 节点池弹窗的「仅限用户组」多选（R104） */
