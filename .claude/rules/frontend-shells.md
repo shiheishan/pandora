@@ -17,24 +17,28 @@ paths:
 - 后台权限只分有和没有：登录了就是管理员，能做全部操作
   - 前端不按权限隐藏任何入口、按钮或页签；侧栏、⌘K、页签栏、仪表盘卡片全部照 `modules.ts` 的登记显示
   - 页面不等 `GET v1/me` 回来再渲染；me 只给头像与名字用（`me.ts`），身份一律显示「管理员」
-- 外框布局（10-16 设计稿）：顶栏（`Topbar.tsx`）横跨整页，下面左侧栏（`Sidebar.tsx`）、右侧主区；主区没有面包屑和大标题，页头直接是页签条
-  - 顶栏：Logo + 站点名 + 版本号、收起侧栏、居中搜索（点开 ⌘K）、主题切换、实时事件（`EventsCapsule`）、头像菜单（菜单头「管理员 · 名字」+ 邮箱；修改我的密码、绑定 Telegram、退出登录）
-  - 侧栏浅底，可收起成 56px 图标栏（状态由 `Shell.tsx` 持有，存 localStorage `pandora-admin-sidebar`，读写包 try/catch；没存过时窄于 960 默认收起）；收起时悬停或聚焦出模块名提示、徽标变小红点；底部「打开用户端 ↗」（入口页的上一级 `../`）
-  - 窄于 640（`Shell.tsx` 的 `useNarrow`）侧栏不占位，改成从左滑出的抽屉：顶栏按钮叫「打开导航 / 关闭导航」，盖遮罩；换页、点遮罩、Esc 关闭；收着时 `inert`；不改也不写 localStorage 的收起状态
-  - 模块图标在 `nav-icons.ts`（Hugeicons），新模块要同时登记图标
+- 外框布局（样稿 `dev/prototype/admin-v4.html`，av4 落地）：`Shell.tsx` 是两栏网格（侧栏 232 + 主区），页面随文档滚动；**桌面（≥ 960）没有顶栏**
+  - 侧栏（`Sidebar.tsx`，`id="admin-sidebar"`，`position: sticky` 贴顶，z-index 20 让侧栏里的弹层盖住内容）自上而下：环形 Logo + 站点名 + 版本徽标（`__APP_RELEASE__`）；搜索框（点开 ⌘K，显示 ⌘K 提示）；`<nav aria-label="主导航">`（浏览器测试的入口，不要改）——第一项「实时动态」（`EventsTrigger variant="nav"`），然后照 `NAV_GROUPS` 分组（第一组标题为 null 不画组名：仪表盘、工单 / 业务 / 网络 / 设置）；工单提醒卡（`tasks.ts` 的 `ticketAlert`，仪表盘与工单页不显示，点进工单）；账户区：头像 + 名字（ui `Menu` 向上弹出：名字 + 邮箱、修改密码、绑定 Telegram、外观「浅色 / 深色」choice、退出登录），旁边「打开用户端」（`../`，新标签）与主题切换两个图标按钮
+  - 导航徽标（`navBadges`）：工单（红，`hot`）、订单与收款 `orders_pending_stale`、营销 `withdrawals_pending`、节点 `nodes_offline`；数字 `aria-hidden`，不进链接的无障碍名称（浏览器用例按精确名点导航）
+  - 侧栏收起成图标栏的功能与 `pandora-admin-sidebar` 存储键已删，不再恢复
+  - 窄于 960（`useMedia('(max-width: 959px)')`）：主区顶上一条 52 高的手机顶栏（`Topbar.tsx`：汉堡「打开导航」+ 页名 + 操作插槽 + `EventsTrigger variant="top"`），侧栏变成 272 宽的抽屉：遮罩、Esc、换页、点遮罩关闭，收着时 `inert`
+  - 页头由外框画（`Shell.tsx`）：20px 模块名 + 计数插槽 + 弹性空白 + 「?」（`PageHelp.tsx`，32 的图标按钮，悬停或聚焦展开阴影卡片，手机隐藏）+ 操作插槽；下面是页签栏（ui `Tabs`）。内容列最宽 1120、页边距 28 / 32 / 72（手机 24 / 16）
+  - 插槽：外框把计数格与操作格的元素经 `kit/PageActions` 的 `PageActionsProvider` 交下去，页面用 `PageActions` / `PageCount` portal 进来（照门户 `PageHeadAside` 的做法）。手机（≤ 639，`useMedia('(max-width: 639px)')`）页头标题行整行隐藏，操作格换成顶栏右侧那格（`Topbar` 的 `actionsRef`），按钮压到 30 高
+  - 三种外框模式（`modules.ts`）：详情 `isDetailRoute(module, tab, rest)`（`DETAIL_ROUTES` 登记的「模块:页签」且 rest 非空；不能写成「任何 rest 非空」，路由页把 rest 当范围用）——不画页头与页签栏；全幅 `fullBleed`（工单）——不画页头与页签栏、内容区无边距，给页面一块 `100vh`（窄屏减 52）的纵向 flex 容器；自画页头 `ownHead`（仪表盘）——不画标题行
+  - 模块图标与外框图标在 `nav-icons.ts`（Hugeicons Pro），新模块要同时登记图标
 - 新增模块或页签：`modules.ts` 的 `MODULES` 与 `NAV_GROUPS`、`nav-icons.ts`；不再登记权限码
   - 页签已登记、页面还没接上的，放进 `modules.ts` 的 `PENDING_TABS`（外框画空状态，不交给模块页面分发）；接好页面后删掉那一项
-- 页面级说明只放页签栏最右侧的「?」（`PageHelp.tsx`，悬停或聚焦展开），数据在 `page-help.ts` 的 `PAGE_HELP`：键是「模块:页签」，没有页签的模块用模块名；值是 `{ label, sections: [{ title, ordered?, items }] }`，要点是字符串或 `{ term, text }`。各模块只改这份数据，不在页面里写说明段落；字段旁的就地提示不受此限
+- 页面级说明只放页头标题行右侧的「?」（`PageHelp.tsx`，悬停或聚焦展开），数据在 `page-help.ts` 的 `PAGE_HELP`：键是「模块:页签」，没有页签的模块用模块名；值是 `{ label, sections: [{ title, ordered?, items }] }`，要点是字符串或 `{ term, text }`。各模块只改这份数据，不在页面里写说明段落；字段旁的就地提示不受此限
 - ⌘K（`CommandPalette.tsx`）：候选来自 `modules.ts` 的 `paletteGroups(query)`——空查询一组「快速跳转」列全部模块，有查询一组「页面」列模块、「模块 › 页签」与 `PALETTE_EXTRAS` 深链；实体搜索经组件的 `sources` 传入，分组接在「页面」之后
   - 实体搜索（10-16）：`entity-search.ts` 的 `useEntitySearch` 在有查询时并行查 `GET v1/users`、`v1/orders`、`v1/nodes`（`q`、`limit=4`），分「用户」「订单」「节点」三组接在「页面」之后、`sources` 之前；防抖 200ms，查询键带搜索词、`signal` 传给 `api.get`，搜索词变了旧请求由 react-query 取消；某组失败就不显示那组，不报错；没有结果且还在查时显示「正在搜索…」
   - 实体候选带 `path`（`EntityItem`），选中直接 `navigate` 到那一条：`/users/list/<用户id>`、`/billing/orders/<订单id>`、`/nodes/nodes/<节点id>`；只用本文件里的最小 schema 与状态文案，不 import `screens/**`（外框不把模块页面拉进主包）
-- 实时事件（`EventsCapsule.tsx`，纯函数在 `events.ts`）：按 topic + table + op 生成通用条目（事件只说哪一行变了，没有业务内容），每条有未读点、「全部标为已读」，页签 全部 / 订单 / 订阅 / 工单 / 节点 / 其他（按现有 topic 归类，不新增事件类型）；最多留 30 条，已读只在内存，刷新即清（10-16 用户定，不持久化）
+- 实时动态（`EventsCapsule.tsx`，纯函数在 `events.ts`）：`EventsProvider` 在 `Shell.tsx` 里包一次，是唯一的数据源（`useRealtime` 只调一次，每个入口只开一条 SSE）；`EventsTrigger` 有两种外观——侧栏第一项（`nav`，弹层贴侧栏右侧）与手机顶栏按钮（`top`，弹层横铺在顶栏下），共用同一个弹层内容。按 topic + table + op 生成通用条目（事件只说哪一行变了，没有业务内容），每条有未读点、「全部标为已读」，页签 全部 / 订单 / 订阅 / 工单 / 节点 / 其他（按现有 topic 归类，不新增事件类型）；最多留 30 条，已读只在内存，刷新即清（10-16 用户定，不持久化）
   - 点事件标已读并跳到对应页：订单、工单、节点、服务器、套餐有 id 时直接打开那一条（工单消息、订阅、删除事件退回列表页）；底部「审计日志 →」去 `/security/audit`
 - 接口回 404 时统一显示「不存在或已删除」（`ui/QueryView`），不提权限
 - 与设计稿不同的产品命名：
   - 「欠费单」叫「待处理到账」（10-16 设计稿，取代原「挂账」）
 - 改密码成功后，后端已在同一事务里吊销全部会话：前端直接清令牌回登录页，不再发任何请求
-- 浏览器标题（`Shell.tsx`、`LoginPage.tsx`）、登录页页脚与顶栏品牌区随站点名：已登录读 `site.ts` 的 `useAdminSiteName()`（`v1/settings/site`，与内容页共用缓存），登录前读服务端写进入口页的 `<meta name="application-name">`（`documentSiteName()`，开发期没有就是 Pandora）；顶栏只画环形标记加站点名文字，不写死 Pandora
+- 浏览器标题（`Shell.tsx`、`LoginPage.tsx`）、登录页页脚与侧栏品牌区随站点名：已登录读 `site.ts` 的 `useAdminSiteName()`（`v1/settings/site`，与内容页共用缓存），登录前读服务端写进入口页的 `<meta name="application-name">`（`documentSiteName()`，开发期没有就是 Pandora）；侧栏只画环形标记加站点名文字，不写死 Pandora
 - 2 小时无操作自动退出（`idle.ts` 的 `startIdleWatch`，在 `Shell.tsx` 挂上）：后台有定时轮询，服务端按 last_seen 判的空闲在开着的标签页上永远不会触发，所以前端只把点击、按键、滚轮、触摸算作操作，多个标签页经 localStorage 共享最近操作时间
 - 侧栏徽标与仪表盘「待办」共用 `tasks.ts` 的同一条查询和同一种缓存形状
 

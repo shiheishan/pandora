@@ -10,11 +10,14 @@ paths:
 - 设计稿 `设计规范.dc.html` 是唯一依据：颜色、字号、间距、圆角、控件高度都先落成令牌，组件（CSS Modules）只引用令牌，不写色值
 - 两个入口的差异（门户用森林绿、后台保持墨色中性，控件高度、圆角、字号、输入框边框 `--control-border-width` / `--control-bg`、浮层 `--popover-border` / `--popover-shadow`、字段标签 `--label-*` 等）全部来自 `styles/roles.css` 的同名角色令牌，按 `<html data-app>` 切换；角色令牌与 `design-tokens.ts` 的 `ROLE_TOKENS` 同源，两个入口的键必须相同
   - 组件里不写 admin / portal 分支
-  - 确实需要入口选择器时用 `:root[data-app='…']`。现有两处：`Button.module.css` 的后台小号按钮字号，`Toast.module.css` 的门户窄屏上移
-- 后台（10-16 设计稿）在全局令牌上另有覆盖：`roles.css` 的 `html[data-app='admin']`（与 `[data-theme='dark']`）两块，把 `--surface*`、`--border`、`--border-strong` 换成设计稿的值（卡片与页面同底、层次靠线），所有 `--radius-*` 归零（直角）；值与 `design-tokens.ts` 的 `ADMIN_OVERRIDES` / `ADMIN_RADIUS` 同源（`tests/tokens.test.ts` 的 "admin overrides"，showcase 在后台模式下照覆盖值核对）。这些不进 `COLOR_TOKENS`，与 Go 端、门户主题无关
+  - 确实需要入口选择器时用 `:root[data-app='…']`。现有一处：`Toast.module.css` 的门户窄屏上移（Button 的后台选择器已在 av4 换成角色令牌）
+  - 门户也在用的组件（Skeleton、Toast、Empty、QueryView、Input、Tag、Segmented、ConfirmModal、Switch、Select、Modal、Button、CountBadge）只能经角色令牌改后台外观，改完门户的值不能变；只有后台用的（Table、Tabs、Toolbar、StatStrip、Checkbox、Card、FilterTabs、Menu、IconButton）可以直接按后台样稿改
+- 后台（样稿 `dev/prototype/admin-v4.html`，黑白灰）在全局令牌上另有覆盖：`roles.css` 的 `html[data-app='admin']` 与 `html[data-app='admin'][data-theme='dark']` 两块，值与 `design-tokens.ts` 的 `ADMIN_OVERRIDES`（37 键，每键浅深两值）/ `ADMIN_RADIUS` 同源（`tests/tokens.test.ts` 的 "admin overrides" 与 "uses the admin radius scale"，showcase 在后台模式下照覆盖值核对）。这些不进 `COLOR_TOKENS`，与 Go 端、门户主题无关
   - 选择器用 `html[...]`：要压过 `:root`，又要输给 `:root[data-theme='dark']`
-  - 10-16 全局颜色换成门户森林绿，后台还没重做：凡是值变了的颜色键都在这两块里钉回原来的「纸白」（`ADMIN_OVERRIDES` 同步），后台外观不变；以后重做后台时再删
-  - 后台的浮层统一墨色细框、无阴影，输入框只有下边线、聚焦把下边线描黑；组件里写 `var(--popover-border)` 等角色令牌，不写 admin 分支
+  - 后台没有品牌色：`--brand` 一族换成墨色（浅色 #171717 / 深色 #ededed，主按钮与选中），蓝色只在 `--info`（#0070f3 / #3291ff：链接、聚焦环、进行中）；`--text-3` 浅 #737373 / 深 #8f8f8f（对比度够正文小字）
+  - 圆角：`--radius-tag` 4、`-sm` 7、`-md` 10、`-lg` 12（`-xl` 同 12）、`-pill` 999
+  - 后台角色值：正文 14px、按钮 500 字重 13.5 / 小号 13、输入框四边 1px 框（聚焦描 `--control-focus-border`）、浮层用阴影不用边框（`--popover-border` 透明、`--popover-shadow` = `--shadow`）、聚焦环与链接是蓝（`--focus-ring` / `--link` = `--info`）
+  - av4 新增的角色键（两个入口都有，门户取原来的效果）：`--control-focus-border`、`--switch-on`、`--switch-w`、`--segment-on-bg`、`--tag-h`、`--tag-pad`、`--tag-font-size`、`--tag-weight`、`--button-danger-bg`、`--button-danger-color`、`--button-danger-border`、`--button-danger-hover-bg`、`--link-hover-decoration`（`base.css` 的 `a:hover` 读它，后台悬停不加下划线）
 - `ui/*.module.css` 只能引用全局令牌或本文件声明的局部变量。守卫：`tests/tokens.test.ts` 的 "ui/%s only references declared custom properties"
 - 样式一律用 CSS Modules；React 的 `style` 属性只用于真正动态的尺寸（列宽、抽屉宽度、骨架尺寸）
 - 弹层用浏览器原生能力，不自己造
@@ -22,6 +25,7 @@ paths:
   - 例外：`Select` 是自绘的 listbox（10-16 设计稿），列表 `position: fixed` 就地渲染在组件里、不 portal 到 body（在 `<dialog>` 里才留在顶层）；Esc 收起时拦住事件，不让外层弹窗跟着关
   - Toast 容器是 popover，每条提示都要重新推到顶层，否则会被已打开的 dialog 盖住
 - 10-16 新增的共用组件：`FilterTabs`（radiogroup + 可移动 tabindex）、`Toolbar` / `SearchField`、`Table` 的排序与表尾、`Modal` 的定宽与头体底结构；`Select` 的纯逻辑（方向键、首字母、定位）在 `ui/select-logic.ts`，配单测，组件只管摆放与事件
+- av4 新增 / 改接口的组件：`IconButton`（`label` 必填，同时是 aria-label 与 title）、`Switch` 的 `tone="danger"`、`Card` 的 `subtitle` / `footer`（头 48 高带底线、底栏带顶线，不再 `overflow: hidden`，免得裁掉菜单）、`Table` 的 `boxed` / `rowClassName`、`Menu` 条目的 `icon` 与 `kind: 'choice'`（一行小分段单选，选项是 menuitemradio，点了不收起）与 `placement="top"`；后台专用的页面级组件不进 ui，放 `admin/kit/`（见 screens-admin.md）
 - 页面只从 `ui/index.ts` import。`cx`、`useModalDialog`、`Field` 是内部实现，不导出
 - 颜色令牌（48 个，10-16 起默认是门户森林绿）有四处同源，增、删、改任何一个都要几处一起改：
   - `styles/tokens.css`：浅色与 `[data-theme='dark']` 两组的键必须完全相同
