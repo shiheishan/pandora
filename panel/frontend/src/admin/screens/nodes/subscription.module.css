@@ -1,4 +1,4 @@
-/* 订阅下发页共用样式。附加设置段（SubscriptionTab.tsx）用 stack / section* / extras* / faint；
+/* 订阅下发页共用样式。附加设置卡（SubscriptionTab.tsx）用 stack / extrasActions / faint；
    订阅模板表（SubscriptionTemplates.tsx）用 clients / cell2。 */
 
 .stack {
@@ -7,48 +7,19 @@
   gap: var(--space-16);
 }
 
-.section {
-  padding-top: var(--space-16);
-  border-top: 1px solid var(--text);
-}
-
-.sectionHead {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  margin-bottom: var(--space-12);
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: inherit;
-  font-weight: var(--fw-semibold);
-}
-
 .faint {
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: 1.6;
 }
 
-.extrasFields {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-}
-
-.extrasField {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .extrasActions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-8);
-  margin-top: var(--space-16);
+  width: 100%;
 }
 
 /* 模板表客户端列：名称 + （fallback 行的）「默认」标签 */

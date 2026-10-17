@@ -23,6 +23,7 @@ export function SubscriptionTemplates() {
           },
           {
             key: 'ua',
+            hideOnMobile: true,
             header: 'UA 关键词',
             mono: true,
             render: (row) => (
