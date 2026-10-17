@@ -1,10 +1,13 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, QueryView, Switch, Table, Tag, Toolbar, useToast, type TableColumn } from '../../../ui'
+import { PageActions } from '../../kit'
 import { useFailure } from '../../actions'
 import { toggledSchema, useInvalidateBilling, useProviders, type Provider } from './api'
 import css from './Billing.module.css'
-import { effectiveMethods, isEditableProvider, isOffline, methodLabel, providerKind, providerMode, providerNote, providerStats, rateLabel, todayLabel, toggleBody, type ProviderMode } from './model'
+import { effectiveMethods, isEditableProvider, isOffline, methodLabel, providerKind, providerMode, providerNote, providerStats, providerTags, rateLabel, todayLabel, toggleBody, type ProviderMode } from './model'
 import { CallbackBaseCard } from './CallbackBaseCard'
 import { ProviderDialog } from './ProviderDialog'
 
@@ -20,20 +23,25 @@ export function ProvidersTab({ now }: { now: Date }) {
   const [form, setForm] = useState<Provider | 'new' | null>(null)
 
   return (
-    <>
+    <div className={css.page}>
+      <PageActions>
+        <Button variant="primary" onClick={() => setForm('new')}>
+          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />
+          新建渠道
+        </Button>
+      </PageActions>
       {/* 顶部统计由前端从列表算（不含系统内置的 offline）；数据没回来时不显示 */}
-      <Toolbar
-        end={
-          <Button size="sm" variant="primary" onClick={() => setForm('new')}>
-            新建渠道
-          </Button>
-        }
-      >
+      <Toolbar>
         {providers.data && (
-          <span className={css.providerStats}>
-            {providerStats(providers.data).map((s) => (
-              <span key={s.label} className={css.small}>
-                <span className={`${css.statNum} ${s.tone !== 'neutral' ? css[`tone_${s.tone}`] : ''}`}>{s.n}</span> {s.label}
+          <span className={css.tsum}>
+            {providerStats(providers.data).map((s, i) => (
+              <span key={s.label}>
+                {i > 0 && ' · '}
+                {s.tone === 'warn' ? (
+                  <span className={css.tone_warn}>{`${s.n} ${s.label}`}</span>
+                ) : (
+                  `${s.n} ${s.label}`
+                )}
               </span>
             ))}
           </span>
@@ -53,7 +61,7 @@ export function ProvidersTab({ now }: { now: Date }) {
       <CallbackBaseCard />
       <ToggleDialog pending={pending} onClose={() => setPending(null)} />
       <ProviderDialog open={form !== null} editing={form === 'new' ? null : form} onClose={() => setForm(null)} />
-    </>
+    </div>
   )
 }
 
@@ -79,17 +87,22 @@ function ProviderTable({
         return (
           <span className={css.stack}>
             <span className={css.providerName}>
-              {p.display_name}
-              <span className={`${css.mono} ${css.small}`}>{p.code}</span>
+              <b>{p.display_name}</b>
+              <span className={`${css.mono} ${css.muted}`}>{p.code}</span>
               <Tag tone="neutral">{providerKind(p)}</Tag>
+              {providerTags(p).map((t) => (
+                <Tag key={t.label} tone={t.tone}>{t.label}</Tag>
+              ))}
             </span>
-            <span className={`${css.small} ${css[`tone_${note.tone}`]}`}>{note.text}</span>
-            {methods.length > 0 && <span className={css.small}>支付方式：{methods.map(methodLabel).join(' / ')}</span>}
-            {!offline && p.notify_url && (
-              <span className={css.small}>
-                回调地址：<span className={css.mono}>{p.notify_url}</span>
-              </span>
-            )}
+            <div className={css.providerLines}>
+              <span className={note.tone === 'danger' ? css.tone_danger : undefined}>{note.text}</span>
+              {methods.length > 0 && <span>支付方式：{methods.map(methodLabel).join(' / ')}</span>}
+              {!offline && p.notify_url && (
+                <span>
+                  回调地址：<span className={css.mono}>{p.notify_url}</span>
+                </span>
+              )}
+            </div>
           </span>
         )
       },
@@ -107,27 +120,25 @@ function ProviderTable({
     },
     {
       key: 'act',
-      header: '操作',
+      header: '收新单 · 操作',
       width: '200px',
       align: 'right',
       render: (p) => {
         const offline = isOffline(p)
         const mode = providerMode(p)
+        if (offline) {
+          return <span className={css.muted}>内置，不能改</span>
+        }
         return (
           // 行内控件不触发整行的「打开编辑」
           <span className={css.rowActions} onClick={(e) => e.stopPropagation()}>
-            {!offline && (
-              <>
-                <Switch aria-label={`${p.display_name} 收新单`} checked={mode === 'on'} onChange={(e) => onToggle(e.target.checked ? 'on' : 'paused', p)} />
-                <span className={css.small}>收单</span>
-              </>
-            )}
+            <Switch aria-label={`${p.display_name} 收新单`} checked={mode === 'on'} onChange={(e) => onToggle(e.target.checked ? 'on' : 'paused', p)} />
             {isEditableProvider(p) && (
-              <Button size="xs" onClick={() => onEdit(p)}>
+              <Button variant="link" size="xs" onClick={() => onEdit(p)}>
                 编辑
               </Button>
             )}
-            {!offline && mode !== 'off' && (
+            {mode !== 'off' && (
               <button type="button" className={css.textAction} onClick={() => onToggle('off', p)}>
                 停用
               </button>
@@ -138,7 +149,7 @@ function ProviderTable({
     },
   ]
   // 整行点击打开编辑；系统内置的 offline 渠道只读，不响应
-  return <Table label="支付渠道列表" columns={columns} rows={rows} rowKey={(p) => p.id} onRowClick={(p) => isEditableProvider(p) && onEdit(p)} />
+  return <Table label="支付渠道列表" columns={columns} rows={rows} rowKey={(p) => p.id} boxed onRowClick={(p) => isEditableProvider(p) && onEdit(p)} />
 }
 
 const COPY: Record<ProviderMode, { title: (n: string) => string; body: string; confirm: string; danger: boolean }> = {

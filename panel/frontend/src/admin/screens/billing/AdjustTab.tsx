@@ -1,8 +1,10 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, Input, Modal, QueryView, Table, TextArea, useToast, type TableColumn } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { parseYuan } from '../users/model'
 import { adjustmentSchema, useAdjustments, useInvalidateBilling, type Adjustment } from './api'
@@ -14,16 +16,67 @@ export function AdjustTab() {
   const [formOpen, setFormOpen] = useState(false)
   const [reversing, setReversing] = useState<Adjustment | null>(null)
 
+  const columns: TableColumn<Adjustment>[] = [
+    {
+      key: 'reason',
+      header: '原因 · 登记人',
+      render: (a) => {
+        const v = adjustmentView(a)
+        return (
+          <>
+            <span className={css.ellipsis} title={a.reason}>{a.reason}</span>
+            <span className={css.sub2}>{v.meta}</span>
+          </>
+        )
+      },
+    },
+    {
+      key: 'effective_on',
+      header: '生效日',
+      width: '110px',
+      render: (a) => <span className={`${css.mono} ${css.muted}`}>{a.effective_on}</span>,
+    },
+    {
+      key: 'amount',
+      header: '金额',
+      width: '120px',
+      align: 'right',
+      render: (a) => {
+        const v = adjustmentView(a)
+        return <span className={`${css.num} ${css[`tone_${v.tone}`]}`}>{v.amount}</span>
+      },
+    },
+    {
+      key: 'act',
+      header: '',
+      width: '72px',
+      align: 'right',
+      render: (a) => {
+        const v = adjustmentView(a)
+        if (v.state === 'open') {
+          return (
+            <Button variant="link" size="xs" onClick={() => setReversing(a)}>
+              冲销
+            </Button>
+          )
+        }
+        return <span className={css.small}>{v.state === 'reversal' ? '冲销单' : '已冲销'}</span>
+      },
+    },
+  ]
+
   return (
-    <section className={css.adjCard} aria-label="收入调整">
-      <div className={css.adjHead}>
-        <span className={css.bannerTitle}>收入调整</span>
-        <span className={css.small}>只追加，不改原账；冲销会生成一条反向记录</span>
-        <span className={css.spacer} />
-        <Button size="sm" variant="primary" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
+    <Card
+      title="收入调整"
+      subtitle="只追加，不改原账；冲销会生成一条反向记录"
+      extra={
+        <Button size="sm" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
+          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />
           登记调整
         </Button>
-      </div>
+      }
+      flush
+    >
       {formOpen && <AdjustFormRow onClose={() => setFormOpen(false)} />}
       <QueryView
         query={list}
@@ -38,52 +91,17 @@ export function AdjustTab() {
         }
       >
         {(rows) => (
-          <div role="table" aria-label="收入调整列表" className={css.adjList}>
-            <div role="row" className={`${css.adjRow} ${css.adjHeader}`}>
-              <span role="columnheader">原因 · 登记人</span>
-              <span role="columnheader">生效日</span>
-              <span role="columnheader" className={css.right}>
-                金额
-              </span>
-              <span role="columnheader" />
-            </div>
-            {rows.map((a) => (
-              <Row key={a.id} a={a} onReverse={() => setReversing(a)} />
-            ))}
-          </div>
+          <Table
+            label="收入调整列表"
+            columns={columns}
+            rows={rows}
+            rowKey={(a) => a.id}
+            rowClassName={(a) => (adjustmentView(a).state === 'reversed' ? css.faded : undefined)}
+          />
         )}
       </QueryView>
       {reversing && <ReverseDialog key={reversing.id} a={reversing} onClose={() => setReversing(null)} />}
-    </section>
-  )
-}
-
-function Row({ a, onReverse }: { a: Adjustment; onReverse: () => void }) {
-  const v = adjustmentView(a)
-  return (
-    <div role="row" className={`${css.adjRow} ${v.state === 'reversed' ? css.faded : ''}`}>
-      <span role="cell" className={css.stack}>
-        <span className={css.ellipsis} title={a.reason}>
-          {a.reason}
-        </span>
-        <span className={`${css.small} ${css.ellipsis}`}>{v.meta}</span>
-      </span>
-      <span role="cell" className={`${css.mono} ${css.muted}`}>
-        {a.effective_on}
-      </span>
-      <span role="cell" className={`${css.right} ${css.num} ${css[`tone_${v.tone}`]}`}>
-        {v.amount}
-      </span>
-      <span role="cell" className={css.right}>
-        {v.state !== 'open' ? (
-          <span className={css.small}>{v.state === 'reversal' ? '冲销单' : '已冲销'}</span>
-        ) : (
-          <button type="button" className={css.textAction} onClick={onReverse}>
-            冲销
-          </button>
-        )}
-      </span>
-    </div>
+    </Card>
   )
 }
 
