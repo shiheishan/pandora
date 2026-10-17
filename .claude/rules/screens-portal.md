@@ -5,7 +5,8 @@ paths:
 
 # 门户页面通用约定
 
-- 页面只改自己目录，不动 `portal/screens/index.ts` 的 `SCREENS` 登记表；页头标题与副标题由 Shell 按 `portal/pages.ts` 画，页面只管内容区。
+- 页面只改自己目录，不动 `portal/screens/index.ts` 的 `SCREENS` 登记表；内容列、页标题、Logo 由 Shell 按 `portal/pages.ts` 画，页面只管内容区。外观一律按样稿 `dev/prototype/portal-v5.html`，用 `portal/kit` 的套件（`portal-kit.md`）。
+- 页面列表（`pages.ts` 的 `PAGES`）：我的套餐 `#/subs`、选购 `#/plans`、确认 `#/checkout`、订单 `#/orders`、钱包 `#/wallet`、邀请返利 `#/referral`、工单支持 `#/tickets`、消息 `#/messages`、帮助中心 `#/help`、账号安全 `#/account`、我的 `#/me`（只在手机有：资料卡、订单 / 消息 / 工单三格、邀请横幅、帮助中心、账号安全、外观、退出登录；桌面落回我的套餐）。「概览」10-16 删除，原来的公告横条与待支付提醒并进我的套餐页。
 - 页面之间的约定地址（改任何一个都要同步两端；购买模型 10-07 起）：
   - 我的套餐：`#/subs`（每份一张卡）、`#/subs/<一份>/detail`（节点与每天用量）、`#/subs/<一份>/traffic`（流量不够：重置与换更大套餐）、`#/subs/<一份>/change`（换个套餐）、`#/subs/<一份>/rotated?old=<旧尾号>`（换新链接之后）、`#/subs/new`（再买一份）
   - 选购：`#/plans`；`?kind=one_time` 一次性标签（缺省按时间；目录里只有一类时不显示标签、忽略它）
@@ -21,7 +22,7 @@ paths:
 - `common/` 只放多个门户页面共用的东西；只有一个页面用的放回该页面目录，后台也要用的提升到 `core/` 或 `ui/`，不让后台引用 `portal/screens/common`。
 - schema 按 Go 实际编码写严：无 omitempty 的字段必填（指针 / 可空列 nullable），只有 omitempty 的字段可选；页面对缺席做降级，而不是放宽 schema。实时失效只靠查询的 `meta.topics`。
 - 各页面的 schema 被 `panel/frontend/tests/mock-portal*.test.ts` 与 `tests/smoke/` 引用核对，改 schema 要一起跑、一起改。
-- 购买路径（概览、我的套餐、选购、确认与付款、完成页、订单、钱包与兑换卡）的页面文字或结构改了，同改 `panel/frontend/tests/browser`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。
+- 购买路径（我的套餐、选购、确认与付款、完成页、订单、钱包与兑换卡）的页面文字或结构改了，同改 `panel/frontend/tests/browser`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。
 - 日期显示统一按按日用量接口回的切日时区（`common/subscriptions.ts` 的 `timeZone` → `common/traffic.ts` 的 `formatDate`），与用量柱同一口径；拿不到时才退回浏览器本地时区。
 - 幂等键从 `common/intent.ts` 取（转出 `core/intent`）：一次用户意图一把、按请求指纹复用，成功或 4xx 业务拒绝后丢弃，断网与 5xx 保留；没挂幂等中间件的接口不带键。
 - 整个系统只有人民币（10-16）：金额一律 `formatMoney(minor)` 单参，页面不读任何 `currency` 字段；支付方式：余额、易支付，以及按站点币种建发票的 BTCPay Server、CoinPayments（用户在渠道收银台里选币付款，10-14 用户定要做加密货币支付；面板不直接收 USDT 转账）。

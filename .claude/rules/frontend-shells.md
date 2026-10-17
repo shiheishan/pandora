@@ -41,6 +41,12 @@ paths:
 ## 门户（src/portal）
 
 - 门户没有 reauth，`createAppRuntime('portal')` 不传 `requestReauth`
+- 外框布局（样稿 v5，`Shell.tsx`；组件套件见 `portal-kit.md`）：
+  - 桌面（≥ 960）：左侧固定窄导航 232 宽（Logo = 站点名展示字体 + 绿点；三组 `pages.ts` 的 `SIDE_GROUPS`：我的套餐 / 选购 / 钱包 ‖ 订单 / 邀请返利 ‖ 消息 / 工单支持 / 帮助中心 / 账号安全；当前项白底浮起；「订单」计数 = 待支付笔数 `usePendingOrderCount`，「消息」计数 = 未读数）。`<nav aria-label="主导航">` 与前三项的名字是浏览器测试的入口，不要改
+  - 侧栏底部账户按钮（头像首字、名字、余额），点开在上方弹出账户菜单（`role="menu"`）：名字 + 当前套餐 chip + 邮箱、钱包（余额）、账号安全、外观「浅色 / 深色」（`menuitemradio`）、退出登录；点外面、Esc、Tab、换页收起，方向键在项之间移动
+  - 手机（≤ 959）：没有侧栏，内容列顶上只有 Logo；底部悬浮标签栏四项 `TAB_PAGES`（套餐 / 选购 / 钱包 / 我的），订单、邀请、消息、工单、帮助、账号安全都从「我的」页进，这些页上「我的」高亮（`tabOwner`）；「我的」上的小红点 = 有未读消息或待支付订单
+  - 内容列 720 宽，`WIDE_PAGES` 1040；页标题 h1 在列里（`HIDDEN_TITLE_PAGES` 只给读屏）；标题行右侧插槽 `PageHeadAside`；换页整列重挂载触发 rise 进场
+  - `#/me` 只在手机有：`resolvePage(path, { desktop })` 在 `matchMedia('(min-width: 960px)')` 为真时把它落回 `#/subs`（窗口拉宽同样跳回）；`#/overview` 已删，按未知页面落回 `#/subs`
 - 外来链接不能用两段式路径（public 网关根下有订阅通配）
   - 邀请链接用 `/?invite=CODE`，渲染前就取走
   - 快捷登录链接用 `#/quick-login/<token>`，加载时即消费并抹掉
@@ -53,8 +59,8 @@ paths:
   - 键的白名单是 `styles/design-tokens.ts` 的 `COLOR_TOKENS`
   - Logo 只认 `data:image/`，因为 CSP 的 img-src 只放行 `'self' data:`
 - 外框与页面共用同一个查询键的读接口，schema 必须是全字段，各处经 `select` 取自己要的部分
-  - 涉及 `queries.ts` 的 `SUBSCRIPTIONS_KEY`、`COMMISSION_KEY`、`['portal','me']`、`['portal','balance']`
+  - 涉及 `queries.ts` 的 `SUBSCRIPTIONS_KEY`、`COMMISSION_KEY`、`PENDING_ORDERS_KEY`（`v1/orders?status=pending_payment`，侧栏订单计数与我的套餐页的待支付横条共用）、`['portal','me']`、`['portal','balance']`
   - 页面不要另开键，也不要收窄这些 schema
-- 多条订阅时，主订阅取 `pickPrimary`：生效订阅里 `current_period_end` 最晚的那条。外框徽标、概览、选购页都按它
+- 多条订阅时，主订阅取 `pickPrimary`：生效订阅里 `current_period_end` 最晚的那条。账户菜单与「我的」页的套餐 chip、选购页都按它
 - 未读数没有 SSE 推送，按契约 60 秒轮询一次 `limit=1`
-- 门户外框（`*.module.css`）只用 960 与 640 两个断点
+- 门户外框（`*.module.css`）只用 960 与 640 两个断点；外框的手机布局都在 959 以下
