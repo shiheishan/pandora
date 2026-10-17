@@ -528,8 +528,8 @@ async function saveTheme(ctx: MockContext): Promise<MockResult> {
 
 const SLOT_CATALOG: ReadonlyArray<readonly [string, string, string]> = [
   ['portal.login.notice', '登录页提示', '登录框上方，未登录访客可见'],
-  ['portal.home.banner', '概览页横幅', '概览页最顶部，通栏'],
-  ['portal.home.aside', '概览页附加卡片', '概览页内容下方'],
+  ['portal.home.banner', '我的套餐横幅', '我的套餐页最顶部，通栏'],
+  ['portal.home.aside', '我的套餐附加卡片', '我的套餐页内容下方'],
   ['portal.sidebar.extra', '侧栏附加内容', '侧栏导航下方、账号信息上方'],
   ['portal.subscribe.notice', '订阅页说明', '「我的订阅」页顶部'],
   ['portal.plans.notice', '选购页说明', '「选购套餐」页顶部，适合放退换与发票说明'],
