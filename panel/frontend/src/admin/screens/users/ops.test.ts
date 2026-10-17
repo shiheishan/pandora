@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { banSkippedText, hasAnyFilter } from './BulkBanForm'
-import { jobFilename, jobFinished, jobPercent } from './jobs'
+import { jobFilename, jobFinished, jobPercent, jobResultView } from './jobs'
 import { bulkPreviewSchema, devicesSchema, generationJobSchema, resetDoneSchema, trafficGrantedSchema, userGroupsSchema, type OnlineDevice } from './api'
 import {
   assignableGroups,
@@ -131,6 +131,13 @@ describe('批量生成', () => {
     expect(jobFinished({ status: 'running' })).toBe(false)
     expect(jobFinished({ status: 'failed' })).toBe(true)
     expect(jobFilename({ email_prefix: 'dealer', created_at: '2026-10-07T08:00:00Z' })).toBe('users-dealer-2026-10-07.csv')
+  })
+
+  it('生成记录的结果列：成功但有没生成的标警示并写个数', () => {
+    expect(jobResultView({ status: 'succeeded', failed: 3 })).toEqual({ label: '完成 · 3 个未生成', tone: 'warn' })
+    expect(jobResultView({ status: 'succeeded', failed: 0 })).toEqual({ label: '已完成', tone: 'ok' })
+    expect(jobResultView({ status: 'running', failed: 0 })).toEqual({ label: '生成中', tone: 'info' })
+    expect(jobResultView({ status: 'failed', failed: 2 })).toEqual({ label: '已停止', tone: 'danger' })
   })
 })
 
