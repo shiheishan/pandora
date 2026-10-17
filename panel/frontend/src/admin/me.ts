@@ -22,17 +22,3 @@ export function useAdminMe() {
     staleTime: 60_000,
   })
 }
-
-/**
- * 侧栏账户块的三段文字：标题「管理员 · 姓名」，姓名 ← display_name ?? email 本地部分；
- * 头像字取姓名首字，me 还没回来时取「管」。
- */
-export function identityLabels(me: AdminMe | undefined) {
-  const role = '管理员'
-  const name = me?.display_name || me?.email.split('@')[0] || ''
-  return {
-    title: name ? `${role} · ${name}` : role,
-    subtitle: me?.email ?? '',
-    initial: (name || role).slice(0, 1),
-  }
-}
