@@ -352,6 +352,59 @@
   .sh-acts .btn { flex: 1; }
   .btn.danger { background: var(--danger); border-color: #7d1c2b; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 10px 22px -12px rgba(125, 28, 43, 0.8); }
 
+  /* 邀请返利 */
+  /* 邀请卡：大号比例 + 链接一键复制 + 三格统计（参考 Binance 邀请页的大号返佣比例、Whatnot 的链接加复制、Yami 的三格战绩） */
+  .inv { border-radius: 28px; padding: 30px 34px 0; background: radial-gradient(640px 300px at 100% 0%, var(--tint), transparent 70%), linear-gradient(180deg, var(--paper-2), #fff); box-shadow: var(--lift), 0 0 0 1.5px var(--tint-line); overflow: hidden; }
+  .inv-h { font-size: 22px; font-weight: 600; line-height: 1.35; margin: 14px 0 0; letter-spacing: -0.01em; }
+  .inv-h .num { font-size: 64px; line-height: 1; display: block; margin-bottom: 6px; letter-spacing: -0.03em; }
+  .inv-h .num small { font-size: 30px; margin-left: 2px; }
+  .inv-how { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 0; padding: 0; }
+  .inv-how span { font-size: 13px; color: var(--text-2); padding: 5px 10px; border-radius: 99px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 0 1px var(--line); }
+  .inv-how b { color: var(--deep); margin-right: 4px; font-family: var(--tw); }
+  .inv-link { display: flex; gap: 10px; margin-top: 24px; }
+  .inv-link .linkchip { flex: 1; min-width: 0; }
+  .inv-link .linkchip code { overflow: hidden; text-overflow: ellipsis; }
+  .inv-link .btn.soft code { font-family: var(--tw); font-size: 15px; letter-spacing: 0.04em; }
+  .inv-use { font-size: 13px; color: var(--text-2); margin: 10px 4px 0; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 26px -34px 0; box-shadow: 0 -1px 0 var(--line); background: rgba(255, 255, 255, 0.6); }
+  .stats div { padding: 16px 20px 18px 34px; }
+  .stats div + div { box-shadow: -1px 0 0 var(--line); padding-left: 24px; }
+  .stats small { display: block; font-size: 12.5px; color: var(--text-2); }
+  .stats .num { font-size: 24px; display: block; margin-top: 4px; }
+  /* 佣金卡：沿用钱包余额卡，两个动作用同一个可用额 */
+  .comm { margin-top: 18px; border-radius: 24px; padding: 26px 30px; background: #fff; box-shadow: var(--lift); display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 6px 24px; }
+  .comm .lbl { font-size: 14px; color: var(--text-2); }
+  .comm .amt { font-size: 46px; line-height: 1; margin-top: 10px; }
+  .comm .amt .cur { font-size: 24px; margin-right: 4px; }
+  .comm .meta { grid-column: 1; font-size: 13.5px; margin-top: 8px; }
+  .comm .acts { grid-column: 2; grid-row: 1 / 4; display: flex; flex-direction: column; gap: 10px; align-self: center; }
+  .comm .acts .btn { min-width: 168px; }
+  /* 邀请码列表 */
+  .codes .row { cursor: default; }
+  .codes .row:hover { background: none; }
+  .codes .cd-c { font-family: var(--tw); font-weight: 700; font-size: 17px; letter-spacing: 0.04em; min-width: 92px; }
+  .codes .rt small { margin-top: 0; }
+  .codes .off .cd-c { color: var(--text-3); }
+  .h-row .act-l { all: unset; cursor: pointer; font-size: 14px; color: var(--act); font-weight: 600; }
+  .h-row .cnt { font-size: 13px; color: var(--text-3); margin-right: 12px; }
+  /* 佣金记录 / 邀请记录 */
+  .rec .rt b { font-weight: 500; }
+  .rec .ref { font-family: var(--tw); font-size: 13px; color: var(--text-3); margin-left: 6px; }
+  .rec .oa small { font-size: 12px; color: var(--text-2); }
+  .rec .void .num { color: var(--text-3); text-decoration: line-through; }
+  .rec .void .rt b { color: var(--text-2); }
+  .rv.plus { color: var(--act); }
+  .who-e { font-family: var(--tw); font-size: 14.5px; }
+  .tab-cap { font-size: 13px; color: var(--text-3); margin: 10px 6px 0; }
+  .fld { display: block; margin-top: 16px; }
+  .fld > span { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); margin: 0 2px 8px; }
+  .fld > span a { color: var(--act); font-weight: 600; }
+  .fld .code { font-family: var(--sans); font-size: 15.5px; letter-spacing: 0; }
+  .fld .code.m { font-family: var(--tw); font-size: 17px; }
+  .chips2 { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips2 .am { padding: 0 16px; height: 40px; line-height: 40px; font-size: 14px; }
+  .warn-t { font-size: 12.5px; color: var(--warn); margin: 8px 2px 0; }
+
   /* 我的（手机） */
   .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
   .profile .avatar { width: 52px; height: 52px; font-size: 20px; }
@@ -426,6 +479,21 @@
     .tools .seg span { flex: 1; text-align: center; padding: 7px 4px; }
     .rc { padding: 4px 16px 18px; }
     .od .ico { display: none; }
+    .inv { padding: 24px 22px 0; border-radius: 24px; }
+    .inv-h { font-size: 19px; }
+    .inv-h .num { font-size: 52px; }
+    .inv-link { flex-direction: column; }
+    .inv-link .linkchip { flex: none; height: 46px; }
+    .stats { margin: 22px -22px 0; }
+    .stats div { padding: 14px 10px 16px 22px; }
+    .stats div + div { padding-left: 14px; }
+    .stats .num { font-size: 19px; }
+    .comm { grid-template-columns: 1fr; padding: 22px; border-radius: 22px; }
+    .comm .acts { grid-column: 1; grid-row: auto; flex-direction: row; margin-top: 16px; }
+    .comm .acts .btn { flex: 1; min-width: 0; }
+    .codes .cd-c { min-width: 0; font-size: 15.5px; }
+    .codes .rv { display: none; }
+    .rec .ico { display: none; }
   }
 </style>
 </head>
@@ -463,7 +531,7 @@
   <a class="nav-a" data-p="wallet" href="#wallet"><svg class="i"><use href="#i-wallet"/></svg>钱包</a>
   <div class="nav-gap"></div>
   <a class="nav-a" data-p="orders" href="#orders"><svg class="i"><use href="#i-orders"/></svg>订单<span class="dot">2</span></a>
-  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-gift"/></svg>邀请返利</a>
+  <a class="nav-a" data-p="ref" href="#ref"><svg class="i"><use href="#i-gift"/></svg>邀请返利</a>
   <div class="nav-gap"></div>
   <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-bell"/></svg>消息<span class="dot">2</span></a>
   <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-chat"/></svg>工单支持</a>
@@ -988,6 +1056,104 @@
     </div>
   </div>
 
+  <!-- ================= 邀请返利 ================= -->
+  <section class="page" id="p-ref">
+    <div class="col">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <h1>邀请返利</h1>
+
+      <!-- 标题按计佣范围写：每次付款 / 首单（scope=first_order）；费率为 0 时只写「邀请好友注册」 -->
+      <div class="inv">
+        <span class="eyebrow">Pandora · 邀请</span>
+        <p class="inv-h"><span class="num">10<small>%</small></span>好友每次付款，你都拿这么多佣金</p>
+        <p class="inv-how"><span><b>1</b>把链接发给朋友</span><span><b>2</b>朋友注册时自动填上你的邀请码</span><span><b>3</b>朋友付款，佣金记到你这里</span></p>
+        <div class="inv-link">
+          <span class="linkchip"><code>https://example.test/?invite=K7Q2M9</code></span>
+          <button class="btn hot">复制邀请链接</button>
+          <button class="btn soft">邀请码 <code>K7Q2M9</code></button>
+        </div>
+        <!-- 邀请码有上限时才有；用满了换成警示色「邀请码已用满 50 次…」；站点关注册时写「站点暂停注册，邀请链接暂时无法使用。」 -->
+        <p class="inv-use">这个邀请码已有 12 人注册，还能再邀请 38 人。</p>
+        <div class="stats">
+          <div><small>邀请注册</small><span class="num">12</span></div>
+          <div><small>付费好友</small><span class="num">5</span></div>
+          <div><small>累计佣金</small><span class="num">¥268.40</span></div>
+        </div>
+      </div>
+
+      <!-- 使用佣金：转入余额与申请提现用同一个可用额（账本余额 − 在途提现） -->
+      <div class="comm">
+        <div class="lbl">可用佣金</div>
+        <div class="amt num"><span class="cur">¥</span>135.60</div>
+        <div class="meta">另有 <b class="num">¥32.00</b> 在冻结期内，解冻后可用。</div>
+        <div class="acts">
+          <button class="btn hot" data-open="transfer">转入余额</button>
+          <button class="btn soft" data-open="withdraw">申请提现</button>
+        </div>
+      </div>
+
+      <!-- 个人邀请码：有效在前；后台设的上限内可再生成 -->
+      <div class="h-row" style="margin:34px 4px 10px"><h3 style="margin:0">我的邀请码</h3><span><span class="cnt">有效 2/3</span><button class="act-l">再生成一个</button></span></div>
+      <div class="rows codes">
+        <div class="row"><span class="cd-c">K7Q2M9</span><span class="rt"><span class="st ok">有效</span><small>注册 12 人 · 访问 86 次</small></span><span class="rv">10-02 生成</span><button class="btn soft sm">复制链接</button></div>
+        <div class="row"><span class="cd-c">P3XW8N</span><span class="rt"><span class="st ok">有效</span><small>注册 0 人 · 访问 4 次</small></span><span class="rv">10-14 生成</span><button class="btn soft sm">复制链接</button></div>
+        <div class="row off"><span class="cd-c">H2RT5C</span><span class="rt"><span class="st">已停用</span><small>注册 0 人 · 访问 2 次</small></span><span class="rv">09-03 生成</span></div>
+      </div>
+      <p class="tab-cap">访问次数按 IP 去重，只作参考。</p>
+
+      <!-- 佣金记录 / 邀请记录 -->
+      <div class="tools">
+        <div class="seg" role="tablist" aria-label="记录"><span class="on" data-r="rec">佣金记录</span><span data-r="who">邀请记录<em>12</em></span></div>
+      </div>
+      <div class="kind2" data-r="rec">
+        <div class="rows rec" style="margin-top:14px">
+          <div class="row"><span class="ico"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt"><b>好友付款返佣</b><span class="ref">PD-2610-3120</span><small>10-14 · z***@example.test</small></span><span class="oa"><span class="num rv plus">+¥5.90</span><small>冻结至 10-21</small></span></div>
+          <div class="row"><span class="ico"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt"><b>好友付款返佣</b><span class="ref">PD-2610-2877</span><small>10-11 · l***@example.test</small></span><span class="oa"><span class="num rv plus">+¥26.10</span><small>冻结至 10-18</small></span></div>
+          <div class="row"><span class="ico out"><svg class="i"><use href="#i-wallet"/></svg></span><span class="rt"><b>转入余额</b><small>10-01</small></span><span class="oa"><span class="num">−¥16.50</span><small>已完成</small></span></div>
+          <div class="row"><span class="ico out"><svg class="i"><use href="#i-out"/></svg></span><span class="rt"><b>提现</b><span class="ref">支付宝</span><small>09-28</small></span><span class="oa"><span class="num">−¥100.00</span><small>已打款</small></span></div>
+          <div class="row"><span class="ico"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt"><b>好友付款返佣</b><span class="ref">PD-2609-2203</span><small>09-20 · w***@example.test</small></span><span class="oa"><span class="num rv plus">+¥29.90</span><small>可用</small></span></div>
+          <div class="row"><span class="ico"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt"><b>第 2 级好友付款返佣</b><span class="ref">PD-2609-2011</span><small>09-15</small></span><span class="oa"><span class="num rv plus">+¥3.00</span><small>可用</small></span></div>
+          <div class="row void"><span class="ico out"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt"><b>好友付款返佣</b><span class="ref">PD-2609-1904</span><small>09-10 · z***@example.test</small></span><span class="oa"><span class="num">+¥5.90</span><small>已冲销</small></span></div>
+          <div class="row void"><span class="ico out"><svg class="i"><use href="#i-out"/></svg></span><span class="rt"><b>提现</b><span class="ref">USDT（TRC20）</span><small>09-05 · 地址与链不符</small></span><span class="oa"><span class="num">−¥50.00</span><small>已驳回</small></span></div>
+        </div>
+        <button class="more">显示全部 14 条</button>
+      </div>
+      <div class="kind2" data-r="who" hidden>
+        <div class="rows rec" style="margin-top:14px">
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-user"/></svg></span><span class="rt"><span class="who-e">z***@example.test</span></span><span class="rv">10-12 注册</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-user"/></svg></span><span class="rt"><span class="who-e">l***@example.test</span></span><span class="rv">10-09 注册</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-user"/></svg></span><span class="rt"><span class="who-e">m***@example.test</span></span><span class="rv">10-03 注册</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-user"/></svg></span><span class="rt"><span class="who-e">w***@example.test</span></span><span class="rv">09-18 注册</span></div>
+          <div class="row"><span class="ri"><svg class="i"><use href="#i-user"/></svg></span><span class="rt"><span class="who-e">q***@example.test</span></span><span class="rv">09-11 注册</span></div>
+        </div>
+        <p class="tab-cap">只显示打码后的邮箱。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 转入余额：确认一次，写明转了就不能提现 -->
+  <div class="sheet" id="sh-transfer" hidden>
+    <div class="sh-card" role="alertdialog" aria-label="转入余额">
+      <div class="sh-top"><b>转入余额</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div class="amt-show"><span class="num cur">¥</span><span class="num">135.60</span></div>
+      <p class="sh-p" style="text-align:center;margin-top:-6px">全部可用佣金即时到账。转入后不能再提现，余额可以买套餐和续费。</p>
+      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn hot" data-close>转入余额</button></div>
+    </div>
+  </div>
+
+  <!-- 申请提现：金额（带「全部」）+ 方式 + 收款账号；按钮写明金额（参考钱包充值弹层） -->
+  <div class="sheet" id="sh-withdraw" hidden>
+    <div class="sh-card" role="dialog" aria-label="申请提现">
+      <div class="sh-top"><b>申请提现</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <label class="fld"><span>金额（元）<a href="#ref">全部 ¥135.60</a></span><input class="code m" inputmode="decimal" value="100.00" aria-label="提现金额" /></label>
+      <p class="faint">最低 ¥50.00，审核通过后打款。同一时间只能有一笔在处理。</p>
+      <div class="sh-lbl">收到哪里</div>
+      <div class="chips2"><button class="am on">支付宝</button><button class="am">USDT（TRC20）</button></div>
+      <label class="fld"><span>收款账号</span><input class="code" placeholder="支付宝账号与实名，如 138****0000 张三" aria-label="收款账号" /></label>
+      <button class="btn hot full">申请提现 <span class="num">¥100.00</span></button>
+    </div>
+  </div>
+
   <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
   <section class="page" id="p-me">
     <div class="col">
@@ -1001,7 +1167,7 @@
       <h3>账户</h3>
       <div class="rows">
         <a class="row" href="#orders"><span class="ri"><svg class="i"><use href="#i-orders"/></svg></span><span class="rt">订单</span><span class="rv">2 笔待支付</span><svg class="i chev"><use href="#i-chev"/></svg></a>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt">邀请返利</span><span class="rv">可提 <span class="num" style="color:var(--ink)">¥135.60</span></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <a class="row" href="#ref"><span class="ri"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt">邀请返利</span><span class="rv">可用佣金 <span class="num" style="color:var(--ink)">¥135.60</span></span><svg class="i chev"><use href="#i-chev"/></svg></a>
         <div class="row"><span class="ri"><svg class="i"><use href="#i-bell"/></svg></span><span class="rt">消息</span><span class="rv">2 条未读</span><svg class="i chev"><use href="#i-chev"/></svg></div>
       </div>
       <h3>帮助</h3>
@@ -1027,7 +1193,7 @@
 
 <script>
   // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
-  const pages = ['subs', 'plans', 'wallet', 'orders', 'me']
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'me']
   function show() {
     let p = location.hash.slice(1)
     if (!pages.includes(p)) p = 'subs'
@@ -1087,6 +1253,15 @@
     el.textContent = '正在向支付渠道查询…'
     setTimeout(() => { el.textContent = '我已支付，刷新状态'; el.closest('.pend').querySelector('.pend-note').hidden = false }, 700)
   }))
+  // 邀请返利：佣金记录 / 邀请记录切换，?r=who 预选
+  function rtab(r) {
+    document.querySelectorAll('[data-r]').forEach((el) => {
+      if (el.classList.contains('kind2')) el.hidden = el.dataset.r !== r
+      else el.classList.toggle('on', el.dataset.r === r)
+    })
+  }
+  document.querySelectorAll('.seg [data-r]').forEach((el) => el.addEventListener('click', () => rtab(el.dataset.r)))
+  if (q.get('r')) rtab(q.get('r'))
   const bar = document.createElement('nav')
   bar.className = 'pal'
   ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
