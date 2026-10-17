@@ -22,6 +22,8 @@ export function useQuickLogin(): QuickLogin {
   const [failed, setFailed] = useState<string | null>(null)
 
   function generate() {
+    // 新令牌发出时服务端作废旧的：先撤掉上一条，别让看着有效的旧码露出来
+    setLink(null)
     issue.mutate(undefined, {
       onSuccess: (out) => {
         setLink({
@@ -122,7 +124,7 @@ export function QuickLoginSheet({
           className={cx(css.qlLink, expired && css.off)}
           code={link.url}
           action={
-            <button type="button" onClick={() => void copy()}>
+            <button type="button" disabled={expired} onClick={() => void copy()}>
               {copied ? '已复制' : '复制'}
             </button>
           }

@@ -50,7 +50,8 @@ export function AuthPage({
   const site = useSiteConfig()
   const signup = useSignupConfig()
   const appearance = useAppearance()
-  const mode = site.data?.registration_mode ?? 'open'
+  // 站点配置没到（加载中、失败）时不猜「开放」：注册页签照常给，但邀请码按必填，页脚不说注册开没开
+  const mode = site.data?.registration_mode
   const [picked, setView] = useState<View>(initialTab)
   // 关闭注册时整个注册页签藏掉（样稿 ?reg=closed），带邀请码打开的也落到登录
   const regOpen = mode !== 'closed'
@@ -84,6 +85,7 @@ export function AuthPage({
         {loginNotice && (
           <div className={css.notice}>
             <span className={css.noticeTag}>公告</span>
+            {/* 插槽 HTML 由服务端按白名单净化后下发 */}
             <div className={css.noticeBody} dangerouslySetInnerHTML={{ __html: loginNotice }} />
           </div>
         )}
@@ -117,7 +119,7 @@ export function AuthPage({
           )}
           {view === 'reg' && (
             <RegisterForm
-              mode={mode === 'invite_only' ? 'invite_only' : 'open'}
+              mode={mode === 'open' ? 'open' : 'invite_only'}
               invite={invite ?? readStoredInvite()}
               emailVerification={site.data?.email_verification ?? true}
               captcha={signup.data?.captcha ?? null}

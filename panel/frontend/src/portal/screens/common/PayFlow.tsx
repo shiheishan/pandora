@@ -6,7 +6,7 @@ import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useBalance } from '../../queries'
 import { useApi } from '../../../shell/runtime'
-import { Skeleton } from '../../../ui'
+import { Skeleton, useToast } from '../../../ui'
 import { Btn, cx, Icon, Num, Sheet } from '../../kit'
 import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
 import { detectDevice } from './clients'
@@ -276,6 +276,7 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 export function SwitchToBalance({ order, onLeave }: { order: OrderDetail; onLeave?: () => void }) {
   const balance = useBalance()
   const cancel = useCancelOrder()
+  const toast = useToast()
   const rebuy = rebuyQuery(order)
   const left = balance.data?.balance ?? 0
   if (!rebuy || left <= 0 || order.status !== 'pending_payment') return null
@@ -289,10 +290,14 @@ export function SwitchToBalance({ order, onLeave }: { order: OrderDetail; onLeav
         size="sm"
         busy={cancel.isPending}
         onClick={() =>
-          void cancel.mutateAsync(order.id).then(() => {
-            onLeave?.()
-            navigate('/checkout', { query: rebuy })
-          })
+          void cancel.mutateAsync(order.id).then(
+            () => {
+              onLeave?.()
+              navigate('/checkout', { query: rebuy })
+            },
+            // 单已被付掉、网络断等：留在原处说一声，不吞掉
+            (e: unknown) => toast((e instanceof Error && e.message) || '没取消成，请稍后再试', 'danger'),
+          )
         }
       >
         取消这张单，改用余额付

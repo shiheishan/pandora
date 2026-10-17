@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { COLOR_TOKENS } from '../../../styles/design-tokens'
 import { themesResponse, type Theme } from './schemas'
-import { THEME_COLORS, activateNotice, buildThemeRequest, colorTokenName, themeSwatches, themeTagline, themeToForm, validateThemeForm } from './theme'
+import { THEME_COLORS, activateNotice, brandDerived, buildThemeRequest, colorTokenName, themeSwatches, themeTagline, themeToForm, validateThemeForm } from './theme'
 
 const U = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`
 const theme = (patch: Partial<Theme> = {}): Theme => ({
@@ -135,6 +135,34 @@ describe('theme form', () => {
 
     // 校验失败不建 body
     expect(buildThemeRequest({ ...form, name: '' }, { kind: 'create', from: theme() }).ok).toBe(false)
+  })
+
+  it('derives the brand companion tokens when the brand colour changes, keeps them otherwise', () => {
+    const source = theme()
+    const before = { ...source.tokens.light }
+    // 改了品牌色：--brand-deep / --brand-mark / --brand-line 跟着推，不再是来源的值
+    const form = themeToForm({ kind: 'edit', theme: source })
+    form.colors.accent = '#2b6cb9'
+    const built = buildThemeRequest(form, { kind: 'edit', theme: source })
+    if (!built.ok) throw new Error(JSON.stringify(built.errors))
+    const want = brandDerived('#2b6cb9', form.colors.bg)
+    for (const [k, v] of Object.entries(want)) {
+      expect(built.body.tokens.light[k]).toBe(v)
+      expect(v).toMatch(/^#[0-9a-f]{6}$/)
+    }
+    expect(want['--brand-deep']).toBe('#1e4c82')
+    // 派生色比品牌色暗 / 亮 / 更接近背景
+    expect(want['--brand-line']).not.toBe('#2b6cb9')
+
+    // 没改品牌色：保留来源主题手调的值（包括大小写不同的同一色）
+    const same = themeToForm({ kind: 'edit', theme: source })
+    same.colors.accent = same.colors.accent.toUpperCase()
+    same.colors.bg = '#eef0f2'
+    const kept = buildThemeRequest(same, { kind: 'edit', theme: source })
+    if (!kept.ok) throw new Error(JSON.stringify(kept.errors))
+    for (const k of ['--brand-deep', '--brand-mark', '--brand-line']) {
+      expect(kept.body.tokens.light[k]).toBe(before[k]?.trim() || kept.body.tokens.light[k])
+    }
   })
 
   it('keeps a data-image logo from the source but drops others and empty taglines', () => {
