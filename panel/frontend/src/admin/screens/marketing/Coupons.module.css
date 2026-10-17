@@ -49,22 +49,8 @@
 }
 
 /* 表尾（样稿 .tfoot）：左计数、右分页 */
-.footerRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-2);
-  font-size: 13px;
-}
 
-.footerSpacer {
-  flex: 1;
-}
 
-.pageLabel {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
 
 .empty {
   padding: 40px 0;
@@ -154,4 +140,15 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* 手机专用的补充行（桌面隐藏，对应样稿 .m-only） */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+  }
 }

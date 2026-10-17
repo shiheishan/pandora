@@ -1,5 +1,4 @@
 import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState } from 'react'
 import { Row, RowList } from '../../kit'
@@ -30,8 +29,7 @@ export function ThemeTab() {
         title="主题"
         subtitle="用户端同一时间只用一套，明暗两组随用户切换"
         extra={
-          <Button size="sm" onClick={() => setEditing({ kind: 'create', from: null })}>
-            <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+          <Button size="sm" icon={Add01Icon} onClick={() => setEditing({ kind: 'create', from: null })}>
             新建
           </Button>
         }

@@ -220,6 +220,7 @@ function HotList({ rows, now }: { rows: OnlineDevice[]; now: Date }) {
       key: 'seen',
       header: '最近在线',
       width: '76px',
+      hideOnMobile: true,
       align: 'right',
       render: (d) => <span className={signupCss.dpMuted}>{d.last_seen_at ? relativeTime(d.last_seen_at, now) : '—'}</span>,
     },

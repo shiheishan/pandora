@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { navigate, useHashLocation } from '../../../core/router'
 import { Button, Empty, FilterTabs, Modal, QueryView, Table, Tag, Toolbar, SearchField, IconClose } from '../../../ui'
@@ -54,8 +53,7 @@ export function KbTab({ rest }: { rest: string[] }) {
   return (
     <>
       <PageActions>
-        <Button variant="primary" onClick={startNew}>
-          <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+        <Button variant="primary" icon={Add01Icon} onClick={startNew}>
           新建文章
         </Button>
       </PageActions>
@@ -96,12 +94,14 @@ export function KbTab({ rest }: { rest: string[] }) {
                   {
                     key: 'category',
                     header: '分类',
+                    hideOnMobile: true,
                     width: '112px',
                     render: (a) => <span className={css.cat}>{a.latest.category?.trim() || '未分类'}</span>,
                   },
                   {
                     key: 'platforms',
                     header: '平台',
+                    hideOnMobile: true,
                     width: '140px',
                     render: (a) => <span className={css.plats}>{platformsLabel(a.latest.target_platforms)}</span>,
                   },

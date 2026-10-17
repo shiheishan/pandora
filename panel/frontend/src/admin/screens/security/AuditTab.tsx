@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Input, Modal, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
+import { Button, Empty, Input, Modal, Pager, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { PageActions } from '../../kit'
 import { ACTOR_LABEL, actorLabel, AUDIT_PAGE, authLabel, clockTime, EMPTY_AUDIT_FILTER, exportQuery, hasAuditFilter, objectLabel, OUTCOME_LABEL, OUTCOME_TONE, validateExportRange, type AuditFilter } from './logic'
 import { useAudit, useFailure, useInvalidateSecurity } from './queries'
@@ -14,6 +14,7 @@ const columns: TableColumn<AuditEvent>[] = [
     key: 'at',
     header: '时间',
     width: '128px',
+    hideOnMobile: true,
     render: (e) => (
       <span className={css.time} title={formatDateTime(e.occurred_at)}>
         {clockTime(e.occurred_at)}
@@ -28,6 +29,10 @@ const columns: TableColumn<AuditEvent>[] = [
       <span className={css.auditWho} title={`${ACTOR_LABEL[e.actor_kind]}${e.actor_email ? ` · ${e.actor_email}` : ''}`}>
         <span className={`${css.ellipsis} ${css.auditWhoMain}`}>{actorLabel(e)}</span>
         <span className={css.auditWhoSub}>{ACTOR_LABEL[e.actor_kind]}</span>
+        {/* 手机上隐藏了时间与动作两列，挪到这里一行 */}
+        <span className={`${css.auditWhoSub} ${css.mOnly}`}>
+          <span className="mono">{e.action}</span> · {clockTime(e.occurred_at)}
+        </span>
       </span>
     ),
   },
@@ -35,6 +40,7 @@ const columns: TableColumn<AuditEvent>[] = [
     key: 'action',
     header: '动作',
     mono: true,
+    hideOnMobile: true,
     render: (e) => (
       <span className={`${css.ellipsis} ${css.cellAction}`} title={e.action}>
         {e.action}
@@ -44,6 +50,7 @@ const columns: TableColumn<AuditEvent>[] = [
   {
     key: 'object',
     header: '对象',
+    hideOnMobile: true,
     render: (e) => (
       <span className={`${css.ellipsis} ${css.cellObject}`} title={e.reason ? `原因：${e.reason}` : (e.resource_id ?? undefined)}>
         {objectLabel(e)}
@@ -54,6 +61,7 @@ const columns: TableColumn<AuditEvent>[] = [
     key: 'ip',
     header: '来源 IP',
     width: '120px',
+    hideOnMobile: true,
     mono: true,
     render: (e) => <span className={css.time}>{e.source_ip ?? '—'}</span>,
   },
@@ -61,6 +69,7 @@ const columns: TableColumn<AuditEvent>[] = [
     key: 'auth',
     header: '认证',
     width: '80px',
+    hideOnMobile: true,
     render: (e) => {
       const a = authLabel(e.auth_context)
       return <span className={`${css.nowrap} ${a.strong ? css.strong : css.authMuted}`}>{a.label}</span>
@@ -128,40 +137,16 @@ export function AuditTab() {
             )
           }
         >
-          {(page) => {
-            const total = page.total
-            const pageCount = Math.max(1, Math.ceil(total / AUDIT_PAGE))
-            const pageIndex = Math.floor(offset / AUDIT_PAGE) + 1
-            const atStart = offset === 0
-            const atEnd = offset + AUDIT_PAGE >= total
-            const singlePage = pageCount <= 1
-            const prevDisabled = atStart || singlePage
-            const nextDisabled = atEnd || singlePage
-
-            return (
-              <Table
-                boxed
-                label="审计日志"
-                columns={columns}
-                rows={page.events}
-                rowKey={(e) => e.id}
-                footer={
-                  <>
-                    <span>
-                      第 {pageIndex} / {pageCount} 页 · 共 {formatCount(total)} 条
-                    </span>
-                    <span className={css.spacer} />
-                    <Button size="sm" disabled={prevDisabled} onClick={() => setOffset(Math.max(0, offset - AUDIT_PAGE))}>
-                      上一页
-                    </Button>
-                    <Button size="sm" disabled={nextDisabled} onClick={() => setOffset(offset + AUDIT_PAGE)}>
-                      下一页
-                    </Button>
-                  </>
-                }
-              />
-            )
-          }}
+          {(page) => (
+            <Table
+              boxed
+              label="审计日志"
+              columns={columns}
+              rows={page.events}
+              rowKey={(e) => e.id}
+              footer={page.total > AUDIT_PAGE ? <Pager inline total={page.total} limit={AUDIT_PAGE} offset={offset} onChange={setOffset} /> : <span>共 {formatCount(page.total)} 条</span>}
+            />
+          )}
         </QueryView>
       </div>
 

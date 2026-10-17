@@ -85,18 +85,7 @@
 }
 
 /* 表尾左右布局 */
-.tfootRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
 
-.tfootBtns {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
 /* 弹窗中的小块（GenerateCodes 与 TemplateDrawer 引用） */
 .formSection {

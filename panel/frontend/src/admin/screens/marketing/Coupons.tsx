@@ -1,12 +1,11 @@
 import { useMutation } from '@tanstack/react-query'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useState } from 'react'
 import { saveFile, toCsv } from '../../../core/download'
 import { formatMoney } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, FilterTabs, Modal, QueryView, Switch, Table, Tag, useToast } from '../../../ui'
+import { Button, FilterTabs, Modal, Pager, QueryView, Switch, Table, Tag, useToast } from '../../../ui'
 import { PageActions } from '../../kit'
 import { CouponFormModal, type BatchResult } from './CouponForm'
 import local from './Coupons.module.css'
@@ -79,8 +78,6 @@ export function Coupons({ rest }: { rest: string[] }) {
 
       <QueryView query={list} empty={null}>
         {(data) => {
-          const pages = Math.ceil(data.total / PAGE)
-          const page = Math.floor(offset / PAGE) + 1
           return (
             <Table<Coupon>
               label="优惠券"
@@ -104,6 +101,10 @@ export function Coupons({ rest }: { rest: string[] }) {
                       <span className={local.codeCell}>
                         <span className={local.codeMain}>{c.code}</span>
                         {batchLabel && <span className={local.codeSub}>{batchLabel}</span>}
+                        {/* 手机上隐藏了使用与有效期两列，挪到这里一行 */}
+                        <span className={`${local.codeSub} ${local.mOnly}`}>
+                          {usage(c).label} · {couponPeriodLabel(c, new Date()).short}
+                        </span>
                       </span>
                     )
                   },
@@ -112,12 +113,14 @@ export function Coupons({ rest }: { rest: string[] }) {
                 {
                   key: 'plans',
                   header: '适用套餐',
+                  hideOnMobile: true,
                   render: (c) => <span className={local.cellDim}>{planScopeLabel(c.applicable_plan_ids, plans)}</span>,
                 },
-                { key: 'usage', header: '使用', align: 'right', render: (c) => <span className={local.numCell}>{usage(c).label}</span> },
+                { key: 'usage', header: '使用', align: 'right', hideOnMobile: true, render: (c) => <span className={local.numCell}>{usage(c).label}</span> },
                 {
                   key: 'period',
                   header: '有效期',
+                  hideOnMobile: true,
                   render: (c) => {
                     const period = couponPeriodLabel(c, new Date())
                     return (
@@ -129,25 +132,7 @@ export function Coupons({ rest }: { rest: string[] }) {
                 },
                 { key: 'enabled', header: '启用', align: 'right', render: (c) => <CouponToggle coupon={c} /> },
               ]}
-              footer={
-                <div className={local.footerRow}>
-                  <span>共 {data.total} 张</span>
-                  {data.total > PAGE && (
-                    <>
-                      <span className={local.footerSpacer} />
-                      <span className={local.pageLabel}>
-                        第 {page} / {pages} 页
-                      </span>
-                      <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-                        上一页
-                      </Button>
-                      <Button size="sm" disabled={page >= pages} onClick={() => setOffset(offset + PAGE)}>
-                        下一页
-                      </Button>
-                    </>
-                  )}
-                </div>
-              }
+              footer={data.total > PAGE ? <Pager inline total={data.total} limit={PAGE} offset={offset} onChange={setOffset} /> : <span>共 {data.total} 张</span>}
             />
           )
         }}
@@ -155,8 +140,7 @@ export function Coupons({ rest }: { rest: string[] }) {
 
       <PageActions>
         <Button onClick={() => setFormModal('batch')}>批量生成</Button>
-        <Button variant="primary" onClick={() => setFormModal('one')}>
-          <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+        <Button variant="primary" icon={Add01Icon} onClick={() => setFormModal('one')}>
           新建
         </Button>
       </PageActions>

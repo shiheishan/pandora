@@ -1,11 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, ConfirmModal, Empty, FilterTabs, QueryView, Select, StatStrip, Table, Tag, type TableColumn, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, FilterTabs, Pager, QueryView, Select, StatStrip, Table, Tag, type TableColumn, useToast } from '../../../ui'
 import { PageActions, Row, RowList } from '../../kit'
 import { GenerateModal, OneTimeModal, useBatchExport, useCodesReport } from './GenerateCodes'
 import { TemplateModal } from './TemplateDrawer'
@@ -53,8 +52,7 @@ export function Gifts({ rest }: { rest: string[] }) {
   return (
     <div className={css.stack}>
       <PageActions>
-        <Button variant="primary" onClick={() => setTemplateModalOpen(true)}>
-          <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+        <Button variant="primary" icon={Add01Icon} onClick={() => setTemplateModalOpen(true)}>
           新建
         </Button>
       </PageActions>
@@ -248,6 +246,7 @@ function Batches({ selected }: { selected: string | null }) {
     {
       key: 'template',
       header: '模板',
+      hideOnMobile: true,
       render: (b) => b.template_name,
     },
     {
@@ -260,6 +259,7 @@ function Batches({ selected }: { selected: string | null }) {
     {
       key: 'export',
       header: '导出',
+      hideOnMobile: true,
       render: (b) =>
         b.exported_at ? (
           <span className={css.muted}>已导出 · {b.exported_by_email ?? ''}</span>
@@ -292,29 +292,8 @@ function Batches({ selected }: { selected: string | null }) {
     },
   ]
 
-  const batchFooter = (
-    <div className={local.tfootRow}>
-      <span>共 {total} 批</span>
-      {total > BATCH_PAGE && (
-        <div className={local.tfootBtns}>
-          <Button
-            size="sm"
-            disabled={offset <= 0}
-            onClick={() => setOffset((cur) => Math.max(0, cur - BATCH_PAGE))}
-          >
-            上一页
-          </Button>
-          <Button
-            size="sm"
-            disabled={offset + BATCH_PAGE >= total}
-            onClick={() => setOffset((cur) => cur + BATCH_PAGE)}
-          >
-            下一页
-          </Button>
-        </div>
-      )}
-    </div>
-  )
+  const batchFooter =
+    total > BATCH_PAGE ? <Pager inline total={total} limit={BATCH_PAGE} offset={offset} onChange={setOffset} /> : <span>共 {total} 批</span>
 
   return (
     <div className={css.stack}>
@@ -370,29 +349,8 @@ function BatchCodes({ batch }: { batch: Batch }) {
   const total = codes.data?.total ?? 0
   const scope = `批次 ${batchLabel(batch)}${status ? ` · ${CODE_STATUS[status]!.label}` : ''}${codes.data?.total !== undefined ? ` · 共 ${codes.data.total.toLocaleString('zh-CN')} 张` : ''}`
 
-  const codeFooter = (
-    <div className={local.tfootRow}>
-      <span>共 {total} 张</span>
-      {total > CODE_PAGE && (
-        <div className={local.tfootBtns}>
-          <Button
-            size="sm"
-            disabled={offset <= 0}
-            onClick={() => setOffset((cur) => Math.max(0, cur - CODE_PAGE))}
-          >
-            上一页
-          </Button>
-          <Button
-            size="sm"
-            disabled={offset + CODE_PAGE >= total}
-            onClick={() => setOffset((cur) => cur + CODE_PAGE)}
-          >
-            下一页
-          </Button>
-        </div>
-      )}
-    </div>
-  )
+  const codeFooter =
+    total > CODE_PAGE ? <Pager inline total={total} limit={CODE_PAGE} offset={offset} onChange={setOffset} /> : <span>共 {total} 张</span>
 
   const codeColumns: readonly TableColumn<GiftCode>[] = [
     {
@@ -412,6 +370,7 @@ function BatchCodes({ batch }: { batch: Batch }) {
     {
       key: 'user',
       header: '兑换人',
+      hideOnMobile: true,
       render: (c) => <span className={css.muted}>{c.used_email ? `兑换人 ${c.used_email}` : '—'}</span>,
     },
     {
@@ -518,6 +477,7 @@ function Usages({ templateId }: { templateId: string }) {
       key: 'time',
       header: '时间',
       mono: true,
+      hideOnMobile: true,
       render: (u) => <span className={css.muted}>{formatDateTime(u.redeemed_at)}</span>,
     },
     {
@@ -529,6 +489,7 @@ function Usages({ templateId }: { templateId: string }) {
     {
       key: 'template',
       header: '模板',
+      hideOnMobile: true,
       render: (u) => <span className={css.muted}>{u.template_name}</span>,
     },
     {

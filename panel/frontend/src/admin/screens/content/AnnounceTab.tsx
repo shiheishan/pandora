@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { navigate, useHashLocation } from '../../../core/router'
 import { Button, Empty, FilterTabs, IconClose, Modal, QueryView, Table, Tag, Toolbar } from '../../../ui'
@@ -42,8 +41,7 @@ export function AnnounceTab({ rest }: { rest: string[] }) {
   return (
     <>
       <PageActions>
-        <Button variant="primary" onClick={() => startNew(null)}>
-          <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+        <Button variant="primary" icon={Add01Icon} onClick={() => startNew(null)}>
           新建公告
         </Button>
       </PageActions>
@@ -85,18 +83,21 @@ export function AnnounceTab({ rest }: { rest: string[] }) {
                   {
                     key: 'severity',
                     header: '级别',
+                    hideOnMobile: true,
                     width: '64px',
                     render: (a) => <span className={SEV_CLASS[a.severity]}>{SEVERITY[a.severity].label}</span>,
                   },
                   {
                     key: 'target',
                     header: '可见范围',
+                    hideOnMobile: true,
                     width: '104px',
                     render: (a) => <span className={css.target}>{annTargetLabel(a)}</span>,
                   },
                   {
                     key: 'when',
                     header: '时间',
+                    hideOnMobile: true,
                     width: '112px',
                     align: 'right',
                     render: (a) => <span className={css.when}>{annWhen(a)}</span>,

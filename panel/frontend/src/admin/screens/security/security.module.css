@@ -80,8 +80,14 @@
 }
 
 .auditTableHost table {
-  min-width: 880px;
   table-layout: fixed;
+}
+
+/* 桌面七列定宽，窄于 880 时表格内横向滚动；手机上只剩操作人与结果两列，不设最小宽 */
+@media (min-width: 640px) {
+  .auditTableHost table {
+    min-width: 880px;
+  }
 }
 
 .auditWho {
@@ -363,4 +369,15 @@
 
 .sstPaused {
   color: var(--danger);
+}
+
+/* 手机专用的补充行（桌面隐藏，对应样稿 .m-only）；放在文件末尾，盖过同权重的 display */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+  }
 }

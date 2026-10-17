@@ -1,5 +1,4 @@
 import { Add01Icon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
@@ -39,8 +38,7 @@ export function HooksTab() {
   return (
     <>
       <PageActions>
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <HugeiconsIcon icon={Add01Icon} size={16} aria-hidden="true" />
+        <Button variant="primary" icon={Add01Icon} onClick={() => setCreating(true)}>
           新建钩子
         </Button>
       </PageActions>
