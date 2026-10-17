@@ -62,7 +62,6 @@ function FilterSection({ now }: { now: Date }) {
   const total = preview.data?.total ?? null
   const set = (next: Partial<BulkForm>) => setForm((f) => ({ ...f, ...next }))
   const opsDisabled = total === null || total === 0
-  const n = total ?? 0
 
   const toggleOp = (next: Exclude<BulkOp, null>) => {
     setOp((cur) => (cur === next ? null : next))
