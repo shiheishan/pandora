@@ -301,14 +301,28 @@
 .ruleRow {
   display: grid;
   grid-template-areas:
-    'no kind value out tools'
-    '. err err err err';
-  grid-template-columns: 20px 120px minmax(0, 1fr) 160px auto;
+    'no kind value out note tools'
+    '. err err err err err';
+  grid-template-columns: 20px 120px minmax(0, 1fr) 160px minmax(0, 120px) auto;
   gap: 4px 8px;
   align-items: center;
   padding: 8px 10px;
   border-radius: var(--radius-md);
   background: var(--surface-2);
+}
+
+.ruleHead {
+  padding: 0 10px 6px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.ruleHead .rTools {
+  justify-self: end;
+  text-align: right;
 }
 
 .rNo {
@@ -325,6 +339,12 @@
 
 .rOut {
   grid-area: out;
+}
+
+.rNote {
+  grid-area: note;
+  min-width: 0;
+  font-size: 12.5px;
 }
 
 .rTools {
@@ -351,6 +371,19 @@
 
 .ruleTools {
   display: inline-flex;
+}
+
+@media (max-width: 639px) {
+  .ruleRow {
+    grid-template-areas:
+      'no kind value out tools'
+      '. err err err err';
+    grid-template-columns: 20px 120px minmax(0, 1fr) 160px auto;
+  }
+
+  .rNote {
+    display: none;
+  }
 }
 
 .outboundRow {

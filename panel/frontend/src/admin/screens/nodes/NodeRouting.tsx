@@ -174,6 +174,16 @@ export function RuleRows({
   return (
     <div className={css.rules}>
       {rows.length === 0 && <Empty bare title="没有规则" description={emptyHint} />}
+      {rows.length > 0 && (
+        <div className={`${css.ruleRow} ${css.ruleHead}`} aria-hidden="true">
+          <span className={css.rNo}>#</span>
+          <span className={css.rKind}>匹配类型</span>
+          <span className={css.rValue}>内容</span>
+          <span className={css.rOut}>出站</span>
+          <span className={css.rNote}>备注</span>
+          <span className={`${css.ruleTools} ${css.rTools}`}>顺序</span>
+        </div>
+      )}
       {rows.map((r, i) => (
         <div key={i} className={css.ruleRow}>
           <span className={`${css.mono} ${css.faint} ${css.rNo}`}>{i + 1}</span>
@@ -189,6 +199,7 @@ export function RuleRows({
             </>
           )}
           <Select aria-label="出站" size="sm" fieldClassName={css.rOut} placeholder="选择出站" value={r.outbound} disabled={disabled} onChange={(e) => update(i, { outbound: e.target.value })} options={outbounds.map(([value, label]) => ({ value, label }))} />
+          <span className={`${css.rNote} ${css.faint} ${css.ellipsis}`} title={r.note || undefined}>{r.note || '—'}</span>
           <span className={`${css.ruleTools} ${css.rTools}`}>
             <Button size="xs" variant="ghost" aria-label={`第 ${i + 1} 条上移`} disabled={disabled || i === 0} onClick={() => move(i, -1)}>
               ↑
