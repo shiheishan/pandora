@@ -101,7 +101,18 @@
   color: var(--text-2);
 }
 
-.footerPager.footerPager {
-  margin-left: auto;
-  padding: 0;
+
+/* 只在手机（≤639）显示：被 hideOnMobile 收起的列，把要紧的信息挪到留下的格里（样稿 .m-only） */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-3);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+  }
 }

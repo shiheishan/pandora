@@ -1,5 +1,4 @@
 import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
@@ -25,7 +24,10 @@ export function AdjustTab() {
         return (
           <>
             <span className={css.ellipsis} title={a.reason}>{a.reason}</span>
-            <span className={css.sub2}>{v.meta}</span>
+            <span className={css.sub2}>
+              {v.meta}
+              <span className={css.mOnlyInline}> · 生效 {a.effective_on}</span>
+            </span>
           </>
         )
       },
@@ -33,6 +35,7 @@ export function AdjustTab() {
     {
       key: 'effective_on',
       header: '生效日',
+      hideOnMobile: true,
       width: '110px',
       render: (a) => <span className={`${css.mono} ${css.muted}`}>{a.effective_on}</span>,
     },
@@ -70,8 +73,7 @@ export function AdjustTab() {
       title="收入调整"
       subtitle="只追加，不改原账；冲销会生成一条反向记录"
       extra={
-        <Button size="sm" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
-          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />
+        <Button size="sm" icon={PlusSignIcon} aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
           登记调整
         </Button>
       }

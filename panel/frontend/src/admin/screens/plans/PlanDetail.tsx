@@ -121,17 +121,7 @@ export function PlanDetailPage({
         }
         tabs={{
           label: '套餐详情',
-          items: tabs.map((t) => ({
-            value: t.value,
-            label:
-              t.count !== undefined ? (
-                <>
-                  {t.label} <span className={css.tabCount}>{t.count}</span>
-                </>
-              ) : (
-                t.label
-              ),
-          })),
+          items: tabs.map((t) => ({ value: t.value, label: t.label, badge: t.count })),
           value: activeTab,
           onChange: onTab,
         }}

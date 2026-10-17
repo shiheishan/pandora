@@ -41,6 +41,7 @@ export function ArrearsTab({ now }: { now: Date }) {
     {
       key: 'age',
       header: '账龄',
+      hideOnMobile: true,
       width: '72px',
       align: 'right',
       render: (c) => {
@@ -55,6 +56,7 @@ export function ArrearsTab({ now }: { now: Date }) {
     {
       key: 'status',
       header: '状态',
+      hideOnMobile: true,
       width: '100px',
       render: (c) => {
         const v = LATE_STATUS_VIEW[c.status]
@@ -120,7 +122,7 @@ export function ArrearsTab({ now }: { now: Date }) {
               footer={
                 <>
                   {showCount && <span>共 {total} 条</span>}
-                  <Pager className={css.footerPager} total={total} limit={LATE_PAGE} offset={offset} onChange={(o) => go({ offset: o })} />
+                  <Pager inline total={total} limit={LATE_PAGE} offset={offset} onChange={(o) => go({ offset: o })} />
                 </>
               }
             />

@@ -1,5 +1,4 @@
 import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useCallback, useEffect, useState } from 'react'
 import { formatMoney, relativeTime } from '../../../core/format'
 import { href, navigate, useHashLocation, type RouteQuery } from '../../../core/router'
@@ -94,9 +93,9 @@ function OrdersList({
       <PageActions>
         <Button
           variant="primary"
+          icon={PlusSignIcon}
           onClick={() => navigate(path(null), { query: query(state, { new: state.userId || '1' }) })}
         >
-          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />
           人工开单
         </Button>
       </PageActions>
@@ -147,7 +146,7 @@ function OrdersList({
                           : `共 ${total.toLocaleString('en-US')} 条 · 点一行查看详情`}
                       </span>
                       <Pager
-                        className={css.footerPager}
+                        inline
                         total={total}
                         limit={ORDERS_PAGE}
                         offset={state.offset}
@@ -185,23 +184,41 @@ function columns(now: Date): TableColumn<OrderRow>[] {
               人工
             </Tag>
           )}
+          <small className={css.mOnly}>
+            {o.user_email} · {orderWhat(o)}
+          </small>
         </>
       ),
     },
-    { key: 'user', header: '用户', render: (o) => <span className={css.ellipsis}>{o.user_email}</span> },
-    { key: 'what', header: '内容', render: (o) => <span className={`${css.muted} ${css.ellipsis}`}>{orderWhat(o)}</span> },
-    { key: 'amount', header: '金额', width: '100px', align: 'right', mono: true, render: (o) => formatMoney(o.total_amount) },
-    { key: 'channel', header: '渠道', width: '120px', render: (o) => <span className={css.muted}>{channelLabel(o)}</span> },
+    { key: 'user', header: '用户', hideOnMobile: true, render: (o) => <span className={css.ellipsis}>{o.user_email}</span> },
+    { key: 'what', header: '内容', hideOnMobile: true, render: (o) => <span className={`${css.muted} ${css.ellipsis}`}>{orderWhat(o)}</span> },
+    {
+      key: 'amount',
+      header: '金额',
+      width: '100px',
+      align: 'right',
+      mono: true,
+      render: (o) => (
+        <>
+          {formatMoney(o.total_amount)}
+          <small className={css.mOnly}>
+            <Tag tone={ORDER_STATUS_VIEW[o.status].tone}>{ORDER_STATUS_VIEW[o.status].label}</Tag>
+          </small>
+        </>
+      ),
+    },
+    { key: 'channel', header: '渠道', width: '120px', hideOnMobile: true, render: (o) => <span className={css.muted}>{channelLabel(o)}</span> },
     {
       key: 'status',
       header: '状态',
       width: '80px',
+      hideOnMobile: true,
       render: (o) => {
         const v = ORDER_STATUS_VIEW[o.status]
         return <Tag tone={v.tone}>{v.label}</Tag>
       },
     },
-    { key: 'at', header: '创建时间', width: '90px', align: 'right', render: (o) => <span className={css.small}>{relativeTime(o.created_at, now)}</span> },
+    { key: 'at', header: '创建时间', width: '90px', align: 'right', hideOnMobile: true, render: (o) => <span className={css.small}>{relativeTime(o.created_at, now)}</span> },
   ]
 }
 

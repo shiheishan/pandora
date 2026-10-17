@@ -1,5 +1,4 @@
 import { RefreshIcon, Tick02Icon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatDateTime, formatMoney } from '../../../core/format'
@@ -71,8 +70,7 @@ function OrderView({
               </Button>
             )}
             {markable && (
-              <Button variant="primary" size="sm" onClick={() => setMarking(true)}>
-                <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={1.6} aria-hidden />
+              <Button variant="primary" size="sm" icon={Tick02Icon} onClick={() => setMarking(true)}>
                 标记已支付
               </Button>
             )}
@@ -220,8 +218,7 @@ function QueryChannel({ o }: { o: OrderDetail }) {
     <section>
       <Callout
         action={
-          <Button size="sm" busy={busy} onClick={() => void run()}>
-            <HugeiconsIcon icon={RefreshIcon} size={16} strokeWidth={1.6} aria-hidden />
+          <Button size="sm" icon={RefreshIcon} busy={busy} onClick={() => void run()}>
             向渠道查单
           </Button>
         }

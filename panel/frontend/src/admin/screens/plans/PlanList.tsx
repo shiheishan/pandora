@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { Button, Empty, FilterTabs, QueryView, SearchField, Select, Table, Tag, Toolbar, type TableColumn } from '../../../ui'
 import { PageActions } from '../../kit'
@@ -44,8 +43,8 @@ export function PlanList(props: {
     <div className={css.page}>
       {/* 「新建」进外框页头右侧的操作插槽 */}
       <PageActions>
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />新建
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setCreating(true)}>
+          新建
         </Button>
       </PageActions>
 
@@ -114,6 +113,7 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
     },
     {
       key: 'kind',
+      hideOnMobile: true,
       header: '类型',
       render: (r) => <span className={css.nowrap}>{KIND_LABELS[r.kind]}</span>,
     },
@@ -132,6 +132,7 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
     },
     {
       key: 'quota',
+      hideOnMobile: true,
       header: '额度',
       render: (r) => {
         const view = planListView(r)
@@ -145,6 +146,7 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
     },
     {
       key: 'lines',
+      hideOnMobile: true,
       header: '线路',
       render: (r) => {
         const view = planListView(r)
@@ -153,6 +155,7 @@ function PlanTable({ rows, onOpen, hasAny }: { rows: readonly PlanRow[]; onOpen:
     },
     {
       key: 'subs',
+      hideOnMobile: true,
       header: '有效订阅',
       align: 'right',
       render: (r) => <span className={css.monoText}>{planListView(r).subs}</span>,

@@ -7,12 +7,6 @@
   min-width: 0;
 }
 
-/* 页签里的计数（样稿 .dnav .muted） */
-.tabCount {
-  color: var(--text-3);
-  font-weight: var(--fw-regular);
-}
-
 .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;

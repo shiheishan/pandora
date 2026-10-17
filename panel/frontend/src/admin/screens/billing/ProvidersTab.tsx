@@ -1,5 +1,4 @@
 import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, QueryView, Switch, Table, Tag, Toolbar, useToast, type TableColumn } from '../../../ui'
@@ -25,8 +24,7 @@ export function ProvidersTab({ now }: { now: Date }) {
   return (
     <div className={css.page}>
       <PageActions>
-        <Button variant="primary" onClick={() => setForm('new')}>
-          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setForm('new')}>
           新建渠道
         </Button>
       </PageActions>
@@ -102,12 +100,15 @@ function ProviderTable({
                   回调地址：<span className={css.mono}>{p.notify_url}</span>
                 </span>
               )}
+              <span className={css.mOnly}>
+                今日成交 {todayLabel(p.today)} · 成功率 {rateLabel(p.success_rate_24h)}
+              </span>
             </div>
           </span>
         )
       },
     },
-    { key: 'today', header: '今日成交', width: '110px', align: 'right', mono: true, render: (p) => todayLabel(p.today) },
+    { key: 'today', header: '今日成交', width: '110px', align: 'right', mono: true, hideOnMobile: true, render: (p) => todayLabel(p.today) },
     {
       key: 'rate',
       header: (
@@ -116,6 +117,7 @@ function ProviderTable({
       width: '90px',
       align: 'right',
       mono: true,
+      hideOnMobile: true,
       render: (p) => rateLabel(p.success_rate_24h),
     },
     {
