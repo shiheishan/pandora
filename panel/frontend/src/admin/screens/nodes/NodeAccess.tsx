@@ -1,5 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
+import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import {
   Button,
@@ -10,11 +11,13 @@ import {
   Input,
   Modal,
   QueryView,
+  Select,
   Switch,
   useToast,
 } from '../../../ui'
-import { useFailure, useIntentKey, useInvalidateNodes } from './queries'
-import { deletedResponse, relaySchema, type NodeRow, type Relay } from './schemas'
+import { NO_POOL_HINT } from './logic'
+import { useFailure, useIntentKey, useInvalidateNodes, usePools } from './queries'
+import { adminNodeSchema, deletedResponse, relaySchema, type NodeRow, type Relay } from './schemas'
 import { RELAYS_PER_NODE_MAX } from './xb'
 import { useNodeRelays } from './xbQueries'
 import { NodeECH } from './NodeECH'
@@ -23,9 +26,95 @@ import css from './xb.module.css'
 export function NodeAccess({ node }: { node: NodeRow }) {
   return (
     <div className={css.stack}>
+      <NodePoolSection node={node} />
       <NodeRelaysSection node={node} />
       <NodeECH node={node} />
     </div>
+  )
+}
+
+/** 节点池：从编辑表单挪出来的独立保存段，一次 PATCH 只带改过的 pool_id */
+function NodePoolSection({ node }: { node: NodeRow }) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const invalidate = useInvalidateNodes()
+  const pools = usePools()
+  const retired = node.serving_status === 'retired'
+
+  const [picked, setPicked] = useState(node.pool_id ?? '')
+  const [error, setError] = useState('')
+  // 保存成功、列表刷新后 node.pool_id 变了，把选中值跟过去
+  const [lastPoolId, setLastPoolId] = useState(node.pool_id)
+  if (lastPoolId !== node.pool_id) {
+    setLastPoolId(node.pool_id)
+    setPicked(node.pool_id ?? '')
+    setError('')
+  }
+
+  const changed = picked !== (node.pool_id ?? '')
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.request(`v1/nodes/${node.id}`, adminNodeSchema, {
+        method: 'PATCH',
+        body: { row_version: node.row_version, pool_id: picked },
+      }),
+    onSuccess: () => {
+      const name = (pools.data ?? []).find((p) => p.id === picked)?.name ?? ''
+      toast(`已改到节点池「${name}」，约 30 秒内下发`)
+      void invalidate()
+    },
+    onError: (e) => {
+      // 别人先改了整行：刷新到最新让用户确认后再保存
+      if (isApiError(e, 'conflict') && e.fields.row_version) {
+        toast('节点已被其他人修改，已刷新到最新；请确认后再保存', 'danger')
+        void invalidate()
+        return
+      }
+      if (isApiError(e) && e.status === 422 && e.fields.pool_id) {
+        setError(e.fields.pool_id)
+        return
+      }
+      fail(e)
+    },
+  })
+
+  const submit = () => {
+    if (!picked) {
+      setError(NO_POOL_HINT)
+      return
+    }
+    save.mutate()
+  }
+
+  return (
+    <Card>
+      <div className={css.cardTitleRow}>
+        <div className={css.sectionTitle}>节点池</div>
+      </div>
+      <div className={css.cardDesc}>节点只服务所在节点池绑定的套餐；不在任何节点池里的节点不服务任何用户。</div>
+      <div>
+        <Select
+          label="节点池"
+          placeholder={pools.data && pools.data.length === 0 ? '还没有节点池，先到「节点池」新建' : '选择节点池'}
+          hint={NO_POOL_HINT}
+          value={picked}
+          error={error}
+          disabled={retired || save.isPending}
+          onChange={(e) => {
+            setPicked(e.target.value)
+            setError('')
+          }}
+          options={(pools.data ?? []).map((p) => ({ value: p.id, label: p.name, disabled: p.status === 'disabled' }))}
+        />
+        <div className={css.formFooter}>
+          <Button size="sm" variant="primary" busy={save.isPending} disabled={!changed || retired} onClick={submit}>
+            保存
+          </Button>
+        </div>
+      </div>
+    </Card>
   )
 }
 

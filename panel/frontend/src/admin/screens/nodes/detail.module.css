@@ -410,3 +410,46 @@
     grid-template-columns: 96px minmax(0, 1fr) auto;
   }
 }
+
+/* 整页详情（NodeDetailPage）新增 */
+
+/* 标题前的地区码（样稿 .rc） */
+.pageCc {
+  display: inline-block;
+  width: 22px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
+  text-align: center;
+}
+
+.okText {
+  color: var(--ok);
+}
+
+.warnText {
+  color: var(--warn);
+}
+
+/* 曲线标题里的小字（峰值等） */
+.chartSub {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* 四格指标套框（样稿 .nmet）；覆盖 .kpis 的上/下边线 */
+.kpisBoxed {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* 曲线块套框（样稿 .bw），与指标块间距 12px */
+.chartBoxed {
+  margin-top: 12px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
