@@ -1,49 +1,245 @@
-/* 商品类型：下划线标签，17px 标题 + 13px 说明 */
-.seg {
-  display: flex;
-  gap: 28px;
-  border-bottom: 1px solid var(--border);
-}
-
-.seg button {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-  margin-bottom: -1px;
-  padding: 0 0 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
+/* 选购页说明文字（样稿 .seg-cap） */
+.segCap {
+  margin: -12px 4px 0;
+  font-size: 14px;
   color: var(--text-2);
-  font-size: 17px;
-  font-weight: var(--fw-semibold);
-  line-height: 1.3;
+}
+
+/* 桌面：三列套餐网格 */
+.plans {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 22px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 手机：单选展开列表（PickList，样稿 .pick .pk）
+ * ------------------------------------------------------------------------- */
+.pick {
+  display: none;
+}
+
+.pk {
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+}
+
+.pk[data-open='true'] {
+  box-shadow: var(--lift), 0 0 0 1.5px var(--brand-line);
+}
+
+.pk[data-current='true'] {
+  background: radial-gradient(360px 200px at 0% 0%, var(--brand-soft), transparent 75%), var(--surface);
+}
+
+.pkHead {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 18px 20px;
+  width: 100%;
   text-align: left;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
 }
 
-.seg button:hover {
+.pkN {
+  font-size: 17px;
+  font-weight: 600;
   color: var(--text);
 }
 
-.seg button small {
-  color: var(--text-3);
+.pkS {
+  grid-row: 2;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.pkP {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  align-self: center;
   font-size: 13px;
-  font-weight: var(--fw-regular);
+  color: var(--text-2);
 }
 
-.seg button[aria-selected='true'] {
-  border-bottom-color: var(--brand);
+.pkP b {
+  font-size: 22px;
+  color: var(--text);
+  margin-right: 3px;
+}
+
+.pkB {
+  padding: 0 20px 20px;
+}
+
+.pkB .alt {
+  margin-top: 0;
+}
+
+.pkB ul {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 18px;
+}
+
+.pkB li {
+  padding: 6px 0;
+  font-size: 14.5px;
+}
+
+.pkB .act > * {
+  width: 100%;
+}
+
+.pkB .next {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------------------
+ * 一次性：行列表（OnceList，样稿 .once .on-row）
+ * ------------------------------------------------------------------------- */
+.once {
+  margin-top: 22px;
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  overflow: hidden;
+}
+
+.onRow {
+  display: grid;
+  grid-template-columns: 120px 1fr auto 236px;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 26px;
+}
+
+.onRow + .onRow {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.onRow[data-current='true'],
+.onRow[data-current] {
+  background: radial-gradient(420px 160px at 0% 50%, var(--brand-soft), transparent 75%);
+}
+
+.onGb {
+  display: flex;
+  align-items: baseline;
+}
+
+.gbNum {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.gbUnit {
+  font-family: var(--font-display);
+  font-size: 16px;
+  margin-left: 4px;
+}
+
+.onT {
+  min-width: 0;
+}
+
+.onName {
+  display: inline;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
   color: var(--text);
 }
 
-.field {
+.chip {
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+
+.onSub {
+  display: block;
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.onP {
+  display: flex;
+  align-items: baseline;
+}
+
+.pNum {
+  font-size: 26px;
+}
+
+.onA {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
-.fieldLabel {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
+.onA button,
+.onA a {
+  width: 100%;
+}
+
+.onA .next {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------------------
+ * 手机断点（959px 以下）
+ * ------------------------------------------------------------------------- */
+@media (max-width: 959px) {
+  .segCap {
+    margin-top: -8px;
+    font-size: 13px;
+  }
+
+  .plans {
+    display: none;
+  }
+
+  .pick {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .once {
+    border-radius: 20px;
+  }
+
+  .onRow {
+    grid-template-columns: 84px 1fr auto;
+    gap: 6px 14px;
+    padding: 18px;
+  }
+
+  .gbNum {
+    font-size: 30px;
+  }
+
+  .gbUnit {
+    font-size: 13px;
+  }
+
+  .onA {
+    grid-column: 1 / -1;
+  }
+
+  .pNum {
+    font-size: 20px;
+  }
 }
