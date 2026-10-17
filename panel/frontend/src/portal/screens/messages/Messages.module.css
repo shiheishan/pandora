@@ -1,14 +1,14 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-16);
 }
 
+/* 顶栏（样稿 .msg-bar）：左分段控件，右文字按钮 */
 .bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .tabLabel {
@@ -17,98 +17,238 @@
   gap: 6px;
 }
 
-.listCard {
-  overflow: hidden;
+/* 全部标为已读（样稿 .read-all） */
+.readAll {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  color: var(--brand);
+  padding: 6px 4px;
 }
 
+.readAll[disabled] {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.readAll:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 通知（样稿 .nt）：图标 + 标题 + 两行截断的正文，右列时间与未读圆点
+ * ------------------------------------------------------------------------ */
 .list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  gap: var(--space-12);
-  align-items: start;
+/* 行间的分隔线画在 li 上沿（行本身铺满整行，画在后面一行的阴影会盖在前一行底上） */
+.list li + li {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.nt {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px 20px;
+  position: relative;
+  transition: background 0.15s;
+}
+
+/* 按钮行（去除默认 button 外观，写法与 kit 的 button.row 一致） */
+button.nt {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
   width: 100%;
-  padding: 14px 18px;
-  border: 0;
-  border-bottom: 1px solid var(--surface-2);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-}
-
-button.row {
+  padding: 16px 20px;
+  position: relative;
   cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 0.15s;
 }
 
-button.row:hover {
+.nt:hover {
   background: var(--surface-2);
 }
 
-button.row:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
+button.nt:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  margin-top: 7px;
-  border-radius: 50%;
+.ntIco {
+  margin-top: 1px;
 }
 
-.row[data-unread] .dot {
-  background: var(--brand);
-}
-
-.dot[data-severity='notice'] {
-  background: var(--info);
-}
-
-.dot[data-severity='warning'] {
-  background: var(--warn);
-}
-
-.dot[data-severity='critical'] {
-  background: var(--danger);
-}
-
-.main {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.text {
+  flex: 1;
   min-width: 0;
 }
 
-.title {
+.text b {
+  display: block;
+  font-size: 15px;
   font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.text p {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 
-.row[data-unread] .title {
+.side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex: none;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.side i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--brand-mark);
+  visibility: hidden;
+}
+
+/* 未读：左缘一点品牌底色、粗标题、圆点可见 */
+.nt[data-unread] {
+  background: radial-gradient(420px 120px at 0% 50%, color-mix(in srgb, var(--brand-mark) 9%, transparent), transparent 80%);
+}
+
+.nt[data-unread] .text b {
+  color: var(--text);
   font-weight: var(--fw-semibold);
 }
 
-.body {
-  font-size: 13px;
-  color: var(--text-2);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.nt[data-unread] .side i {
+  visibility: visible;
 }
 
-.at {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+/* 读屏文字：视觉隐藏 */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
-@media (max-width: 639px) {
-  .row {
-    padding: 12px var(--pad-card);
+/* ---------------------------------------------------------------------------
+ * 公告（样稿 .an）：左侧等级色条 + 标签，正文完整显示
+ * ------------------------------------------------------------------------ */
+.anList {
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.an {
+  display: flex;
+  gap: 14px;
+  padding: 18px 20px 18px 22px;
+  position: relative;
+}
+
+.an + .an {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+/* 左侧等级色条：上下各留 18，只圆右侧 */
+.an::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18px;
+  bottom: 18px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+}
+
+.an[data-severity='critical']::before {
+  background: var(--danger);
+}
+
+.an[data-severity='warning']::before {
+  background: var(--warn);
+}
+
+.an[data-severity='notice']::before {
+  background: var(--brand);
+}
+
+.an[data-pinned] {
+  background: radial-gradient(520px 160px at 0% 0%, var(--brand-soft), transparent 75%), var(--surface-2);
+}
+
+.anText {
+  flex: 1;
+  min-width: 0;
+}
+
+.anText b {
+  font-size: 15.5px;
+  font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
+}
+
+.anText p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.tags {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.date {
+  font-size: 12.5px;
+  color: var(--text-3);
+  flex: none;
+}
+
+/* 窄屏（样稿手机样式在 959 以下） */
+@media (max-width: 959px) {
+  .nt,
+  button.nt {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .an {
+    padding: 16px 16px 16px 18px;
+    flex-direction: column;
+    gap: 6px;
   }
 }
