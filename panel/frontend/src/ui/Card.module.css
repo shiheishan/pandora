@@ -25,12 +25,18 @@
 
 .title {
   margin: 0;
-  min-width: 0;
+  flex: none;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: var(--fw-medium);
 }
 
+/* 副标题放不下就截断，不挤得标题折行（手机上卡头常只剩标题加一个按钮的宽度） */
 .subtitle {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 12.5px;
   color: var(--text-3);
 }
