@@ -160,11 +160,12 @@ test('C7：送的流量跟着那一份', async ({ browser, world }) => {
     const from = await openCard(page, std.name)
     const usage = from.getByText(/含送的 1G/)
     await expect(usage).toBeVisible()
-    // 多份时只显示选中的那份：点到基础版再看
+    const usageText = await text(usage)
+    // 多份时只显示选中的那份：点到基础版再看（标准版那张随之隐藏，文字先取好）
     await expect(await openCard(page, basic.name)).not.toContainText('含送的')
     // 10-16 删了流量包：页面上不再出现这三个字
     await expect(page.getByText(/流量包/)).toHaveCount(0)
     await narrowShot(page, 'C7-cards')
-    return `标准版写「${await text(usage)}」，基础版没有送的流量；页面上没有「流量包」`
+    return `标准版写「${usageText}」，基础版没有送的流量；页面上没有「流量包」`
   })
 })
