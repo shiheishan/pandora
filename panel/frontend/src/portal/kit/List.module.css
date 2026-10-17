@@ -1,0 +1,334 @@
+/* ===========================================================================
+ * List.module.css
+ * 门户样稿 v5 的列表与横条：操作行、卡片容器、分组头、横条提醒
+ * ========================================================================= */
+
+.rows {
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  overflow: hidden;
+}
+
+/* 行样式 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 20px;
+  min-height: 62px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: var(--text);
+  text-decoration: none;
+  background: transparent;
+}
+
+.row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* 按钮行（去除默认 button 外观） */
+button.row {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 0 20px;
+  min-height: 62px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: var(--text);
+  font: inherit;
+}
+
+button.row:hover {
+  background: var(--surface-2);
+}
+
+button.row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+button.row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.row:disabled:hover {
+  background: transparent;
+}
+
+/* 静态行 */
+.rowStatic {
+  cursor: default;
+}
+
+.rowStatic:hover {
+  background: transparent;
+}
+
+/* 相邻行之间的分隔线 */
+.row + .row {
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+/* 图标块 */
+.ri {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand-ink);
+  flex: none;
+}
+
+.ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand-ink);
+  flex: none;
+}
+
+.icoMuted {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  flex: none;
+}
+
+.icoSolid {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--brand-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--on-brand);
+  flex: none;
+}
+
+/* 标题与子标题 */
+.rt {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.rt small {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+/* 右侧值 */
+.rv {
+  font-size: 14px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.rvNum {
+  font-family: var(--font-display);
+  color: var(--text);
+  font-size: 15.5px;
+  white-space: nowrap;
+}
+
+.rvPlus {
+  font-family: var(--font-display);
+  color: var(--brand);
+  font-size: 15.5px;
+  white-space: nowrap;
+}
+
+.rvAction {
+  color: var(--brand);
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/* 箭头 */
+.chev {
+  width: 18px;
+  height: 18px;
+  color: var(--text-3);
+  flex: none;
+}
+
+/* 分区标题 */
+.hRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 34px 4px 10px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  margin: 34px 4px 10px;
+  letter-spacing: 0.02em;
+}
+
+.hRow .sectionTitle {
+  margin: 0;
+}
+
+/* 月份分组头 */
+.groupH {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 30px 6px 10px;
+}
+
+/* 横条提醒（Note） */
+.note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  box-shadow: 0 0 0 1px var(--border);
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: var(--text);
+  text-decoration: none;
+  cursor: default;
+}
+
+a.note {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+a.note:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.note:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+button.note {
+  all: unset;
+  /* all: unset 把字体也清掉了，先继承回来，下面的 font-size 才生效 */
+  font: inherit;
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  box-shadow: 0 0 0 1px var(--border);
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+button.note:hover {
+  background: var(--surface-2);
+}
+
+button.note:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.noteTag {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  flex: none;
+}
+
+.noteTagWarn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.noteTagDanger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.noteTagBrand {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+}
+
+.noteText {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.noteText small {
+  color: var(--text-2);
+  font-size: 13px;
+  margin-left: 6px;
+}
+
+.noteGo {
+  color: var(--brand);
+  font-weight: 600;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* 窄屏覆盖（959px 以下） */
+@media (max-width: 959px) {
+  .row,
+  button.row {
+    padding: 0 16px;
+  }
+
+  .rt small {
+    font-size: 12.5px;
+  }
+
+  .noteText small {
+    display: none;
+  }
+}

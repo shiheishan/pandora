@@ -5,7 +5,7 @@
   /* 门户四边框白底；后台只有下边线、透明底（角色令牌） */
   border-style: solid;
   border-width: var(--control-border-width);
-  border-color: var(--border-strong);
+  border-color: var(--control-border-color);
   border-radius: var(--radius-control);
   background: var(--control-bg);
   color: var(--text);
