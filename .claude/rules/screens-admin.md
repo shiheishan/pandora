@@ -48,7 +48,7 @@ paths:
   - `Select`：自绘 listbox，props 与旧的原生版兼容，`onChange` 的 `e.target.value` 照旧可用；不要再往里塞 `<option>`
   - `FilterTabs`（带计数的筛选页签，`items: {value,label,count?}[]`）、`Toolbar` + `SearchField`（列表上方的筛选条，`SearchField` 必须给 `aria-label`）
   - `Button` 可给 `icon`（文字前 15px 图标，样稿「新建」的加号、详情页头操作的图标）
-  - `Table`：列可设 `sortable`，配 `sort` / `onSortChange`；另有 `footer`、`stickyHeader`、`boxed`（装进带框盒子，样稿 `.box` 里的表）、`rowClassName(row)`；列可设 `hideOnMobile`（≤639 整列隐藏，对应样稿 `.h-m`；有列收起的表在手机上撤掉 560 最小宽），手机上一律只留两三列、不靠横向滚动；收起列里要紧的信息补在留下的格里，用全局类 `m-only`（`styles/base.css`，对应样稿 `.m-only`，只在 ≤639 出现），不在模块 CSS 里各写一份；分页放进表尾用 `<Pager inline>`
+  - `Table`：列可设 `sortable`，配 `sort` / `onSortChange`；另有 `footer`、`stickyHeader`、`boxed`（装进带框盒子，样稿 `.box` 里的表）、`rowClassName(row)`；列可设 `hideOnMobile`（≤639 整列隐藏，对应样稿 `.h-m`；有列收起的表在手机上撤掉 560 最小宽），手机上一律只留两三列、不靠横向滚动；收起列里要紧的信息补在留下的格里，用全局类 `m-only`（另起一行）/ `m-only-inline`（接在同一行），定义在 `styles/base.css`，对应样稿 `.m-only`，只在 ≤639 出现，不在模块 CSS 里各写一份；分页放进表尾用 `<Pager inline>`
   - `Card({ title?, subtitle?, extra?, footer?, tint?, flush? })`：头 48 高带底线、`footer` 是带顶线的底栏（说明 + 保存按钮）；表格、行列表放进去用 `flush`
   - `Button` 的 `variant="danger"` 在后台是红字红框；图标按钮用 `IconButton({ label, icon, size?: 'md'|'sm'|'xs' })`（`label` 同时是 aria-label 与 title）
   - `Switch` 另有 `tone="danger"`（打开是红色，危险开关用）；`Checkbox`、`Tabs`、`Segmented`、`Tag`、`StatStrip` 的外观已按样稿，页面不要再覆盖它们的颜色与尺寸

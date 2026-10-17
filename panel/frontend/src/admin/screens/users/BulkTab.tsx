@@ -199,7 +199,7 @@ function FilterSection({ now }: { now: Date }) {
 function previewColumns(now: Date): TableColumn<{ email: string; plan_name: string | null; current_period_end: string | null }>[] {
   return [
     { key: 'email', header: '邮箱', render: (u) => u.email },
-    { key: 'plan', header: '套餐', render: (u) => <span className={ops.dim}>{u.plan_name ?? '无订阅'}</span> },
+    { key: 'plan', header: '套餐', hideOnMobile: true, render: (u) => <span className={ops.dim}>{u.plan_name ?? '无订阅'}</span> },
     {
       key: 'exp',
       header: '到期',
@@ -542,7 +542,7 @@ function GenerationRecordsTable({
         <span className={ops.reasonCell}>
           {j.reason}
           <span className={ops.sub2}>{j.email_prefix}@{j.email_domain}</span>
-          <span className={`${ops.sub2} ${ops.mOnly}`}>{formatDateTime(j.created_at)}</span>
+          <span className={`${ops.sub2} m-only`}>{formatDateTime(j.created_at)}</span>
         </span>
       ),
     },

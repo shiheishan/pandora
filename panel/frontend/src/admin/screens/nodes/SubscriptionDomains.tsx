@@ -178,10 +178,23 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
         rowKey={(r) => `${r.groupId}:${r.baseUrl}`}
         empty="还没有订阅域名，订阅链接用面板对外地址。"
         columns={[
-          { key: 'host', header: '域名', mono: true, render: (row) => row.host },
+          {
+            key: 'host',
+            header: '域名',
+            mono: true,
+            render: (row) => (
+              <>
+                {row.host}
+                <span className={`${css.scopeSub} m-only`}>
+                  {row.groupName} · {row.scope}
+                </span>
+              </>
+            ),
+          },
           {
             key: 'scope',
             header: '作用范围',
+            hideOnMobile: true,
             render: (row) => (
               <span>
                 {row.groupName}

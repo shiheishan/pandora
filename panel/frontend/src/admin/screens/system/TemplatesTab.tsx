@@ -49,7 +49,7 @@ export function TemplatesTab() {
               empty={<Empty bare title="这个渠道目前没有可编辑的模板。" />}
               columns={[
                 { key: 'name', header: '模板', render: (r) => <span className={css.name}>{r.name}</span> },
-                { key: 'code', header: '标识', render: (r) => <span className={css.code}>{r.code}</span> },
+                { key: 'code', header: '标识', hideOnMobile: true, render: (r) => <span className={css.code}>{r.code}</span> },
                 {
                   key: 'status',
                   header: '状态',

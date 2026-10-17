@@ -23,6 +23,14 @@
   flex: none;
 }
 
+/* 手机上卡头放不下时，右侧操作换到下一行 */
+@media (max-width: 639px) {
+  .head {
+    flex-wrap: wrap;
+    padding-block: 8px;
+  }
+}
+
 .title {
   margin: 0;
   flex: none;

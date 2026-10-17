@@ -30,7 +30,7 @@ const columns: TableColumn<AuditEvent>[] = [
         <span className={`${css.ellipsis} ${css.auditWhoMain}`}>{actorLabel(e)}</span>
         <span className={css.auditWhoSub}>{ACTOR_LABEL[e.actor_kind]}</span>
         {/* 手机上隐藏了时间与动作两列，挪到这里一行 */}
-        <span className={`${css.auditWhoSub} ${css.mOnly}`}>
+        <span className={`${css.auditWhoSub} m-only`}>
           <span className="mono">{e.action}</span> · {clockTime(e.occurred_at)}
         </span>
       </span>

@@ -102,7 +102,7 @@ export function Coupons({ rest }: { rest: string[] }) {
                         <span className={local.codeMain}>{c.code}</span>
                         {batchLabel && <span className={local.codeSub}>{batchLabel}</span>}
                         {/* 手机上隐藏了使用与有效期两列，挪到这里一行 */}
-                        <span className={`${local.codeSub} ${local.mOnly}`}>
+                        <span className={`${local.codeSub} m-only`}>
                           {usage(c).label} · {couponPeriodLabel(c, new Date()).short}
                         </span>
                       </span>

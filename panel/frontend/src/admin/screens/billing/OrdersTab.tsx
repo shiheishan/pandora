@@ -184,7 +184,7 @@ function columns(now: Date): TableColumn<OrderRow>[] {
               人工
             </Tag>
           )}
-          <small className={css.mOnly}>
+          <small className={`${css.mSub} m-only`}>
             {o.user_email} · {orderWhat(o)}
           </small>
         </>
@@ -201,7 +201,7 @@ function columns(now: Date): TableColumn<OrderRow>[] {
       render: (o) => (
         <>
           {formatMoney(o.total_amount)}
-          <small className={css.mOnly}>
+          <small className={`${css.mSub} m-only`}>
             <Tag tone={ORDER_STATUS_VIEW[o.status].tone}>{ORDER_STATUS_VIEW[o.status].label}</Tag>
           </small>
         </>

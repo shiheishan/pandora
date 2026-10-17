@@ -25,6 +25,8 @@
 
 .main {
   display: grid;
+  /* 单列且可收窄：里面不折行带省略号的文字才会截断，而不是把整行撑宽 */
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px;
   flex: 1;
   min-width: 0;

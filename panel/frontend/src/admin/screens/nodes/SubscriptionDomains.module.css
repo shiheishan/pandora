@@ -21,6 +21,14 @@
   color: var(--text-3);
 }
 
+/* 手机上作用范围列收起，挪到域名下面一行 */
+.scopeSub {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+}
+
 /* 添加行下方、表格上方的错误提示 */
 .alertWrap {
   padding: var(--space-12) var(--space-16) 0;

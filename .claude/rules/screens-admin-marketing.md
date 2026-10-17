@@ -8,7 +8,7 @@ paths:
 - 地址：`/marketing/coupons[/<券 id>]?status=active|paused`（详情弹窗）、`/marketing/gifts/<templates|batches|usages>[/<批次 id>]`、`/marketing/commission/<review|withdraw|settings>?status=open|done|all`、`/marketing/signup`。「注册试用与邀请」直接挂 users 模块的 `SignupGrowth`（无 props，样式自带），本模块不改 users/ 下的文件。
 - 文件分工：`logic.ts` 放输入换算与优惠券，`giftModel.ts` 放礼品卡，`commissionModel.ts` 放提现与复核，`levelsModel.ts` 放佣金规则表单与单独设置；各配单测（`marketing.test.ts` / `gifts.test.ts` / `commissionModel.test.ts` / `levelsModel.test.ts`）。
 - 只有人民币：券、礼品卡、佣金、提现都没有币种，`formatMoney` 单参。
-- 优惠券（10-16）：「新建」「批量生成」在页头 `PageActions`，都在弹窗里（`CouponFormModal`）；列表是 ui `Table boxed`，表尾只有一页时写「共 N 张」、超过一页换成 `<Pager inline>`；手机上适用套餐 / 使用 / 有效期三列 `hideOnMobile`，使用与有效期挪到优惠码下一行（`.mOnly`），不可切换的券（已过期、已用完）整行淡显、灰标签（`rowClassName`）；详情（规则 + 最近 200 条兑换）也是弹窗。有开始时间 `valid_from`（空 = 创建即生效）；没有「限定时长」，后端也已删 `applicable_intervals`。批量上限前端 500（`COUPON_BATCH_MAX`），后端 1000，保持现状。
+- 优惠券（10-16）：「新建」「批量生成」在页头 `PageActions`，都在弹窗里（`CouponFormModal`）；列表是 ui `Table boxed`，表尾只有一页时写「共 N 张」、超过一页换成 `<Pager inline>`；手机上适用套餐 / 使用 / 有效期三列 `hideOnMobile`，使用与有效期挪到优惠码下一行（全局类 `m-only`），不可切换的券（已过期、已用完）整行淡显、灰标签（`rowClassName`）；详情（规则 + 最近 200 条兑换）也是弹窗。有开始时间 `valid_from`（空 = 创建即生效）；没有「限定时长」，后端也已删 `applicable_intervals`。批量上限前端 500（`COUPON_BATCH_MAX`），后端 1000，保持现状。
 - 礼品卡明文只在两处出现：生码响应里的前 4 张样例（`sample`）与批次的一次性导出 CSV；列表、使用记录、按筛选导出的报表一律掩码。不要在别处展示或拼出明文。
 - 「导出当前筛选」走 `GET v1/gift-cards/codes/report`（要 reauth，无幂等），与卡码列表共用 `codeFilterQuery`；确认框写明明文只在批次的一次性导出里。
 - 下载文件名优先取 `Content-Disposition`，幂等重放的响应没有这个头，所以兜底按批次 id 前 8 位自拼（`batchFileName` / `codesReportFileName`）。

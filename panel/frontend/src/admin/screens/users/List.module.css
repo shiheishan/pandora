@@ -128,13 +128,3 @@
   }
 }
 
-/* 只在手机显示（样稿 .m-only） */
-.mOnly {
-  display: none;
-}
-
-@media (max-width: 639px) {
-  .mOnly {
-    display: block;
-  }
-}

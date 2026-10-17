@@ -43,6 +43,14 @@
   white-space: nowrap;
 }
 
+/* 手机上表格按屏宽排：名字与副行折行，不把表撑宽 */
+@media (max-width: 639px) {
+  .nameText,
+  .subText {
+    white-space: normal;
+  }
+}
+
 /* 等宽数字（价格、有效订阅数） */
 .monoText {
   font-family: var(--font-mono);

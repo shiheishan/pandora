@@ -150,7 +150,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
             <span className={listCss.name}>{userLabel(u)}</span>
             <span className={listCss.id}>{shortId(u.id)}</span>
             {/* 手机上套餐列隐藏，套餐与到期并进这一格（样稿 m-only） */}
-            <span className={`${listCss.small} ${listCss.mOnly}`}>
+            <span className={`${listCss.small} m-only`}>
               {u.current_subscription
                 ? `${u.current_subscription.plan_name} · ${subExpiryView(u.current_subscription.current_period_end, now).text}`
                 : '无套餐'}

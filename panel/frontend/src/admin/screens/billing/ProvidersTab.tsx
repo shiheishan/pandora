@@ -100,7 +100,7 @@ function ProviderTable({
                   回调地址：<span className={css.mono}>{p.notify_url}</span>
                 </span>
               )}
-              <span className={css.mOnly}>
+              <span className="m-only">
                 今日成交 {todayLabel(p.today)} · 成功率 {rateLabel(p.success_rate_24h)}
               </span>
             </div>

@@ -71,14 +71,20 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* 只在手机（≤639）出现：列表收起列后，把要紧信息补在留下的格里；显示时回到元素本来的 display */
-.m-only {
+/* 只在手机（≤639）出现：列表收起列后，把要紧信息补在留下的格里（样稿 .m-only）。
+   m-only 在手机上另起一行，m-only-inline 接在同一行；:root 抬高优先级，压过模块类里的 display */
+:root .m-only,
+:root .m-only-inline {
   display: none;
 }
 
 @media (max-width: 639px) {
-  .m-only {
-    display: revert;
+  :root .m-only {
+    display: block;
+  }
+
+  :root .m-only-inline {
+    display: inline;
   }
 }
 

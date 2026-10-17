@@ -43,6 +43,13 @@
   text-overflow: ellipsis;
 }
 
+/* 手机上表格按内容排，不折行的长原因会撑出屏宽：改成折行 */
+@media (max-width: 639px) {
+  .ellipsis {
+    white-space: normal;
+  }
+}
+
 .link {
   color: var(--info);
   text-decoration: none;
@@ -378,23 +385,3 @@
   gap: var(--space-8);
 }
 
-/* 只在手机（≤639）显示：被 hideOnMobile 收起的列，把要紧的信息挪到留下的格里（样稿 .m-only） */
-.mOnly {
-  display: none;
-}
-
-@media (max-width: 639px) {
-  .mOnly {
-    display: block;
-  }
-}
-
-.mOnlyInline {
-  display: none;
-}
-
-@media (max-width: 639px) {
-  .mOnlyInline {
-    display: inline;
-  }
-}

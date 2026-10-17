@@ -271,3 +271,12 @@
   color: var(--text-3);
   font-size: 12px;
 }
+
+/* 手机上标题与标识折行，不把表撑出屏宽 */
+@media (max-width: 639px) {
+  .titleMain,
+  .titleSlug {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

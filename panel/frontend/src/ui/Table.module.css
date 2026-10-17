@@ -153,4 +153,14 @@
   .fitMobile {
     min-width: 0;
   }
+
+  /* 屏宽有限：单元格留白收窄，卡码、邮箱这类没有断点的长串任意处折行 */
+  .fitMobile th,
+  .fitMobile td {
+    padding: 0 12px;
+  }
+
+  .fitMobile td {
+    overflow-wrap: anywhere;
+  }
 }

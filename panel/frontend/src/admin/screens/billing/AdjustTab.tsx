@@ -26,7 +26,7 @@ export function AdjustTab() {
             <span className={css.ellipsis} title={a.reason}>{a.reason}</span>
             <span className={css.sub2}>
               {v.meta}
-              <span className={css.mOnlyInline}> · 生效 {a.effective_on}</span>
+              <span className="m-only-inline"> · 生效 {a.effective_on}</span>
             </span>
           </>
         )

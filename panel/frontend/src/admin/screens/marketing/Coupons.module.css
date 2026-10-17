@@ -142,13 +142,3 @@
   gap: 6px;
 }
 
-/* 手机专用的补充行（桌面隐藏，对应样稿 .m-only） */
-.mOnly {
-  display: none;
-}
-
-@media (max-width: 639px) {
-  .mOnly {
-    display: block;
-  }
-}
