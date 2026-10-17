@@ -47,7 +47,8 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
   // 列表页带来的筛选查询串原样带着走，返回时还原
   const listQuery = Object.fromEntries(location.query)
   const back = { href: href('/nodes/nodes', listQuery), label: '节点' }
-  const row: NodeRow | null = list.data?.nodes.find((n) => n.id === id) ?? detail.data ?? null
+  // 以单条详情为准；它还没回来时先用列表缓存里的这一行秒出
+  const row: NodeRow | null = detail.data ?? list.data?.nodes.find((n) => n.id === id) ?? null
 
   if (!row) {
     return (

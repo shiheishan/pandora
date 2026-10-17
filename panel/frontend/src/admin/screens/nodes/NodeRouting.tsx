@@ -104,7 +104,7 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
   )
 }
 
-/** 出站行编辑器：标签 + 类型 + settings JSON + 删除（抽屉够宽，逐行平铺；全局路由页右栏窄，改用列表 + 弹窗） */
+/** 出站行编辑器：标签 + 类型 + settings JSON + 删除（编辑弹窗够宽，逐行平铺；全局路由页右栏窄，改用列表 + 弹窗） */
 function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: OutboundRow[]; errors: Record<number, string>; disabled: boolean; onChange: (rows: OutboundRow[]) => void; emptyHint: string }) {
   const update = (i: number, patch: Partial<OutboundRow>) => onChange(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   return (

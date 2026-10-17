@@ -684,7 +684,7 @@ export function renameOutbound(rows: readonly RuleRow[], from: string, to: strin
   return rows.map((r) => (r.outbound === key ? { ...r, outbound: to.trim() } : r))
 }
 
-/** 规则的简短文字（抽屉只读列表） */
+/** 规则的简短文字（只读列表） */
 export function ruleSummary(r: Route): string {
   const row = routeToRow(r)
   if (row.legacy) return `${row.legacy.label} ${row.legacy.value}`
