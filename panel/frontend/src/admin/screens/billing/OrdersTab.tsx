@@ -1,12 +1,15 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useCallback, useEffect, useState } from 'react'
 import { formatMoney, relativeTime } from '../../../core/format'
 import { href, navigate, useHashLocation, type RouteQuery } from '../../../core/router'
 import { Button, Empty, FilterTabs, IconClose, Pager, QueryView, SearchField, Table, Tag, Toolbar, type TableColumn } from '../../../ui'
+import { PageActions } from '../../kit'
 import { ORDERS_PAGE, useOrders, type OrderRow } from './api'
-import css from './Billing.module.css'
 import { ManualOrder } from './ManualOrder'
+import { OrderPage } from './OrderPage'
+import css from './Orders.module.css'
 import { channelLabel, filterStatuses, isOrderFilter, ORDER_FILTERS, ORDER_STATUS_VIEW, orderWhat, type OrderFilter } from './model'
-import { OrderDialog } from './OrderDialog'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -34,18 +37,50 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
     // 非法 uuid 后端回 400：不带上去，筛选标签也不画
     userId: UUID.test(userParam) ? userParam : '',
   }
+  // 详情是整页（外框 DETAIL_ROUTES 登记了 billing:orders）；列表的查询串留在地址上，返回链接带回去
+  const selected = rest[0] ?? null
+
+  if (selected) {
+    return (
+      <OrderPage id={selected} now={now} back={{ href: href('/billing/orders', query(state)), label: '订单' }} />
+    )
+  }
+
   const newParam = location.query.get('new')
   const manualFor = newParam && UUID.test(newParam) ? newParam : null
-  // 从用户抽屉某一份订阅的「给这份开单」进来：#/billing/orders?new=<用户 id>&sub=<订阅 id>，只用来预选落点
+  // 从用户详情某一份订阅的「给这份开单」进来：#/billing/orders?new=<用户 id>&sub=<订阅 id>，只用来预选落点
   const subParam = location.query.get('sub')
   const entrySubscription = manualFor && subParam && UUID.test(subParam) ? subParam : null
   const manualOpen = newParam !== null
-  const selected = rest[0] ?? null
 
+  return (
+    <OrdersList
+      state={state}
+      manualFor={manualFor}
+      entrySubscription={entrySubscription}
+      manualOpen={manualOpen}
+      now={now}
+    />
+  )
+}
+
+function OrdersList({
+  state,
+  manualFor,
+  entrySubscription,
+  manualOpen,
+  now,
+}: {
+  state: ListState
+  manualFor: string | null
+  entrySubscription: string | null
+  manualOpen: boolean
+  now: Date
+}) {
   const change = useCallback(
-    (next: Partial<ListState>) => navigate(path(selected), { replace: true, query: query({ ...state, ...next }) }),
+    (next: Partial<ListState>) => navigate(path(null), { replace: true, query: query({ ...state, ...next }) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- state 由地址派生，按其原始值比较
-    [selected, state.filter, state.q, state.offset, state.userId],
+    [state.filter, state.q, state.offset, state.userId],
   )
 
   const orders = useOrders({ q: state.q.trim() || undefined, status: filterStatuses(state.filter), user_id: state.userId || undefined, offset: state.offset })
@@ -56,13 +91,16 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
 
   return (
     <div className={css.page}>
-      <Toolbar
-        end={
-          <Button size="sm" variant="primary" onClick={() => navigate(path(selected), { query: query(state, { new: state.userId || '1' }) })}>
-            人工开单
-          </Button>
-        }
-      >
+      <PageActions>
+        <Button
+          variant="primary"
+          onClick={() => navigate(path(null), { query: query(state, { new: state.userId || '1' }) })}
+        >
+          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={1.6} aria-hidden />
+          人工开单
+        </Button>
+      </PageActions>
+      <Toolbar>
         <DebouncedSearch value={state.q} onChange={(q) => change({ q, offset: 0 })} />
         <FilterTabs
           label="订单状态"
@@ -79,44 +117,54 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
           </span>
         )}
       </Toolbar>
-      <div className={`${css.tableBox} ${css.wide}`}>
-        <QueryView
-          query={orders}
-          rows={8}
-          isEmpty={(d) => d.orders.length === 0}
-          empty={
-            <Empty
-              bare
-              title={filtered ? '没有符合条件的订单' : '还没有订单'}
-              description={filtered ? '换个关键词或状态再看看。' : '用户在用户端下单，或管理员人工开单后，订单会出现在这里。'}
-            />
-          }
-        >
-          {(d) => (
-            <Table
-              label="订单列表"
-              columns={columns(now)}
-              rows={d.orders}
-              rowKey={(o) => o.id}
-              onRowClick={(o) => window.location.assign(href(path(o.id), query(state)))}
-              footer={
-                d.orders.length > 0 ? (
-                  <span className={css.listFooter}>
-                    共 {total.toLocaleString('en-US')} 条 · 点一行查看详情
-                  </span>
-                ) : undefined
-              }
-            />
-          )}
-        </QueryView>
-      </div>
-      <Pager total={total} limit={ORDERS_PAGE} offset={state.offset} onChange={(offset) => change({ offset })} />
-      <OrderDialog id={selected} onClose={() => navigate(path(null), { query: query(state) })} />
+      <QueryView
+        query={orders}
+        rows={8}
+        isEmpty={(d) => d.orders.length === 0}
+        empty={
+          <Empty
+            bare
+            title={filtered ? '没有符合条件的订单' : '还没有订单'}
+            description={filtered ? '换个关键词或状态再看看。' : '用户在用户端下单，或管理员人工开单后，订单会出现在这里。'}
+          />
+        }
+      >
+        {(d) => (
+          <Table
+            label="订单列表"
+            columns={columns(now)}
+            rows={d.orders}
+            rowKey={(o) => o.id}
+            boxed
+            onRowClick={(o) => navigate(path(o.id), { query: query(state) })}
+            footer={
+              d.orders.length > 0
+                ? (
+                    <>
+                      <span className={css.footerText}>
+                        {total > ORDERS_PAGE
+                          ? '点一行查看详情'
+                          : `共 ${total.toLocaleString('en-US')} 条 · 点一行查看详情`}
+                      </span>
+                      <Pager
+                        className={css.footerPager}
+                        total={total}
+                        limit={ORDERS_PAGE}
+                        offset={state.offset}
+                        onChange={(offset) => change({ offset })}
+                      />
+                    </>
+                  )
+                : undefined
+            }
+          />
+        )}
+      </QueryView>
       <ManualOrder
         open={manualOpen}
         userId={manualFor}
         entrySubscriptionId={entrySubscription}
-        onClose={(createdId) => navigate(path(createdId ?? selected), { replace: createdId === undefined, query: query(state) })}
+        onClose={(createdId) => navigate(path(createdId ?? null), { replace: createdId === undefined, query: query(state) })}
       />
     </div>
   )
@@ -133,7 +181,7 @@ function columns(now: Date): TableColumn<OrderRow>[] {
         <>
           {o.order_no}
           {o.manual && (
-            <Tag tone="outline" className={css.manualTag}>
+            <Tag tone="neutral" className={css.manualTag}>
               人工
             </Tag>
           )}
