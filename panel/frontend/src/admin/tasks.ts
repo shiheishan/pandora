@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../shell/runtime'
+import type { ModuleKey } from './modules'
 
 // ---------------------------------------------------------------------------
 // 条目按 kind 区分；某类条目可以缺席（如没有待处理时），缺席按 0 计。
@@ -41,4 +42,40 @@ export function useDashboardTasks() {
 export function taskCount(items: readonly TaskItem[] | undefined, kind: Exclude<TaskItem['kind'], 'notifications_backlog'>): number {
   const item = items?.find((i) => i.kind === kind)
   return item && 'count' in item ? item.count : 0
+}
+
+export interface NavBadge {
+  count: number
+  /** 红色（工单）；其余是灰色等宽数字 */
+  hot?: boolean
+}
+
+/** 侧栏徽标：工单 = tickets_open（红）、订单与收款 = orders_pending_stale、营销 = withdrawals_pending、节点与服务器 = nodes_offline；为 0 的不返回 */
+export function navBadges(items: readonly TaskItem[] | undefined): Partial<Record<ModuleKey, NavBadge>> {
+  if (!items) return {}
+  const out: Partial<Record<ModuleKey, NavBadge>> = {}
+  const tickets = taskCount(items, 'tickets_open')
+  if (tickets > 0) out.tickets = { count: tickets, hot: true }
+  const orders = taskCount(items, 'orders_pending_stale')
+  if (orders > 0) out.billing = { count: orders }
+  const withdrawals = taskCount(items, 'withdrawals_pending')
+  if (withdrawals > 0) out.marketing = { count: withdrawals }
+  const nodes = taskCount(items, 'nodes_offline')
+  if (nodes > 0) out.nodes = { count: nodes }
+  return out
+}
+
+/** 侧栏底部工单提醒卡：tickets_open 的数量与最久等待秒数；数量为 0（或条目缺席）时返回 null */
+export function ticketAlert(items: readonly TaskItem[] | undefined): { count: number; oldestWaitSeconds: number | null } | null {
+  const item = items?.find((i): i is Extract<TaskItem, { kind: 'tickets_open' }> => i.kind === 'tickets_open')
+  if (!item || item.count === 0) return null
+  return { count: item.count, oldestWaitSeconds: item.oldest_wait_seconds }
+}
+
+/** 等待时长的中文：< 60 秒「不到 1 分钟」，< 1 小时「N 分钟」，< 1 天「N 小时」，否则「N 天」（都向下取整） */
+export function formatWait(seconds: number): string {
+  if (seconds < 60) return '不到 1 分钟'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`
+  return `${Math.floor(seconds / 86400)} 天`
 }

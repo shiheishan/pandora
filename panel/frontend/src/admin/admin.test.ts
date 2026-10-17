@@ -3,11 +3,11 @@ import { ApiError } from '../core/api'
 import { classifyFailure, createIntentKey, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
 import { identityLabels } from './me'
-import { MODULES, modulePath, paletteGroups, resolveRoute } from './modules'
+import { isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
 import { PAGE_HELP, pageHelp } from './page-help'
 import { createReauthController } from './reauth'
 import { documentSiteName } from './site'
-import { taskCount, tasksSchema } from './tasks'
+import { formatWait, navBadges, taskCount, tasksSchema, ticketAlert } from './tasks'
 
 describe('documentSiteName', () => {
   it('reads the server-written application-name meta and falls back to Pandora', () => {
@@ -59,6 +59,43 @@ describe('resolveRoute', () => {
     expect(modulePath('billing', 'arrears')).toBe('/billing/arrears')
     expect(modulePath('billing', 'nope')).toBe('/billing/orders')
     expect(modulePath('dash', 'x')).toBe('/dash')
+  })
+})
+
+describe('isDetailRoute', () => {
+  it('详情页：rest 非空且在登记表里', () => {
+    expect(isDetailRoute('users', 'list', ['u1'])).toBe(true)
+    expect(isDetailRoute('billing', 'orders', ['PD1'])).toBe(true)
+    expect(isDetailRoute('nodes', 'nodes', ['n1'])).toBe(true)
+    expect(isDetailRoute('nodes', 'servers', ['s1'])).toBe(true)
+    expect(isDetailRoute('plans', null, ['p1'])).toBe(true)
+    expect(isDetailRoute('plans', null, ['p1', 'prices'])).toBe(true)
+  })
+
+  it('列表或筛选：rest 为空或不在登记表', () => {
+    expect(isDetailRoute('users', 'list', [])).toBe(false)
+    expect(isDetailRoute('nodes', 'routing', ['g1'])).toBe(false)
+    expect(isDetailRoute('content', 'kb', ['a'])).toBe(false)
+    expect(isDetailRoute('tickets', null, ['TK1'])).toBe(false)
+    expect(isDetailRoute('users', 'groups', ['g'])).toBe(false)
+  })
+})
+
+describe('nav groups', () => {
+  it('NAV_GROUPS 覆盖全部模块各一次，且分组标题与 MODULES.group 一致', () => {
+    const keys = NAV_GROUPS.flatMap(([, mods]) => mods)
+    expect(new Set(keys)).toEqual(new Set(Object.keys(MODULES) as typeof keys))
+    expect(keys.length).toBe(Object.keys(MODULES).length)
+    expect(NAV_GROUPS[0]![0]).toBe(null)
+    for (const [title, mods] of NAV_GROUPS) {
+      if (title === null) continue
+      for (const k of mods) expect(MODULES[k].group).toBe(title)
+    }
+  })
+
+  it('全幅仅工单', () => {
+    expect(isFullBleed('tickets')).toBe(true)
+    expect(isFullBleed('users')).toBe(false)
   })
 })
 
@@ -173,6 +210,45 @@ describe('dashboard/tasks', () => {
     expect(taskCount(items, 'withdrawals_pending')).toBe(3)
     expect(taskCount(items, 'nodes_offline')).toBe(0)
     expect(taskCount(undefined, 'tickets_open')).toBe(0)
+  })
+
+  it('navBadges：侧栏徽标映射与为 0 省略', () => {
+    const badgeItems = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [
+        { kind: 'tickets_open', count: 7, high_priority: 0, oldest_wait_seconds: null },
+        { kind: 'orders_pending_stale', count: 2, threshold_seconds: 3600 },
+        { kind: 'withdrawals_pending', count: 0, amount: 0 },
+        { kind: 'nodes_offline', count: 3, sample: [], longest_offline_seconds: null },
+      ],
+    }).items
+    expect(navBadges(badgeItems)).toEqual({
+      tickets: { count: 7, hot: true },
+      billing: { count: 2 },
+      nodes: { count: 3 },
+    })
+    expect(navBadges(undefined)).toEqual({})
+  })
+
+  it('ticketAlert：无工单为 null，有工单带最久等待', () => {
+    const zero = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'tickets_open', count: 0, high_priority: 0, oldest_wait_seconds: null }],
+    }).items
+    expect(ticketAlert(zero)).toBe(null)
+    expect(ticketAlert(undefined)).toBe(null)
+    const items = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'tickets_open', count: 7, high_priority: 0, oldest_wait_seconds: 10800 }],
+    }).items
+    expect(ticketAlert(items)).toEqual({ count: 7, oldestWaitSeconds: 10800 })
+  })
+
+  it('formatWait 向下取整', () => {
+    expect(formatWait(30)).toBe('不到 1 分钟')
+    expect(formatWait(125)).toBe('2 分钟')
+    expect(formatWait(10800)).toBe('3 小时')
+    expect(formatWait(200000)).toBe('2 天')
   })
 })
 

@@ -3,6 +3,8 @@ export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'ma
 interface ModuleDef {
   title: string
   group: string
+  /** 全幅：铺满窗口、无页边距，外框不画页头和页签栏（页面自己画栏头）。只有工单 */
+  fullBleed?: true
   /** [标签值, 标签名]；第一项为默认标签 */
   tabs?: ReadonlyArray<readonly [string, string]>
 }
@@ -13,20 +15,20 @@ interface ModuleDef {
 // ---------------------------------------------------------------------------
 export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   dash: { title: '仪表盘', group: '工作台' },
-  tickets: { title: '工单', group: '工作台' },
+  tickets: { title: '工单', group: '工作台', fullBleed: true },
   users: {
     title: '用户',
-    group: '用户运营',
+    group: '业务',
     tabs: [
       ['list', '用户列表'],
       ['groups', '用户组'],
       ['bulk', '批量运营'],
     ],
   },
-  plans: { title: '套餐', group: '商业' },
+  plans: { title: '套餐', group: '业务' },
   billing: {
     title: '订单与收款',
-    group: '商业',
+    group: '业务',
     tabs: [
       ['orders', '订单'],
       ['arrears', '待处理到账'],
@@ -36,7 +38,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
   marketing: {
     title: '营销',
-    group: '商业',
+    group: '业务',
     tabs: [
       ['coupons', '优惠券'],
       ['gifts', '礼品卡'],
@@ -57,7 +59,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
   content: {
     title: '内容与外观',
-    group: '运营',
+    group: '设置',
     tabs: [
       ['announce', '公告'],
       ['kb', '知识库'],
@@ -66,7 +68,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
   system: {
     title: '通知与插件',
-    group: '运营',
+    group: '设置',
     tabs: [
       ['notify', '通知渠道'],
       ['templates', '邮件模板'],
@@ -75,7 +77,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
   security: {
     title: '安全与运维',
-    group: '系统',
+    group: '设置',
     tabs: [
       ['audit', '审计日志'],
       ['access', '访问日志'],
@@ -86,13 +88,14 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
   },
 }
 
-export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> = [
-  ['工作台', ['dash', 'tickets']],
-  ['用户运营', ['users']],
-  ['商业', ['plans', 'billing', 'marketing']],
+/**
+ * 侧栏导航分组：第一组无标题；非 null 的组标题与组内模块的 group 相同（测试核对）。
+ */
+export const NAV_GROUPS: ReadonlyArray<readonly [string | null, readonly ModuleKey[]]> = [
+  [null, ['dash', 'tickets']],
+  ['业务', ['users', 'plans', 'billing', 'marketing']],
   ['网络', ['nodes']],
-  ['运营', ['content', 'system']],
-  ['系统', ['security']],
+  ['设置', ['content', 'system', 'security']],
 ]
 
 /**
@@ -102,6 +105,19 @@ export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> 
 export const PENDING_TABS: ReadonlySet<string> = new Set()
 
 export const isPendingTab = (module: ModuleKey, tab: string | null): boolean => tab != null && PENDING_TABS.has(`${module}:${tab}`)
+
+/**
+ * 「打开某一条」的详情页登记：键是「模块:页签」，没有页签的模块用模块名。
+ * rest 非空即详情。只登记这几处——别的页签把 rest 当筛选范围用（如路由页的 rest 是路由组），不能写成「任何 rest 非空」。
+ */
+const DETAIL_ROUTES: ReadonlySet<string> = new Set(['users:list', 'billing:orders', 'nodes:nodes', 'nodes:servers', 'plans'])
+
+export function isDetailRoute(module: ModuleKey, tab: string | null, rest: readonly string[]): boolean {
+  return rest.length > 0 && DETAIL_ROUTES.has(tab ? `${module}:${tab}` : module)
+}
+
+/** 全幅模块（见 ModuleDef.fullBleed） */
+export const isFullBleed = (module: ModuleKey): boolean => MODULES[module].fullBleed === true
 
 // ⌘K 里的深链：[模块, 页签, 能在这一页做的事]，名称按后端真实能力（换发订阅链接而不是「更换订阅地址」）
 const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]> = [
