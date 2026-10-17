@@ -27,16 +27,21 @@ COMMIT;`,
 
   await step(page, 'EXP', async () => {
     const c = card(page, std.name)
-    await expect(c).toContainText('已暂停使用')
+    // 已到期的主卡：右上「已到期」，大字「X月X日到期了」，下面说节点停了、续费后链接不变
+    await expect(c).toContainText('已到期')
+    const gone = c.getByText(/到期了$/)
+    await expect(gone).toBeVisible()
+    await expect(c).toContainText('节点已经停了。续费后链接不变，App 里更新一次就能接着用。')
     const renew = c.getByRole('link', { name: /^续费，恢复使用/ })
     const change = c.getByRole('link', { name: /^换个套餐/ })
+    const other = c.getByRole('link', { name: '另买一份', exact: true })
     await expect(renew).toBeVisible()
     await expect(change).toBeVisible()
     await expect(change).toContainText('换成别的，马上恢复')
+    await expect(other).toBeVisible()
     const box = [await renew.boundingBox(), await change.boundingBox()]
     await narrowShot(page, 'EXP-card')
-    const head = await text(c.getByRole('heading').locator('xpath=../..'))
-    return `卡片「${head}」；主按钮「${await text(renew)}」，旁边次按钮「${await text(change)}」（1280 宽并排：${box.map((b) => Math.round(b?.width ?? 0)).join(' / ')}px）`
+    return `卡片「${await text(gone)}」；主按钮「${await text(renew)}」，旁边「${await text(change)}」「另买一份」（1280 宽并排：${box.map((b) => Math.round(b?.width ?? 0)).join(' / ')}px）`
   })
 
   await step(page, 'EXPb', async () => {
