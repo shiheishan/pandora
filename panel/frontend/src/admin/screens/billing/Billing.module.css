@@ -27,6 +27,7 @@
 
 .num {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .stack {
