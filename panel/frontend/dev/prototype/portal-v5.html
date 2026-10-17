@@ -567,13 +567,24 @@
   .st.ok { background: #e4f1e8; color: #23603c; font-weight: 600; }
   .row .lnk { margin-left: 0; }
   .row[hidden] { display: none; }
-  /* 快捷登录生成后：链接 + 倒数 + 复制，60 秒后收起 */
-  .ql { padding: 0 20px 18px 70px; }
-  .ql[hidden] { display: none; }
-  .ql .linkchip { justify-content: space-between; height: 46px; background: var(--paper-2); }
-  .ql .linkchip code { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
-  .ql-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--warn, #8a5a00); }
-  .ql-bar i { width: 7px; height: 7px; border-radius: 50%; background: #d08a1a; }
+  /* 快捷登录弹层：二维码居中，下面是倒计时条、链接和提醒 */
+  .ql-card .sh-p { margin-bottom: 18px; }
+  .qr-box { position: relative; width: 208px; height: 208px; margin: 0 auto; padding: 14px; border-radius: 20px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 14px 30px -18px rgba(var(--sh), 0.45); }
+  .qr { display: block; width: 100%; height: 100%; }
+  .qr { shape-rendering: crispEdges; }
+  .qr rect { fill: var(--ink); }
+  .qr-over { position: absolute; inset: 0; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgba(255, 255, 255, 0.86); backdrop-filter: blur(3px); font-size: 15px; }
+  .qr-over[hidden] { display: none; }
+  .ql-time { width: 208px; margin: 14px auto 0; text-align: center; font-size: 13px; color: var(--text-2); }
+  .ql-time i { display: block; height: 4px; margin-top: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
+  .ql-time s { display: block; height: 100%; width: 100%; border-radius: 99px; background: var(--act); transition: width 1s linear; }
+  .ql-time.low { color: var(--warn); }
+  .ql-time.low s { background: #d08a1a; }
+  .ql-time.gone { color: var(--danger); }
+  .ql-link { margin-top: 18px; justify-content: space-between; height: 48px; background: var(--paper-2); }
+  .ql-link code { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
+  .ql-link.off { opacity: 0.45; pointer-events: none; }
+  .ql-warn { margin: 10px 2px 0; font-size: 12.5px; color: var(--text-3); }
   /* Telegram：未绑定 / 出码 / 已绑定三态 */
   .tgc { border-radius: 20px; background: #fff; box-shadow: var(--lift); padding: 18px 20px 20px; }
   .tgc-h { display: flex; align-items: center; gap: 14px; }
@@ -612,6 +623,96 @@
   .fld .err { display: block; font-style: normal; font-size: 12.5px; color: var(--danger); margin: 7px 2px 0; }
   .fld .err[hidden] { display: none; }
   .fld .code.bad { box-shadow: inset 0 0 0 1.5px var(--danger); }
+
+  /* 确认页：左边是「要做什么、买多久」，右边是钱（参考 Descript / Typeform 的左选项右账单、Upwork 的「现在 → 换成」、Flodesk 的时长单选行） */
+  .ck-back { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--act); font-weight: 600; margin-bottom: 10px; }
+  .ckv[hidden] { display: none; }
+  .ck { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 28px; align-items: start; }
+  .ck-l { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .ck-l > h3 { margin: 10px 4px -6px; }
+  .ck-item { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 20px; background: #fff; box-shadow: var(--lift); }
+  .ck-item .tag { font-size: 20px; }
+  .ck-item small { display: block; margin-top: 4px; font-size: 13px; color: var(--text-2); }
+  .ck-item .pill2 { margin-left: auto; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+  .ck-swap { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 20px; background: #fff; box-shadow: var(--lift); }
+  .ck-swap .k { font-size: 12.5px; color: var(--text-3); }
+  .ck-swap b { display: block; margin: 4px 0 3px; font-size: 18px; font-weight: 600; }
+  .ck-swap small { font-size: 13px; color: var(--text-2); }
+  .ck-swap .to { padding-left: 14px; box-shadow: inset 3px 0 0 var(--act); }
+  .ck-swap > svg { color: var(--text-3); }
+  .ck-what { padding: 16px 18px; border-radius: 16px; background: radial-gradient(420px 140px at 0% 0%, var(--tint), transparent 80%), var(--paper-2); box-shadow: inset 0 0 0 1px var(--tint-line); font-size: 15px; line-height: 1.7; }
+  .ck-what p { margin: 0; }
+  .ck-what p + p { margin-top: 6px; }
+  .tiers { display: flex; flex-direction: column; gap: 8px; }
+  .tier { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 14px; padding: 15px 18px; border-radius: 16px; background: #fff; box-shadow: 0 0 0 1px var(--line); }
+  .tier .dot-r { grid-row: 1 / 3; }
+  .tier b { font-size: 15.5px; font-weight: 600; }
+  .tier small { grid-column: 2; font-size: 13px; color: var(--text-2); }
+  .tier .num { grid-row: 1 / 3; grid-column: 3; font-size: 17px; font-weight: 600; }
+  .tier.on { box-shadow: 0 0 0 1.5px var(--act); background: radial-gradient(360px 100px at 0% 0%, var(--tint), transparent 80%), #fff; }
+  .tier.on > .dot-r { box-shadow: inset 0 0 0 5px var(--deep); }
+  .formula { margin: -6px 4px 0; font-size: 14px; color: var(--text-2); }
+  .formula b { color: var(--ink); }
+  .ck-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .ck-notes li { display: block; padding: 0 0 0 16px; position: relative; font-size: 14px; line-height: 1.7; color: var(--text-2); }
+  .ck-notes li::before { content: ''; position: absolute; left: 2px; top: 10px; width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); }
+  .ck-notes li b { color: var(--ink); font-weight: 600; }
+  .ck-notes li.warn { color: var(--warn); }
+  .ck-notes li.warn::before { background: #d08a1a; }
+  .ck-tip { padding: 14px 16px; border-radius: 14px; background: var(--warn-bg); color: var(--warn); font-size: 14px; line-height: 1.65; }
+  .ck-tip a { display: inline-block; margin-top: 4px; font-weight: 600; color: var(--warn); }
+  .ck-name .code { font-family: var(--sans); font-size: 15.5px; letter-spacing: 0; }
+  .ck-name .chips2 { margin-top: 10px; }
+  .ck-name .chips2 button { all: unset; cursor: pointer; padding: 7px 12px; border-radius: 10px; font-size: 13.5px; background: #fff; box-shadow: 0 0 0 1px var(--line); }
+  .btn:disabled { background: var(--bg); color: var(--text-3); border-color: transparent; box-shadow: inset 0 0 0 1px var(--line); cursor: not-allowed; filter: none; transform: none; }
+  .ck-alt { font-size: 14px; color: var(--text-2); }
+  .ck-alt a { color: var(--act); font-weight: 600; }
+  .ck-again { font-size: 13.5px; color: #23603c; }
+  /* 右边账单卡 */
+  .bill { position: sticky; top: 40px; border-radius: 24px; background: #fff; box-shadow: var(--lift); padding: 22px 22px 20px; }
+  .bill > b { display: block; font-size: 13px; font-weight: 500; color: var(--text-3); margin-bottom: 6px; }
+  .bl { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; font-size: 14.5px; }
+  .bl + .bl { box-shadow: 0 -1px 0 var(--line); }
+  .bl[hidden], .ck-notes li[hidden] { display: none; }
+  .bl > span:first-child { color: var(--text-2); }
+  .bl > span:last-child { text-align: right; }
+  .bl.ok > span:last-child { color: #23603c; font-weight: 600; }
+  .bl details { margin-top: 6px; font-size: 13px; color: var(--text-2); }
+  .bl summary { cursor: pointer; color: var(--act); font-weight: 600; list-style: none; }
+  .bl summary::-webkit-details-marker { display: none; }
+  .bl details p { margin: 6px 0 0; line-height: 1.65; }
+  .bl.calc { flex-direction: column; gap: 0; }
+  .bl.calc > div { display: flex; justify-content: space-between; }
+  .bl.calc > div > span:last-child { color: #23603c; font-weight: 600; }
+  .cpn { padding: 12px 0 4px; box-shadow: 0 -1px 0 var(--line); }
+  .cpn > button { all: unset; cursor: pointer; font-size: 14px; color: var(--act); font-weight: 600; }
+  .cpn-row { display: flex; gap: 8px; }
+  .cpn-row .code { height: 44px; font-size: 15px; text-transform: uppercase; }
+  .cpn-row .btn { height: 44px; padding: 0 16px; }
+  .cpn .good { margin: 8px 2px 0; font-size: 13px; color: #23603c; }
+  .cpn [hidden] { display: none; }
+  .bal { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); font-size: 14px; color: var(--text-2); }
+  .bal b { color: var(--ink); font-weight: 600; }
+  .bal[hidden] { display: none; }
+  .due { margin: 16px 2px 0; font-size: 14.5px; color: var(--text-2); line-height: 1.6; }
+  .due b { display: inline-block; font-size: 26px; color: var(--ink); font-weight: 700; vertical-align: -2px; margin-left: 2px; font-family: var(--tw); letter-spacing: -0.02em; }
+  .due-n { margin: 6px 2px 0; font-size: 12.5px; color: var(--text-2); }
+  .due-n[hidden] { display: none; }
+  .bill .pays { margin-top: 14px; }
+  .bill .pays[hidden] { display: none; }
+  .bill .btn.full { margin-top: 16px; }
+  .bill .ck-again { margin: 12px 2px 0; }
+  .ck-refuse { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--danger-bg); color: var(--danger); font-size: 13.5px; line-height: 1.6; }
+  .ck-refuse[hidden] { display: none; }
+  .ck-refuse div { display: flex; gap: 8px; margin-top: 10px; }
+  /* 放到哪里 */
+  .land { max-width: 560px; }
+  .land .q { font-size: 18px; font-weight: 600; margin: 4px 4px 14px; }
+  .land a.opt { align-items: flex-start; background: #fff; box-shadow: var(--lift); padding: 18px; border-radius: 18px; }
+  .land a.opt + a.opt { margin-top: 10px; }
+  .land .ot { flex: 1; font-size: 16px; font-weight: 600; }
+  .land .ot small { font-weight: 400; }
+  .land .opt > svg.chev { width: 18px; height: 18px; color: var(--text-3); align-self: center; }
 
   /* 我的（手机） */
   .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
@@ -740,6 +841,12 @@
     .tgc .tg-acts .btn { flex: none; height: 46px; }
     .pf { grid-template-columns: 1fr 52px 76px; padding: 14px 16px; }
     .pf.hd { padding: 11px 16px; }
+    /* 确认页：一列，账单卡排在最后 */
+    .ck { grid-template-columns: 1fr; gap: 18px; }
+    .bill { position: static; padding: 20px 18px 18px; border-radius: 22px; }
+    .ck-swap { grid-template-columns: 1fr; gap: 10px; }
+    .ck-swap > svg { transform: rotate(90deg); margin-left: 6px; }
+    .ck-item { flex-wrap: wrap; }
   }
 </style>
 </head>
@@ -828,7 +935,7 @@
           <div class="meta" style="font-size:14px">11 月 27 日 16:03 到期 · 3 / 5 台设备在线</div>
           <div class="hero-foot">
             <button class="btn hot grow">添加到 App</button>
-            <button class="btn soft">续费 · 到 12 月 27 日</button>
+            <a class="btn soft" href="?ck=renew#checkout">续费 · 到 12 月 27 日</a>
           </div>
         </div>
         <h3>这一份</h3>
@@ -836,7 +943,7 @@
           <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 专业版</small></span><span class="rv"><code class="num" style="font-weight:400">····PQsM</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-reset"/></svg></span><span class="rt">重置本期流量<small>已用的清零，马上能用满 520 GB · 本期还能买 2 次</small></span><span class="rv num">¥15</span><svg class="i chev"><use href="#i-chev"/></svg></div>
-          <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <a class="row" href="?ck=change#checkout"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></a>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
         </div>
@@ -854,7 +961,7 @@
           <div class="meta" style="font-size:14px">11 月 3 日 09:20 到期 · 2 / 3 台设备在线</div>
           <div class="low-tip">
             <span class="t"><b>流量快用完了</b>本期已用 80%，用完会停，到下一期恢复</span>
-            <button class="btn soft sm">重置 · <span class="num">¥10</span></button>
+            <a class="btn soft sm" href="?s=multi&ck=reset#checkout">重置 · <span class="num">¥10</span></a>
             <a class="go" href="#plans">换更大的 ›</a>
           </div>
           <div class="hero-foot">
@@ -867,7 +974,7 @@
           <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 家里用</small></span><span class="rv"><code class="num" style="font-weight:400">····x7Ke</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-reset"/></svg></span><span class="rt">重置本期流量<small>已用的清零，马上能用满 200 GB · 本期还能买 1 次</small></span><span class="rv num">¥10</span><svg class="i chev"><use href="#i-chev"/></svg></div>
-          <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <a class="row" href="?ck=change#checkout"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></a>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
         </div>
@@ -885,7 +992,7 @@
           <div class="meta" style="font-size:14px">没有到期日 · 1 / 3 台设备在线</div>
           <div class="hero-foot">
             <button class="btn hot grow">添加到 App</button>
-            <button class="btn soft">再买同款，叠加上去</button>
+            <a class="btn soft" href="?s=multi&ck=stack#checkout">再买同款，叠加上去</a>
           </div>
         </div>
         <h3>这一份</h3>
@@ -940,7 +1047,7 @@
       <div data-only="one multi expired empty">
         <h3>更多</h3>
         <div class="rows">
-          <div class="row" data-only="one multi expired"><span class="ri"><svg class="i"><use href="#i-plus"/></svg></span><span class="rt">再买一份，分开用<small>单独的链接、单独的流量，和现在的互不影响</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+          <a class="row" href="?ck=new#checkout" data-only="one multi expired"><span class="ri"><svg class="i"><use href="#i-plus"/></svg></span><span class="rt">再买一份，分开用<small>单独的链接、单独的流量，和现在的互不影响</small></span><svg class="i chev"><use href="#i-chev"/></svg></a>
           <div class="row"><span class="ri"><svg class="i"><use href="#i-card"/></svg></span><span class="rt">有卡？去兑换</span><svg class="i chev"><use href="#i-chev"/></svg></div>
         </div>
       </div>
@@ -978,7 +1085,7 @@
             <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
             <div class="rule"></div>
             <ul><li><span>每期 <b>500 GB</b> 流量</span></li><li><span><b>5 台</b>设备同时用</span></li><li><span><b>亚太精选 + 欧美</b>线路</span></li><li><span><b>流媒体</b>解锁</span></li><li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li></ul>
-            <button class="btn hot">续费专业版</button>
+            <a class="btn hot" href="?ck=land#checkout">续费专业版</a>
             <p class="next">下一步选：续在原来那份上，或另开一份</p>
           </article>
           <article class="plan">
@@ -1010,7 +1117,7 @@
             <div class="pk-b">
               <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
               <ul><li><span><b>亚太精选 + 欧美</b>线路</span></li><li><span><b>流媒体</b>解锁</span></li><li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li></ul>
-              <button class="btn hot">续费专业版</button>
+              <a class="btn hot" href="?ck=land#checkout">续费专业版</a>
               <p class="next">下一步选：续在原来那份上，或另开一份</p>
             </div>
           </details>
@@ -1681,8 +1788,7 @@
       <div class="rows">
         <div class="row" data-open="pw"><span class="ri"><svg class="i"><use href="#i-key"/></svg></span><span class="rt">密码<small>改密码后，其他设备会全部下线</small></span><span class="rv">修改</span><svg class="i chev"><use href="#i-chev"/></svg></div>
         <!-- 快捷登录：只在这台已登录的设备生成，60 秒、一次性；再生成时旧的立即作废 -->
-        <div class="row static"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">快捷登录<small>在新设备上打开链接就能登录，60 秒内有效，只能用一次</small></span><button class="btn soft sm" data-ql>生成链接</button></div>
-        <div class="ql" hidden><div class="linkchip"><code>https://example.test/#/quick-login/q7Km2xPa9WzT4bNc</code><button>复制</button></div><div class="ql-bar"><i></i><span data-ql-left>58</span> 秒后失效 · 已复制到剪贴板</div></div>
+        <div class="row" data-open="ql"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">在新设备上登录<small>扫码或打开一次性链接，不用输密码</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
       </div>
 
       <h3>登录的设备</h3>
@@ -1726,6 +1832,22 @@
       <div class="sh-acts"><button class="btn soft" data-close>取消</button><button class="btn hot" data-pw>更新密码</button></div>
     </div>
   </div>
+  <!-- 快捷登录（参考 Telegram 扫码登录、Surfshark 用已登录设备登录、Brave 同步码的倒计时与提醒、Binance 二维码过期遮罩）：
+       打开弹层就生成一次；60 秒、只能用一次；再生成时旧的立即作废 -->
+  <div class="sheet" id="sh-ql" hidden>
+    <div class="sh-card ql-card" role="dialog" aria-label="在新设备上登录">
+      <div class="sh-top"><b>在新设备上登录</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">用新设备的相机扫这个码，或者把链接发到新设备上打开，就能直接登录。</p>
+      <div class="qr-box">
+        <svg class="qr" viewBox="0 0 29 29" aria-label="登录二维码" role="img"></svg>
+        <div class="qr-over" hidden><b>已失效</b><button class="btn sm" data-ql-new>重新生成</button></div>
+      </div>
+      <div class="ql-time"><span data-ql-t>0:58 后失效 · 只能用一次</span><i><s data-ql-bar></s></i></div>
+      <div class="linkchip ql-link"><code>https://example.test/#/quick-login/q7Km2xPa9WzT4bNc</code><button data-ql-copy>复制</button></div>
+      <p class="ql-warn">只发给自己的设备：拿到这个链接的人能直接登录你的账号。</p>
+      <div class="sh-acts"><button class="btn soft" data-close>完成</button></div>
+    </div>
+  </div>
   <div class="sheet" id="sh-tgun" hidden>
     <div class="sh-card" role="alertdialog" aria-label="解除绑定 Telegram">
       <div class="sh-top"><b>解除绑定 Telegram？</b><button class="x" data-close aria-label="关闭">×</button></div>
@@ -1733,6 +1855,180 @@
       <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn danger" data-close data-tgto="unbound">解除绑定</button></div>
     </div>
   </div>
+
+  <!-- ================= 确认页（#checkout，?ck=renew|change|new|stack|reset|land；不在导航里） ================= -->
+  <section class="page" id="p-checkout">
+    <div class="col wide">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+
+      <!-- 放到哪里：买已有的套餐时先选，不预选；只有一个选项时直接跳过 -->
+      <div class="ckv" data-ck="land">
+        <a class="ck-back" href="#plans">‹ 选购</a>
+        <h1>买专业版</h1>
+        <div class="land">
+          <p class="q">专业版放到哪里？</p>
+          <a class="opt" href="?ck=renew#checkout"><span class="ot">续在原来那份上<small>链接不变，到期日往后延</small></span><svg class="i chev"><use href="#i-chev"/></svg></a>
+          <a class="opt" href="?ck=new#checkout"><span class="ot">另开一份<small>新链接，和现在的分开：各自的流量、各自到期</small></span><svg class="i chev"><use href="#i-chev"/></svg></a>
+        </div>
+      </div>
+
+      <!-- 续费 -->
+      <div class="ckv" data-ck="renew">
+        <a class="ck-back" href="#subs">‹ 我的套餐</a>
+        <h1>续费</h1>
+        <div class="ck">
+          <div class="ck-l">
+            <div class="ck-item"><span class="tag">专业版</span><span><small>每期 500 GB · 5 台设备</small></span><span class="pill2">还剩 42 天</span></div>
+            <div class="ck-what"><p>到期日 11 月 27 日 → <b data-f="end">12 月 27 日</b>。链接不变，现在用的设备不用重新添加。</p></div>
+            <h3>买多久</h3>
+            <div class="tiers" role="radiogroup" aria-label="买多久">
+              <button class="tier on" role="radio" data-item="专业版 · 1 个月" data-price="¥59.00" data-end="12 月 27 日" data-total="5900"><span class="dot-r"></span><b>1 个月</b><small>到 12 月 27 日</small><span class="num">¥59.00</span></button>
+              <button class="tier" role="radio" data-item="专业版 · 3 个月" data-price="¥159.00" data-end="2027 年 2 月 27 日" data-total="15900"><span class="dot-r"></span><b>3 个月</b><small>到 2027 年 2 月 27 日</small><span class="num">¥159.00</span></button>
+              <button class="tier" role="radio" data-item="专业版 · 1 年" data-price="¥599.00" data-end="2027 年 11 月 27 日" data-total="59900"><span class="dot-r"></span><b>1 年</b><small>到 2027 年 11 月 27 日</small><span class="num">¥599.00</span></button>
+            </div>
+            <ul class="ck-notes"><li>现在剩的 208 GB 用到 11 月 27 日，到时不累加；11 月 27 日起新的一期，每期 500 GB。</li></ul>
+          </div>
+          <aside class="bill" data-total="5900" data-verb="续费">
+            <b>账单</b>
+            <div class="bl"><span data-f="item">专业版 · 1 个月</span><span class="num" data-f="price">¥59.00</span></div>
+            <div class="bl" data-cpn-line hidden><span>优惠码 <span data-cpn-code></span></span><span class="num" data-cpn-off></span></div>
+            <div class="bl"><span>到期日</span><span>11 月 27 日 → <span data-f="end">12 月 27 日</span></span></div>
+            <div class="cpn"></div>
+            <div class="bal"></div>
+            <p class="due"></p><p class="due-n" hidden></p>
+            <div class="pays"></div>
+            <div class="ck-refuse" hidden>你这份专业版还有一张没付款的续费单。先付掉或取消它，再下新的。<div><button class="btn soft sm">取消它</button><a class="btn soft sm" href="?od=1#orders">去付款</a></div></div>
+            <button class="btn hot full" data-go></button>
+          </aside>
+        </div>
+      </div>
+
+      <!-- 换套餐：现在 → 换成；每档写算式；原套餐没用完的部分可展开「怎么算的」 -->
+      <div class="ckv" data-ck="change">
+        <a class="ck-back" href="#subs">‹ 我的套餐</a>
+        <h1>换成家庭版</h1>
+        <div class="ck">
+          <div class="ck-l">
+            <div class="ck-swap"><div><span class="k">现在</span><b>专业版</b><small>每期 500 GB · 5 台设备</small></div><svg class="i"><use href="#i-chev"/></svg><div class="to"><span class="k">换成</span><b>家庭版</b><small>每期 300 GB · 6 台设备</small></div></div>
+            <div class="ck-what"><p>现在就换成家庭版：链接不变。每月流量 500 GB → 300 GB、设备 5 台 → 6 台，今天生效。<span data-refund-only hidden>多出的 ¥14.60 退到钱包余额。</span></p><p>从今天起重新算一期，到期 11 月 27 日 → <b data-f="end">2027 年 1 月 16 日</b>。</p></div>
+            <h3>买多久</h3>
+            <div class="tiers" role="radiogroup" aria-label="买多久">
+              <button class="tier" role="radio" data-item="家庭版 · 1 个月" data-price="¥49.00" data-end="11 月 16 日" data-total="0" data-refund="1460" data-formula="¥49.00 − 原套餐没用完的 ¥63.60 = <b>今天不用付，退 ¥14.60 到钱包余额</b>" data-note="（先抵家庭版的 ¥49.00，多的 ¥14.60 退到钱包）"><span class="dot-r"></span><b>1 个月</b><small>¥49 − ¥63.6 = 退 ¥14.6</small><span class="num">¥49.00</span></button>
+              <button class="tier on" role="radio" data-item="家庭版 · 3 个月" data-price="¥139.00" data-end="2027 年 1 月 16 日" data-total="7540" data-formula="¥139.00 − 原套餐没用完的 ¥63.60 = <b>今天付 ¥75.40</b>" data-note="（先抵家庭版的 ¥139.00，还需付 ¥75.40）"><span class="dot-r"></span><b>3 个月</b><small>¥139 − ¥63.6 = 付 ¥75.4</small><span class="num">¥139.00</span></button>
+              <button class="tier" role="radio" data-item="家庭版 · 1 年" data-price="¥499.00" data-end="2027 年 10 月 16 日" data-total="43540" data-formula="¥499.00 − 原套餐没用完的 ¥63.60 = <b>今天付 ¥435.40</b>" data-note="（先抵家庭版的 ¥499.00，还需付 ¥435.40）"><span class="dot-r"></span><b>1 年</b><small>¥499 − ¥63.6 = 付 ¥435.4</small><span class="num">¥499.00</span></button>
+            </div>
+            <p class="formula" data-f="formula">¥139.00 − 原套餐没用完的 ¥63.60 = <b>今天付 ¥75.40</b></p>
+            <ul class="ck-notes">
+              <li><b>专业版这期没用完的 208 GB 和 42 天，已经按 ¥63.60 算给你了</b><span data-f="note">（先抵家庭版的 ¥139.00，还需付 ¥75.40）</span>。从今天起按家庭版（每期 300 GB）重新算。</li>
+              <li data-refund-only hidden>退回的 ¥14.60 在「钱包」里，可以用来续费、买套餐，不能提现。</li>
+              <li class="warn">你的流量用得比天数快，现在换只能算回 ¥63.60。不急的话，快到期时再换更划算。</li>
+            </ul>
+            <p class="ck-alt">不想停用专业版？<a href="?ck=new#checkout">保留它，另外再买一份家庭版 ›</a></p>
+          </div>
+          <aside class="bill" data-total="7540" data-sub="13900" data-verb="换成家庭版">
+            <b>账单</b>
+            <div class="bl"><span data-f="item">家庭版 · 3 个月</span><span class="num" data-f="price">¥139.00</span></div>
+            <div class="bl" data-cpn-line hidden><span>优惠码 <span data-cpn-code></span></span><span class="num" data-cpn-off></span></div>
+            <div class="bl calc"><div><span>原套餐没用完的部分</span><span class="num">−¥63.60</span></div>
+              <details><summary>怎么算的</summary><p>专业版这期付了 ¥159.00。还剩 42/92 天（46%），流量还剩 208 GB/520 GB（40%），按少的那项算：¥159.00 × 40% = ¥63.60。按下单那一刻算；送的天数不算钱。</p></details></div>
+            <div class="bl"><span>到期日</span><span>11 月 27 日 → <span data-f="end">2027 年 1 月 16 日</span></span></div>
+            <div class="bl ok" data-refund-only hidden><span>多出的退回余额</span><span class="num">+¥14.60</span></div>
+            <div class="cpn"></div>
+            <div class="bal"></div>
+            <p class="due"></p><p class="due-n" hidden></p>
+            <div class="pays"></div>
+            <button class="btn hot full" data-go></button>
+            <p class="ck-again">↺ 换了以后想换回来也可以，按同样的方法算钱。</p>
+          </aside>
+        </div>
+      </div>
+
+      <!-- 再买一份（同款）：上方提示改成续费；会重名时名字必填 -->
+      <div class="ckv" data-ck="new">
+        <a class="ck-back" href="#plans">‹ 选购</a>
+        <h1>再买一份</h1>
+        <div class="ck">
+          <div class="ck-l">
+            <div class="ck-tip">你已经有一份专业版（还剩 42 天）。<br /><a href="?ck=renew#checkout">只想延长它？改成续费 →</a></div>
+            <div class="ck-what"><p>会得到一个新链接，要在用它的设备上添加到 App。你现在的专业版不受影响，各自到期、各自算流量。</p></div>
+            <h3>买多久</h3>
+            <div class="tiers" role="radiogroup" aria-label="买多久">
+              <button class="tier on" role="radio" data-item="专业版 · 1 个月" data-price="¥59.00" data-end="11 月 16 日" data-total="5900"><span class="dot-r"></span><b>1 个月</b><small>到 11 月 16 日</small><span class="num">¥59.00</span></button>
+              <button class="tier" role="radio" data-item="专业版 · 3 个月" data-price="¥159.00" data-end="2027 年 1 月 16 日" data-total="15900"><span class="dot-r"></span><b>3 个月</b><small>到 2027 年 1 月 16 日</small><span class="num">¥159.00</span></button>
+              <button class="tier" role="radio" data-item="专业版 · 1 年" data-price="¥599.00" data-end="2027 年 10 月 16 日" data-total="59900"><span class="dot-r"></span><b>1 年</b><small>到 2027 年 10 月 16 日</small><span class="num">¥599.00</span></button>
+            </div>
+            <h3>给它起个名字 <small style="color:var(--text-3);margin-left:4px">必填</small></h3>
+            <label class="fld ck-name" style="margin:0">
+              <input class="code" maxlength="16" value="妈妈的 iPad" placeholder="例如：妈妈的 iPad" aria-label="给它起个名字" data-name />
+              <p class="ck-tip" data-name-warn hidden style="margin-top:10px">不起名的话，App 里会有两个「Pandora · 专业版」，分不清哪个是哪个。</p>
+              <div class="chips2"><button data-idea>妈妈的 iPad</button><button data-idea>爸爸的手机</button><button data-idea>工作电脑</button></div>
+              <p class="faint">App 里会显示成「Pandora · <span data-name-show>妈妈的 iPad</span>」。名字以后随时能改。</p>
+            </label>
+          </div>
+          <aside class="bill" data-total="5900" data-verb="买一份新的">
+            <b>账单</b>
+            <div class="bl"><span data-f="item">专业版 · 1 个月</span><span class="num" data-f="price">¥59.00</span></div>
+            <div class="bl" data-cpn-line hidden><span>优惠码 <span data-cpn-code></span></span><span class="num" data-cpn-off></span></div>
+            <div class="bl"><span>到期日</span><span>今天起，到 <span data-f="end">11 月 16 日</span></span></div>
+            <div class="bl"><span>流量</span><span>每期 500 GB，从 0 开始</span></div>
+            <div class="cpn"></div>
+            <div class="bal"></div>
+            <p class="due"></p><p class="due-n" hidden></p>
+            <div class="pays"></div>
+            <button class="btn hot full" data-go></button>
+          </aside>
+        </div>
+      </div>
+
+      <!-- 叠加（一次性同款）：总流量加上，有效期顺延或永久 -->
+      <div class="ckv" data-ck="stack">
+        <a class="ck-back" href="#subs">‹ 我的套餐</a>
+        <h1>叠加</h1>
+        <div class="ck">
+          <div class="ck-l">
+            <div class="ck-item"><span class="tag">随用 100G</span><span><small>一次性 · 永久有效 · 3 台设备</small></span><span class="pill2">剩 63 GB</span></div>
+            <div class="ck-what"><p>再买一份随用 100G，加到你现在这份上：总流量 63 GB → <b>163 GB</b>，还是永久有效。</p><p>叠加后还是原来那个链接，不用重新添加。</p></div>
+          </div>
+          <aside class="bill" data-total="3900" data-verb="叠加">
+            <b>账单</b>
+            <div class="bl"><span>叠加到</span><span>随用 100G</span></div>
+            <div class="bl"><span>随用 100G · 一次性</span><span class="num">¥39.00</span></div>
+            <div class="bl" data-cpn-line hidden><span>优惠码 <span data-cpn-code></span></span><span class="num" data-cpn-off></span></div>
+            <div class="bl"><span>总流量</span><span>剩 63 GB → 加完 163 GB</span></div>
+            <div class="bl"><span>有效期</span><span>永久</span></div>
+            <div class="cpn"></div>
+            <div class="bal"></div>
+            <p class="due"></p><p class="due-n" hidden></p>
+            <div class="pays"></div>
+            <button class="btn hot full" data-go></button>
+          </aside>
+        </div>
+      </div>
+
+      <!-- 重置流量：永远按原价，没有优惠码；只清这一期已用的 -->
+      <div class="ckv" data-ck="reset">
+        <a class="ck-back" href="#subs">‹ 我的套餐</a>
+        <h1>重置流量</h1>
+        <div class="ck">
+          <div class="ck-l">
+            <div class="ck-item"><span class="tag">家里用</span><span><small>基础版 · 本期已用 159 GB / 200 GB</small></span><span class="pill2">本期还能买 1 次</span></div>
+            <div class="ck-what"><p>把「家里用」这一期已用的流量清零，马上生效。链接不变，到期时间不变。</p></div>
+            <ul class="ck-notes"><li>只清这一期已用的流量；到期时间都不变。</li></ul>
+          </div>
+          <aside class="bill" data-total="1000" data-verb="重置" data-nocpn>
+            <b>账单</b>
+            <div class="bl"><span>重置</span><span>家里用</span></div>
+            <div class="bl"><span>重置流量</span><span class="num">¥10.00</span></div>
+            <div class="bl"><span>重置后能用</span><span>41 GB → 200 GB</span></div>
+            <div class="bal"></div>
+            <p class="due"></p><p class="due-n" hidden></p>
+            <div class="pays"></div>
+            <button class="btn hot full" data-go></button>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
   <section class="page" id="p-me">
@@ -1773,7 +2069,7 @@
 
 <script>
   // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
-  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'security', 'me']
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'security', 'checkout', 'me']
   function show() {
     let p = location.hash.slice(1)
     if (!pages.includes(p)) p = 'subs'
@@ -1914,18 +2210,49 @@
   if (q.get('h')) hp(q.get('h'), q.get('v') === 'detail')
   if (q.get('hq')) { hsIn.value = q.get('hq'); hsearch() }
   // 账号安全：快捷登录倒数、下线、Telegram 三态（?tg=code|bound 预选）、通知开关、改密码出错演示（?pe=1）
-  const qlBox = document.querySelector('.ql')
-  let qlTimer
-  function ql() {
-    let left = 60
-    qlBox.hidden = false
-    document.querySelector('[data-ql]').textContent = '重新生成'
-    clearInterval(qlTimer)
-    const tick = () => { document.querySelector('[data-ql-left]').textContent = left; if (left-- <= 0) { clearInterval(qlTimer); qlBox.hidden = true; document.querySelector('[data-ql]').textContent = '生成链接' } }
-    tick()
-    qlTimer = setInterval(tick, 1000)
+  // 二维码只是样子：按种子画三个定位角加随机点（正式门户用 common/qr.ts 真编码）
+  function drawQr(seed) {
+    const svg = document.querySelector('.qr')
+    let r = seed
+    const rnd = () => ((r = (r * 1103515245 + 12345) % 2147483648) / 2147483648)
+    const cells = []
+    const finder = (x, y) => { for (let i = 0; i < 7; i++) for (let j = 0; j < 7; j++) if (i === 0 || i === 6 || j === 0 || j === 6 || (i > 1 && i < 5 && j > 1 && j < 5)) cells.push([x + i, y + j]) }
+    finder(0, 0); finder(22, 0); finder(0, 22)
+    const inFinder = (x, y) => (x < 8 && y < 8) || (x > 20 && y < 8) || (x < 8 && y > 20)
+    for (let x = 0; x < 29; x++) for (let y = 0; y < 29; y++) if (!inFinder(x, y) && rnd() < 0.48) cells.push([x, y])
+    svg.innerHTML = cells.map(([x, y]) => '<rect x="' + x + '" y="' + y + '" width="1" height="1"/>').join('')
   }
-  document.querySelector('[data-ql]').addEventListener('click', ql)
+  let qlTimer
+  function ql(expired = false) {
+    let left = expired ? 0 : 60
+    clearInterval(qlTimer)
+    drawQr(Math.floor(Math.random() * 1e6) + 7)
+    const box = document.querySelector('.ql-time')
+    const over = document.querySelector('.qr-over')
+    const link = document.querySelector('.ql-link')
+    const tick = () => {
+      box.classList.toggle('low', left > 0 && left <= 10)
+      box.classList.toggle('gone', left <= 0)
+      document.querySelector('[data-ql-bar]').style.width = (left / 60) * 100 + '%'
+      if (left <= 0) {
+        clearInterval(qlTimer)
+        document.querySelector('[data-ql-t]').textContent = '已失效，重新生成一个'
+        over.hidden = false
+        link.classList.add('off')
+        return
+      }
+      document.querySelector('[data-ql-t]').textContent = '0:' + String(left).padStart(2, '0') + ' 后失效 · 只能用一次'
+      over.hidden = true
+      link.classList.remove('off')
+      left--
+    }
+    tick()
+    if (!expired) qlTimer = setInterval(tick, 1000)
+  }
+  document.querySelector('[data-open="ql"]').addEventListener('click', () => ql())
+  document.querySelector('[data-ql-new]').addEventListener('click', () => ql())
+  document.querySelector('[data-ql-copy]').addEventListener('click', (e) => { const b = e.currentTarget; b.textContent = '已复制'; setTimeout(() => { b.textContent = '复制' }, 1500) })
+  if (q.get('w') === 'ql') ql(!!q.get('qx'))
   document.querySelectorAll('[data-kick]').forEach((el) => el.addEventListener('click', () => {
     const row = el.closest('.row')
     const note = document.getElementById('kick-note')
@@ -1944,8 +2271,105 @@
   document.querySelectorAll('[data-tgto]').forEach((el) => el.addEventListener('click', () => tgState(el.dataset.tgto)))
   document.querySelectorAll('.sw').forEach((el) => el.addEventListener('click', () => el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true')))
   tgState(['code', 'bound'].includes(q.get('tg')) ? q.get('tg') : 'unbound')
-  if (q.get('ql')) ql()
   if (q.get('pe')) { const f = document.querySelector('#sh-pw .fld'); f.querySelector('.code').classList.add('bad'); f.querySelector('.err').hidden = false }
+  // 确认页：?ck= 选哪种；点「买多久」换账单；余额开关、付款方式、优惠码、起名都在页面里算。?ckx=pending 演示「还有一张没付的单」
+  const ck = ['renew', 'change', 'new', 'stack', 'reset', 'land'].includes(q.get('ck')) ? q.get('ck') : 'renew'
+  const BAL = 2650
+  const yuan = (f) => '¥' + (f / 100).toFixed(2)
+  document.querySelectorAll('.ckv').forEach((el) => { el.hidden = el.dataset.ck !== ck })
+  function recalc(bill) {
+    const box = bill.closest('.ckv')
+    const total = Math.max(0, +bill.dataset.total - (+bill.dataset.disc || 0))
+    const refund = total === 0 ? +bill.dataset.refund || 0 : 0
+    const sw = bill.querySelector('.bal .sw')
+    const on = !sw || sw.getAttribute('aria-checked') === 'true'
+    let applied = on ? Math.min(BAL, total) : 0
+    let payable = total - applied
+    let kept = 0
+    // 在线付款最少 ¥1：余额只用到剩 ¥1 为止
+    if (payable > 0 && payable < 100) { applied = Math.max(0, total - 100); payable = total - applied; kept = BAL - applied }
+    const bal = bill.querySelector('.bal')
+    bal.hidden = total === 0
+    bal.querySelector('span').innerHTML = on ? '<b>已用余额 ' + yuan(applied) + '</b>（可关掉）' : '用余额（有 ' + yuan(BAL) + '，现在没用）'
+    const due = bill.querySelector('.due')
+    if (total === 0) due.innerHTML = '这次不用付钱' + (refund ? '，多出的 ' + yuan(refund) + ' 退到钱包余额' : '')
+    else if (applied > 0 && payable > 0) due.innerHTML = '余额抵 ' + yuan(applied) + '，还需支付 <b>' + yuan(payable) + '</b>'
+    else if (applied > 0) due.innerHTML = '余额够付，<b>' + yuan(applied) + '</b> 全部用余额'
+    else due.innerHTML = '要付 <b>' + yuan(payable) + '</b>'
+    const dn = bill.querySelector('.due-n')
+    dn.hidden = !kept
+    if (kept) dn.textContent = '支付宝、微信支付最低要付 ¥1.00，所以这次余额只用 ' + yuan(applied) + '，剩下 ' + yuan(kept) + ' 还在余额里。'
+    const pays = bill.querySelector('.pays')
+    pays.hidden = payable === 0
+    const fee = Math.max(1, Math.round(payable * 0.006))
+    pays.querySelector('[data-fee]').textContent = '手续费 ' + yuan(fee) + '，合计 ' + yuan(payable + fee)
+    const wx = pays.querySelector('.pay.on [data-fee]')
+    pays.querySelector('[data-fee-n]').hidden = !wx
+    pays.querySelector('[data-fee-n]').textContent = '选微信支付另付手续费 ' + yuan(fee) + '，合计 ' + yuan(payable + fee) + '；用余额付不收手续费。'
+    const verb = bill.dataset.verb
+    const go = bill.querySelector('[data-go]')
+    const nameIn = box.querySelector('[data-name]')
+    const noName = nameIn && !nameIn.value.trim()
+    go.disabled = noName
+    go.textContent = noName ? '先给它起个名字' : total === 0 ? verb : payable > 0 ? verb + '，付 ' + yuan(payable) : verb + '，用余额付 ' + yuan(applied)
+    box.querySelectorAll('[data-refund-only]').forEach((el) => { el.hidden = !refund })
+  }
+  document.querySelectorAll('.bill').forEach((bill) => {
+    if (!bill.hasAttribute('data-nocpn')) bill.querySelector('.cpn').innerHTML = '<button data-cpn-open>有优惠码？</button><div class="cpn-row" hidden><input class="code" placeholder="例如 AUTUMN26" aria-label="优惠码" /><button class="btn soft" data-cpn-use>使用</button></div><p class="good" hidden></p>'
+    bill.querySelector('.bal').innerHTML = '<span></span><button class="sw" role="switch" aria-checked="true" aria-label="用余额"></button>'
+    bill.querySelector('.pays').innerHTML = '<label class="pay on"><span class="pi ali">支</span><span class="pt">支付宝</span><span class="dot-r"></span></label><label class="pay"><span class="pi wx">微</span><span class="pt">微信支付<small data-fee></small></span><span class="dot-r"></span></label><p class="due-n" data-fee-n hidden></p>'
+    bill.querySelector('.bal .sw').addEventListener('click', (e) => { const s = e.currentTarget; s.setAttribute('aria-checked', s.getAttribute('aria-checked') === 'true' ? 'false' : 'true'); recalc(bill) })
+    bill.querySelectorAll('.pay').forEach((p) => p.addEventListener('click', () => { bill.querySelectorAll('.pay').forEach((x) => x.classList.toggle('on', x === p)); recalc(bill) }))
+    const cpn = bill.querySelector('.cpn')
+    if (cpn && cpn.firstChild) {
+      cpn.querySelector('[data-cpn-open]').addEventListener('click', (e) => { e.currentTarget.hidden = true; cpn.querySelector('.cpn-row').hidden = false })
+      cpn.querySelector('[data-cpn-use]').addEventListener('click', (e) => {
+        const btn = e.currentTarget
+        const inp = cpn.querySelector('input')
+        const line = bill.querySelector('[data-cpn-line]')
+        if (btn.textContent === '不用了') { bill.dataset.disc = 0; inp.value = ''; btn.textContent = '使用'; line.hidden = true; cpn.querySelector('.good').hidden = true; return recalc(bill) }
+        const code = inp.value.trim().toUpperCase() || 'AUTUMN26'
+        inp.value = code
+        const off = Math.round((+bill.dataset.sub || +bill.dataset.total) * 0.1)
+        bill.dataset.disc = off
+        line.hidden = false
+        line.querySelector('[data-cpn-code]').textContent = code
+        line.querySelector('[data-cpn-off]').textContent = '−' + yuan(off)
+        line.classList.add('ok')
+        const good = cpn.querySelector('.good')
+        good.hidden = false
+        good.textContent = '已用优惠码 ' + code + '，省 ' + yuan(off)
+        btn.textContent = '不用了'
+        recalc(bill)
+      })
+    }
+    recalc(bill)
+  })
+  document.querySelectorAll('.tier').forEach((t) => t.addEventListener('click', () => {
+    const box = t.closest('.ckv')
+    const bill = box.querySelector('.bill')
+    box.querySelectorAll('.tier').forEach((x) => x.classList.toggle('on', x === t))
+    box.querySelectorAll('[data-f]').forEach((el) => {
+      const v = { item: t.dataset.item, price: t.dataset.price, end: t.dataset.end, formula: t.dataset.formula, note: t.dataset.note }[el.dataset.f]
+      if (v !== undefined) el.innerHTML = v
+    })
+    bill.dataset.total = t.dataset.total
+    bill.dataset.refund = t.dataset.refund || 0
+    bill.dataset.sub = Math.round(parseFloat(t.dataset.price.slice(1)) * 100)
+    if (+bill.dataset.disc) bill.querySelector('[data-cpn-use]').click(), bill.querySelector('[data-cpn-use]').click()
+    recalc(bill)
+  }))
+  const nameIn = document.querySelector('[data-name]')
+  const nameSync = () => {
+    document.querySelector('[data-name-show]').textContent = nameIn.value.trim() || '专业版'
+    document.querySelector('[data-name-warn]').hidden = !!nameIn.value.trim()
+    recalc(nameIn.closest('.ckv').querySelector('.bill'))
+  }
+  nameIn.addEventListener('input', nameSync)
+  document.querySelectorAll('[data-idea]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); nameIn.value = b.textContent; nameSync() }))
+  if (q.get('ckx') === 'pending') document.querySelector('[data-ck="renew"] .ck-refuse').hidden = false
+  if (q.get('nm') === '0') { nameIn.value = ''; nameSync() }
+  if (q.get('bal') === '0') document.querySelectorAll('.bal .sw').forEach((s) => s.click())
   const bar = document.createElement('nav')
   bar.className = 'pal'
   ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
