@@ -5,6 +5,8 @@ interface ModuleDef {
   group: string
   /** 全幅：铺满窗口、无页边距，外框不画页头和页签栏（页面自己画栏头）。只有工单 */
   fullBleed?: true
+  /** 页面自己画页头（问候语 + 帮助），外框不画标题行；页签栏照画（仪表盘没有页签）。只有仪表盘 */
+  ownHead?: true
   /** [标签值, 标签名]；第一项为默认标签 */
   tabs?: ReadonlyArray<readonly [string, string]>
 }
@@ -14,7 +16,7 @@ interface ModuleDef {
 // 结构照 10-16 设计稿：用户只剩三个页签，套餐没有页签，营销与安全各加一个 signup。
 // ---------------------------------------------------------------------------
 export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
-  dash: { title: '仪表盘', group: '工作台' },
+  dash: { title: '仪表盘', group: '工作台', ownHead: true },
   tickets: { title: '工单', group: '工作台', fullBleed: true },
   users: {
     title: '用户',
@@ -118,6 +120,9 @@ export function isDetailRoute(module: ModuleKey, tab: string | null, rest: reado
 
 /** 全幅模块（见 ModuleDef.fullBleed） */
 export const isFullBleed = (module: ModuleKey): boolean => MODULES[module].fullBleed === true
+
+/** 页面自己画页头的模块（见 ModuleDef.ownHead） */
+export const hasOwnHead = (module: ModuleKey): boolean => MODULES[module].ownHead === true
 
 // ⌘K 里的深链：[模块, 页签, 能在这一页做的事]，名称按后端真实能力（换发订阅链接而不是「更换订阅地址」）
 const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]> = [

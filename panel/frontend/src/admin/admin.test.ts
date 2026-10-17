@@ -3,7 +3,7 @@ import { ApiError } from '../core/api'
 import { classifyFailure, createIntentKey, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
 import { identityLabels } from './me'
-import { isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
+import { hasOwnHead, isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
 import { PAGE_HELP, pageHelp } from './page-help'
 import { createReauthController } from './reauth'
 import { documentSiteName } from './site'
@@ -96,6 +96,11 @@ describe('nav groups', () => {
   it('全幅仅工单', () => {
     expect(isFullBleed('tickets')).toBe(true)
     expect(isFullBleed('users')).toBe(false)
+  })
+
+  it('自画页头仅仪表盘', () => {
+    const own = (Object.keys(MODULES) as (keyof typeof MODULES)[]).filter(hasOwnHead)
+    expect(own).toEqual(['dash'])
   })
 })
 
