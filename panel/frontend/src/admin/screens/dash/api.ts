@@ -13,6 +13,8 @@ const decimalBytes = z.string().regex(/^\d+$/)
 
 // ---------------------------------------------------------------------------
 // GET v1/dashboard/backlog/notifications（DASH-01 冻结）
+// 仪表盘已不显示通知积压（10-16 设计稿：归「系统状态」）；schema 只剩 tests/smoke 在核对，
+// 后端接口下线时连同 smoke 那一行一起删
 // ---------------------------------------------------------------------------
 export const backlogSchema = z.object({
   as_of: z.string(),
@@ -69,6 +71,7 @@ export type Overview = z.output<typeof overviewSchema>
 // ---------------------------------------------------------------------------
 // GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计）
 // ---------------------------------------------------------------------------
+/** 趋势卡的区间：收入与注册日活共用 7 / 30 / 90 天 */
 export type RevenueDays = 7 | 30 | 90
 const revenuePointSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -196,15 +199,6 @@ export type ActivityPoint = z.output<typeof activityPointSchema>
 // ---------------------------------------------------------------------------
 const MINUTE = 60_000
 
-export function useBacklog() {
-  const api = useApi()
-  return useQuery({
-    queryKey: ['admin', 'dash', 'backlog'],
-    queryFn: ({ signal }) => api.get('v1/dashboard/backlog/notifications', backlogSchema, { signal }),
-    refetchInterval: MINUTE,
-  })
-}
-
 export function useOverview() {
   const api = useApi()
   return useQuery({
@@ -226,8 +220,8 @@ export function useRevenue(days: RevenueDays) {
   })
 }
 
-/** 仪表盘固定取近 24 小时前 10 名；「流量」KPI 读同一条查询的 totals，只发一次请求 */
-const TRAFFIC_QUERY = { range: '24h', limit: 10 } as const
+/** 仪表盘固定取近 24 小时前 8 名（两张卡各 8 行，等高） */
+const TRAFFIC_QUERY = { range: '24h', limit: 8 } as const
 
 export function useNodeTraffic() {
   const api = useApi()
@@ -259,11 +253,13 @@ export function useSystemStatus() {
   })
 }
 
-export function useActivity() {
+export function useActivity(days: RevenueDays) {
   const api = useApi()
   return useQuery({
-    queryKey: ['admin', 'dash', 'activity'],
-    queryFn: ({ signal }) => api.get('v1/stats/timeseries', activitySchema, { signal, query: { days: 14 } }),
+    queryKey: ['admin', 'dash', 'activity', days],
+    queryFn: ({ signal }) => api.get('v1/stats/timeseries', activitySchema, { signal, query: { days } }),
     refetchInterval: 5 * MINUTE,
+    // 切区间时保留上一张图，不闪骨架
+    placeholderData: keepPreviousData,
   })
 }

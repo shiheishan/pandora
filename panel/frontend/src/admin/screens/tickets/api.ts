@@ -18,7 +18,8 @@ const time = z.string()
 
 // ---------------------------------------------------------------------------
 // Ticket：列表与详情共用一个 Go 结构。带 omitempty 的字段（后端 nil / false / '' 时省略）
-// 写 optional；closed_reason、related_order 没有 omitempty，恒在、可为 null。
+// 写 optional；user_id、user_email、两个 sla_*_due 没有 omitempty，恒在；
+// closed_reason、related_order 没有 omitempty，恒在、可为 null。
 // related_order：队列恒为 null，详情按关联订单联表；详情的 message_count / last_reply_at 与队列同口径（R114）。
 // ---------------------------------------------------------------------------
 const ticketSchema = z.object({
@@ -31,12 +32,12 @@ const ticketSchema = z.object({
   created_at: time,
   updated_at: time,
   resolved_at: time.nullable(),
-  user_id: z.string().optional(),
-  user_email: z.string().optional(),
+  user_id: z.string(),
+  user_email: z.string(),
   assigned_to: z.string().optional(),
   assignee_email: z.string().optional(),
-  sla_first_response_due: time.optional(),
-  sla_resolution_due: time.optional(),
+  sla_first_response_due: time,
+  sla_resolution_due: time,
   first_responded_at: time.optional(),
   escalated_at: time.optional(),
   sla_breached: z.boolean().optional(),
