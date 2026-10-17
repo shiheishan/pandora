@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="zh-CN" data-pal="a" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>后台样稿 v1</title>
+<style>
+  /* 三套配色候选，每套都有浅色与深色。?pal=a|b|c 切换配色，?theme=dark 看深色，?shot=1 隐藏切换条 */
+  :root {
+    --sans: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    --side-w: 236px;
+    --r: 12px;
+  }
+  /* A 森林绿：与用户端同一个主色，深绿侧栏 */
+  [data-pal='a'][data-theme='light'] {
+    --bg: #f3f5f2; --surface: #fff; --surface-2: #f7f9f7; --line: #e3e8e3; --line-2: #d2dad3;
+    --text: #141715; --text-2: #5f6660; --text-3: #8c938d;
+    --side: #10241a; --side-2: #183020; --side-act: #22412d; --side-text: #e7efe9; --side-text-2: #9fb3a5; --side-text-3: #6f8577; --side-line: rgba(255, 255, 255, 0.08);
+    --pri: #1f3d2b; --pri-h: #2c5a3f; --on-pri: #fff; --acc: #2c5a3f; --acc-soft: #e3ece5; --mark: #4cbb72;
+    --ok: #17804f; --ok-soft: #e2f2e8; --warn: #8a5a00; --warn-soft: #fbf1dc; --danger: #b0283c; --danger-soft: #f9e4e6; --info: #2f5d8a; --info-soft: #e5edf5;
+    --c1: #2c5a3f; --c1-fill: rgba(44, 90, 63, 0.12); --c2: #a9bfb0;
+  }
+  [data-pal='a'][data-theme='dark'] {
+    --bg: #0c120e; --surface: #131a15; --surface-2: #18211b; --line: #212e25; --line-2: #2c3b31;
+    --text: #e6ece7; --text-2: #9aa69d; --text-3: #6f7b72;
+    --side: #090e0b; --side-2: #121a15; --side-act: #1a2a20; --side-text: #e6ece7; --side-text-2: #8a988e; --side-text-3: #5f6d63; --side-line: rgba(255, 255, 255, 0.06);
+    --pri: #4cbb72; --pri-h: #5fcb84; --on-pri: #07140c; --acc: #6fd294; --acc-soft: #173022; --mark: #4cbb72;
+    --ok: #6fd294; --ok-soft: #142a1d; --warn: #f0b35a; --warn-soft: #2c2213; --danger: #f07a86; --danger-soft: #2c1519; --info: #8fb4dc; --info-soft: #16202e;
+    --c1: #6fd294; --c1-fill: rgba(111, 210, 148, 0.14); --c2: #3f5a48;
+  }
+  /* B 石墨：中性灰底、浅色侧栏、墨色按钮，绿色只给选中、链接和焦点 */
+  [data-pal='b'][data-theme='light'] {
+    --bg: #f5f5f4; --surface: #fff; --surface-2: #fafaf9; --line: #e8e7e4; --line-2: #d9d8d4;
+    --text: #18181a; --text-2: #64635e; --text-3: #95948e;
+    --side: #efefed; --side-2: #e6e6e3; --side-act: #fff; --side-text: #18181a; --side-text-2: #64635e; --side-text-3: #95948e; --side-line: #e0dfdb;
+    --pri: #18181a; --pri-h: #2e2e32; --on-pri: #fff; --acc: #23724a; --acc-soft: #e4f0e8; --mark: #4cbb72;
+    --ok: #1f7a4f; --ok-soft: #e3f3ea; --warn: #9a5c00; --warn-soft: #fbf0dc; --danger: #b3263a; --danger-soft: #f8e1e3; --info: #34507c; --info-soft: #e6ebf3;
+    --c1: #23724a; --c1-fill: rgba(35, 114, 74, 0.1); --c2: #bdbcb6;
+  }
+  [data-pal='b'][data-theme='dark'] {
+    --bg: #111113; --surface: #18181b; --surface-2: #1d1d20; --line: #27272b; --line-2: #333338;
+    --text: #ecebe7; --text-2: #9a988f; --text-3: #75736c;
+    --side: #0c0c0e; --side-2: #18181b; --side-act: #232327; --side-text: #ecebe7; --side-text-2: #9a988f; --side-text-3: #6c6a64; --side-line: #1f1f22;
+    --pri: #ecebe7; --pri-h: #fff; --on-pri: #111113; --acc: #6fcf9b; --acc-soft: #15271e; --mark: #4cbb72;
+    --ok: #6fcf9b; --ok-soft: #15271e; --warn: #f0b35a; --warn-soft: #2c2213; --danger: #f07a86; --danger-soft: #2c1519; --info: #93b1dc; --info-soft: #172031;
+    --c1: #6fcf9b; --c1-fill: rgba(111, 207, 155, 0.12); --c2: #3a3a40;
+  }
+  /* C 夜航蓝：深海军蓝侧栏、蓝色主按钮，和状态绿互不相撞 */
+  [data-pal='c'][data-theme='light'] {
+    --bg: #f3f5f8; --surface: #fff; --surface-2: #f8f9fb; --line: #e3e7ee; --line-2: #d3d9e3;
+    --text: #111a2a; --text-2: #5b6678; --text-3: #8b95a5;
+    --side: #0f1b2d; --side-2: #16253b; --side-act: #1f3352; --side-text: #e8edf5; --side-text-2: #93a1b8; --side-text-3: #66748b; --side-line: rgba(255, 255, 255, 0.08);
+    --pri: #2b59c3; --pri-h: #234bab; --on-pri: #fff; --acc: #2b59c3; --acc-soft: #e6edfb; --mark: #5b8cff;
+    --ok: #1f7a4f; --ok-soft: #e3f3ea; --warn: #9a5c00; --warn-soft: #fbf0dc; --danger: #b3263a; --danger-soft: #f8e1e3; --info: #2b59c3; --info-soft: #e6edfb;
+    --c1: #2b59c3; --c1-fill: rgba(43, 89, 195, 0.11); --c2: #b0bdd8;
+  }
+  [data-pal='c'][data-theme='dark'] {
+    --bg: #0b1220; --surface: #111a2b; --surface-2: #152036; --line: #1e2a40; --line-2: #29374f;
+    --text: #e6ebf3; --text-2: #93a0b5; --text-3: #66738a;
+    --side: #070d18; --side-2: #0f1829; --side-act: #182640; --side-text: #e6ebf3; --side-text-2: #8796ad; --side-text-3: #5a6880; --side-line: rgba(255, 255, 255, 0.06);
+    --pri: #5b8cff; --pri-h: #7aa2ff; --on-pri: #06101f; --acc: #7aa2ff; --acc-soft: #16243f; --mark: #5b8cff;
+    --ok: #6fcf9b; --ok-soft: #13261d; --warn: #f0b35a; --warn-soft: #2c2213; --danger: #f07a86; --danger-soft: #2c1519; --info: #7aa2ff; --info-soft: #16243f;
+    --c1: #7aa2ff; --c1-fill: rgba(122, 162, 255, 0.14); --c2: #34446a;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font: 14px/1.5 var(--sans); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+  .num { font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); font-size: 0.92em; }
+  svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  [data-icons='hugeicons'] svg.i { stroke-width: 1.5; }
+  button { font: inherit; color: inherit; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 6px; }
+  [hidden] { display: none !important; }
+
+  /* ── 外框 ── */
+  .app { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); min-height: 100vh; }
+  .side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--side); color: var(--side-text); border-right: 1px solid var(--side-line); }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px; }
+  .logo { width: 30px; height: 30px; border-radius: 9px; background: var(--side-text); color: var(--side); display: grid; place-items: center; font-weight: 800; font-size: 15px; position: relative; }
+  .logo::after { content: ''; position: absolute; right: -2px; top: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--mark); box-shadow: 0 0 0 2px var(--side); }
+  .brand b { display: block; font-size: 15px; letter-spacing: 0.01em; }
+  .brand small { display: block; font-size: 11.5px; color: var(--side-text-3); margin-top: -2px; }
+  .env { margin-left: auto; font-size: 11px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--side-line); color: var(--side-text-2); }
+  .nav { flex: 1; overflow-y: auto; padding: 4px 10px 12px; scrollbar-width: thin; }
+  .grp { font-size: 11.5px; color: var(--side-text-3); padding: 14px 10px 6px; letter-spacing: 0.04em; }
+  .na { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--side-text-2); font-size: 14px; margin: 1px 0; position: relative; }
+  .na:hover { background: var(--side-2); color: var(--side-text); }
+  .na.on { background: var(--side-act); color: var(--side-text); font-weight: 600; }
+  [data-pal='b'][data-theme='light'] .na.on { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px var(--side-line); }
+  .na.on svg.i { color: var(--mark); }
+  [data-pal='b'] .na.on svg.i { color: var(--acc); }
+  .na .ct { margin-left: auto; font-size: 12px; min-width: 20px; text-align: center; padding: 0 6px; border-radius: 10px; color: var(--side-text-2); }
+  .na .ct.hot { background: var(--danger); color: #fff; font-weight: 600; }
+  .na:focus-visible { outline-offset: -2px; }
+  .side-foot { padding: 10px; border-top: 1px solid var(--side-line); display: grid; gap: 4px; }
+  .acct { all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; }
+  .acct:hover { background: var(--side-2); }
+  .acct:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+  .av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: var(--mark); color: #08130c; flex: none; }
+  [data-pal='c'] .av { color: #fff; }
+  .acct .who { min-width: 0; flex: 1; }
+  .acct .who b { display: block; font-size: 13.5px; }
+  .acct .who small { display: block; font-size: 12px; color: var(--side-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acct-wrap { position: relative; }
+  .menu { position: absolute; left: 6px; right: 6px; bottom: calc(100% + 6px); background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.35); padding: 6px; z-index: 20; }
+  .mi { all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; font-size: 13.5px; }
+  .mi:hover, .mi:focus-visible { background: var(--surface-2); }
+  .mi.danger { color: var(--danger); }
+  .msep { height: 1px; background: var(--line); margin: 5px 4px; }
+
+  .main { min-width: 0; display: flex; flex-direction: column; }
+  .top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; height: 60px; padding: 0 28px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .crumb { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-3); white-space: nowrap; }
+  .crumb b { color: var(--text); font-weight: 600; }
+  .search { all: unset; cursor: text; flex: 1; min-width: 0; max-width: 460px; margin: 0 auto; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px 0 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--text-3); font-size: 13.5px; box-sizing: border-box; }
+  .search:hover { border-color: var(--line-2); }
+  .search span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  kbd { font: 11.5px var(--mono); padding: 2px 6px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
+  .tools { display: flex; align-items: center; gap: 6px; }
+  .ib { all: unset; cursor: pointer; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; color: var(--text-2); }
+  .ib:hover { background: var(--surface); color: var(--text); }
+  .ib:focus-visible { outline: 2px solid var(--acc); outline-offset: 0; }
+  .live { all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; color: var(--text-2); }
+  .live:hover { border-color: var(--line-2); color: var(--text); }
+  .live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  .live .n { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--pri); color: var(--on-pri); font-size: 11.5px; display: grid; place-items: center; font-weight: 600; }
+  .burger { display: none; }
+  .shade { display: none; }
+
+  .page { padding: 26px 28px 56px; max-width: 1360px; width: 100%; margin: 0 auto; display: none; }
+  .page.on { display: block; }
+  .ph { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; }
+  .ph h1 { margin: 0; font-size: 24px; letter-spacing: 0.01em; }
+  .ph p { margin: 2px 0 0; color: var(--text-2); font-size: 13.5px; }
+  .ph .sp { flex: 1; }
+  .help { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); padding: 6px 10px; border-radius: 8px; }
+  .help:hover { background: var(--surface); color: var(--text); }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+  .ch { display: flex; align-items: center; gap: 10px; padding: 16px 18px 0; }
+  .ch h2 { margin: 0; font-size: 15px; }
+  .ch .sub { font-size: 12.5px; color: var(--text-3); }
+  .ch .sp { flex: 1; }
+  .link { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--acc); font-weight: 500; }
+  .link:hover { text-decoration: underline; }
+  .link svg.i { width: 15px; height: 15px; }
+
+  .btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 9px; font-size: 13.5px; font-weight: 600; box-sizing: border-box; white-space: nowrap; }
+  .btn.pri { background: var(--pri); color: var(--on-pri); }
+  .btn.pri:hover { background: var(--pri-h); }
+  .btn.sec { background: var(--surface); border: 1px solid var(--line-2); color: var(--text); }
+  .btn.sec:hover { background: var(--surface-2); }
+  .btn svg.i { width: 16px; height: 16px; }
+
+  .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); }
+  .seg button { all: unset; cursor: pointer; padding: 3px 10px; border-radius: 7px; font-size: 12.5px; color: var(--text-2); }
+  .seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--line); }
+  [data-theme='dark'] .seg button.on { background: var(--line-2); box-shadow: none; }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .chip.ok { color: var(--ok); background: var(--ok-soft); }
+  .chip.warn { color: var(--warn); background: var(--warn-soft); }
+  .chip.danger { color: var(--danger); background: var(--danger-soft); }
+  .chip.info { color: var(--info); background: var(--info-soft); }
+  .chip.mute { color: var(--text-2); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+
+  /* ── 仪表盘 ── */
+  .todo { display: grid; grid-template-columns: minmax(280px, 0.9fr) 1.6fr; margin-bottom: 18px; overflow: hidden; }
+  .urgent { padding: 18px 20px; border-right: 1px solid var(--line); background: linear-gradient(180deg, var(--danger-soft), transparent 70%); display: flex; flex-direction: column; }
+  .urgent .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--danger); }
+  .urgent .tag svg.i { width: 15px; height: 15px; }
+  .urgent h3 { margin: 4px 0 0; font-size: 15px; }
+  .big { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 14px; }
+  .big b { font-size: 52px; line-height: 1; letter-spacing: -0.02em; color: var(--danger); }
+  .big span { color: var(--text-2); }
+  .urgent .meta { display: flex; gap: 22px; font-size: 12.5px; color: var(--text-3); margin-top: auto; }
+  .urgent .meta b { display: block; font-size: 15px; color: var(--text); }
+  .urgent .act { margin-top: 16px; }
+  .tlist { display: flex; flex-direction: column; }
+  .tlist .th { display: flex; align-items: center; gap: 8px; padding: 14px 18px 8px; font-size: 13px; color: var(--text-3); }
+  .tlist .th b { color: var(--text); font-size: 15px; }
+  .trow { all: unset; cursor: pointer; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto 18px; align-items: center; gap: 12px; padding: 11px 18px; border-top: 1px solid var(--line); }
+  .trow:hover { background: var(--surface-2); }
+  .trow:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+  .trow .ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; }
+  .trow .ic svg.i { width: 17px; height: 17px; }
+  .trow .ic.warn { background: var(--warn-soft); color: var(--warn); }
+  .trow .ic.info { background: var(--info-soft); color: var(--info); }
+  .trow .t b { display: block; font-size: 14px; font-weight: 600; }
+  .trow .t small { display: block; font-size: 12.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trow .v { font-size: 18px; font-weight: 700; }
+  .trow > svg.i { color: var(--text-3); width: 16px; height: 16px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .kpi { padding: 16px 18px 14px; position: relative; overflow: hidden; }
+  .kpi .l { font-size: 12.5px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+  .kpi .l svg.i { width: 15px; height: 15px; color: var(--text-3); }
+  .kpi .v { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 6px 0 2px; }
+  .kpi .d { font-size: 12.5px; color: var(--text-3); }
+  .up { color: var(--ok); font-weight: 600; }
+  .dn { color: var(--danger); font-weight: 600; }
+  .kpi svg.spark { position: absolute; right: 14px; bottom: 14px; width: 92px; height: 34px; }
+  .meter { height: 6px; border-radius: 3px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; margin-top: 10px; }
+  .meter i { display: block; height: 100%; background: var(--c1); border-radius: 3px; }
+
+  .row2 { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); gap: 14px; margin-bottom: 18px; }
+  .rev-head { display: flex; flex-wrap: wrap; gap: 26px; padding: 12px 18px 0; }
+  .rev-head .l { font-size: 12.5px; color: var(--text-3); }
+  .rev-head .v { font-size: 20px; font-weight: 700; }
+  .rev-head .main-v { font-size: 26px; }
+  .chart { padding: 8px 12px 12px 6px; }
+  .chart svg { display: block; width: 100%; height: 220px; }
+  .chart text { font: 11px var(--sans); fill: var(--text-3); }
+  .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--text-2); padding: 10px 18px 0; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  .health-banner { margin: 14px 18px 4px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; display: flex; gap: 10px; align-items: flex-start; }
+  .health-banner svg.i { width: 17px; height: 17px; margin-top: 1px; }
+  .health-banner b { display: block; }
+  .svc { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 18px; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .svc:first-of-type { border-top: 0; }
+  .svc .s { width: 8px; height: 8px; border-radius: 50%; }
+  .svc .s.ok { background: var(--ok); }
+  .svc .s.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+  .svc small { color: var(--text-3); font-size: 12.5px; text-align: right; }
+  .svcs { padding: 8px 0 6px; }
+  .svc-more { padding: 10px 18px 14px; font-size: 12.5px; color: var(--text-3); }
+
+  .rank { padding: 10px 18px 14px; }
+  .rk { display: grid; grid-template-columns: 34px minmax(0, 1fr) 80px 64px; gap: 12px; align-items: center; padding: 8px 0; font-size: 13.5px; }
+  .rk .cc { font: 11px var(--mono); text-align: center; padding: 2px 0; border-radius: 5px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2); }
+  .rk .nm { min-width: 0; }
+  .rk .nm b { font-weight: 500; }
+  .rk .bar { height: 6px; border-radius: 3px; background: var(--surface-2); margin-top: 6px; overflow: hidden; }
+  .rk .bar i { display: block; height: 100%; background: var(--c1); border-radius: 3px; }
+  .rk .vv { text-align: right; font-weight: 600; }
+  .rk .dd { text-align: right; font-size: 12.5px; }
+
+  /* ── 用户列表 ── */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 16px; }
+  .tabs a { padding: 9px 12px; font-size: 14px; color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs a.on { color: var(--text); font-weight: 600; border-color: var(--acc); }
+  .tbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .field { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--surface); color: var(--text-3); font-size: 13.5px; min-width: 240px; }
+  .field svg.i { width: 16px; height: 16px; }
+  .sel { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--surface); font-size: 13.5px; }
+  .sel svg.i { width: 15px; height: 15px; color: var(--text-3); }
+  .tbar .sp { flex: 1; }
+  .tw { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-weight: 500; font-size: 12.5px; color: var(--text-3); padding: 10px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: var(--surface-2); }
+  .r { text-align: right; }
+  .u { display: flex; align-items: center; gap: 10px; }
+  .u .a { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: var(--acc-soft); color: var(--acc); flex: none; }
+  .u b { display: block; font-weight: 500; }
+  .u small { display: block; font: 11.5px var(--mono); color: var(--text-3); }
+  .sub2 small { display: block; font-size: 12px; color: var(--text-3); }
+  .tr-u { min-width: 130px; }
+  .tr-u .mono { font-size: 12px; }
+  .tr-u .bar { height: 4px; border-radius: 2px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); margin-top: 5px; overflow: hidden; }
+  .tr-u .bar i { display: block; height: 100%; background: var(--c1); }
+  .tr-u .bar i.w { background: var(--warn); }
+  .over { color: var(--danger); font-weight: 600; }
+  .full { color: var(--warn); font-weight: 600; }
+  .tfoot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 13px; color: var(--text-2); border-top: 1px solid var(--line); }
+  .tfoot .sp { flex: 1; }
+  .btn.sm { height: 30px; padding: 0 10px; font-size: 13px; font-weight: 500; }
+  .btn[disabled] { opacity: 0.45; cursor: default; }
+
+  /* ── ⌘K ── */
+  .scrim { position: fixed; inset: 0; background: rgba(8, 12, 10, 0.45); z-index: 40; display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; }
+  .palette { width: 100%; max-width: 600px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.5); overflow: hidden; }
+  .pin { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .pin input { all: unset; flex: 1; font-size: 15px; color: var(--text); }
+  .pg { font-size: 12px; color: var(--text-3); padding: 10px 16px 4px; }
+  .po { display: flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
+  .po small { margin-left: auto; color: var(--text-3); font-size: 12.5px; }
+  .po.on { background: var(--acc-soft); }
+  .po svg.i { color: var(--text-3); width: 17px; height: 17px; }
+  .pf { display: flex; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); }
+
+  /* 实时事件弹层 */
+  .pop { position: absolute; right: 0; top: calc(100% + 8px); width: 360px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.4); z-index: 30; overflow: hidden; }
+  .pop .ph2 { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+  .pop .ph2 b { flex: 1; }
+  .ev { display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ev:last-child { border-bottom: 0; }
+  .ev .d { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); margin-top: 7px; flex: none; }
+  .ev.read .d { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }
+  .ev small { display: block; color: var(--text-3); font-size: 12px; }
+  .live-wrap { position: relative; }
+
+  /* 样稿切换条 */
+  .switch { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50; display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 12px; background: #111; color: #eee; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); }
+  .switch button { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 8px; color: #bbb; }
+  .switch button.on { background: #fff; color: #111; font-weight: 600; }
+  .switch span { color: #777; padding: 0 2px; }
+  .shot .switch { display: none; }
+
+  /* ── 窄屏 ── */
+  @media (max-width: 1180px) {
+    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .row2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 960px) {
+    .app { grid-template-columns: 1fr; }
+    .side { position: fixed; left: 0; top: 0; bottom: 0; width: 272px; z-index: 35; transform: translateX(-100%); transition: transform 0.2s; box-shadow: 0 0 60px rgba(0, 0, 0, 0.3); }
+    .nav-open .side { transform: none; }
+    .nav-open .shade { display: block; }
+    .shade { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 34; }
+    .burger { display: grid; }
+    .crumb .g { display: none; }
+    .todo { grid-template-columns: 1fr; }
+    .urgent { border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+  @media (max-width: 640px) {
+    .top { padding: 0 12px; gap: 6px; height: 56px; }
+    .crumb { display: none; }
+    .search { margin: 0; }
+    .search kbd, .live .lbl { display: none; }
+    .live { padding: 0 10px; }
+    .page { padding: 18px 16px 72px; }
+    .ph h1 { font-size: 21px; }
+    .kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kpi { padding: 13px 14px; }
+    .kpi .v { font-size: 21px; }
+    .kpi svg.spark { display: none; }
+    .rev-head { gap: 16px; }
+    .chart svg { height: 180px; }
+    .rk { grid-template-columns: 30px minmax(0, 1fr) 70px; }
+    .rk .dd { display: none; }
+    .field { min-width: 0; flex: 1 1 100%; }
+    .pop { position: fixed; left: 12px; right: 12px; top: 64px; width: auto; }
+    .ph .help span { display: none; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="a-dash" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></symbol>
+  <symbol id="a-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.8.7 3 2.4 3.5 5.2"/></symbol>
+  <symbol id="a-pkg" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 10h18M7 15h4"/></symbol>
+  <symbol id="i-gift" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="1.5"/><rect x="3" y="7" width="18" height="4" rx="1"/><path d="M12 7v13"/></symbol>
+  <symbol id="a-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="a-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4l2-2z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z"/></symbol>
+  <symbol id="a-ext" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M10 14l6-6M11 8h5v5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="a-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></symbol>
+  <symbol id="a-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3l9-16z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="a-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="a-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+  <symbol id="a-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="a-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="a-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18"/><path d="M16 15h2"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l3 3"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.5L11 20l3-4.5 5 3.5 2-15z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5v16h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="a-dl" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="side" id="side">
+    <div class="brand">
+      <div class="logo">P</div>
+      <div><b>Pandora</b><small>管理控制台</small></div>
+      <span class="env">dev</span>
+    </div>
+    <nav class="nav">
+      <div class="grp">工作台</div>
+      <a class="na" href="#dash" data-nav="dash"><svg class="i"><use href="#a-dash"/></svg>仪表盘</a>
+      <a class="na" href="#dash" data-nav="tickets"><svg class="i"><use href="#i-chat"/></svg>工单<span class="ct hot num">7</span></a>
+      <div class="grp">用户运营</div>
+      <a class="na" href="#users" data-nav="users"><svg class="i"><use href="#a-users"/></svg>用户</a>
+      <div class="grp">商业</div>
+      <a class="na" href="#dash" data-nav="plans"><svg class="i"><use href="#a-pkg"/></svg>套餐</a>
+      <a class="na" href="#dash" data-nav="billing"><svg class="i"><use href="#i-card"/></svg>订单与收款<span class="ct num">2</span></a>
+      <a class="na" href="#dash" data-nav="marketing"><svg class="i"><use href="#i-gift"/></svg>营销<span class="ct num">3</span></a>
+      <div class="grp">网络</div>
+      <a class="na" href="#dash" data-nav="nodes"><svg class="i"><use href="#a-server"/></svg>节点与服务器<span class="ct num">3</span></a>
+      <div class="grp">运营</div>
+      <a class="na" href="#dash" data-nav="content"><svg class="i"><use href="#a-file"/></svg>内容与外观</a>
+      <a class="na" href="#dash" data-nav="system"><svg class="i"><use href="#i-bell"/></svg>通知与插件</a>
+      <div class="grp">系统</div>
+      <a class="na" href="#dash" data-nav="security"><svg class="i"><use href="#i-shield"/></svg>安全与运维</a>
+    </nav>
+    <div class="side-foot">
+      <a class="na" href="#dash"><svg class="i"><use href="#a-ext"/></svg>打开用户端</a>
+      <div class="acct-wrap">
+        <div class="menu" id="acct-menu" hidden>
+          <button class="mi"><svg class="i"><use href="#i-key"/></svg>修改密码</button>
+          <button class="mi"><svg class="i"><use href="#i-send"/></svg>绑定 Telegram</button>
+          <div class="msep"></div>
+          <button class="mi danger"><svg class="i"><use href="#i-logout"/></svg>退出登录</button>
+        </div>
+        <button class="acct" id="acct" aria-haspopup="menu" aria-expanded="false">
+          <span class="av">林</span>
+          <span class="who"><b>林舟</b><small>admin@example.test</small></span>
+          <svg class="i"><use href="#i-updown"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+  <div class="shade" id="shade"></div>
+
+  <div class="main">
+    <header class="top">
+      <button class="ib burger" id="burger" aria-label="打开导航"><svg class="i"><use href="#a-menu"/></svg></button>
+      <div class="crumb" id="crumb"><span class="g">工作台</span><span class="g">/</span><b>仪表盘</b></div>
+      <button class="search" id="open-k"><svg class="i"><use href="#i-search"/></svg><span>搜用户、订单、节点，或跳到模块</span><kbd>⌘K</kbd></button>
+      <div class="tools">
+        <div class="live-wrap">
+          <button class="live" id="live" aria-expanded="false"><i class="dot"></i><span class="lbl">实时事件</span><span class="n num">3</span></button>
+          <div class="pop" id="live-pop" hidden>
+            <div class="ph2"><b>实时事件</b><button class="link" id="read-all">全部已读</button></div>
+            <div class="seg" style="margin:10px 14px 4px"><button class="on">全部</button><button>订单</button><button>工单</button><button>节点</button><button>订阅</button></div>
+            <div class="ev"><i class="d"></i><div>新订单 <b class="num">#20261016-0412</b> 已支付 ¥45.00<small>订单 · 刚刚</small></div></div>
+            <div class="ev"><i class="d"></i><div>工单「香港节点晚上很慢」有新回复<small>工单 · 2 分钟前</small></div></div>
+            <div class="ev"><i class="d"></i><div>节点 JP-TYO-03 心跳超时<small>节点 · 6 分钟前</small></div></div>
+            <div class="ev read"><i class="d"></i><div>k.liu@gmail.com 续费了专业版<small>订阅 · 21 分钟前</small></div></div>
+          </div>
+        </div>
+        <button class="ib" id="theme" aria-label="切换深浅色"><svg class="i"><use href="#i-moon"/></svg></button>
+      </div>
+    </header>
+
+    <!-- 仪表盘 -->
+    <section class="page" id="p-dash">
+      <div class="ph">
+        <div><h1>仪表盘</h1><p>10 月 16 日 周五 · 每分钟自动刷新</p></div>
+        <span class="sp"></span>
+        <button class="help"><svg class="i"><use href="#i-help"/></svg><span>仪表盘怎么看</span></button>
+      </div>
+
+      <div class="card todo">
+        <div class="urgent">
+          <span class="tag"><svg class="i"><use href="#a-alert"/></svg>最紧急</span>
+          <h3>待处理工单</h3>
+          <div class="big"><b class="num">7</b><span>个未回复</span></div>
+          <div class="meta"><div>高优先级<b class="num">2 个</b></div><div>最久等待<b class="num">3 小时</b></div></div>
+          <div class="act"><a class="btn pri" href="#dash">去回复<svg class="i"><use href="#i-chev"/></svg></a></div>
+        </div>
+        <div class="tlist">
+          <div class="th"><b>待办</b>5 项 · 1 项紧急</div>
+          <button class="trow"><span class="ic warn"><svg class="i"><use href="#i-wallet"/></svg></span><span class="t"><b>提现待审核</b><small>合计 ¥1,280.00</small></span><span class="v num">3</span><svg class="i"><use href="#i-chev"/></svg></button>
+          <button class="trow"><span class="ic warn"><svg class="i"><use href="#a-server"/></svg></span><span class="t"><b>离线节点</b><small>JP-TYO-03 等 · 最长 26 分钟</small></span><span class="v num">3</span><svg class="i"><use href="#i-chev"/></svg></button>
+          <button class="trow"><span class="ic info"><svg class="i"><use href="#a-clock"/></svg></span><span class="t"><b>超时未支付订单</b><small>超过 30 分钟，可能是回调丢失</small></span><span class="v num">2</span><svg class="i"><use href="#i-chev"/></svg></button>
+          <button class="trow"><span class="ic info"><svg class="i"><use href="#i-mail"/></svg></span><span class="t"><b>通知投递积压</b><small>最久等待 21 分钟 · 重试中 21 · 9 封失败</small></span><span class="v num">214</span><svg class="i"><use href="#i-chev"/></svg></button>
+        </div>
+      </div>
+
+      <div class="kpis">
+        <div class="card kpi"><div class="l"><svg class="i"><use href="#i-wallet"/></svg>今日收入</div><div class="v num">¥4,709.64</div><div class="d">较昨日 <span class="up">+10.0%</span></div><svg class="spark" data-spark="rev"></svg></div>
+        <div class="card kpi"><div class="l"><svg class="i"><use href="#a-pkg"/></svg>有效订阅</div><div class="v num">12,408</div><div class="d">本周新增 <span class="up num">386</span></div></div>
+        <div class="card kpi"><div class="l"><svg class="i"><use href="#a-pulse"/></svg>流量 · 近 24 小时</div><div class="v num">6.23 TB</div><div class="d">最多的是 HK-HKG-01 · 1.80 TB</div></div>
+        <div class="card kpi"><div class="l"><svg class="i"><use href="#a-server"/></svg>节点在线</div><div class="v num">41 <span style="font-size:15px;color:var(--text-3);font-weight:500">/ 44</span></div><div class="d">3 个离线，2 个配置未同步</div><div class="meter"><i style="width:93%"></i></div></div>
+      </div>
+
+      <div class="row2">
+        <div class="card">
+          <div class="ch"><h2>每日净收入</h2><span class="sp"></span><div class="seg" id="rev-range"><button>7 天</button><button class="on">30 天</button><button>90 天</button></div></div>
+          <div class="rev-head">
+            <div><div class="l">区间合计 · 近 30 天</div><div class="v main-v num">¥187,578.78</div><div class="l">较上一区间 <span class="dn">−2.6%</span></div></div>
+            <div><div class="l">日均</div><div class="v num">¥6,252.63</div></div>
+            <div><div class="l">峰值 · 10 月 8 日</div><div class="v num">¥9,123.23</div></div>
+          </div>
+          <div class="chart"><svg id="rev-chart" viewBox="0 0 720 220" preserveAspectRatio="none"></svg></div>
+        </div>
+        <div class="card">
+          <div class="ch"><h2>新用户与日活</h2><span class="sub">近 14 天</span></div>
+          <div class="rev-head">
+            <div><div class="l">14 日注册</div><div class="v main-v num">839</div></div>
+            <div><div class="l">日活均值</div><div class="v main-v num">4,528</div></div>
+          </div>
+          <div class="legend"><span><i style="background:var(--c1)"></i>注册</span><span><i style="background:var(--c2)"></i>日活</span></div>
+          <div class="chart"><svg id="reg-chart" viewBox="0 0 400 220" preserveAspectRatio="none"></svg></div>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="card">
+          <div class="ch"><h2>流量排行</h2><span class="sub">近 24 小时</span><span class="sp"></span><div class="seg"><button class="on">节点</button><button>用户</button></div></div>
+          <div class="rank" id="rank"></div>
+          <div class="svc-more" style="display:flex;padding-top:0"><span>前 6 个节点 · 共 6.23 TB</span><span style="flex:1"></span><a class="link" href="#dash">查看全部节点<svg class="i"><use href="#i-chev"/></svg></a></div>
+        </div>
+        <div class="card">
+          <div class="ch"><h2>服务健康</h2><span class="sub">刚刚更新</span><span class="sp"></span><button class="link">刷新</button></div>
+          <div class="health-banner"><svg class="i"><use href="#a-alert"/></svg><div><b>3 项需要关注</b>节点调度与邮件投递受影响</div></div>
+          <div class="svcs">
+            <div class="svc"><i class="s warn"></i><span>NativeCore 调度</span><small>在线 41/44 · 2 个未同步</small></div>
+            <div class="svc"><i class="s warn"></i><span>邮件投递</span><small>214 排队 · 9 失败</small></div>
+            <div class="svc"><i class="s warn"></i><span>数据库备份</span><small>未配异地 · 1 份缺校验</small></div>
+            <div class="svc"><i class="s ok"></i><span>PostgreSQL 主库</span><small>3 ms · 连接 23/200</small></div>
+            <div class="svc"><i class="s ok"></i><span>Redis 缓存</span><small>0.4 ms</small></div>
+            <div class="svc"><i class="s ok"></i><span>支付回调队列</span><small>0 积压</small></div>
+          </div>
+          <div class="svc-more">另有 2 项正常 · 共 8 项服务</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 用户列表 -->
+    <section class="page" id="p-users">
+      <div class="ph">
+        <div><h1>用户</h1><p>共 48 位用户</p></div>
+        <span class="sp"></span>
+        <button class="help"><svg class="i"><use href="#i-help"/></svg><span>用户状态怎么算</span></button>
+        <button class="btn pri"><svg class="i"><use href="#i-plus"/></svg>批量生成</button>
+      </div>
+      <nav class="tabs"><a class="on" href="#users">用户列表</a><a href="#users">用户组</a><a href="#users">批量运营</a></nav>
+      <div class="card">
+        <div class="tbar">
+          <div class="field"><svg class="i"><use href="#i-search"/></svg>邮箱、用户 ID 或订阅令牌</div>
+          <div class="seg"><button class="on">全部</button><button>正常</button><button>已禁用</button><button>已过期</button><button>已注销</button></div>
+          <div class="sel">全部用户组<svg class="i"><use href="#a-down"/></svg></div>
+          <span class="sp"></span>
+          <span style="font-size:12.5px;color:var(--text-3)">按注册时间</span>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>用户</th><th>用户组</th><th>套餐 · 到期</th><th>本期流量</th><th class="r">余额</th><th class="r">设备</th><th>状态</th><th class="r">最近登录</th></tr></thead>
+            <tbody id="ulist"></tbody>
+          </table>
+        </div>
+        <div class="tfoot"><span>共 48 位用户</span><span class="sp"></span><span class="num">第 1–25 条</span><button class="btn sec sm" disabled>上一页</button><button class="btn sec sm">下一页</button></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ⌘K -->
+<div class="scrim" id="k" hidden>
+  <div class="palette" role="dialog" aria-label="搜索">
+    <div class="pin"><svg class="i"><use href="#i-search"/></svg><input id="k-in" value="zhang" aria-label="搜索" /><kbd>Esc</kbd></div>
+    <div class="pg">用户</div>
+    <div class="po on"><svg class="i"><use href="#a-users"/></svg>zhang.wei@qq.com<small>标准版 · 30 天后到期</small></div>
+    <div class="po"><svg class="i"><use href="#a-users"/></svg>zhangmin@foxmail.com<small>已过期</small></div>
+    <div class="pg">订单</div>
+    <div class="po"><svg class="i"><use href="#i-card"/></svg>#20261015-0388 · zhang.wei@qq.com<small>已支付 ¥45.00</small></div>
+    <div class="pg">跳到模块</div>
+    <div class="po"><svg class="i"><use href="#a-users"/></svg>用户 › 批量运营<small>用户运营</small></div>
+    <div class="pf"><span>↑↓ 选择</span><span>↵ 打开</span><span>Esc 关闭</span></div>
+  </div>
+</div>
+
+<div class="switch" id="switch">
+  <span>配色</span><button data-pal="a">A 森林绿</button><button data-pal="b">B 石墨</button><button data-pal="c">C 夜航蓝</button>
+  <span>|</span><button data-th="light">浅色</button><button data-th="dark">深色</button>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search)
+  const root = document.documentElement
+  if (q.get('shot')) root.classList.add('shot')
+  if (['a', 'b', 'c'].includes(q.get('pal'))) root.dataset.pal = q.get('pal')
+  if (q.get('theme') === 'dark') root.dataset.theme = 'dark'
+
+  // 本机预览 Hugeicons（同门户样稿）：.tmp-icons/hugeicons.svg 不入库，?ic=0 看内联的
+  if (q.get('ic') !== '0') fetch('.tmp-icons/hugeicons.svg').then((r) => (r.ok ? r.text() : null)).then((txt) => {
+    if (!txt) return
+    const doc = new DOMParser().parseFromString(txt, 'image/svg+xml')
+    doc.querySelectorAll('symbol').forEach((s) => { const old = document.getElementById(s.id); if (old) old.replaceWith(document.importNode(s, true)) })
+    root.dataset.icons = 'hugeicons'
+  }).catch(() => {})
+
+  // 切换条
+  function syncSwitch() {
+    document.querySelectorAll('[data-pal]').forEach((b) => b !== root && b.classList.toggle('on', b.dataset.pal === root.dataset.pal))
+    document.querySelectorAll('[data-th]').forEach((b) => b.classList.toggle('on', b.dataset.th === root.dataset.theme))
+    document.querySelector('#theme use').setAttribute('href', root.dataset.theme === 'dark' ? '#a-sun' : '#i-moon')
+  }
+  document.querySelectorAll('#switch [data-pal]').forEach((b) => b.addEventListener('click', () => { root.dataset.pal = b.dataset.pal; syncSwitch() }))
+  document.querySelectorAll('#switch [data-th]').forEach((b) => b.addEventListener('click', () => { root.dataset.theme = b.dataset.th; syncSwitch() }))
+  document.getElementById('theme').addEventListener('click', () => { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; syncSwitch() })
+  syncSwitch()
+
+  // 路由
+  const CRUMB = { dash: ['工作台', '仪表盘'], users: ['用户运营', '用户'] }
+  function route() {
+    const h = (location.hash || '#dash').slice(1)
+    const id = CRUMB[h] ? h : 'dash'
+    document.querySelectorAll('.page').forEach((p) => p.classList.toggle('on', p.id === 'p-' + id))
+    document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === id))
+    const [g, t] = CRUMB[id]
+    document.getElementById('crumb').innerHTML = `<span class="g">${g}</span><span class="g">/</span><b>${t}</b>`
+    document.body.classList.remove('nav-open')
+    window.scrollTo(0, 0)
+  }
+  addEventListener('hashchange', route)
+  route()
+
+  // 窄屏抽屉
+  document.getElementById('burger').addEventListener('click', () => document.body.classList.add('nav-open'))
+  document.getElementById('shade').addEventListener('click', () => document.body.classList.remove('nav-open'))
+
+  // 弹层：账户菜单、实时事件、⌘K
+  function toggle(btn, pop, open) {
+    const o = open ?? pop.hidden
+    pop.hidden = !o
+    btn.setAttribute('aria-expanded', String(o))
+  }
+  const acct = document.getElementById('acct'), acctMenu = document.getElementById('acct-menu')
+  const live = document.getElementById('live'), livePop = document.getElementById('live-pop')
+  acct.addEventListener('click', (e) => { e.stopPropagation(); toggle(acct, acctMenu) })
+  live.addEventListener('click', (e) => { e.stopPropagation(); toggle(live, livePop) })
+  livePop.addEventListener('click', (e) => e.stopPropagation())
+  document.getElementById('read-all').addEventListener('click', () => {
+    document.querySelectorAll('.ev').forEach((e) => e.classList.add('read'))
+    live.querySelector('.n').hidden = true
+  })
+  const k = document.getElementById('k')
+  function openK() { k.hidden = false; document.getElementById('k-in').focus() }
+  document.getElementById('open-k').addEventListener('click', openK)
+  k.addEventListener('click', (e) => { if (e.target === k) k.hidden = true })
+  addEventListener('click', () => { toggle(acct, acctMenu, false); toggle(live, livePop, false) })
+  addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openK() }
+    if (e.key === 'Escape') { k.hidden = true; toggle(acct, acctMenu, false); toggle(live, livePop, false); document.body.classList.remove('nav-open') }
+  })
+  if (q.get('k')) openK()
+  if (q.get('ev')) toggle(live, livePop, true)
+  if (q.get('am')) toggle(acct, acctMenu, true)
+  if (q.get('nav')) document.body.classList.add('nav-open')
+
+  // 图表：确定性的假数据，只用来看配色
+  const NS = 'http://www.w3.org/2000/svg'
+  const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); parent && parent.appendChild(n); return n }
+  const wave = (n, base, amp, seed) => Array.from({ length: n }, (_, i) => base + amp * (Math.sin(i * 0.55 + seed) * 0.6 + Math.sin(i * 1.7 + seed * 2) * 0.4))
+  function area(svg, data, w, h, pad, opts = {}) {
+    const max = opts.max ?? Math.max(...data) * 1.15, min = opts.min ?? 0
+    const x = (i) => pad.l + (i * (w - pad.l - pad.r)) / (data.length - 1)
+    const y = (v) => pad.t + (1 - (v - min) / (max - min)) * (h - pad.t - pad.b)
+    const pts = data.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`)
+    if (opts.fill !== false) el('path', { d: `M${pts[0]} L${pts.join(' L')} L${x(data.length - 1)},${h - pad.b} L${x(0)},${h - pad.b} Z`, fill: 'var(--c1-fill)' }, svg)
+    el('polyline', { points: pts.join(' '), fill: 'none', stroke: opts.stroke || 'var(--c1)', 'stroke-width': opts.sw || 2, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' }, svg)
+    return { x, y }
+  }
+  // 每日净收入
+  const rev = wave(30, 6250, 2100, 1.2); rev[21] = 9123
+  const rs = document.getElementById('rev-chart')
+  ;[0, 5000, 10000].forEach((v) => {
+    const yy = 12 + (1 - v / 11000) * (220 - 12 - 26)
+    el('line', { x1: 44, x2: 716, y1: yy, y2: yy, stroke: 'var(--line)', 'stroke-dasharray': v ? '3 4' : '' }, rs)
+    el('text', { x: 4, y: yy + 4 }, rs).textContent = v ? `¥${v / 1000}k` : '¥0'
+  })
+  const ax = area(rs, rev, 720, 220, { l: 44, r: 4, t: 12, b: 26 }, { max: 11000 })
+  el('circle', { cx: ax.x(29), cy: ax.y(rev[29]), r: 4, fill: 'var(--surface)', stroke: 'var(--c1)', 'stroke-width': 2 }, rs)
+  ;[['9月17日', 0], ['10月2日', 15], ['今天', 29]].forEach(([t, i]) => { const tx = el('text', { x: ax.x(i), y: 214, 'text-anchor': i === 0 ? 'start' : i === 29 ? 'end' : 'middle' }, rs); tx.textContent = t })
+  // 新用户（柱）与日活（线）
+  const reg = wave(14, 60, 18, 0.4), dau = wave(14, 4528, 420, 2.1)
+  const gs = document.getElementById('reg-chart')
+  const bw = (400 - 8) / 14
+  reg.forEach((v, i) => { const hh = (v / 100) * 170; el('rect', { x: 4 + i * bw + bw * 0.2, y: 194 - hh, width: bw * 0.6, height: hh, rx: 3, fill: 'var(--c1)', opacity: i === 13 ? 1 : 0.85 }, gs) })
+  area(gs, dau, 400, 220, { l: 4 + bw / 2, r: 4 + bw / 2, t: 10, b: 60 }, { fill: false, stroke: 'var(--c2)', sw: 2, min: 3000, max: 5600 })
+  ;[['10月3日', 0, 'start'], ['今天', 13, 'end']].forEach(([t, i, a]) => { el('text', { x: i ? 396 : 4, y: 214, 'text-anchor': a }, gs).textContent = t })
+  // 迷你走势
+  // 只有收入有现成的日序列（每日净收入），另两张卡不画走势
+  const SP = { rev: rev.slice(-14) }
+  document.querySelectorAll('[data-spark]').forEach((s) => { s.setAttribute('viewBox', '0 0 92 34'); s.setAttribute('preserveAspectRatio', 'none'); area(s, SP[s.dataset.spark], 92, 34, { l: 1, r: 1, t: 2, b: 2 }, { sw: 1.6 }) })
+
+  // 流量排行
+  const RANK = [['HK', 'HK-HKG-01', '1.80 TB', 28.8, '+777 GB'], ['JP', 'JP-TYO-03', '1.49 TB', 23.8, '+459 GB'], ['SG', 'SG-SIN-02', '1.18 TB', 18.9, '+147 GB'], ['US', 'US-LAX-01', '864 GB', 13.5, '−199 GB'], ['TW', 'TW-TPE-01', '540 GB', 8.4, '−523 GB'], ['DE', 'DE-FRA-01', '402 GB', 6.3, '−661 GB']]
+  document.getElementById('rank').innerHTML = RANK.map(([cc, n, v, p, d]) => `<div class="rk"><span class="cc">${cc}</span><div class="nm"><b>${n}</b><div class="bar"><i style="width:${(p / 28.8) * 100}%"></i></div></div><span class="vv num">${v}</span><span class="dd num ${d[0] === '+' ? 'up' : 'dn'}">${d}</span></div>`).join('')
+
+  // 用户列表
+  const U = [
+    ['zhang.wei@qq.com', '1a2b3c41', '默认', '标准版', '30 天后到期', '0 B', '200 GB', 0, '¥0.00', '0/3', 'ok', '正常', '3 分钟'],
+    ['k.liu@gmail.com', '1a2b3c42', 'VIP', '专业版', '27 天后到期', '185 GB', '500 GB', 37, '¥13.75', '5/5', 'ok', '正常', '50 分钟', 'full'],
+    ['wu.qing@163.com', '1a2b3c43', '默认', '流量畅用 500G', '永久有效', '120 GB', '500 GB', 24, '¥27.50', '1/3', 'ok', '正常', '1 小时'],
+    ['m.chen@outlook.com', '1a2b3c44', '默认', '短期 100G', '25 天后到期', '30.0 GB', '100 GB', 30, '¥41.25', '0/3', 'ok', '正常', '2 小时'],
+    ['yao_ops@proton.me', '1a2b3c45', '企业客户', '标准版', '18 天后到期', '96.0 GB', '200 GB', 48, '¥55.00', '0/3', 'ok', '正常', '3 小时'],
+    ['tomato@icloud.com', '1a2b3c46', '默认', '专业版', '27 天后到期', '410 GB', '500 GB', 82, '¥68.75', '0/10', 'ok', '正常', '从未'],
+    ['grace.h@foxmail.com', '0ceb4c14', 'VIP', '无订阅', '', '', '', -1, '¥82.50', '–', 'ok', '正常', '4 小时'],
+    ['lin.xiao@qq.com', 'c173b6bd', '默认', '体验版', '9 天后到期', '11.8 GB', '20.0 GB', 59, '¥96.25', '2/1', 'ok', '正常', '5 小时', 'over'],
+    ['sec.check@gmail.com', '5d0e9a20', '默认', '标准版', '已过期 3 天', '182 GB', '200 GB', 91, '¥0.00', '0/3', 'warn', '已过期', '6 天'],
+    ['spam.bot@example.test', '77f1aa02', '默认', '体验版', '已过期 12 天', '0 B', '20.0 GB', 0, '¥0.00', '0/1', 'danger', '已禁用', '12 天'],
+  ]
+  document.getElementById('ulist').innerHTML = U.map(([m, id, g, p, e, used, cap, pct, bal, dev, st, stl, last, devFlag]) => `<tr>
+    <td><div class="u"><span class="a">${m[0].toUpperCase()}</span><span><b>${m}</b><small>#${id}</small></span></div></td>
+    <td>${g}</td>
+    <td class="sub2">${p}<small>${e}</small></td>
+    <td>${pct < 0 ? '<span style="color:var(--text-3)">—</span>' : `<div class="tr-u"><span class="mono">${used} / ${cap}</span><div class="bar"><i class="${pct > 80 ? 'w' : ''}" style="width:${pct}%"></i></div></div>`}</td>
+    <td class="r num">${bal}</td>
+    <td class="r num ${devFlag || ''}">${dev}</td>
+    <td><span class="chip ${st}">${stl}</span></td>
+    <td class="r" style="color:var(--text-2)">${last}</td></tr>`).join('')
+</script>
+</body>
+</html>
