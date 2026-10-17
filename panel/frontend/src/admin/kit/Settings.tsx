@@ -5,8 +5,8 @@ import { cx } from './cx'
 import css from './Settings.module.css'
 
 export interface SettingRowProps {
-  /** 左侧方块图标（Hugeicons Pro stroke-rounded 的图标对象） */
-  icon: IconSvgElement
+  /** 左侧方块图标（Hugeicons Pro stroke-rounded 的图标对象）；不传时不画图标列 */
+  icon?: IconSvgElement
   title: ReactNode
   description?: ReactNode
   checked: boolean
@@ -34,9 +34,11 @@ export function SettingRow({
   return (
     <div className={css.item}>
       <div className={css.row}>
-        <span className={css.icon}>
-          <HugeiconsIcon icon={icon} size={16} strokeWidth={1.6} aria-hidden="true" />
-        </span>
+        {icon != null && (
+          <span className={css.icon}>
+            <HugeiconsIcon icon={icon} size={16} strokeWidth={1.6} aria-hidden="true" />
+          </span>
+        )}
         <div className={css.text}>
           <b className={css.title} id={titleId}>{title}</b>
           {description != null && <small className={css.description}>{description}</small>}

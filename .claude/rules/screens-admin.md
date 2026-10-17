@@ -36,7 +36,7 @@ paths:
   - `SectionTitle({ children, hint?, action?, variant?: 'block'|'group', as?: 'h2'|'h3' })`：块标题（block）/ 设置分组标题（group）
   - `Avatar({ text, size?: 'sm'|'lg' })`：首字头像
   - `Callout({ children, action? })`：灰底提示条；`DangerRow({ title, description?, actionLabel, onAction, busy?, disabled? })`：红框危险操作行；`CopyButton({ value, label })`：复制图标按钮（成功 toast「已复制」）
-  - `SettingRow({ icon, title, description?, checked, onChange, disabled?, tone?, children? })`：图标 + 说明 + 开关的设置行，`children` 是打开后展开的子设置
+  - `SettingRow({ icon?, title, description?, checked, onChange, disabled?, tone?, children? })`：（图标 +）说明 + 开关的设置行，不传 `icon` 就不画图标列；`children` 是打开后展开的子设置
   - `RadioCards<T>({ label, options: {value, title, description?, disabled?}[], value, onChange, columns?: 2|3 })`：单选卡片（radiogroup，方向键跳过禁用项）
   - `TagInput({ label, values, onChange, max = 100, placeholder?, normalize?, validate?, hint?, disabled? })`：标签输入（回车、逗号、粘贴多行拆分，去重、上限）；纯函数 `splitTagInput` / `mergeTags` 也导出
   - `RowList({ label?, children })` + `Row({ lead?, title, meta?, extra?, value?, actions?, onClick?, align? })`：表格之外的逐行列表；给 `onClick` 整行可点（键盘 Enter / 空格），行里就不要再放按钮
