@@ -1,3 +1,4 @@
+import { PauseCircleIcon, PlayCircleIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
@@ -59,7 +60,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 
   if (canActivate(node)) {
     return (
-      <Button size="sm" variant="secondary" busy={busy} onClick={() => activate.mutate()}>
+      <Button size="sm" variant="secondary" icon={PlayCircleIcon} busy={busy} onClick={() => activate.mutate()}>
         上线节点
       </Button>
     )
@@ -67,7 +68,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 
   if (node.serving_status === 'disabled') {
     return (
-      <Button size="sm" variant="secondary" busy={busy} onClick={() => toggle.mutate('active')}>
+      <Button size="sm" variant="secondary" icon={PlayCircleIcon} busy={busy} onClick={() => toggle.mutate('active')}>
         上线节点
       </Button>
     )
@@ -76,7 +77,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
   if (node.serving_status === 'active') {
     return (
       <>
-        <Button size="sm" variant="secondary" busy={busy} onClick={() => setConfirmToggle(true)}>
+        <Button size="sm" variant="secondary" icon={PauseCircleIcon} busy={busy} onClick={() => setConfirmToggle(true)}>
           停用节点
         </Button>
         <ConfirmModal

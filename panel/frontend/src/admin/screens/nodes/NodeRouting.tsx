@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
@@ -123,8 +124,8 @@ function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: O
       ))}
       {!disabled && (
         <div>
-          <Button size="sm" onClick={() => onChange([...rows, { tag: '', type: 'shadowsocks', settings: '{}' }])}>
-            ＋ 添加出站
+          <Button size="sm" icon={PlusSignIcon} onClick={() => onChange([...rows, { tag: '', type: 'shadowsocks', settings: '{}' }])}>
+            添加出站
           </Button>
         </div>
       )}
@@ -135,7 +136,7 @@ function OutboundRows({ rows, errors, disabled, onChange, emptyHint }: { rows: O
 /** 「添加规则」：放在规则段头（设计稿）；末尾是兜底时插到兜底之前 */
 export function AddRuleButton({ rows, disabled, onChange }: { rows: RuleRow[]; disabled: boolean; onChange: (rows: RuleRow[]) => void }) {
   return (
-    <Button size="sm" disabled={disabled} onClick={() => onChange(insertRule(rows, newRule()))}>
+    <Button size="sm" icon={PlusSignIcon} disabled={disabled} onClick={() => onChange(insertRule(rows, newRule()))}>
       添加规则
     </Button>
   )

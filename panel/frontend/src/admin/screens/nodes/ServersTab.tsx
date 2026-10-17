@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { MoreHorizontalIcon } from '@hugeicons-pro/core-stroke-rounded'
+import { MoreHorizontalIcon, PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
@@ -41,7 +41,7 @@ export function ServersTab() {
   return (
     <div className={css.stack}>
       <PageActions>
-        <Button variant="primary" onClick={() => setAdding(true)}>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setAdding(true)}>
           添加服务器
         </Button>
       </PageActions>

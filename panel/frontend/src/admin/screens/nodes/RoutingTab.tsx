@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
@@ -27,7 +28,7 @@ export function RoutingTab({ rest }: { rest: readonly string[] }) {
   return (
     <div className={css.stack}>
       <PageActions>
-        <Button variant="primary" onClick={() => setCreating(true)}>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setCreating(true)}>
           新建路由组
         </Button>
       </PageActions>

@@ -1,3 +1,4 @@
+import { ArrowUpDownIcon, PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
@@ -197,6 +198,7 @@ export function NodesTab() {
       <PageActions>
         <Button
           variant="primary"
+          icon={PlusSignIcon}
           disabled={!!sorting}
           onClick={() => {
             setCreateKey((k) => k + 1)
@@ -257,7 +259,7 @@ export function NodesTab() {
           )}
           <span className={s.spacer} />
           {filter !== 'retired' && (
-            <Button size="sm" className={s.hideNarrow} onClick={toggleSort} busy={saveOrder.isPending} variant={sorting ? 'primary' : 'secondary'}>
+            <Button size="sm" icon={sorting ? undefined : ArrowUpDownIcon} className={s.hideNarrow} onClick={toggleSort} busy={saveOrder.isPending} variant={sorting ? 'primary' : 'secondary'}>
               {sorting ? '完成排序' : '调整排序'}
             </Button>
           )}
@@ -327,6 +329,7 @@ export function NodesTab() {
                 <span>共 {page.data.total} 个匹配 · 筛选与搜索在服务端进行</span>
                 <span className={s.spacer} />
                 <Pager
+                  inline
                   total={page.data.total}
                   limit={NODE_PAGE}
                   offset={offset}

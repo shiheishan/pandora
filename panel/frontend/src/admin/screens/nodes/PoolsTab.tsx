@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { navigate } from '../../../core/router'
@@ -36,7 +37,7 @@ export function PoolsTab() {
   return (
     <div className={css.stack}>
       <PageActions>
-        <Button variant="primary" onClick={() => setEditing('new')}>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setEditing('new')}>
           新建节点池
         </Button>
       </PageActions>

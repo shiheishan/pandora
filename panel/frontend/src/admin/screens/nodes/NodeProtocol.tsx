@@ -1,3 +1,4 @@
+import { PencilEdit01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useState } from 'react'
 import { Callout, KvList, KvRow, SectionTitle } from '../../kit'
 import { Button, ConfirmModal, Empty, Modal, QueryView, type QueryLike } from '../../../ui'
@@ -41,7 +42,7 @@ export function NodeProtocol({ node, detail }: { node: NodeRow; detail: QueryLik
               ))}
               <SectionTitle
                 action={
-                  <Button size="sm" disabled={retired} onClick={() => setOpen(true)}>
+                  <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setOpen(true)}>
                     编辑
                   </Button>
                 }

@@ -1,3 +1,4 @@
+import { PencilEdit01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useState } from 'react'
 import { KvList, KvRow, SectionTitle } from '../../kit'
 import { formatBytes } from '../../../core/format'
@@ -25,7 +26,7 @@ export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: numb
       <section>
         <SectionTitle
           action={
-            <Button size="sm" disabled={retired} onClick={() => setEdit('routing')}>
+            <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setEdit('routing')}>
               编辑
             </Button>
           }
@@ -66,7 +67,7 @@ export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: numb
       <section>
         <SectionTitle
           action={
-            <Button size="sm" disabled={retired} onClick={() => setEdit('traffic')}>
+            <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setEdit('traffic')}>
               编辑
             </Button>
           }
@@ -93,7 +94,7 @@ export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: numb
       <section>
         <SectionTitle
           action={
-            <Button size="sm" disabled={retired} onClick={() => setEdit('access')}>
+            <Button size="sm" icon={PencilEdit01Icon} disabled={retired} onClick={() => setEdit('access')}>
               编辑
             </Button>
           }

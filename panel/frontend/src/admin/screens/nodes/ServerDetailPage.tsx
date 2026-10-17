@@ -1,3 +1,4 @@
+import { PencilEdit01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
@@ -275,7 +276,7 @@ function ServerDetailBody({
         }
         actions={
           s.status !== 'retired' ? (
-            <Button size="sm" onClick={() => setEditing(true)}>
+            <Button size="sm" icon={PencilEdit01Icon} onClick={() => setEditing(true)}>
               编辑
             </Button>
           ) : undefined
