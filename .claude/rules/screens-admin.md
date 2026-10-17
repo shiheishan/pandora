@@ -26,10 +26,10 @@ paths:
   - 详情页（打开某一条）用 kit 的 `DetailPage`，并在 `admin/modules.ts` 的 `DETAIL_ROUTES` 登记（`isDetailRoute(module, tab, rest)`：登记的「模块:页签」且 rest 非空才算详情；现有 `users:list`、`billing:orders`、`nodes:nodes`、`nodes:servers`、`plans`）。详情模式下外框不画页头和页签栏，返回链接、标题、操作、详情页签都由 `DetailPage` 画。没登记的路径 rest 非空也照常画页头（如路由页把 rest 当范围用）。
   - 全幅模式：`MODULES` 上的 `fullBleed: true`（只有工单）——外框不画页头和页签栏、内容区无边距不限宽，页面拿到一块 `height: 100vh`（窄屏减去 52 顶栏）的纵向 flex 容器，自己画栏头铺满。
   - 自画页头：`ownHead: true`（只有仪表盘）——外框不画标题行，页面自己画问候语与「?」（可直接用 `admin/PageHelp.tsx` 的 `PageHelpTip` + `pageHelp('dash', null)`）。
-- `admin/modules.ts` 的 `PENDING_TABS` 是「还没按新设计做出来」的页签，外壳给它们显示空状态；页面接好后从集合里删掉那一项。套餐模块没有页签，详情路径是 `/plans/<id>`（详情弹窗内的页签接在后面：`/plans/<id>/<prices|pools|versions>`）。
+- `admin/modules.ts` 的 `PENDING_TABS` 是「还没按新设计做出来」的页签，外壳给它们显示空状态；页面接好后从集合里删掉那一项。套餐模块没有页签，详情路径是 `/plans/<id>`（详情整页的页签接在后面：`/plans/<id>/<prices|pools|versions>`）。
 - 颜色：后台没有品牌色。`--brand` / `--accent` 在后台都是墨色（主按钮、选中、批量条），蓝色是 `--info`（链接、聚焦环、「进行中」）；成功 / 警告 / 危险用 `--ok` / `--warn` / `--danger` 及其 `-soft` / `-line`。新代码不要写 `--brand*`，要墨色写 `--text` 或 `--accent`，要蓝写 `--info`。层次：页面 `--bg`、卡片 `--surface`、悬停 `--surface-2`、选中 `--surface-3`；线 `--border` / `--border-strong` / `--border-hover`；圆角 `--radius-tag` 4 / `-sm` 7 / `-md` 10 / `-lg` 12 / `-pill`。
 - kit 组件（后台专用，`admin/kit/index.ts`，页面 `import { … } from '../../kit'`；样稿类名写在各组件注释里）：
-  - `DetailPage<T>({ back: {href, label}, title, lead?, meta?, actions?, tabs?: {label, items, value, onChange}, side?, children })`：详情页骨架。返回链接 + 标题行（`lead` 是标题前的头像 / 地区码，`meta` 是标题下一行的状态、ID、复制按钮），右侧 `actions`；有 `side` 时两栏（右栏 300 宽、贴顶），窄于 960 变单栏
+  - `DetailPage<T>({ back: {href, label}, title, lead?, meta?, actions?, tabs?: {label, items: {value, label, badge?}[], value, onChange}, side?, children })`：详情页骨架。返回链接 + 标题行（`lead` 是标题前的头像 / 地区码，`meta` 是标题下一行的状态、ID、复制按钮），右侧 `actions`；有 `side` 时两栏（右栏 300 宽、贴顶），窄于 960 变单栏
   - `SideFacts({ label?, children })` + `SideFact({ label, children, action? })`：详情右栏的条目（dl）
   - `KvList({ boxed?, labelWidth = 120, children })` + `KvRow({ label, children, action?, muted? })`：左标签右值的键值行；`boxed` 装进带框盒子
   - `StatusDot({ tone: 'ok'|'warn'|'off'|'bad', children })`：带圆点的状态文字
@@ -47,7 +47,8 @@ paths:
   - `Modal`：`size` 取 `'sm'|'md'|'lg'`（400 / 560 / 720）或 `ModalWidth` 数值（400、440、480、520、560、640、680、720、760），另有 `subtitle`、`headExtra`、`footerStart`、`tall`、`divided`、`bodyClassName`；结构是头 / 体 / 底，体内滚动
   - `Select`：自绘 listbox，props 与旧的原生版兼容，`onChange` 的 `e.target.value` 照旧可用；不要再往里塞 `<option>`
   - `FilterTabs`（带计数的筛选页签，`items: {value,label,count?}[]`）、`Toolbar` + `SearchField`（列表上方的筛选条，`SearchField` 必须给 `aria-label`）
-  - `Table`：列可设 `sortable`，配 `sort` / `onSortChange`；另有 `footer`、`stickyHeader`、`boxed`（装进带框盒子，样稿 `.box` 里的表）、`rowClassName(row)`
+  - `Button` 可给 `icon`（文字前 15px 图标，样稿「新建」的加号、详情页头操作的图标）
+  - `Table`：列可设 `sortable`，配 `sort` / `onSortChange`；另有 `footer`、`stickyHeader`、`boxed`（装进带框盒子，样稿 `.box` 里的表）、`rowClassName(row)`；列可设 `hideOnMobile`（≤639 整列隐藏，对应样稿 `.h-m`），手机上一律只留两三列、不靠横向滚动；分页放进表尾用 `<Pager inline>`
   - `Card({ title?, subtitle?, extra?, footer?, tint?, flush? })`：头 48 高带底线、`footer` 是带顶线的底栏（说明 + 保存按钮）；表格、行列表放进去用 `flush`
   - `Button` 的 `variant="danger"` 在后台是红字红框；图标按钮用 `IconButton({ label, icon, size?: 'md'|'sm'|'xs' })`（`label` 同时是 aria-label 与 title）
   - `Switch` 另有 `tone="danger"`（打开是红色，危险开关用）；`Checkbox`、`Tabs`、`Segmented`、`Tag`、`StatStrip` 的外观已按样稿，页面不要再覆盖它们的颜色与尺寸

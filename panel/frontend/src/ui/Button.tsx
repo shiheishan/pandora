@@ -24,10 +24,12 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   busy?: boolean
   /** 窄屏弹窗里的按钮通栏 */
   block?: boolean
+  /** 文字前的图标（样稿里「新建」的加号、详情页头操作的图标），15px */
+  icon?: IconSvgElement
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'secondary', size = 'md', busy = false, block = false, disabled, type = 'button', className, children, ...rest },
+  { variant = 'secondary', size = 'md', busy = false, block = false, icon, disabled, type = 'button', className, children, ...rest },
   ref,
 ) {
   return (
@@ -40,6 +42,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...rest}
     >
       {busy && <span className={css.spinner} aria-hidden="true" />}
+      {icon && !busy && <HugeiconsIcon icon={icon} size={15} strokeWidth={1.6} aria-hidden="true" />}
       {children}
     </button>
   )
