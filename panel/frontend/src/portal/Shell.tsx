@@ -96,16 +96,15 @@ function AccountMenu({
   const runtime = useRuntime()
   const theme = useTheme()
   const menuId = useId()
-  const [open, setOpen] = useState(false)
+  // 记下在哪一页打开的：换页后自然算收起，不用在 effect 里 setState
+  const [openOn, setOpenOn] = useState<string | null>(null)
+  const open = openOn === path
+  const setOpen = useCallback((next: boolean) => setOpenOn(next ? path : null), [path])
   const wrapRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const close = useCallback(() => setOpen(false), [])
-
-  useEffect(() => {
-    setOpen(false)
-  }, [path])
+  const close = useCallback(() => setOpen(false), [setOpen])
 
   useEffect(() => {
     if (!open) return
@@ -119,7 +118,7 @@ function AccountMenu({
     }
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [open])
+  }, [open, setOpen])
 
   const focusMenuItem = (delta: number) => {
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])
