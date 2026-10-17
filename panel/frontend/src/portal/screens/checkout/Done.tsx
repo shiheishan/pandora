@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { href, useHashLocation } from '../../../core/router'
-import { Card, Empty, Skeleton } from '../../../ui'
+import { Empty, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
+import { Btn } from '../../kit'
 import { useBalance } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { usePlans } from '../common/catalog'
@@ -13,6 +14,7 @@ import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, useOrder } fro
 import { ResultView } from '../common/Result'
 import { UpdateHelpLink } from '../common/UpdateHelp'
 import { doneLines, doneSub, readDone } from './result-copy'
+import css from './Pay.module.css'
 
 const POLL_MS = 3000
 const POLL_LIMIT_MS = 120_000
@@ -51,33 +53,47 @@ export function Done({ orderId }: { orderId: string }) {
     if (linksStale && !links.isFetching) void links.refetch()
   }, [subsStale, linksStale, subs, links])
 
-  if (order.isPending || h.subs.isPending || subsStale || linksStale) return <Skeleton height={260} />
+  if (order.isPending || h.subs.isPending || subsStale || linksStale) {
+    return (
+      <div className={css.card}>
+        <Skeleton height={260} />
+      </div>
+    )
+  }
   if (order.isError) return <LoadError error={order.error} onRetry={() => void order.refetch()} what="订单" />
   const o = order.data!
   if (!paid && isPlanArchivedRefund(o)) {
     // 套餐归档后才付款（10-16）：不开通，钱已转进钱包余额
     return (
-      <Card className={flowCss.narrow}>
+      <div className={css.card}>
         <Empty
           bare
           title="套餐已停售，没有开通"
           description={`${archivedRefundText(o.surcharge_kept)}，可以用来买别的套餐。`}
-          action={<a href={href('/wallet')}>去钱包看看</a>}
+          action={
+            <Btn href={href('/wallet')} tone="soft">
+              去钱包看看
+            </Btn>
+          }
         />
-      </Card>
+      </div>
     )
   }
   if (!paid) {
     const closed = o.status === 'cancelled' || o.status === 'expired'
     return (
-      <Card className={flowCss.narrow}>
+      <div className={css.card}>
         <Empty
           bare
           title={closed ? '这单没有付成' : timedOut ? '还没收到付款结果' : '正在确认付款结果…'}
           description={closed ? '订单已经取消了，没有扣钱。' : timedOut ? '如果已经付了，过一会儿在订单里看看；30 分钟内没付会自动取消，不会扣钱。' : '付完一般几秒就到，这一页会自己更新。'}
-          action={<a href={href(closed ? '/subs' : `/orders/${orderId}`)}>{closed ? '回到我的套餐' : '去订单里看看'}</a>}
+          action={
+            <Btn href={href(closed ? '/subs' : `/orders/${orderId}`)} tone="soft">
+              {closed ? '回到我的套餐' : '去订单里看看'}
+            </Btn>
+          }
         />
-      </Card>
+      </div>
     )
   }
   const sub = doneSub(o, ctx, h.held)
