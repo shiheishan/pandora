@@ -553,6 +553,66 @@
   kbd { display: inline-block; margin: 0 3px; padding: 0 7px; border-radius: 7px; background: #fff; box-shadow: 0 0 0 1px rgba(var(--sh), 0.16), 0 2px 0 rgba(var(--sh), 0.12); font: 600 13.5px/22px var(--sans); color: var(--ink); white-space: nowrap; }
   .ha .fallback { margin-top: 24px; }
 
+  /* 账号安全：单列分区（参考 Linear「Security & access」的当前会话置顶、Kiwi 的设备行 + 下线、GitBook / Attio 的通知开关表） */
+  .acct { display: flex; align-items: center; gap: 14px; padding: 20px 22px; border-radius: 22px; background: radial-gradient(420px 160px at 0% 0%, var(--tint), transparent 75%), #fff; box-shadow: var(--lift), 0 0 0 1px var(--tint-line); }
+  .acct .avatar { width: 48px; height: 48px; font-size: 19px; background: var(--deep); color: #fff; }
+  .acct b { display: block; font-size: 17px; font-weight: 600; }
+  .acct small { display: block; margin-top: 3px; font-size: 13px; color: var(--text-2); }
+  .acct .mono { font-family: var(--tw); font-size: 13.5px; color: var(--ink); }
+  .sec-cap { font-size: 12.5px; color: var(--text-3); margin: 10px 6px 0; }
+  .row .btn.sm { flex: none; }
+  .row.static { cursor: default; }
+  .row.static:hover { background: none; }
+  .row .rt .st { margin-left: 8px; vertical-align: 1px; }
+  .st.ok { background: #e4f1e8; color: #23603c; font-weight: 600; }
+  .row .lnk { margin-left: 0; }
+  .row[hidden] { display: none; }
+  /* 快捷登录生成后：链接 + 倒数 + 复制，60 秒后收起 */
+  .ql { padding: 0 20px 18px 70px; }
+  .ql[hidden] { display: none; }
+  .ql .linkchip { justify-content: space-between; height: 46px; background: var(--paper-2); }
+  .ql .linkchip code { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
+  .ql-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--warn, #8a5a00); }
+  .ql-bar i { width: 7px; height: 7px; border-radius: 50%; background: #d08a1a; }
+  /* Telegram：未绑定 / 出码 / 已绑定三态 */
+  .tgc { border-radius: 20px; background: #fff; box-shadow: var(--lift); padding: 18px 20px 20px; }
+  .tgc-h { display: flex; align-items: center; gap: 14px; }
+  .tgc-h .ri { width: 36px; height: 36px; border-radius: 10px; background: var(--bg); display: flex; align-items: center; justify-content: center; color: var(--deep); flex: none; }
+  .tgc-h .rt { flex: 1; font-size: 15px; }
+  .tgc-h .rt small { display: block; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .tgc-h .rt b { font-weight: 600; color: var(--ink); }
+  .tgc-h .lnk { margin-left: 0; }
+  .tgc [data-tg][hidden] { display: none; }
+  .tgc p { margin: 14px 0 0; font-size: 14px; line-height: 1.65; color: var(--text-2); }
+  .tgc .tg-acts { display: flex; gap: 10px; margin-top: 16px; }
+  .tgc .tg-acts .btn { flex: 1; }
+  .tg-code { margin-top: 16px; padding: 16px 18px; border-radius: 16px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
+  .tg-code span { font-size: 13px; color: var(--text-2); }
+  .tg-code code { display: block; margin: 6px 0 4px; font: 700 24px var(--tw); letter-spacing: 0.06em; color: var(--ink); }
+  .tg-code small { font-size: 12.5px; color: var(--text-3); }
+  .tg-grp { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; box-shadow: 0 -1px 0 var(--line); font-size: 12.5px; color: var(--text-3); }
+  .tg-grp a { font-size: 14px; color: var(--act); font-weight: 600; }
+  /* 通知方式：3 类 × 2 渠道 */
+  .pref { border-radius: 20px; background: #fff; box-shadow: var(--lift); overflow: hidden; }
+  .pf { display: grid; grid-template-columns: 1fr 76px 76px; align-items: center; padding: 14px 20px; }
+  .pf + .pf { box-shadow: 0 -1px 0 var(--line); }
+  .pf.hd { padding: 12px 20px; font-size: 12.5px; color: var(--text-3); background: var(--paper-2); }
+  .pf.hd span:not(:first-child), .pf > .swc { justify-self: center; }
+  .pf b { display: block; font-size: 15px; font-weight: 500; }
+  .pf small { display: block; font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+  .sw { all: unset; box-sizing: border-box; cursor: pointer; width: 42px; height: 26px; border-radius: 99px; background: rgba(var(--sh), 0.16); position: relative; transition: background 0.2s; }
+  .sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(var(--sh), 0.3); transition: transform 0.2s; }
+  .sw[aria-checked="true"] { background: var(--act); }
+  .sw[aria-checked="true"]::after { transform: translateX(16px); }
+  .sw:disabled { cursor: not-allowed; opacity: 0.45; }
+  .pf-note { padding: 12px 20px 14px; font-size: 12.5px; color: var(--text-2); box-shadow: 0 -1px 0 var(--line); background: var(--paper-2); }
+  .pf-note[hidden] { display: none; }
+  .out-btn { width: 100%; margin-top: 30px; color: var(--danger); }
+  .sh-card .fld .code { height: 50px; }
+  .fld .err { display: block; font-style: normal; font-size: 12.5px; color: var(--danger); margin: 7px 2px 0; }
+  .fld .err[hidden] { display: none; }
+  .fld .code.bad { box-shadow: inset 0 0 0 1.5px var(--danger); }
+
   /* 我的（手机） */
   .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
   .profile .avatar { width: 52px; height: 52px; font-size: 20px; }
@@ -671,6 +731,15 @@
     .ha-fb { margin: 26px -20px 0; padding: 18px 20px 22px; }
     .ha-fb > span { flex-basis: 100%; }
     .ha-fb .btn { flex: 1; }
+    /* 账号安全 */
+    .acct { padding: 18px; }
+    .ql { padding: 0 16px 16px; }
+    .row .rt small { font-size: 12.5px; }
+    .tgc { padding: 16px; }
+    .tgc .tg-acts { flex-direction: column; }
+    .tgc .tg-acts .btn { flex: none; height: 46px; }
+    .pf { grid-template-columns: 1fr 52px 76px; padding: 14px 16px; }
+    .pf.hd { padding: 11px 16px; }
   }
 </style>
 </head>
@@ -699,6 +768,10 @@
   <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/><path d="M12 8v4l3 2"/></symbol>
   <symbol id="i-renew" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l3 3M14 9l2 2"/></symbol>
+  <symbol id="i-desk" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.5L11 20l3-4.5 5 3.5 2-15z"/><path d="M9 13.5L21 4"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5v16h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/></symbol>
 </svg>
 
@@ -714,7 +787,7 @@
   <a class="nav-a" data-p="msgs" href="#msgs"><svg class="i"><use href="#i-bell"/></svg>消息<span class="dot">2</span></a>
   <a class="nav-a" data-p="tickets" href="#tickets"><svg class="i"><use href="#i-chat"/></svg>工单支持</a>
   <a class="nav-a" data-p="help" href="#help"><svg class="i"><use href="#i-help"/></svg>帮助中心</a>
-  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-shield"/></svg>账号安全</a>
+  <a class="nav-a" data-p="security" href="#security"><svg class="i"><use href="#i-shield"/></svg>账号安全</a>
   <div class="me">
     <div class="avatar">张</div>
     <div class="who"><b>张伟</b><span>余额 <span class="num">¥26.50</span></span></div>
@@ -1596,6 +1669,71 @@
     </div>
   </section>
 
+  <!-- ================= 账号安全 ================= -->
+  <section class="page" id="p-security">
+    <div class="col">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <h1>账号安全</h1>
+      <!-- 个人信息：邮箱、用户 ID（uuid 前 8 位）、注册时间；没有用户组 -->
+      <div class="acct"><div class="avatar">张</div><div><b>user@example.test</b><small>用户 ID <span class="mono">3f9a2c1e</span> · 注册于 2026-03-02</small></div></div>
+
+      <h3>登录</h3>
+      <div class="rows">
+        <div class="row" data-open="pw"><span class="ri"><svg class="i"><use href="#i-key"/></svg></span><span class="rt">密码<small>改密码后，其他设备会全部下线</small></span><span class="rv">修改</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <!-- 快捷登录：只在这台已登录的设备生成，60 秒、一次性；再生成时旧的立即作废 -->
+        <div class="row static"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">快捷登录<small>在新设备上打开链接就能登录，60 秒内有效，只能用一次</small></span><button class="btn soft sm" data-ql>生成链接</button></div>
+        <div class="ql" hidden><div class="linkchip"><code>https://example.test/#/quick-login/q7Km2xPa9WzT4bNc</code><button>复制</button></div><div class="ql-bar"><i></i><span data-ql-left>58</span> 秒后失效 · 已复制到剪贴板</div></div>
+      </div>
+
+      <h3>登录的设备</h3>
+      <!-- 只列网页登录；不显示 IP 和位置；当前这台置顶、不能下线；下线直接执行 -->
+      <div class="rows">
+        <div class="row static"><span class="ri"><svg class="i"><use href="#i-desk"/></svg></span><span class="rt">Chrome · macOS<span class="st ok">当前</span><small>刚刚活跃 · 登录于 10-16 09:12</small></span></div>
+        <div class="row static"><span class="ri"><svg class="i"><use href="#i-phone"/></svg></span><span class="rt">Safari · iPhone<small>2 小时前活跃 · 登录于 10-12 21:40</small></span><button class="lnk" data-kick>下线</button></div>
+        <div class="row static"><span class="ri"><svg class="i"><use href="#i-desk"/></svg></span><span class="rt">Edge · Windows<small>10-09 活跃 · 登录于 09-30 08:15</small></span><button class="lnk" data-kick>下线</button></div>
+      </div>
+      <p class="sec-cap" id="kick-note" hidden></p>
+
+      <h3>Telegram</h3>
+      <div class="tgc" data-state="unbound">
+        <!-- 未绑定：右边一个小按钮；出码：下面给 /start 指令和两个按钮；已绑定：右边是解除绑定（有确认框） -->
+        <div class="tgc-h"><span class="ri"><svg class="i"><use href="#i-send"/></svg></span><span class="rt">Telegram 提醒<small data-tg="unbound code">绑定后，到期、流量和工单回复的提醒也能发到 Telegram</small><small data-tg="bound">已绑定 <b>@zhangwei</b> · 提醒会发到这个账号</small></span><button class="btn soft sm" data-tg="unbound" data-tgto="code">绑定</button><button class="lnk" data-tg="bound" data-open="tgun">解除绑定</button></div>
+        <div class="tg-code" data-tg="code"><span>在 Telegram 里向 @pandora_example_bot 发送：</span><code>/start 7KQ2MXAB</code><small>4:52 内有效 · 发送后这里会自动变成「已绑定」</small></div>
+        <div class="tg-acts" data-tg="code"><a class="btn" data-tgto="bound">在 Telegram 中打开</a><button class="btn soft" data-tgto="bound">我已发送，完成绑定</button></div>
+        <div class="tg-grp"><a href="#security">加入用户讨论群 ↗</a>入群申请可能需要先绑定 Telegram 并有在用的套餐</div>
+      </div>
+
+      <h3>通知方式</h3>
+      <!-- 后端固定 3 类 × 2 渠道；交易通知锁定开启；没绑 Telegram 时那一列不能开 -->
+      <div class="pref">
+        <div class="pf hd"><span>通知</span><span>邮件</span><span>Telegram</span></div>
+        <div class="pf"><span><b>交易通知</b><small>支付成功等，不能关</small></span><button class="sw swc" role="switch" aria-checked="true" aria-label="交易通知 · 邮件" disabled></button><button class="sw swc" role="switch" aria-checked="true" aria-label="交易通知 · Telegram" data-tgsw disabled></button></div>
+        <div class="pf"><span><b>服务提醒</b><small>到期、流量、工单回复</small></span><button class="sw swc" role="switch" aria-checked="true" aria-label="服务提醒 · 邮件"></button><button class="sw swc" role="switch" aria-checked="true" aria-label="服务提醒 · Telegram" data-tgsw></button></div>
+        <div class="pf"><span><b>活动与群发</b><small>优惠活动、站点群发</small></span><button class="sw swc" role="switch" aria-checked="false" aria-label="活动与群发 · 邮件"></button><button class="sw swc" role="switch" aria-checked="false" aria-label="活动与群发 · Telegram" data-tgsw></button></div>
+        <div class="pf-note" id="tg-note">绑定 Telegram 后可以开启 Telegram 推送。</div>
+      </div>
+
+      <button class="btn soft out-btn">退出登录</button>
+    </div>
+  </section>
+
+  <div class="sheet" id="sh-pw" hidden>
+    <div class="sh-card" role="dialog" aria-label="修改密码">
+      <div class="sh-top"><b>修改密码</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">改好后，除了这台设备，其他设备都会下线，需要重新登录。</p>
+      <label class="fld"><span>当前密码</span><input class="code" type="password" autocomplete="current-password" /><em class="err" hidden>当前密码不正确</em></label>
+      <label class="fld"><span>新密码</span><input class="code" type="password" autocomplete="new-password" placeholder="至少 8 位，含字母和数字" /></label>
+      <div class="sh-acts"><button class="btn soft" data-close>取消</button><button class="btn hot" data-pw>更新密码</button></div>
+    </div>
+  </div>
+  <div class="sheet" id="sh-tgun" hidden>
+    <div class="sh-card" role="alertdialog" aria-label="解除绑定 Telegram">
+      <div class="sh-top"><b>解除绑定 Telegram？</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">将不再收到 Telegram 推送，之后可以重新绑定。</p>
+      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn danger" data-close data-tgto="unbound">解除绑定</button></div>
+    </div>
+  </div>
+
   <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
   <section class="page" id="p-me">
     <div class="col">
@@ -1619,7 +1757,7 @@
       </div>
       <h3>设置</h3>
       <div class="rows">
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-shield"/></svg></span><span class="rt">账号安全</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <a class="row" href="#security"><span class="ri"><svg class="i"><use href="#i-shield"/></svg></span><span class="rt">账号安全</span><svg class="i chev"><use href="#i-chev"/></svg></a>
         <div class="row"><span class="ri"><svg class="i"><use href="#i-logout"/></svg></span><span class="rt" style="color:var(--danger)">退出登录</span></div>
       </div>
     </div>
@@ -1635,7 +1773,7 @@
 
 <script>
   // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
-  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'me']
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'security', 'me']
   function show() {
     let p = location.hash.slice(1)
     if (!pages.includes(p)) p = 'subs'
@@ -1775,6 +1913,39 @@
   }))
   if (q.get('h')) hp(q.get('h'), q.get('v') === 'detail')
   if (q.get('hq')) { hsIn.value = q.get('hq'); hsearch() }
+  // 账号安全：快捷登录倒数、下线、Telegram 三态（?tg=code|bound 预选）、通知开关、改密码出错演示（?pe=1）
+  const qlBox = document.querySelector('.ql')
+  let qlTimer
+  function ql() {
+    let left = 60
+    qlBox.hidden = false
+    document.querySelector('[data-ql]').textContent = '重新生成'
+    clearInterval(qlTimer)
+    const tick = () => { document.querySelector('[data-ql-left]').textContent = left; if (left-- <= 0) { clearInterval(qlTimer); qlBox.hidden = true; document.querySelector('[data-ql]').textContent = '生成链接' } }
+    tick()
+    qlTimer = setInterval(tick, 1000)
+  }
+  document.querySelector('[data-ql]').addEventListener('click', ql)
+  document.querySelectorAll('[data-kick]').forEach((el) => el.addEventListener('click', () => {
+    const row = el.closest('.row')
+    const note = document.getElementById('kick-note')
+    note.textContent = '已将 ' + row.querySelector('.rt').firstChild.textContent + ' 下线'
+    note.hidden = false
+    row.hidden = true
+  }))
+  const tgc = document.querySelector('.tgc')
+  function tgState(t) {
+    tgc.dataset.state = t
+    tgc.querySelectorAll('[data-tg]').forEach((el) => { el.hidden = !el.dataset.tg.split(' ').includes(t) })
+    const bound = t === 'bound'
+    document.querySelectorAll('[data-tgsw]').forEach((el, i) => { el.disabled = !bound || i === 0; if (!bound) el.setAttribute('aria-checked', 'false'); else if (i < 2) el.setAttribute('aria-checked', 'true') })
+    document.getElementById('tg-note').hidden = bound
+  }
+  document.querySelectorAll('[data-tgto]').forEach((el) => el.addEventListener('click', () => tgState(el.dataset.tgto)))
+  document.querySelectorAll('.sw').forEach((el) => el.addEventListener('click', () => el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true')))
+  tgState(['code', 'bound'].includes(q.get('tg')) ? q.get('tg') : 'unbound')
+  if (q.get('ql')) ql()
+  if (q.get('pe')) { const f = document.querySelector('#sh-pw .fld'); f.querySelector('.code').classList.add('bad'); f.querySelector('.err').hidden = false }
   const bar = document.createElement('nav')
   bar.className = 'pal'
   ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
