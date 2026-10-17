@@ -36,7 +36,7 @@ describe('mock api · portal checkout (purchase model)', () => {
   afterAll(() => close(server))
   beforeEach(() => scenario('proto-s4'))
 
-  it('换套餐按订阅展开：原型 S4 的 ¥21 与退 ¥9；三档都有算式所需的明细', async () => {
+  it('换套餐按订阅展开：原型 S4 的 ¥21 与退 ¥9（订阅套餐只按剩余时间算）；三档都有算式所需的明细', async () => {
     const [sub] = (await subs()).subscriptions
     const byPlan = await quote({ action: 'change', subscription_id: sub!.id })
     expect(byPlan.min_payment).toBe(100)
@@ -44,7 +44,10 @@ describe('mock api · portal checkout (purchase model)', () => {
     const basic = byPlan.quotes.find((q) => q.plan_id === BASIC)!
     expect([pro.credit, pro.total, pro.refund]).toEqual([2400, 2100, 0])
     expect([basic.total, basic.refund]).toEqual([0, 900])
-    expect(pro.credit_detail).toMatchObject({ paid: 3000, days_left: 25, days_total: 30, ratio_ppm: 800000 })
+    // 原来是订阅套餐：只看剩余付费时间（Go proration.go），流量两项为 0；到期多推了 30 分钟，比例略高于 80%
+    expect(pro.credit_detail).toMatchObject({ paid: 3000, days_left: 24, days_total: 30, traffic_left: 0, traffic_total: 0 })
+    expect(pro.credit_detail!.ratio_ppm).toBeGreaterThanOrEqual(800000)
+    expect(pro.credit_detail!.ratio_ppm).toBeLessThan(801000)
     // 与 A 路一致：只给订阅时每个套餐的全部价格档都返回
     expect(byPlan.quotes.filter((q) => q.plan_id === PRO)).toHaveLength(3)
     const tiers = await quote({ action: 'change', subscription_id: sub!.id, plan_id: PRO })

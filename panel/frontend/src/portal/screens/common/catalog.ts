@@ -150,6 +150,14 @@ export function gb(bytes: number): string {
 }
 const trim = (n: number) => (n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10))
 
+/** 大数字用：拆成数和单位（样稿 .num.big + .unit「208 GB」）；与 gb 同一取整，单位写 GB / TB / MB */
+export function gbParts(bytes: number): { value: string; unit: string } {
+  const g = Math.max(0, bytes) / 1024 ** 3
+  if (g >= 1024) return { value: trim(g / 1024), unit: 'TB' }
+  if (g >= 1) return { value: trim(g), unit: 'GB' }
+  return { value: String(Math.round(Math.max(0, bytes) / 1024 ** 2)), unit: 'MB' }
+}
+
 /** 流量：订阅套餐「每期 100G」，一次性「共 50G」，不限「不限流量」 */
 export function planTraffic(plan: Pick<Plan, 'kind' | 'traffic_bytes'>): string {
   if (plan.traffic_bytes === null) return '不限流量'

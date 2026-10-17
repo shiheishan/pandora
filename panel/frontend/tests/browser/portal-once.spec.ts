@@ -9,8 +9,8 @@ import type { Page } from '@playwright/test'
 
 const yuan = (s: string) => Math.round(Number(s) * 100)
 
-/** 选购页的「按时间 / 一次性」标签 */
-const kindTab = (page: Page, name: '按时间' | '一次性') => page.getByRole('tablist', { name: '套餐类型' }).getByRole('tab', { name: new RegExp(`^${name}`) })
+/** 选购页页头的「按时间 / 一次性」分段选择（radiogroup「套餐类型」，选中的 aria-checked） */
+const kindTab = (page: Page, name: '按时间' | '一次性') => page.getByRole('radiogroup', { name: '套餐类型' }).getByRole('radio', { name: new RegExp(`^${name}`) })
 
 test('D：一次性新购、叠加、换成按时间的套餐', async ({ browser, world }) => {
   const { once, std } = world.plans
@@ -20,7 +20,7 @@ test('D：一次性新购、叠加、换成按时间的套餐', async ({ browser
   await step(page, 'D1', async () => {
     await nav(page, '选购')
     await kindTab(page, '一次性').click()
-    await expect(kindTab(page, '一次性')).toHaveAttribute('aria-selected', 'true')
+    await expect(kindTab(page, '一次性')).toHaveAttribute('aria-checked', 'true')
     await planCard(page, once.name).getByRole('link', { name: '买这个' }).click()
     await expect(page.getByRole('heading', { level: 1, name: `买${once.name}` })).toBeVisible()
     const validity = await seen(page, /^今天起 30 天，到 /)
@@ -33,15 +33,17 @@ test('D：一次性新购、叠加、换成按时间的套餐', async ({ browser
     const lines = await happened(page)
     await backToSubs(page)
     const c = card(page, once.name)
-    await expect(c).toContainText('剩 20G / 共 20G')
+    // 主卡：大数字是剩余，下面一行「剩余 · 共 20G，不清零，用完为止」，进度条满格
+    await expect(c).toContainText('剩余 · 共 20G')
+    await expect(c.getByRole('progressbar', { name: '剩余流量' })).toHaveAttribute('aria-valuenow', '100')
     tail = await tailOf(c)
-    return `确认页有效期「${validity}」「要付 ¥5.00」；${paid}；完成页「${lines[0]}」；卡片「剩 20G / 共 20G」····${tail}`
+    return `确认页有效期「${validity}」「要付 ¥5.00」；${paid}；完成页「${lines[0]}」；卡片「剩余 · 共 20G」····${tail}`
   })
 
   await step(page, 'D2', async () => {
     await nav(page, '选购')
     // 名下只有一次性套餐：选购页默认停在「一次性」；同款那张卡的按钮是「再买一份」
-    await expect(kindTab(page, '一次性')).toHaveAttribute('aria-selected', 'true')
+    await expect(kindTab(page, '一次性')).toHaveAttribute('aria-checked', 'true')
     await planCard(page, once.name).getByRole('link', { name: '再买一份' }).click()
     await expect(page.getByRole('heading', { level: 1, name: `买${once.name}` })).toBeVisible()
     const choices = page.getByRole('radiogroup', { name: `${once.name}放到哪里` })
@@ -59,9 +61,9 @@ test('D：一次性新购、叠加、换成按时间的套餐', async ({ browser
     expect(lines[0]).toContain('总流量加上 20G')
     await backToSubs(page)
     const c = card(page, once.name)
-    await expect(c).toContainText('剩 40G / 共 40G')
+    await expect(c).toContainText('剩余 · 共 40G')
     expect(await tailOf(c), '叠加链接不变').toBe(tail)
-    return `选项 ${options.map((o) => `「${o}」`).join('')} 不预选；选叠加后「${traffic}」；${paid}；完成页「${lines[0]}」；卡片「剩 40G / 共 40G」，链接 ····${tail} 不变`
+    return `选项 ${options.map((o) => `「${o}」`).join('')} 不预选；选叠加后「${traffic}」；${paid}；完成页「${lines[0]}」；卡片「剩余 · 共 40G」，链接 ····${tail} 不变`
   })
 
   await step(page, 'D3', async () => {
@@ -94,9 +96,9 @@ test('D4：只有一次性套餐时切到「按时间」', async ({ browser, wor
   const page = await openPortal(browser, u)
   await step(page, 'D4', async () => {
     await nav(page, '选购')
-    await expect(kindTab(page, '一次性')).toHaveAttribute('aria-selected', 'true')
+    await expect(kindTab(page, '一次性')).toHaveAttribute('aria-checked', 'true')
     await kindTab(page, '按时间').click()
-    await expect(kindTab(page, '按时间')).toHaveAttribute('aria-selected', 'true')
+    await expect(kindTab(page, '按时间')).toHaveAttribute('aria-checked', 'true')
     await expect(planCard(page, std.name)).toBeVisible()
     return `默认「一次性」；点「按时间」后列出${std.name}`
   })

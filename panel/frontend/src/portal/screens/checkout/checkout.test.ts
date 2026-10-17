@@ -123,7 +123,8 @@ describe('确认页的钱（原型 S7 / S7b / S7c 与最低额）', () => {
 describe('确认页的文字', () => {
   const s4 = sub({ usedGiB: 20, current_period_end: '2026-11-01T12:00:00Z' })
   const naming = makeNaming([s4], undefined)
-  const credit = { paid: 3000, days_left: 25, days_total: 30, traffic_left: 80 * GIB, traffic_total: 100 * GIB, ratio_ppm: 800000 }
+  // 订阅套餐的原份只按剩余付费时间算（Go proration.go）：流量两项恒为 0
+  const credit = { paid: 3000, days_left: 24, days_total: 30, traffic_left: 0, traffic_total: 0, ratio_ppm: 800000 }
 
   it('换便宜：算式与明细', () => {
     const r = row({
@@ -140,10 +141,34 @@ describe('确认页的文字', () => {
     const c = confirmCopy({ target: { kind: 'change', subId: s4.id, planId: 'basic' }, sub: s4, plan: BASIC, oldPlan: STD, row: r, naming, held: [s4], now: NOW })
     expect(c.formula).toBe('¥15.00 − 原套餐没用完的 ¥24.00 = 今天不用付，退 ¥9.00 到钱包余额')
     expect(c.rows.find((x) => x.k === '原套餐没用完的部分')?.calc).toBe(
-      '标准版这期付了 ¥30.00。还剩 25/30 天（83%），流量还剩 80G/100G（80%），按少的那项算：¥30.00 × 80% = ¥24.00。按下单那一刻算；送的天数不算钱。',
+      '标准版这期付了 ¥30.00。还剩 24/30 天（80%），¥30.00 × 80% = ¥24.00。按下单那一刻算；送的天数不算钱。',
     )
+    expect(c.notes[0]).toEqual({ b: '标准版这期没用完的 24 天，已经按 ¥24.00 算给你了', rest: expect.stringMatching(/^（先抵基础版的 ¥15\.00，多的 ¥9\.00 退到钱包）/) })
+    expect(c.callout[0]).toMatch(/每期流量 100G → 50G、设备 /)
+    expect(c.swap?.from.name).toBe('标准版')
+    expect(c.swap?.to.name).toBe('基础版')
     expect(tierNote({ kind: 'change', subId: 'x', planId: 'basic' }, r)).toEqual(['¥15 − ¥24', '= 退 ¥9'])
     expect(changeFormula(row({ subtotal: 4500, credit: 2400, total: 2100 }))).toBe('¥45.00 − 原套餐没用完的 ¥24.00 = 今天付 ¥21.00')
+  })
+
+  it('换套餐：一次性原份取天数与流量里少的；永久的只看流量；流量用得快时提醒', () => {
+    const once = sub({ id: 'o1', plan_id: 'once', plan_name: '流量版', plan_kind: 'one_time', usedGiB: 60, current_period_end: '2026-10-22T12:00:00Z' })
+    const r = (detail: typeof credit, c: number) => row({ plan_id: 'std', price_id: 'std1', subtotal: 3000, credit: c, credit_detail: detail, total: 3000 - c })
+    const args = (s: typeof once, rr: ReturnType<typeof row>) =>
+      ({ target: { kind: 'change', subId: s.id, planId: 'std' }, sub: s, plan: STD, oldPlan: ONCE, row: rr, naming: makeNaming([s], undefined), held: [s], now: NOW }) as const
+    const half = { paid: 2000, days_left: 15, days_total: 30, traffic_left: 40 * GIB, traffic_total: 100 * GIB, ratio_ppm: 400000 }
+    const c = confirmCopy(args(once, r(half, 800)))
+    expect(c.rows.find((x) => x.k === '原套餐没用完的部分')?.calc).toBe(
+      '流量版付了 ¥20.00。还剩 15/30 天（50%），流量还剩 40G/100G（40%），按少的那项算：¥20.00 × 40% = ¥8.00。按下单那一刻算；送的天数和流量不算钱。',
+    )
+    expect(c.notes.some((n) => typeof n === 'string' && n.startsWith('你的流量用得比天数快'))).toBe(true)
+    const forever = { ...once, permanent: true, current_period_end: null }
+    const perm = { paid: 2000, days_left: 0, days_total: 0, traffic_left: 40 * GIB, traffic_total: 100 * GIB, ratio_ppm: 400000 }
+    const p = confirmCopy(args(forever, r(perm, 800)))
+    expect(p.rows.find((x) => x.k === '原套餐没用完的部分')?.calc).toBe(
+      '流量版付了 ¥20.00。流量还剩 40G/100G（40%），¥20.00 × 40% = ¥8.00。按下单那一刻算；送的流量不算钱。',
+    )
+    expect(p.notes.some((n) => typeof n === 'string' && n.startsWith('你的流量用得比天数快'))).toBe(false)
   })
 
   it('叠加：总流量与有效期', () => {
@@ -159,6 +184,13 @@ describe('确认页的文字', () => {
     })
     expect(c.rows.find((x) => x.k === '总流量')?.v).toBe('剩 90G → 加完 190G')
     expect(c.rows.find((x) => x.k === '有效期')?.v).toMatch(/→/)
+  })
+
+  it('重置：清零已用，送的流量保留，能用满上限 + 送的', () => {
+    const one = sub({ usedGiB: 110, bonus_bytes: 20 * GIB, reset_price: 1500, reset_limit: 2, resets_used: 1 })
+    const c = confirmCopy({ target: { kind: 'reset', subId: one.id }, sub: one, plan: STD, row: row({ subtotal: 1500 }), naming: makeNaming([one], undefined), held: [one], now: NOW })
+    expect(c.rows.find((x) => x.k === '重置后能用')?.v).toBe('10G → 120G')
+    expect(c.item).toEqual({ name: '标准版', facts: '本期已用 110G / 120G', pill: '本期还能买 1 次' })
   })
 
   it('续费：剩的流量到期不累加', () => {

@@ -1,14 +1,14 @@
 import { href } from '../../../core/router'
-import { Card, Empty, Skeleton, Tag } from '../../../ui'
+import { Empty, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
+import { Btn, Chip, cx } from '../../kit'
 import { LoadError } from '../common/Blocks'
 import { devicesText, KIND_NAME, planTraffic, priceFor, usePlans, validityText, type Plan } from '../common/catalog'
-import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { day, money, moneyShort, perPeriod } from '../common/purchase'
 import { tierOf, useQuote, type QuoteRow } from '../common/quote'
 import type { Subscription } from '../common/subscriptions'
-import css from './Subs.module.css'
+import css from './Pages.module.css'
 
 /** 换过去要付多少：「换过去，今天付 ¥21.00」/「换过去今天不用付，还退 ¥9.00 到钱包余额」 */
 function changeResult(row: Pick<QuoteRow, 'total' | 'refund'>): string {
@@ -17,7 +17,7 @@ function changeResult(row: Pick<QuoteRow, 'total' | 'refund'>): string {
   return '换过去今天不用付'
 }
 
-/** 同一档月价比较：比现在贵的标「更大」，便宜的标「更便宜」；只在同类型的订阅套餐之间比 */
+/** 同一档月价比较：比现在贵的标「更大」，便宜的标「更便宜」；只在同类型的按时间套餐之间比 */
 function sizeTag(target: Plan, current: Plan | undefined): 'bigger' | 'cheaper' | null {
   if (!current || target.kind !== current.kind || target.kind === 'one_time') return null
   const a = priceFor(target, '1m')?.unit_amount
@@ -39,41 +39,57 @@ export function ChangePick({ id }: { id: string }) {
   if (h.subs.isPending || plans.isPending) return <Skeleton height={240} />
   const failed = h.subs.isError ? h.subs : plans.isError ? plans : null
   if (failed) return <LoadError error={failed.error} onRetry={() => void failed.refetch()} what="套餐" />
-  if (!sub || !sub.changeable) return <Empty title="这一份现在不能换套餐" description="已经停用的套餐不能换，可以另买一份。" action={<a href={href('/plans')}>去选购</a>} />
+  if (!sub || !sub.changeable)
+    return (
+      <Empty
+        title="这一份现在不能换套餐"
+        description="已经停用的套餐不能换，可以另买一份。"
+        action={
+          <Btn href={href('/plans')} tone="soft">
+            去选购
+          </Btn>
+        }
+      />
+    )
   const current = plans.data!.find((p) => p.id === sub.plan_id)
   const price = sub.renewal_price
   return (
-    <div className={`${flowCss.stack} ${flowCss.narrow}`}>
-      <p className={flowCss.lead}>
+    <div className={cx(css.page, css.narrow)}>
+      <p className={css.now}>
         {h.naming.multi ? `「${h.naming.dn(sub)}」` : '你'}现在是 <b>{sub.plan_name}</b>
         {current && `：${planTraffic(current)} · ${devicesText(current.max_devices)}`}
         {price && price.billing_interval !== 'one_time' && ` · ${moneyShort(price.unit_amount)}${perPeriod(price.billing_interval, price.interval_count)}`}
       </p>
-      <Card>
-        {quote.isPending ? (
+      {quote.isPending ? (
+        <div className={css.card}>
           <Skeleton height={120} />
-        ) : quote.isError ? (
+        </div>
+      ) : quote.isError ? (
+        <div className={css.card}>
           <LoadError error={quote.error} onRetry={() => void quote.refetch()} what="价格" />
-        ) : quote.data.quotes.length === 0 ? (
+        </div>
+      ) : quote.data.quotes.length === 0 ? (
+        <div className={css.card}>
           <Empty bare title="暂时没有能换的套餐" description="可以另买一份，或者到期后再来看看。" />
-        ) : (
-          <div>
-            {[...new Set(quote.data.quotes.map((q) => q.plan_id))]
-              .filter((planId) => planId !== sub.plan_id)
-              .map((planId) => {
-                const plan = plans.data!.find((p) => p.id === planId)
-                const row = tierOf(quote.data.quotes, sub, (q) => q.plan_id === planId)
-                return plan && row ? <Row key={planId} sub={sub} row={row} plan={plan} current={current} /> : null
-              })}
-          </div>
-        )}
-      </Card>
-      <p className={flowCss.faint}>换了马上生效，链接不变。下一步会把账算清楚再让你确认。</p>
+        </div>
+      ) : (
+        <div className={css.opts}>
+          {[...new Set(quote.data.quotes.map((q) => q.plan_id))]
+            .filter((planId) => planId !== sub.plan_id)
+            .map((planId) => {
+              const plan = plans.data!.find((p) => p.id === planId)
+              const row = tierOf(quote.data!.quotes, sub, (q) => q.plan_id === planId)
+              return plan && row ? <Option key={planId} sub={sub} row={row} plan={plan} current={current} /> : null
+            })}
+        </div>
+      )}
+      <p className={css.faint}>换了马上生效，链接不变。下一步会把账算清楚再让你确认。</p>
     </div>
   )
 }
 
-function Row({ sub, row, plan, current }: { sub: Subscription; row: QuoteRow; plan: Plan; current: Plan | undefined }) {
+/** 一行选项：左边套餐名与事实，右边「换成X」按钮（浏览器测试按这个链接的文字找行） */
+function Option({ sub, row, plan, current }: { sub: Subscription; row: QuoteRow; plan: Plan; current: Plan | undefined }) {
   const tag = sizeTag(plan, current)
   const month = plan.kind === 'subscription' ? priceFor(plan, '1m') : undefined
   const priceNote =
@@ -83,22 +99,25 @@ function Row({ sub, row, plan, current }: { sub: Subscription; row: QuoteRow; pl
         ? `${moneyShort(month.unit_amount)}${perPeriod(month.billing_interval, month.interval_count)}`
         : `${perPeriod(row.interval, row.interval_count)}`
   return (
-    <div className={css.optRow}>
+    <div className={css.opt}>
       <div className={css.optText}>
-        <b>{plan.name}</b>{' '}
-        <Tag>{KIND_NAME[plan.kind]}</Tag>{' '}
-        {tag === 'bigger' ? <Tag tone="brand">更大</Tag> : tag === 'cheaper' ? <Tag>更便宜</Tag> : null}
-        <small>
+        <span className={css.optName}>
+          {plan.name}
+          <Chip>{KIND_NAME[plan.kind]}</Chip>
+          {tag === 'bigger' && <Chip tone="solid">更大</Chip>}
+          {tag === 'cheaper' && <Chip>更便宜</Chip>}
+        </span>
+        <span className={css.optFacts}>
           {planTraffic(plan)} · {devicesText(plan.max_devices)} · {priceNote}
-        </small>
-        <small className={css.optResult}>
+        </span>
+        <span className={css.optResult}>
           {changeResult(row)}
           {row.period_end && ` · 从今天起算，到 ${day(row.period_end)}`}
-        </small>
+        </span>
       </div>
-      <a className={css.optButton} href={href('/checkout', { change: sub.id, plan: plan.id })} id={`btn-change-${plan.id}`}>
+      <Btn size="sm" tone={tag === 'bigger' ? 'primary' : 'soft'} href={href('/checkout', { change: sub.id, plan: plan.id })} id={`btn-change-${plan.id}`}>
         换成{plan.name}
-      </a>
+      </Btn>
     </div>
   )
 }

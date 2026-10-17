@@ -1,5 +1,5 @@
 import { admin, grant, newUser, subscriptionsOf, sql, str, uuid, type User } from './api.ts'
-import { backToSubs, card, daysBetween, expect, happened, monthsLater, narrowShot, nav, openPortal, step, test, text, submit } from './fixtures.ts'
+import { backToSubs, card, daysBetween, openCard, expect, happened, monthsLater, narrowShot, nav, openPortal, step, test, text, submit } from './fixtures.ts'
 import { giftCode } from './seed.ts'
 import type { Page } from '@playwright/test'
 
@@ -7,14 +7,15 @@ import type { Page } from '@playwright/test'
 //  门户 C6（礼品卡七种用法）与 C7（送的流量跟着那一份；10-16 起没有流量包）
 // ============================================================================
 
-/** 从我的套餐底部「有卡？去兑换」进兑换页，输卡号、查询，停在卡面 */
+/** 从我的套餐底部「有卡？去兑换」打开钱包页的兑换弹层，输卡号、点兑换，停在卡面（弹层标题随后会变，卡面按 h3 找） */
 async function lookup(page: Page, code: string): Promise<string> {
   await nav(page, '我的套餐')
   await page.getByRole('link', { name: '有卡？去兑换' }).click()
-  await expect(page.getByRole('heading', { level: 1, name: '兑换卡' })).toBeVisible()
-  await page.getByLabel('卡号').fill(code)
-  await page.getByRole('button', { name: '查询' }).click()
-  const face = page.getByText('这张卡', { exact: true }).locator('xpath=following-sibling::h3[1]')
+  const dialog = page.getByRole('dialog', { name: '兑换卡' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('卡号').fill(code)
+  await dialog.getByRole('button', { name: '兑换', exact: true }).click()
+  const face = page.getByRole('dialog').getByRole('heading', { level: 3 })
   await expect(face).toBeVisible()
   return text(face)
 }
@@ -60,8 +61,10 @@ test('C6：礼品卡', async ({ browser, world }) => {
     await expect(page.getByRole('heading', { name: '流量已清零重算' })).toBeVisible()
     const lines = await happened(page)
     await backToSubs(page)
-    await expect(card(page, std.name)).toContainText('剩 100G / 共 100G')
-    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片「剩 100G / 共 100G」`
+    // 主卡：大数字是剩余（100 GB），下面一行「本期剩余 · 共 100G」
+    await expect(card(page, std.name)).toContainText('本期剩余 · 共 100G')
+    await expect(card(page, std.name).getByRole('progressbar', { name: '剩余流量' })).toHaveAttribute('aria-valuenow', '100')
+    return `卡面「${face}」；「${s}」；完成页「${lines[0]}」；卡片剩余 100%「本期剩余 · 共 100G」`
   })
 
   await step(page, 'C6c', async () => {
@@ -118,8 +121,9 @@ test('C6：礼品卡', async ({ browser, world }) => {
   await step(other, 'C6f', async () => {
     await expect(other.getByText('你还没有套餐')).toBeVisible()
     await other.getByRole('link', { name: '有卡？去兑换' }).click()
-    await other.getByLabel('卡号').fill(mystery)
-    await other.getByRole('button', { name: '查询' }).click()
+    const dialog = other.getByRole('dialog', { name: '兑换卡' })
+    await dialog.getByLabel('卡号').fill(mystery)
+    await dialog.getByRole('button', { name: '兑换', exact: true }).click()
     const go = other.getByRole('button', { name: '兑换，抽一次' })
     const err = other.getByRole('alert').first()
     await expect(go.or(err).first()).toBeVisible()
@@ -152,7 +156,8 @@ test('C7：送的流量跟着那一份', async ({ browser, world }) => {
   const page = await openPortal(browser, u)
 
   await step(page, 'C7', async () => {
-    const from = card(page, std.name)
+    // 两份：先在切换条上点到标准版
+    const from = await openCard(page, std.name)
     const usage = from.getByText(/含送的 1G/)
     await expect(usage).toBeVisible()
     await expect(card(page, basic.name)).not.toContainText('含送的')

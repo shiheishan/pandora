@@ -41,7 +41,9 @@ describe('叫法', () => {
 })
 
 describe('流量与名字', () => {
-  it('流量不足：剩余（含送的流量）低于 15%', () => {
+  it('流量快用完：已用（含送的流量）过 80%', () => {
+    expect(isLow(sub({ usedGiB: 80 }))).toBe(true)
+    expect(isLow(sub({ usedGiB: 79 }))).toBe(false)
     expect(isLow(sub({ usedGiB: 92 }))).toBe(true)
     expect(isLow(sub({ usedGiB: 92, bonus_bytes: 30 * GIB }))).toBe(false)
     expect(isLow(sub({ usedGiB: 40 }))).toBe(false)

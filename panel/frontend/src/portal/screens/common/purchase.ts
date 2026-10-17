@@ -96,10 +96,13 @@ export function leftOf(sub: Pick<Subscription, 'traffic_limit' | 'bonus_bytes' |
   return { left: Math.max(0, total - used), total, used, bonus }
 }
 
-/** 流量不足：剩余低于 15%（原型 isLow） */
-export function isLow(sub: Subscription): boolean {
-  const { left, total } = leftOf(sub)
-  return left !== null && total !== null && total > 0 && left / total < 0.15
+/** 「流量快用完」的提醒线：本期（一次性为总量）已用过 80%，含送的流量（用户 10-16 定） */
+export const LOW_USED_RATIO = 0.8
+
+/** 流量快用完：已用 ≥ 80%（含送的）；不限流量的不算 */
+export function isLow(sub: Pick<Subscription, 'traffic_limit' | 'bonus_bytes' | 'traffic_used'>): boolean {
+  const { used, total } = leftOf(sub)
+  return total !== null && (total <= 0 || used / total >= LOW_USED_RATIO)
 }
 
 /** 付费流量重置还能买几次（本期 / 有效期内）：没开为 null，不限次数为 Infinity */
