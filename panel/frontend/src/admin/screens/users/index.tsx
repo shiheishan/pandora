@@ -34,27 +34,30 @@ function ListTab({ rest, now }: { rest: string[]; now: Date }) {
   const path = (id: string | null, t?: DetailTab) => (id ? `/users/list/${encodeURIComponent(id)}${t && t !== 'profile' ? `/${t}` : ''}` : '/users/list')
 
   const onChange = useCallback(
-    (next: Partial<ListState>) => navigate(path(selected, detailTab), { replace: true, query: query({ ...state, ...next }) }),
+    (next: Partial<ListState>) => navigate('/users/list', { replace: true, query: query({ ...state, ...next }) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- state 由地址派生，按其原始值比较
-    [selected, detailTab, state.filter, state.group, state.q, state.offset, query],
+    [state.filter, state.group, state.q, state.offset, query],
   )
 
-  return (
-    <>
-      <UserList
-        state={state}
-        onChange={onChange}
-        linkFor={(id) => href(path(id), query(state))}
-        now={now}
-      />
+  if (selected) {
+    return (
       <UserDetail
         id={selected}
         tab={detailTab}
         onTab={(t) => navigate(path(selected, t), { replace: true, query: query(state) })}
-        onClose={() => navigate(path(null), { query: query(state) })}
+        backHref={href('/users/list', query(state))}
         now={now}
       />
-    </>
+    )
+  }
+
+  return (
+    <UserList
+      state={state}
+      onChange={onChange}
+      openUser={(id) => navigate(path(id), { query: query(state) })}
+      now={now}
+    />
   )
 }
 

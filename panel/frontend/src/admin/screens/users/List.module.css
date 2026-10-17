@@ -1,62 +1,129 @@
-.list {
+.who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.whoText {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 230px);
-  min-height: 480px;
+  gap: 2px;
+  min-width: 0;
   overflow: hidden;
 }
 
-.tableBox {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* QueryView 直出 Table：让 Table 内 .scroll 承担纵向滚动，stickyHeader 才生效 */
-.tableBox > div {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.tableBox > div > div {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-.tableBox table {
-  min-width: 860px;
-  table-layout: fixed;
-}
-
-.tableBox td {
+.name {
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.footer {
-  flex: none;
+.id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.small {
+  font-size: 12.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.trafficText {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.track {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--text-2);
+}
+
+.fillWarn {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--warn);
+}
+
+.toneWarn {
+  color: var(--warn);
+}
+
+.toneDanger {
+  color: var(--danger);
+}
+
+.foot {
+  display: flex;
   align-items: center;
   gap: var(--space-8);
-  min-height: 48px;
-  padding: var(--space-8) 0;
-  border-top: 1px solid var(--border);
+  width: 100%;
+  font-size: 13px;
   color: var(--text-2);
-  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
 }
 
-.footerTotal {
+.footSpacer {
   flex: 1;
+}
+
+.range {
+  font-family: var(--font-mono);
   white-space: nowrap;
 }
 
-.footerRange {
+.sortHint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
   white-space: nowrap;
+}
+
+.search {
+  flex: 1;
+  min-width: 220px;
+  max-width: 380px;
+}
+
+.filterSelect {
+  width: 150px;
+}
+
+@media (max-width: 639px) {
+  .search {
+    width: 100%;
+    max-width: none;
+    flex-basis: 100%;
+  }
 }
