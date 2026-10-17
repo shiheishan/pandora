@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Empty, Input, Modal, QueryView, Select, Tag, useToast } from '../../../ui'
+import { PageActions } from '../../kit'
 import { UK, useUserGroups } from '../users/api'
 import { assignableGroups, groupOptionLabel } from '../users/model'
 import { createPoolBody, emptyPoolForm, patchPoolBody, planNamesLabel, POOL_STATUS, poolDeleteBlock, poolFormFrom, poolGroupsChanged, poolGroupsLabel, type PoolForm } from './infra'
@@ -34,52 +35,67 @@ export function PoolsTab() {
 
   return (
     <div className={css.stack}>
-      <div className={x.bar}>
-        <span>{pools.data ? `${pools.data.length} 个节点池 · 节点归入池，套餐绑定池` : '节点池'}</span>
-        <span className={css.spacer} />
+      <PageActions>
         <Button variant="primary" onClick={() => setEditing('new')}>
           新建节点池
         </Button>
+      </PageActions>
+      <div className={x.bar}>
+        <span>{pools.data ? `${pools.data.length} 个节点池 · 节点归入池，套餐绑定池` : '节点池'}</span>
       </div>
 
       <QueryView query={pools} rows={4} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有节点池" description="新建一个节点池，再在节点里选它、在套餐里绑定它。" />}>
         {(list) => (
-          <div className={x.pools}>
+          <div className={x.cards}>
             {list.map((p) => {
               const block = poolDeleteBlock(p)
+              const groups = poolGroupsLabel(p)
               return (
-                <section key={p.id} className={x.pool} aria-label={`节点池 ${p.name}`}>
-                  <div>
-                    <div className={x.poolName}>{p.name}</div>
-                    <div className={x.poolMeta}>
-                      <span>{p.nodes} 个节点</span>
-                      {p.status !== 'active' && <Tag tone={POOL_STATUS[p.status].tone}>{POOL_STATUS[p.status].label}</Tag>}
-                    </div>
-                    <div className={x.poolMeta}>
-                      <span className={css.mono}>{p.code}</span>
-                      {p.region && <span>· {p.region}</span>}
-                    </div>
-                    <div className={x.poolActions}>
-                      <Button size="xs" onClick={() => setEditing(p)}>
-                        编辑
-                      </Button>
-                      <Button size="xs" variant="ghost" className={block ? undefined : x.dangerText} disabled={block !== null || remove.isPending} title={block ?? undefined} onClick={() => setRemoving(p)}>
-                        删除
-                      </Button>
-                    </div>
+                <section key={p.id} className={x.card} aria-label={`节点池 ${p.name}`}>
+                  <div className={x.ch}>
+                    <b>{p.name}</b>
+                    <span className={css.faint}>{p.nodes} 个节点</span>
+                    {p.status !== 'active' && <Tag tone={POOL_STATUS[p.status].tone}>{POOL_STATUS[p.status].label}</Tag>}
+                  </div>
+                  <div className={x.cs}>
+                    <span className={css.mono}>{p.code}</span>
+                    {p.region ? ` · ${p.region}` : ''}
                   </div>
                   <div className={x.chips}>
-                    {p.members.length === 0 && <span className={css.faint}>没有节点。在节点的「协议参数」里把资源池选成它。</span>}
-                    {p.members.map((m) => (
-                      <button key={m.id} type="button" className={`${x.memberChip} ${x.chipButton}`} onClick={() => navigate(`/nodes/nodes/${m.id}`)} aria-label={`打开节点 ${m.name}`}>
-                        {m.name}
-                      </button>
-                    ))}
+                    {p.members.length === 0 ? (
+                      <span className={css.faint}>没有节点。在节点详情『路由与流量 › 访问』里把节点池选成它。</span>
+                    ) : (
+                      p.members.map((m) => (
+                        <button key={m.id} type="button" className={`${x.memberChip} ${x.chipButton}`} onClick={() => navigate(`/nodes/nodes/${m.id}`)} aria-label={`打开节点 ${m.name}`}>
+                          {m.name}
+                        </button>
+                      ))
+                    )}
                   </div>
-                  <div className={x.poolPlans}>
-                    <span className={css.faint}>绑定套餐</span>
-                    <span>{planNamesLabel(p)}</span>
-                    {poolGroupsLabel(p) && <Tag tone="info">{poolGroupsLabel(p)}</Tag>}
+                  <div className={x.kv2}>
+                    <span>绑定套餐</span>
+                    <span>
+                      {p.plan_names.length > 0 ? (
+                        planNamesLabel(p)
+                      ) : (
+                        <span className={x.note}>没有绑定套餐，暂时不服务任何用户</span>
+                      )}
+                      {groups && (
+                        <>
+                          {' '}
+                          <Tag tone="info">{groups}</Tag>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div className={x.cf}>
+                    <span className={css.spacer} />
+                    <Button size="sm" variant="secondary" onClick={() => setEditing(p)}>
+                      编辑
+                    </Button>
+                    <Button size="sm" variant="secondary" disabled={block !== null || remove.isPending} title={block ?? undefined} onClick={() => setRemoving(p)}>
+                      删除
+                    </Button>
                   </div>
                 </section>
               )
