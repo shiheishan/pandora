@@ -2,19 +2,20 @@ import { useEffect, useState } from 'react'
 import { formatCount, relativeTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
+import { RadioCards, SectionTitle } from '../../kit'
 import { Button, Card, Empty, Input, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { useFailure } from '../../actions'
 import { DEVICE_WINDOWS, okSchema, useDevices, useFindUserByEmail, useInvalidateUsers, type DeviceMode, type DeviceWindow, type OnlineDevice } from './api'
 import { devicePolicyBody, nearLimit, pips } from './model'
-import ops from './Ops.module.css'
 import signupCss from './Signup.module.css'
-import css from './Users.module.css'
 
 // 设计稿的「拒绝新设备 / 踢下最早的设备」按后端两种判定改写（契约后台-03 GET v1/devices）
 const MODES: ReadonlyArray<[DeviceMode, string, string]> = [
   ['loose', '拒绝新设备', '节点本地判定，超限的新连接被拒；已在线的设备不受影响'],
   ['strict', '超限停止下发', '面板跨节点汇总，超出上限 + 宽容值后停止向该订阅下发'],
 ]
+
+const MODE_OPTIONS = MODES.map(([value, title, description]) => ({ value, title, description }))
 
 /**
  * 全局设备数策略与接近/超出上限的订阅（10-16 起放在安全模块）。
@@ -31,37 +32,45 @@ export function DevicePolicy({ now: propNow }: { now?: Date } = {}) {
   const now = propNow ?? internalNow
 
   const devices = useDevices()
+
   return (
-    <div className={signupCss.deviceStack}>
+    <div className={signupCss.dpStack}>
+      <SectionTitle variant="group" hint="单个订阅的上限在用户详情「订阅与设备」里覆盖">
+        全局设备数策略
+      </SectionTitle>
+      {devices.data ? (
+        <PolicyForm
+          key={`${devices.data.mode}-${devices.data.grace}-${devices.data.window_minutes}`}
+          mode={devices.data.mode}
+          grace={devices.data.grace}
+          window={devices.data.window_minutes}
+        />
+      ) : devices.isError ? (
+        <Card>
+          <Empty bare title="策略读取失败" description="稍后重试。" />
+        </Card>
+      ) : (
+        <Card>
+          <p className={signupCss.dpMuted}>加载中…</p>
+        </Card>
+      )}
       <Card
-        title={
-          <span className={ops.cardTitle}>
-            全局设备数策略
-            <span className={`${css.small} ${ops.titleNote}`}>单个订阅的上限在用户详情「订阅与设备」里覆盖</span>
+        flush
+        title="接近或超出上限的订阅"
+        footer={
+          <span className={signupCss.dpMuted}>
+            在线按近 {devices.data?.window_minutes ?? 5} 分钟内的来源 IP 去重；统计生效中订阅里在线最多的 200 条。
           </span>
         }
       >
-        {devices.data ? (
-          // 服务端值变了（保存后重拉）就重置草稿
-          <PolicyForm key={`${devices.data.mode}-${devices.data.grace}-${devices.data.window_minutes}`} mode={devices.data.mode} grace={devices.data.grace} window={devices.data.window_minutes} />
-        ) : devices.isError ? (
-          <Empty bare title="策略读取失败" description="稍后重试。" />
-        ) : (
-          <p className={css.small}>加载中…</p>
-        )}
-      </Card>
-      <Card flush title="接近或超出上限的订阅">
-        <div className={ops.bare}>
-          <QueryView
-            query={devices}
-            rows={4}
-            isEmpty={(d) => nearLimit(d.devices).length === 0}
-            empty={<Empty bare title="没有接近上限的订阅" description="在线设备数达到上限的订阅会出现在这里。" />}
-          >
-            {(d) => <HotList rows={nearLimit(d.devices)} now={now} />}
-          </QueryView>
-        </div>
-        <p className={ops.cardFoot}>在线按近 {devices.data?.window_minutes ?? 5} 分钟内的来源 IP 去重；统计生效中订阅里在线最多的 200 条。</p>
+        <QueryView
+          query={devices}
+          rows={4}
+          isEmpty={(d) => nearLimit(d.devices).length === 0}
+          empty={<Empty bare title="没有接近上限的订阅" description="在线设备数达到上限的订阅会出现在这里。" />}
+        >
+          {(d) => <HotList rows={nearLimit(d.devices)} now={now} />}
+        </QueryView>
       </Card>
     </div>
   )
@@ -95,42 +104,38 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
   }
 
   const strict = mode === 'strict'
-  const graceHint = strict ? '在线数超过「上限 + 宽容值」才停止下发（0–5）' : '仅「超限停止下发」时生效'
+
+  const footer = (
+    <>
+      <span className={signupCss.dpFooterStatus}>{dirty ? '有未保存的修改' : '当前策略已生效'}</span>
+      <span className={signupCss.dpFooterSpacer} />
+      <Button size="sm" variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
+        保存策略
+      </Button>
+    </>
+  )
 
   return (
-    <div className={ops.formStack}>
-      <fieldset className={signupCss.modeSet}>
-        <legend className={css.fieldLabel}>超出上限时</legend>
-        <div className={signupCss.modeGrid}>
-          {MODES.map(([value, title, desc]) => (
-            <label key={value} className={mode === value ? `${ops.modeOption} ${ops.modeOn}` : ops.modeOption}>
-              <input
-                type="radio"
-                name="device-mode"
-                value={value}
-                checked={mode === value}
-                onChange={() => {
-                  setMode(value)
-                  setError(null)
-                }}
-              />
-              <span className={css.stack}>
-                <span className={ops.groupName}>{title}</span>
-                <span className={css.small}>{desc}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <div className={signupCss.twoCols}>
+    <Card footer={footer}>
+      <p className={signupCss.dpFieldLabel}>超出上限时</p>
+      <RadioCards
+        label="超出上限时"
+        columns={2}
+        options={MODE_OPTIONS}
+        value={mode}
+        onChange={(value) => {
+          setMode(value)
+          setError(null)
+        }}
+      />
+      <div className={signupCss.dpTwoCols}>
         <Input
-          label="宽容值"
+          label="宽容值（0–5，仅「超限停止下发」生效）"
           mono
           inputMode="numeric"
           value={grace}
           disabled={busy || !strict}
           error={error ?? undefined}
-          hint={graceHint}
           onChange={(e) => {
             setGrace(e.target.value)
             setError(null)
@@ -149,14 +154,14 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
           }
         />
       </div>
-      <div className={signupCss.policyFooter}>
-        <span className={signupCss.statusText}>{dirty ? '有未保存的修改' : '当前策略已生效'}</span>
-        <Button variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
-          保存策略
-        </Button>
-      </div>
-    </div>
+    </Card>
   )
+}
+
+function pipClass(p: 'on' | 'over' | 'off', exceeded: boolean): string {
+  if (p === 'off') return signupCss.dpDot
+  if (p === 'on') return `${signupCss.dpDot} ${signupCss.dpDotOn}`
+  return exceeded ? `${signupCss.dpDot} ${signupCss.dpDotOverDanger}` : `${signupCss.dpDot} ${signupCss.dpDotOver}`
 }
 
 function HotList({ rows, now }: { rows: OnlineDevice[]; now: Date }) {
@@ -178,37 +183,30 @@ function HotList({ rows, now }: { rows: OnlineDevice[]; now: Date }) {
       key: 'who',
       header: '订阅',
       render: (d) => (
-        <span className={css.stack}>
-          <span className={ops.ellipsis}>{d.email || '—'}</span>
-          <span className={css.small}>
+        <>
+          <span>{d.email || '—'}</span>
+          <span className={signupCss.dpSubLine}>
             {d.plan || '—'}
             {d.overridden ? ' · 已单独覆盖上限' : ''}
           </span>
-        </span>
-      ),
-    },
-    {
-      key: 'pips',
-      header: '在线',
-      width: '120px',
-      render: (d) => (
-        <span className={css.pips} aria-hidden="true">
-          {pips(d.online, d.limit).map((p, i) => (
-            <span key={i} className={p === 'off' ? css.pip : `${css.pip} ${p === 'over' ? css.pipOver : css.pipOn}`} />
-          ))}
-        </span>
+        </>
       ),
     },
     {
       key: 'count',
       header: '在线 / 上限',
-      width: '84px',
+      width: '120px',
       align: 'right',
       mono: true,
       render: (d) => (
-        <span className={d.exceeded ? css.tone_danger : css.tone_warn}>
-          {formatCount(d.online)}/{formatCount(d.limit)}
-        </span>
+        <>
+          <span className={signupCss.dpDots} aria-hidden="true">
+            {pips(d.online, d.limit).map((p, i) => (
+              <span key={i} className={pipClass(p, d.exceeded)} />
+            ))}
+          </span>
+          {formatCount(d.online)} / {formatCount(d.limit)}
+        </>
       ),
     },
     {
@@ -216,9 +214,15 @@ function HotList({ rows, now }: { rows: OnlineDevice[]; now: Date }) {
       header: '状态',
       width: '92px',
       // exceeded 是后端按「上限 + 宽容值」算的；超了上限但还在宽容值内的单独标出来
-      render: (d) => (d.exceeded ? <Tag tone="danger">已超限</Tag> : d.online > d.limit ? <Tag tone="warn">宽容内</Tag> : <Tag tone="warn">已满</Tag>),
+      render: (d) => (d.exceeded ? <Tag tone="danger">已超限</Tag> : d.online > d.limit ? <Tag tone="warn">宽容内</Tag> : <Tag tone="neutral">已满</Tag>),
     },
-    { key: 'seen', header: '最近在线', width: '76px', align: 'right', render: (d) => <span className={css.muted}>{d.last_seen_at ? relativeTime(d.last_seen_at, now) : '—'}</span> },
+    {
+      key: 'seen',
+      header: '最近在线',
+      width: '76px',
+      align: 'right',
+      render: (d) => <span className={signupCss.dpMuted}>{d.last_seen_at ? relativeTime(d.last_seen_at, now) : '—'}</span>,
+    },
   ]
   return <Table label="接近或超出上限的订阅" columns={columns} rows={rows} rowKey={(d) => d.subscription_id} onRowClick={(d) => void open(d)} />
 }

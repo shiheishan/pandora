@@ -66,9 +66,9 @@ export function RiskTab() {
             return <Empty bare title={EMPTY_TEXT[view]} />
           }
           return (
-            <div className={css.list}>
+            <div className={css.clus}>
               {list.map((c) => (
-                <ClusterRow key={c.key} cluster={c} onMark={() => setMarking(c)} onDisable={() => setDisabling(c)} />
+                <ClusterCard key={c.key} cluster={c} onMark={() => setMarking(c)} onDisable={() => setDisabling(c)} />
               ))}
             </div>
           )
@@ -76,7 +76,7 @@ export function RiskTab() {
       </QueryView>
       {marking && <MarkConfirmModal cluster={marking} onClose={() => setMarking(null)} />}
       {disabling && <DisableModal cluster={disabling} onClose={() => setDisabling(null)} />}
-      <div className={css.deviceSlot}>
+      <div className={css.deviceGap}>
         <DevicePolicy />
       </div>
     </div>
@@ -126,55 +126,51 @@ function MarkConfirmModal({ cluster: c, onClose }: { cluster: Cluster; onClose: 
   )
 }
 
-/** 成员状态字的颜色：停用 / 封禁红、待验证橙、其余灰 */
-function statusClass(status: string): string | undefined {
-  if (status === 'suspended' || status === 'banned') return css.stDanger
+/** 成员状态字的颜色：停用 / 封禁灰、待验证橙、其余次要灰 */
+function statusClass(status: string): string {
+  if (status === 'suspended' || status === 'banned') return css.stMuted
   if (status === 'pending') return css.stWarn
-  return css.stNormal
+  return css.stDim
 }
 
-function ClusterRow({ cluster: c, onMark, onDisable }: { cluster: Cluster; onMark: () => void; onDisable: () => void }) {
+function ClusterCard({ cluster: c, onMark, onDisable }: { cluster: Cluster; onMark: () => void; onDisable: () => void }) {
   const state = reviewState(c.review)
   const result = reviewText(state)
   const candidates = disableCandidates(c)
   const canMark = !isMarkedNormal(c)
+  const marked = isMarkedNormal(c)
 
   return (
-    <div className={`${css.row} ${isMarkedNormal(c) ? css.dim : ''}`}>
-      <div className={css.info}>
+    <article className={`${css.cl} ${marked ? css.done : ''}`}>
+      <div className={css.clh}>
         <span className={css.ip}>{c.ip || 'IP 无法解密'}</span>
-        <span className={css.place}>{clusterPlace(c)}</span>
-        <span className={css.meta}>
-          <Tag tone={RISK_TONE[c.risk]}>{RISK_LABEL[c.risk]}</Tag>
-          <span className={css.count}>{c.accounts} 个账号</span>
-        </span>
-        {result && <span className={css.note}>{result}</span>}
-      </div>
-      <div className={css.members}>
-        {c.users.map((u) => (
-          <div key={u.id} className={css.member}>
-            <a className={sec.ellipsis} href={href(`/users/list/${encodeURIComponent(u.id)}`)}>
-              {u.email}
-            </a>
-            <span className={`${css.status} ${statusClass(u.status)}`}>{USER_STATUS_LABEL[u.status] ?? u.status}</span>
-            <span className={css.plan}>{u.active_plan ?? '无生效套餐'}</span>
-          </div>
-        ))}
-        {c.users.length < c.accounts && <div className={css.more}>另有 {c.accounts - c.users.length} 个账号已不存在</div>}
-      </div>
-      <div className={css.actions}>
+        <span className={css.geo}>{clusterPlace(c)}</span>
+        <Tag tone={RISK_TONE[c.risk]}>{RISK_LABEL[c.risk]}</Tag>
+        <span className={css.accCount}>{c.accounts} 个账号</span>
+        <span className={css.sp} />
         {canMark && (
-          <button type="button" className={css.textBtn} onClick={onMark}>
+          <Button size="sm" onClick={onMark}>
             标记正常
-          </button>
+          </Button>
         )}
         {candidates.length > 0 && (
-          <button type="button" className={`${css.textBtn} ${css.dangerBtn}`} onClick={onDisable}>
+          <Button size="sm" variant="danger" onClick={onDisable}>
             禁用账号…
-          </button>
+          </Button>
         )}
       </div>
-    </div>
+      {c.users.map((u) => (
+        <div key={u.id} className={css.mem}>
+          <a className={css.link} href={href(`/users/list/${encodeURIComponent(u.id)}`)}>
+            {u.email}
+          </a>
+          <span className={statusClass(u.status)}>{USER_STATUS_LABEL[u.status] ?? u.status}</span>
+          <span className={css.plan}>{u.active_plan ?? '无生效套餐'}</span>
+        </div>
+      ))}
+      {c.users.length < c.accounts && <div className={css.more}>另有 {c.accounts - c.users.length} 个账号已不存在</div>}
+      {result && <div className={css.note2}>{result}</div>}
+    </article>
   )
 }
 

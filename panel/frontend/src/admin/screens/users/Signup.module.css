@@ -144,64 +144,81 @@
 }
 
 /* ===========================================================================
- * 设备策略（DevicePolicy）
+ * 设备策略（DevicePolicy，风控页签挂载）
  * ========================================================================= */
-.deviceStack {
+
+.dpStack {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
   min-width: 0;
 }
 
-.modeSet {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
+.dpFieldLabel {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
-.modeSet > legend {
-  margin-bottom: var(--space-8);
-  padding: 0;
-}
-
-.modeGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-12);
-}
-
-@media (max-width: 959px) {
-  .modeGrid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.twoCols {
+.dpTwoCols {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-12);
   align-items: start;
+  margin-top: var(--space-4);
 }
 
-@media (max-width: 959px) {
-  .twoCols {
+@media (max-width: 639px) {
+  .dpTwoCols {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.policyFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  margin-top: var(--space-4);
-}
-
-.statusText {
+.dpFooterStatus {
   color: var(--text-3);
   font-size: var(--fs-caption);
+}
+
+.dpFooterSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.dpSubLine {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.dpDots {
+  display: inline-flex;
+  gap: 3px;
+  margin-right: 10px;
+  vertical-align: 1px;
+}
+
+.dpDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.dpDotOn {
+  background: var(--ok);
+}
+
+.dpDotOver {
+  background: var(--warn);
+}
+
+.dpDotOverDanger {
+  background: var(--danger);
+}
+
+.dpMuted {
+  color: var(--text-2);
 }
