@@ -466,8 +466,8 @@ export function validateBasic(b: BasicForm, creating: boolean): Record<string, s
   if (!b.name.trim()) e.name = '必填'
   else if ([...b.name.trim()].length > 120) e.name = '不超过 120 字'
   if (creating && !b.serverId) e.server_id = '选择承载的服务器'
-  // 没划进节点池的节点不服务任何用户（R104）；后端只拒绝清空在役节点的池，表单一律要求选
-  if (!b.poolId) e.pool_id = NO_POOL_HINT
+  // 新建必须选节点池（R104）；编辑时节点池在详情『访问』里单独改，协议表单不再校验它
+  if (creating && !b.poolId) e.pool_id = NO_POOL_HINT
   if (creating && !b.nodeType) e.node_type = '选择协议'
   if (!b.host.trim()) e.server_host = '必填'
   const port = Number(b.port)
@@ -767,4 +767,84 @@ export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new
     sums[i]!.n += 1
   }
   return sums.map((s, i) => ({ hour: new Date(start + i * 3600_000).getHours(), mbps: s.n ? Number((s.total / s.n).toFixed(1)) : null }))
+}
+
+/** 带宽曲线标题里的峰值：最大的非空桶；全空或最大值为 0 时返回 null */
+export function bandwidthPeak(buckets: ReadonlyArray<{ hour: number; mbps: number | null }>): { mbps: number; hour: number } | null {
+  let best: { mbps: number; hour: number } | null = null
+  for (const b of buckets) {
+    if (b.mbps === null || b.mbps <= 0) continue
+    if (!best || b.mbps > best.mbps || (b.mbps === best.mbps && b.hour < best.hour)) best = { mbps: b.mbps, hour: b.hour }
+  }
+  return best
+}
+
+/** 地址查询串 f 的取值 → 状态筛选；认不出的一律 'all' */
+export function parseNodeFilter(raw: string | null): NodeFilter {
+  if (raw === 'online' || raw === 'offline' || raw === 'disabled' || raw === 'retired') return raw
+  return 'all'
+}
+
+/** 列表页脚「共 N 个 · M 个在线」：N 不含已退役，M 是 nodeState 为在线的 */
+export function nodeCounts(rows: readonly Pick<NodeRow, 'serving_status' | 'stale'>[]): { total: number; online: number } {
+  let total = 0
+  let online = 0
+  for (const n of rows) {
+    const state = nodeState(n)
+    if (state.filter === 'retired') continue
+    total += 1
+    if (state.filter === 'online') online += 1
+  }
+  return { total, online }
+}
+
+/** 详情「协议参数」只读摘要的一行 */
+export interface SummaryRow {
+  label: string
+  value: string
+  muted?: boolean
+}
+
+/**
+ * 协议参数只读摘要：按后端协议 schema（中文名、条件显示、选项文案）生成。
+ * 前两行固定：协议、监听端口；schema 缺席或与节点协议不同时只给这两行。
+ * 其余按 protocolFields 顺序、只取当前可见（visibleFields）的字段：
+ * 敏感字段一律「不回显」（muted）；空值的必填 / 非高级字段写「未设置」（muted），空值的高级字段跳过；
+ * 枚举取 optionLabels[值] ?? 值；布尔 'true' → 开启、'false' → 关闭；json 压成一行、超过 60 字截断加「…」；其余原样（list 已是逗号分隔）
+ */
+export function protocolSummary(schema: ProtocolSchema | undefined, node: Pick<NodeDetail, 'node_type' | 'server_port' | 'protocol_config'>): SummaryRow[] {
+  const head: SummaryRow[] = [
+    { label: '协议', value: protocolLabel(node.node_type) },
+    node.server_port ? { label: '监听端口', value: String(node.server_port) } : { label: '监听端口', value: '未设置', muted: true },
+  ]
+  if (!schema || schema.node_type !== node.node_type) return head
+  const fields = protocolFields(schema)
+  const values = toFormValues(fields, node.protocol_config)
+  const visible = visibleFields(fields, values)
+  const rows: SummaryRow[] = [...head]
+  for (const f of visible) {
+    if (f.sensitive) {
+      rows.push({ label: f.label, value: '不回显', muted: true })
+      continue
+    }
+    const raw = (values[f.path] ?? '').trim()
+    if (!raw) {
+      if (f.advanced) continue
+      rows.push({ label: f.label, value: '未设置', muted: true })
+      continue
+    }
+    let value = raw
+    if (f.kind === 'enum') value = f.optionLabels[raw] ?? raw
+    else if (f.kind === 'boolean') value = raw === 'true' ? '开启' : raw === 'false' ? '关闭' : raw
+    else if (f.kind === 'json') {
+      try {
+        value = JSON.stringify(JSON.parse(raw))
+      } catch {
+        value = raw.replace(/\s+/g, ' ')
+      }
+      if (value.length > 60) value = `${value.slice(0, 60)}…`
+    }
+    rows.push({ label: f.label, value })
+  }
+  return rows
 }

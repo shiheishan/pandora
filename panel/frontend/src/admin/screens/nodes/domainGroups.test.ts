@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   addDomainBody,
+  defaultScopeValue,
+  domainScopeOptions,
   flattenDomains,
   parseHost,
   removeDomainBody,
@@ -56,6 +58,7 @@ describe('scopeForGroup / flattenDomains', () => {
     ])
     expect(scopeForGroup(solo.groups[0]!, solo.groups, userGroups)).toBe('所有用户')
     expect(flattenDomains(solo, userGroups)[0]!.scope).toBe('所有用户')
+    expect(flattenDomains(solo, userGroups)[0]!.groupName).toBe('缺省')
 
     const def = multiGroupCfg.groups[0]!
     expect(scopeForGroup(def, multiGroupCfg.groups, userGroups)).toBe('其余用户')
@@ -231,6 +234,63 @@ describe('addDomainBody', () => {
       },
     ])
     expect(addDomainBody(twoGroupsNoDefault, 'sub.example.com')).toEqual({ error: '订阅域名组最多 2 个' })
+  })
+
+  it('指定组 id 时加进该组；该组满了报错；空串走缺省', () => {
+    const out = addDomainBody(withDefault, 'vip2.example.com', G_VIP)
+    expect('error' in out).toBe(false)
+    if ('error' in out) return
+    expect(out.body.groups[1]!.domains.map((d) => d.base_url)).toContain('https://vip2.example.com')
+
+    const fullVip = cfg([
+      {
+        id: G_DEFAULT,
+        name: '缺省',
+        is_default: true,
+        domains: [{ base_url: 'https://a.example.com', weight: 1, score: 1, effective_weight: 1 }],
+        user_group_ids: [],
+      },
+      {
+        id: G_VIP,
+        name: 'VIP 专线',
+        is_default: false,
+        domains: [
+          { base_url: 'https://v1.example.com', weight: 1, score: 1, effective_weight: 1 },
+          { base_url: 'https://v2.example.com', weight: 1, score: 1, effective_weight: 1 },
+          { base_url: 'https://v3.example.com', weight: 1, score: 1, effective_weight: 1 },
+        ],
+        user_group_ids: [U_VIP],
+      },
+    ])
+    expect(addDomainBody(fullVip, 'x.example.com', G_VIP)).toEqual({ error: '「VIP 专线」组最多 3 个域名' })
+
+    const viaEmpty = addDomainBody(withDefault, 'def-new.example.com', '')
+    expect('error' in viaEmpty).toBe(false)
+    if ('error' in viaEmpty) return
+    expect(viaEmpty.body.groups[0]!.domains.some((d) => d.base_url === 'https://def-new.example.com')).toBe(true)
+  })
+})
+
+describe('domainScopeOptions / defaultScopeValue', () => {
+  it('缺省组只显示组名；非缺省带 scope；无缺省组时前置「缺省（新建）」', () => {
+    const opts = domainScopeOptions(multiGroupCfg, userGroups)
+    expect(opts).toEqual([
+      { value: G_DEFAULT, label: '缺省' },
+      { value: G_VIP, label: 'VIP 专线 · 仅 VIP' },
+    ])
+    expect(defaultScopeValue(multiGroupCfg)).toBe(G_DEFAULT)
+
+    const noDefault = cfg([
+      {
+        id: G_VIP,
+        name: 'VIP 专线',
+        is_default: false,
+        domains: [{ base_url: 'https://vip.example.com', weight: 1, score: 1, effective_weight: 1 }],
+        user_group_ids: [U_VIP],
+      },
+    ])
+    expect(domainScopeOptions(noDefault, userGroups)[0]).toEqual({ value: '', label: '缺省（新建）' })
+    expect(defaultScopeValue(noDefault)).toBe('')
   })
 })
 
