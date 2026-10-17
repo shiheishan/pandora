@@ -1,134 +1,182 @@
-.layout {
+/* 工单支持（样稿 #p-tickets）：宽屏左列表右会话，手机（959 以下）列表与会话分两屏 */
+.tk {
   display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-  gap: var(--space-16);
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
 }
 
-.listPane {
+.main {
+  min-width: 0;
+}
+
+.side {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  gap: 12px;
+  position: sticky;
+  top: 40px;
   min-width: 0;
 }
 
-.detailPane {
-  min-width: 0;
-}
-
-.back {
-  display: none;
-}
-
-@media (max-width: 639px) {
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .layout[data-view='list'] .detailPane,
-  .layout[data-view='detail'] .listPane {
-    display: none;
-  }
-
-  /* 列表页在窄屏不显示右侧会话，宽屏默认选中的第一张不该高亮 */
-  .layout[data-view='list'] .item[aria-current] {
-    border-color: var(--border);
-  }
-
-  .back {
-    display: inline-block;
-    align-self: flex-start;
-    color: var(--text-2);
-    font-size: 13px;
-    text-decoration: none;
-  }
-
-  .thread > .back {
-    padding: 12px var(--pad-card) 0;
-  }
-}
-
-/* ===========================================================================
- * 列表
- * ========================================================================= */
+/* ---------------------------------------------------------------------------
+ * 左列：列表卡（样稿 .tk-list .ti）
+ * ------------------------------------------------------------------------- */
 .list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  overflow: hidden;
 }
 
 .item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--text);
-  text-decoration: none;
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  padding: 14px 16px 15px;
+}
+
+.item + .item {
+  box-shadow: 0 -1px 0 var(--border);
 }
 
 .item:hover {
-  border-color: var(--border-hover);
+  background: var(--surface-2);
 }
 
 .item:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--bg),
-    0 0 0 4px var(--focus-ring);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
-.item[aria-current] {
-  border-color: var(--text);
+.itemOn {
+  background: radial-gradient(260px 120px at 0% 0%, var(--brand-soft), transparent 80%), var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
-.item[data-withdrawn] {
-  opacity: 0.5;
+.item + .itemOn {
+  box-shadow: inset 3px 0 0 var(--brand), 0 -1px 0 var(--border);
 }
 
-.itemMeta {
+.meta {
   display: flex;
   align-items: center;
-  gap: var(--space-8);
-  min-width: 0;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-3);
 }
 
-.ticketNo {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+/* 列表里的状态标签比正文的小一号（样稿 .ti-m .st） */
+.meta .tagSm {
+  font-size: 11.5px;
+  padding: 1px 7px;
+}
+
+.time {
+  margin-left: auto;
+}
+
+.title {
+  display: block;
+  margin-top: 6px;
+  font-size: 14.5px;
+  font-weight: 600;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 已关闭的行：标题降为灰字 */
+.off .title {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.mono {
+  font-family: var(--font-display);
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.sub .mono {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.empty {
+  text-align: center;
+  padding: 30px 18px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.empty b {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.help {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  box-shadow: 0 0 0 1px var(--border);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.help a {
+  color: var(--brand);
+  font-weight: 600;
+  margin-left: auto;
   white-space: nowrap;
 }
 
-.itemCategory {
-  flex: none;
-  margin-left: auto;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+.help a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
-.itemTitle {
-  font-weight: var(--fw-medium);
-  overflow-wrap: anywhere;
-}
-
-/* ===========================================================================
- * 会话
- * ========================================================================= */
-.thread {
+/* ---------------------------------------------------------------------------
+ * 右列：会话卡（样稿 article.th）
+ * ------------------------------------------------------------------------- */
+.th {
+  display: flex;
+  flex-direction: column;
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  min-height: 540px;
   overflow: hidden;
+}
+
+/* 「‹ 全部工单」只在手机显示（见底部媒体查询） */
+.back {
+  display: none;
 }
 
 .head {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--surface-3);
+  gap: 16px;
+  padding: 22px 24px 18px;
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .headMain {
@@ -138,106 +186,137 @@
 
 .subject {
   margin: 0;
-  font-size: 16px;
-  font-weight: var(--fw-semibold);
-  overflow-wrap: anywhere;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .headMeta {
-  margin: 2px 0 0;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  overflow-wrap: anywhere;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.headMeta .mono {
+  font-size: 12.5px;
 }
 
 .headMeta a {
-  color: var(--text-2);
-  white-space: nowrap;
+  color: var(--brand);
 }
 
-.headActions {
+.headMeta a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.acts {
   display: flex;
+  gap: 8px;
   flex: none;
-  gap: var(--space-8);
 }
 
-@media (max-width: 639px) {
-  .head {
-    flex-wrap: wrap;
-    padding: 12px var(--pad-card);
-  }
-
-  .headActions {
-    width: 100%;
-  }
+/* 操作失败的报错条；会话与新建表单里各有一个 */
+.error {
+  margin: 14px 2px 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13.5px;
 }
 
-.messages {
+/* 会话卡里的报错条贴在头部下面，与卡片同宽 */
+.th > .error {
+  margin: 12px 24px 0;
+}
+
+.msgs {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 220px;
+  gap: 18px;
   margin: 0;
-  padding: 18px 20px;
+  padding: 24px;
   list-style: none;
-  background: var(--surface-2);
+  background: radial-gradient(color-mix(in srgb, var(--shade) 7%, transparent) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--surface-2);
 }
 
-.message {
+.m {
+  max-width: 78%;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.message[data-mine] {
-  align-items: flex-end;
+  gap: 6px;
 }
 
 .who {
-  font-size: var(--fs-caption);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
-.bubble {
-  max-width: 78%;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+/* 客服的小圆头像（样稿 .m .who i） */
+.who i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand-deep);
+  color: var(--on-brand);
+  font-style: normal;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.body {
+  margin: 0;
+  padding: 12px 15px;
+  border-radius: 4px 18px 18px 18px;
   background: var(--surface);
-  color: var(--text);
-  white-space: pre-wrap;
+  box-shadow: 0 0 0 1px var(--border), 0 4px 12px -8px color-mix(in srgb, var(--shade) 25%, transparent);
+  font-size: 14.5px;
+  line-height: 1.65;
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 
-.message[data-mine] .bubble {
-  border-color: var(--brand-soft);
-  background: var(--brand-soft);
+.m[data-mine] {
+  align-self: flex-end;
+  align-items: flex-end;
 }
 
-@media (max-width: 639px) {
-  .messages {
-    padding: 14px var(--pad-card);
-  }
-
-  .bubble {
-    max-width: 90%;
-  }
+.m[data-mine] .body {
+  border-radius: 18px 4px 18px 18px;
+  background: var(--brand-deep);
+  color: var(--on-brand);
+  box-shadow: none;
 }
 
 .system {
   align-self: center;
-  font-size: var(--fs-caption);
+  padding: 4px 12px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  box-shadow: 0 0 0 1px var(--border);
+  font-size: 12.5px;
   color: var(--text-3);
-  text-align: center;
 }
 
-.reply {
+/* 回复框（样稿 .compose） */
+.compose {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-8);
-  padding: 12px 16px;
-  border-top: 1px solid var(--surface-3);
+  gap: 10px;
+  align-items: flex-end;
+  padding: 14px 16px 16px;
+  box-shadow: 0 -1px 0 var(--border);
+  background: var(--surface);
 }
 
 .grow {
@@ -245,80 +324,227 @@
   min-width: 0;
 }
 
-.closedNote {
-  margin: 0;
-  padding: 14px 20px;
-  border-top: 1px solid var(--surface-3);
-  font-size: 13px;
-  color: var(--text-3);
+.input {
+  min-height: 50px;
+  max-height: 160px;
+  resize: none;
 }
 
-.error {
-  margin: 0;
-  padding: 10px 20px 0;
-  font-size: 13px;
-  color: var(--danger);
-}
-
-/* ===========================================================================
- * 新建
- * ========================================================================= */
-.form {
-  gap: var(--space-12);
-}
-
-.form .error {
-  padding: 0;
-}
-
-.formTitle {
-  margin: 0;
-  font-size: 16px;
-  font-weight: var(--fw-semibold);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.caption {
-  font-size: var(--fs-caption);
+/* 已关闭的结尾（样稿 .th-end）：撤回 / 自动关闭 / 关闭 */
+.thEnd {
+  padding: 18px 24px 22px;
+  box-shadow: 0 -1px 0 var(--border);
+  text-align: center;
+  font-size: 14px;
   color: var(--text-2);
 }
 
-.chips {
+.thEnd b {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+
+.ok {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+}
+
+.endLink {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.endLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 须等客服回复的一句话（样稿 .th-wait） */
+.thWait {
+  padding: 16px 24px 18px;
+  box-shadow: 0 -1px 0 var(--border);
+  font-size: 14px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.thWait i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * 新建工单（样稿 .nf）
+ * ------------------------------------------------------------------------- */
+.nf {
+  padding: 24px 26px 26px;
+}
+
+/* 关联订单、标题、详细描述三个字段（ui Field）之间的间距 */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.nfTitle {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.faint {
+  margin: 6px 2px 0;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.lbl {
+  display: block;
+  margin: 20px 2px 8px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.cats {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-8);
+  gap: 8px;
 }
 
-.chip {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 17px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
+.cat {
+  all: unset;
   cursor: pointer;
+  padding: 9px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
 }
 
-.chip[aria-checked='true'] {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--surface);
+.cat[aria-checked='true'] {
+  background: var(--brand-deep);
+  color: var(--on-brand);
+  font-weight: 600;
 }
 
-.chip:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--bg),
-    0 0 0 4px var(--focus-ring);
+.cat:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
-.formActions {
+.foot {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.foot .faint {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 手机（样稿 862–875 行）：列表与会话分两屏
+ * ------------------------------------------------------------------------- */
+@media (max-width: 959px) {
+  .tk {
+    grid-template-columns: 1fr;
+  }
+
+  .side {
+    position: static;
+  }
+
+  .tk[data-view='detail'] .side {
+    display: none;
+  }
+
+  .tk[data-view='list'] .main {
+    display: none;
+  }
+
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
+    color: var(--brand);
+    font-weight: 600;
+    padding: 16px 18px 0;
+    margin-bottom: 12px;
+  }
+
+  .back:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  .th {
+    min-height: 0;
+    border-radius: 22px;
+  }
+
+  .head {
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px 18px 16px;
+  }
+
+  .subject {
+    font-size: 17px;
+  }
+
+  .acts {
+    width: 100%;
+  }
+
+  .acts > * {
+    flex: 1;
+  }
+
+  .th > .error {
+    margin: 12px 18px 0;
+  }
+
+  .msgs {
+    padding: 18px 14px;
+  }
+
+  .m {
+    max-width: 88%;
+  }
+
+  .compose {
+    padding: 12px;
+  }
+
+  .thEnd {
+    padding: 18px 14px 20px;
+  }
+
+  .thWait {
+    padding: 16px 14px 18px;
+  }
+
+  .nf {
+    padding: 20px 18px 22px;
+  }
 }
