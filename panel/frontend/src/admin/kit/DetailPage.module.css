@@ -85,7 +85,8 @@
 
 @media (max-width: 959px) {
   .grid {
-    grid-template-columns: 1fr;
+    /* minmax(0, …)：单栏时不让表格这类宽内容把栏撑出视口 */
+    grid-template-columns: minmax(0, 1fr);
     gap: 28px;
   }
 
