@@ -505,6 +505,54 @@
   .st.pin { background: var(--deep); color: #fff; }
   .an-d { font-size: 12.5px; color: var(--text-3); flex: none; }
 
+  /* 帮助中心：左目录右文章（参考 GetYourGuide / Revolut 的搜索 + 分类列表、Base44 的置顶指南卡、Lyft / foodpanda 的编号步骤与文末「有帮助吗」） */
+  .hp { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; }
+  .hp-side { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 40px; }
+  .hs { position: relative; display: block; }
+  .hs svg.i { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--text-3); pointer-events: none; }
+  .hs input { all: unset; box-sizing: border-box; width: 100%; height: 48px; padding: 0 14px 0 43px; border-radius: 14px; background: #fff; box-shadow: var(--lift); font: 15px var(--sans); color: var(--ink); }
+  .hs input::placeholder { color: var(--text-3); }
+  .hs input:focus { box-shadow: var(--lift), 0 0 0 1.5px var(--act); }
+  .hg { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 12px; width: 100%; padding: 15px 14px 15px 15px; border-radius: 18px; background: radial-gradient(280px 140px at 0% 0%, var(--tint), transparent 80%), #fff; box-shadow: var(--lift), 0 0 0 1px var(--tint-line); }
+  .hg .ico { background: var(--deep); color: #fff; }
+  .hg b { display: block; font-size: 15px; font-weight: 600; }
+  .hg small { display: block; margin-top: 3px; font-size: 12.5px; color: var(--text-2); }
+  .hg svg.chev { margin-left: auto; width: 18px; height: 18px; color: var(--text-3); }
+  .hg.on { box-shadow: var(--lift), 0 0 0 1.5px var(--act); }
+  .toc { border-radius: 20px; background: #fff; box-shadow: var(--lift); overflow: hidden; }
+  /* 分组线画在下沿：搜索藏掉前面的组时顶上不会多一道线，最后一道被圆角卡片裁掉 */
+  .toc-g { padding: 4px 0 8px; box-shadow: 0 1px 0 var(--line); }
+  .toc-g > span { display: block; font-size: 12.5px; color: var(--text-3); padding: 14px 18px 6px; }
+  .ta { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; padding: 9px 18px; font-size: 14.5px; line-height: 1.45; color: var(--ink); }
+  .ta:hover { background: var(--paper-2); }
+  .ta.on { background: radial-gradient(260px 80px at 0% 50%, var(--tint), transparent 80%), var(--paper-2); box-shadow: inset 3px 0 0 var(--act); font-weight: 600; }
+  .h-empty { text-align: center; padding: 28px 20px 24px; font-size: 13.5px; color: var(--text-2); }
+  .h-empty b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 6px; }
+  .h-empty .btn { margin-top: 14px; }
+  .ha { display: none; border-radius: 24px; background: #fff; box-shadow: var(--lift); padding: 30px 40px 0; overflow: hidden; }
+  .ha.on { display: block; }
+  .ha-meta { font-size: 13px; color: var(--text-3); }
+  .ha h2 { margin: 8px 0 18px; font-size: 24px; font-weight: 600; line-height: 1.35; letter-spacing: -0.01em; }
+  .ha p { margin: 0 0 14px; max-width: 620px; font-size: 15.5px; line-height: 1.85; color: #2b302c; }
+  .ha h3 { margin: 26px 0 8px; font-size: 16.5px; font-weight: 600; color: var(--ink); letter-spacing: 0; }
+  .ha-fb { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 30px -40px 0; padding: 20px 40px 24px; background: var(--paper-2); box-shadow: 0 -1px 0 var(--line); font-size: 14.5px; color: var(--text-2); }
+  .ha-fb > span { margin-right: auto; }
+  .ha-fb .thx { color: #23603c; font-weight: 600; }
+  .ha-fb [hidden], .ta[hidden], .tk-help[hidden] { display: none; }
+  /* 内置指南：设备切换 + 每个 App 三步，App 自己的按钮名做成键帽 */
+  .dev { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+  .dev button { all: unset; cursor: pointer; padding: 8px 14px; border-radius: 12px; font-size: 14px; background: var(--bg); color: var(--ink); }
+  .dev button.on { background: var(--deep); color: #fff; font-weight: 600; }
+  .ha .hint { width: fit-content; font-size: 14px; color: var(--text-2); padding: 12px 14px; border-radius: 12px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); line-height: 1.7; }
+  .ga { margin-top: 22px; padding-top: 20px; box-shadow: 0 -1px 0 var(--line); }
+  .ga h3 { margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .ga ol { list-style: none; counter-reset: s; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .ga li { counter-increment: s; display: flex; gap: 12px; padding: 0; font-size: 15px; line-height: 1.7; color: #2b302c; }
+  .ga li::before { content: counter(s); flex: none; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%; background: var(--tint); color: var(--deep); font: 600 12.5px/24px var(--sans); text-align: center; }
+  .ga li:last-child::before { content: '✓'; background: #e4f1e8; color: #23603c; }
+  kbd { display: inline-block; margin: 0 3px; padding: 0 7px; border-radius: 7px; background: #fff; box-shadow: 0 0 0 1px rgba(var(--sh), 0.16), 0 2px 0 rgba(var(--sh), 0.12); font: 600 13.5px/22px var(--sans); color: var(--ink); white-space: nowrap; }
+  .ha .fallback { margin-top: 24px; }
+
   /* 我的（手机） */
   .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
   .profile .avatar { width: 52px; height: 52px; font-size: 20px; }
@@ -611,6 +659,18 @@
     .nf { padding: 20px 18px 22px; }
     .nt { padding: 14px 16px; gap: 12px; }
     .an { padding: 16px 16px 16px 18px; flex-direction: column; gap: 6px; }
+    /* 帮助：手机上目录与文章分两屏 */
+    .hp { grid-template-columns: 1fr; }
+    .hp-side { position: static; }
+    .hp[data-view="article"] .hp-side { display: none; }
+    .hp[data-view="list"] .hp-main { display: none; }
+    .ta.on { background: none; box-shadow: none; font-weight: 400; }
+    .ha { padding: 22px 20px 0; border-radius: 22px; }
+    .ha h2 { font-size: 21px; }
+    .ha p { font-size: 15px; }
+    .ha-fb { margin: 26px -20px 0; padding: 18px 20px 22px; }
+    .ha-fb > span { flex-basis: 100%; }
+    .ha-fb .btn { flex: 1; }
   }
 </style>
 </head>
@@ -638,6 +698,7 @@
   <symbol id="i-out" viewBox="0 0 24 24"><path d="M12 20V7M6 13l6-6 6 6"/></symbol>
   <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/><path d="M12 8v4l3 2"/></symbol>
   <symbol id="i-renew" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5v16h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/></symbol>
 </svg>
 
@@ -652,7 +713,7 @@
   <div class="nav-gap"></div>
   <a class="nav-a" data-p="msgs" href="#msgs"><svg class="i"><use href="#i-bell"/></svg>消息<span class="dot">2</span></a>
   <a class="nav-a" data-p="tickets" href="#tickets"><svg class="i"><use href="#i-chat"/></svg>工单支持</a>
-  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-help"/></svg>帮助中心</a>
+  <a class="nav-a" data-p="help" href="#help"><svg class="i"><use href="#i-help"/></svg>帮助中心</a>
   <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-shield"/></svg>账号安全</a>
   <div class="me">
     <div class="avatar">张</div>
@@ -1286,7 +1347,7 @@
             <button class="ti off" data-tk="3" data-only="one multi expired"><span class="ti-m"><span class="st">已关闭</span>套餐与链接<time>09-28</time></span><b>iPhone 上怎么添加</b><small><span class="mono">#TK20260928-A2B7KQWE</span> · 3 条消息</small></button>
             <button class="ti off" data-tk="4" data-only="one multi expired"><span class="ti-m"><span class="st">已撤回</span>连接与技术<time>09-20</time></span><b>换新链接以后连不上</b><small><span class="mono">#TK20260920-Q5WZ3RTN</span> · 1 条消息</small></button>
           </nav>
-          <div class="tk-help"><svg class="i"><use href="#i-help"/></svg>连不上、App 怎么用，帮助中心多半有答案<a href="#tickets">去看看 ›</a></div>
+          <div class="tk-help"><svg class="i"><use href="#i-help"/></svg>连不上、App 怎么用，帮助中心多半有答案<a href="#help">去看看 ›</a></div>
         </div>
 
         <div class="tk-main">
@@ -1416,6 +1477,125 @@
     </div>
   </section>
 
+  <!-- ================= 帮助中心 ================= -->
+  <section class="page" id="p-help">
+    <div class="col wide">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <h1>帮助中心</h1>
+      <div class="hp" data-view="list">
+        <div class="hp-side">
+          <label class="hs"><svg class="i"><use href="#i-search"/></svg><input type="search" placeholder="搜索帮助文章" aria-label="搜索帮助文章" maxlength="64" /></label>
+          <!-- 内置指南常驻在目录上方：换了套餐、换了链接、节点不对，最常要做的就是这一步 -->
+          <button class="hg" data-h="guide"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span><b>在 App 里点一次更新</b><small>换了链接、节点不对时先做这个</small></span><svg class="i chev"><use href="#i-chev"/></svg></button>
+          <!-- 目录按后台填的分类分组，没填分类的归「其他」；只列标题 -->
+          <nav class="toc" aria-label="帮助文章">
+            <div class="toc-g"><span>快速上手</span><button class="ta on" data-h="a1">三分钟完成首次连接</button></div>
+            <div class="toc-g"><span>App 教程</span><button class="ta" data-h="a2">Clash Verge Rev（Windows / macOS）</button><button class="ta" data-h="a3">Shadowrocket（iOS）</button><button class="ta" data-h="a4">Hiddify（Android）</button></div>
+            <div class="toc-g"><span>账单与支付</span><button class="ta" data-h="a5">如何使用礼品卡</button></div>
+            <div class="toc-g"><span>其他</span><button class="ta" data-h="a6">同时在线设备数是怎么算的</button></div>
+            <div class="h-empty" hidden><b>没有找到相关文章</b>换个关键词试试，或直接提交工单。<br /><a class="btn sm" href="#tickets">提交工单</a></div>
+          </nav>
+          <div class="tk-help"><svg class="i"><use href="#i-chat"/></svg>没找到答案？直接问客服<a href="#tickets">提交工单 ›</a></div>
+        </div>
+
+        <div class="hp-main">
+          <a class="back" data-hback>‹ 全部文章</a>
+
+          <article class="ha on" id="ha-a1">
+            <div class="ha-meta">快速上手 · 更新于 10-13</div>
+            <h2>三分钟完成首次连接</h2>
+            <p>在「我的套餐」页面复制链接，或直接点击对应 App 的一键添加按钮。</p>
+            <h3>选择节点</h3>
+            <p>打开 App 后先测速，选择延迟最低的节点。倍率大于 1 的节点会按倍率计流量。</p>
+            <h3>遇到问题</h3>
+            <p>若连接失败，请先在 App 里更新一次，再尝试切换协议不同的节点。</p>
+            <div class="ha-fb"><span>这篇文章有帮助吗？</span><button class="btn soft sm" data-vote>有帮助</button><a class="btn soft sm" href="#tickets">仍未解决，提交工单</a></div>
+          </article>
+
+          <article class="ha" id="ha-a2">
+            <div class="ha-meta">App 教程 · 更新于 10-08</div>
+            <h2>Clash Verge Rev（Windows / macOS）</h2>
+            <p>在「我的套餐」点「添加到 App」，选 Clash Verge Rev。浏览器问要不要打开 App 时，点允许。</p>
+            <h3>开始使用</h3>
+            <p>在 App 左边栏的「代理」里选一个节点，再到「设置」里打开「系统代理」。</p>
+            <div class="ha-fb"><span>这篇文章有帮助吗？</span><button class="btn soft sm" data-vote>有帮助</button><a class="btn soft sm" href="#tickets">仍未解决，提交工单</a></div>
+          </article>
+
+          <article class="ha" id="ha-a3">
+            <div class="ha-meta">App 教程 · 更新于 10-08</div>
+            <h2>Shadowrocket（iOS）</h2>
+            <p>Shadowrocket 需要在 App Store 购买，国区搜不到，要用其他地区的 Apple ID。</p>
+            <p>装好后在「我的套餐」点「添加到 App」，选 Shadowrocket，会自动打开并添加好。</p>
+            <h3>开始使用</h3>
+            <p>回到首页选一个节点，打开最上面的开关。第一次会请求添加 VPN 配置，点允许。</p>
+            <div class="ha-fb"><span>这篇文章有帮助吗？</span><button class="btn soft sm" data-vote>有帮助</button><a class="btn soft sm" href="#tickets">仍未解决，提交工单</a></div>
+          </article>
+
+          <article class="ha" id="ha-a4">
+            <div class="ha-meta">App 教程 · 更新于 10-05</div>
+            <h2>Hiddify（Android）</h2>
+            <p>在「我的套餐」点「添加到 App」，选 Hiddify，会自动打开并添加好。</p>
+            <p>回到首页点中间的大按钮就连上了；要换节点，点底部的「代理」。</p>
+            <div class="ha-fb"><span>这篇文章有帮助吗？</span><button class="btn soft sm" data-vote>有帮助</button><a class="btn soft sm" href="#tickets">仍未解决，提交工单</a></div>
+          </article>
+
+          <article class="ha" id="ha-a5">
+            <div class="ha-meta">账单与支付 · 更新于 09-30</div>
+            <h2>如何使用礼品卡</h2>
+            <p>在「钱包」点「兑换卡」，输入卡号，先看清这张卡能换到什么，再确认兑换。</p>
+            <h3>不同的卡</h3>
+            <p>余额卡直接加到余额上。套餐卡要选一份放到哪里：新开一份，或者加到你已有的那一份上。</p>
+            <p>送流量的卡加在一份正在用的套餐上：按时间的套餐只在这一期有效，一次性套餐直接加到总量上。</p>
+            <div class="ha-fb"><span>这篇文章有帮助吗？</span><button class="btn soft sm" data-vote>有帮助</button><a class="btn soft sm" href="#tickets">仍未解决，提交工单</a></div>
+          </article>
+
+          <article class="ha" id="ha-a6">
+            <div class="ha-meta">其他 · 更新于 09-22</div>
+            <h2>同时在线设备数是怎么算的</h2>
+            <p>按近 24 小时拉取链接的来源计算。同一台设备在 App 里反复更新，只算一台。</p>
+            <div class="ha-fb"><span>这篇文章有帮助吗？</span><button class="btn soft sm" data-vote>有帮助</button><a class="btn soft sm" href="#tickets">仍未解决，提交工单</a></div>
+          </article>
+
+          <!-- 内置指南：按设备列常用 App，每个三步；App 自己的按钮名照它的中文界面原样写成键帽 -->
+          <article class="ha" id="ha-guide">
+            <div class="ha-meta">内置指南</div>
+            <h2>在 App 里点一次「更新」</h2>
+            <div class="dev" role="radiogroup" aria-label="你的设备"><button class="on">iPhone / iPad</button><button>安卓手机</button><button>Mac 电脑</button><button>Windows 电脑</button></div>
+            <p>换了套餐、改了名字或者节点有变化时，在 App 里更新一次就能看到，不用重新添加。</p>
+            <p class="hint">你的配置名就是「我的套餐」卡片上「App 里显示为」后面的那个名字。</p>
+            <section class="ga"><h3>Shadowrocket</h3><ol>
+              <li><span>打开 Shadowrocket，停在底部的<kbd>首页</kbd></span></li>
+              <li><span>在列表里找到你的配置名那一行，向右滑，点<kbd>更新</kbd></span></li>
+              <li><span>那一行下面的节点刷新成新的，就好了</span></li>
+            </ol></section>
+            <section class="ga"><h3>Stash</h3><ol>
+              <li><span>打开 Stash，进入<kbd>设置</kbd>里的<kbd>配置文件</kbd></span></li>
+              <li><span>找到你的配置名，用它旁边的刷新或更新把它更新一次</span></li>
+              <li><span>节点列表刷新成新的，就好了</span></li>
+            </ol></section>
+            <section class="ga"><h3>Quantumult X</h3><ol>
+              <li><span>点右下角的风车按钮，往下找到「节点」那一栏</span></li>
+              <li><span>找到你的配置名，向左滑点<kbd>更新</kbd></span></li>
+              <li><span>回到首页，节点列表变成新的，就好了</span></li>
+            </ol></section>
+            <section class="ga"><h3>Loon</h3><ol>
+              <li><span>打开 Loon，点底部的<kbd>配置</kbd>，找到节点那一栏</span></li>
+              <li><span>找到你的配置名，用它的刷新或更新把它更新一次</span></li>
+              <li><span>节点列表刷新成新的，就好了</span></li>
+            </ol></section>
+            <section class="ga"><h3>sing-box</h3><ol>
+              <li><span>打开 sing-box，点<kbd>配置</kbd>（英文界面是「Profiles」）</span></li>
+              <li><span>点你的配置名，再点<kbd>更新</kbd></span></li>
+              <li><span>配置的更新时间变成刚才，就好了</span></li>
+            </ol></section>
+            <p class="fallback">找不到这些按钮？在 App 里删掉这个配置，回「我的套餐」点「添加到 App」重新加一次，效果一样。</p>
+            <div class="ha-fb"><span>还是不行？</span><a class="btn soft sm" href="#tickets">提交工单</a></div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
   <section class="page" id="p-me">
     <div class="col">
@@ -1435,7 +1615,7 @@
       <h3>帮助</h3>
       <div class="rows">
         <a class="row" href="#tickets"><span class="ri"><svg class="i"><use href="#i-chat"/></svg></span><span class="rt">工单支持</span><span class="rv">客服回复了 1 张</span><svg class="i chev"><use href="#i-chev"/></svg></a>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-help"/></svg></span><span class="rt">帮助中心</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <a class="row" href="#help"><span class="ri"><svg class="i"><use href="#i-help"/></svg></span><span class="rt">帮助中心</span><svg class="i chev"><use href="#i-chev"/></svg></a>
       </div>
       <h3>设置</h3>
       <div class="rows">
@@ -1455,7 +1635,7 @@
 
 <script>
   // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
-  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'me']
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'me']
   function show() {
     let p = location.hash.slice(1)
     if (!pages.includes(p)) p = 'subs'
@@ -1552,6 +1732,49 @@
   document.querySelectorAll('.nt').forEach((el) => el.addEventListener('click', () => { el.classList.remove('new'); syncUnread() }))
   document.querySelector('.read-all').addEventListener('click', () => { document.querySelectorAll('.nt.new').forEach((el) => el.classList.remove('new')); syncUnread() })
   if (q.get('mt')) mtab(q.get('mt'))
+  // 帮助：点目录看文章、点内置指南；搜索按标题和正文过滤目录。?h=a1..a6|guide 预选，&v=detail 手机直接进文章，?hq=关键词 预填搜索
+  const hpBox = document.querySelector('.hp')
+  function hp(id, detail = true) {
+    document.querySelectorAll('.hp [data-h]').forEach((el) => el.classList.toggle('on', el.dataset.h === id))
+    document.querySelectorAll('.ha').forEach((el) => el.classList.toggle('on', el.id === 'ha-' + id))
+    if (detail) hpBox.dataset.view = 'article'
+  }
+  document.querySelectorAll('.hp [data-h]').forEach((el) => el.addEventListener('click', () => { hp(el.dataset.h); scrollTo(0, 0) }))
+  document.querySelector('[data-hback]').addEventListener('click', () => { hpBox.dataset.view = 'list' })
+  const hsIn = document.querySelector('.hs input')
+  function hsearch() {
+    const k = hsIn.value.trim().toLowerCase()
+    let any = false
+    document.querySelectorAll('.toc-g').forEach((g) => {
+      let n = 0
+      g.querySelectorAll('.ta').forEach((a) => {
+        const hit = !k || document.getElementById('ha-' + a.dataset.h).textContent.toLowerCase().includes(k)
+        a.hidden = !hit
+        if (hit) n++
+      })
+      g.hidden = n === 0
+      if (n) any = true
+    })
+    document.querySelector('.h-empty').hidden = any
+    document.querySelector('.hp-side .tk-help').hidden = !any
+    // 宽屏右列跟着搜索走：当前文章被筛掉就换成第一条命中，一条都没有就空着（与正式门户相同）
+    const cur = document.querySelector('.ta.on:not([hidden])')
+    if (!cur && !document.querySelector('.hg.on')) {
+      const first = document.querySelector('.ta:not([hidden])')
+      if (first) hp(first.dataset.h, false)
+      else document.querySelectorAll('.ta, .ha').forEach((el) => el.classList.remove('on'))
+    }
+  }
+  hsIn.addEventListener('input', hsearch)
+  document.querySelectorAll('.dev button').forEach((el) => el.addEventListener('click', () => document.querySelectorAll('.dev button').forEach((b) => b.classList.toggle('on', b === el))))
+  document.querySelectorAll('[data-vote]').forEach((el) => el.addEventListener('click', () => {
+    const t = el.closest('.ha-fb').querySelector('span')
+    t.textContent = '✓ 感谢你的反馈'
+    t.classList.add('thx')
+    el.hidden = true
+  }))
+  if (q.get('h')) hp(q.get('h'), q.get('v') === 'detail')
+  if (q.get('hq')) { hsIn.value = q.get('hq'); hsearch() }
   const bar = document.createElement('nav')
   bar.className = 'pal'
   ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
