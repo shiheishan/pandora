@@ -235,9 +235,10 @@ export function OrdersTab({
                 </span>
               ),
             },
-            { key: 'what', header: '内容', render: (o) => <span className={css.dim}>{orderWhat(o)}</span> },
+            { key: 'what', header: '内容', hideOnMobile: true, render: (o) => <span className={css.dim}>{orderWhat(o)}</span> },
             {
               key: 'time',
+              hideOnMobile: true,
               header: '时间',
               width: '100px',
               render: (o) => <span className={css.dim}>{relativeTime(o.created_at, now)}</span>,

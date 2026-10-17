@@ -138,3 +138,10 @@
   margin: 0;
   color: var(--text);
 }
+
+/* 手机上隐藏的行内操作（样稿 .hide-m） */
+@media (max-width: 639px) {
+  .rowActions .hideMobile {
+    display: none;
+  }
+}

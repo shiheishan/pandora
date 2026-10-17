@@ -59,10 +59,10 @@ export function RiskTab({ d, now }: { d: UserDetail; now: Date }) {
                 empty={<Empty bare title="还没有登录记录" description="用户登录后，这里会列出出口 IP。" />}
                 columns={[
                   { key: 'ip', header: 'IP', mono: true, render: (r) => r.ip },
-                  { key: 'count', header: '登录次数', align: 'right', render: (r) => r.count },
-                  { key: 'first', header: '首次', render: (r) => <span className={css.muted}>{formatDateTime(r.first)}</span> },
+                  { key: 'count', hideOnMobile: true, header: '登录次数', align: 'right', render: (r) => r.count },
+                  { key: 'first', hideOnMobile: true, header: '首次', render: (r) => <span className={css.muted}>{formatDateTime(r.first)}</span> },
                   { key: 'last', header: '最近', align: 'right', render: (r) => <span className={css.muted}>{relativeTime(r.last, now)}</span> },
-                  { key: 'accounts', header: '同 IP 账号', align: 'right', render: (r) => r.accounts },
+                  { key: 'accounts', hideOnMobile: true, header: '同 IP 账号', align: 'right', render: (r) => r.accounts },
                 ]}
               />
             </section>

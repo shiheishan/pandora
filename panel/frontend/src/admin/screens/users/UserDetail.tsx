@@ -1,3 +1,4 @@
+import { CalendarAdd01Icon, ChartHistogramIcon, Wallet01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useState } from 'react'
 import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
@@ -73,13 +74,13 @@ function Body({ d, tab, onTab, backHref, now }: { d: UserDetailData; tab: Detail
             ? undefined
             : (
               <>
-                <Button size="sm" disabled={!target} title={reason ?? undefined} onClick={() => target && navigate('/billing/orders', { query: { new: d.id, sub: target.id } })}>
+                <Button size="sm" icon={CalendarAdd01Icon} disabled={!target} title={reason ?? undefined} onClick={() => target && navigate('/billing/orders', { query: { new: d.id, sub: target.id } })}>
                   {renewLabel}
                 </Button>
-                <Button size="sm" disabled={!target} title={reason ?? undefined} onClick={() => setGrantOpen(true)}>
+                <Button size="sm" icon={ChartHistogramIcon} disabled={!target} title={reason ?? undefined} onClick={() => setGrantOpen(true)}>
                   加流量
                 </Button>
-                <Button size="sm" onClick={adjustBalance}>
+                <Button size="sm" icon={Wallet01Icon} onClick={adjustBalance}>
                   调整余额
                 </Button>
               </>

@@ -350,6 +350,17 @@
   min-width: 0;
 }
 
+/* 只在手机显示（样稿 .m-only）：生成记录的时间列在手机上并进原因格 */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+  }
+}
+
 /* --- 设备策略 ----------------------------------------------------------- */
 .modeSet {
   display: flex;

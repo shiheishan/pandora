@@ -94,6 +94,7 @@ export function ProfileTab({ d, now, onViewOrders }: { d: UserDetail; now: Date;
             },
             {
               key: 'what',
+              hideOnMobile: true,
               header: '内容',
               render: (o) => <span className={css.dim}>{orderWhat(o)}</span>,
             },

@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
@@ -123,6 +124,7 @@ export function GroupsTab() {
     { key: 'users', header: '成员', width: '72px', align: 'right', mono: true, render: (g) => formatCount(g.users) },
     {
       key: 'pools',
+      hideOnMobile: true,
       header: '可用节点池',
       width: '140px',
       render: (g) => (
@@ -134,6 +136,7 @@ export function GroupsTab() {
     // groupRefs 空时返回 '—'（model.ts），那时写「未被引用」
     {
       key: 'refs',
+      hideOnMobile: true,
       header: '被引用',
       width: '150px',
       render: (g) => <span className={gcss.muted}>{groupRefs(g) === '—' ? '未被引用' : groupRefs(g)}</span>,
@@ -150,22 +153,22 @@ export function GroupsTab() {
             <a className={gcss.viewLink} href={href('/users/list', { g: g.id })}>
               查看成员
             </a>
-            <Button variant="link" size="xs" onClick={() => openEdit(g)}>
+            <Button variant="link" size="xs" className={gcss.hideMobile} onClick={() => openEdit(g)}>
               编辑
             </Button>
             {g.status === 'disabled' ? (
-              <Button variant="ghost" size="xs" className={gcss.dangerHover} busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
+              <Button variant="ghost" size="xs" className={`${gcss.dangerHover} ${gcss.hideMobile}`} busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
                 启用
               </Button>
             ) : (
-              <Button variant="ghost" size="xs" className={gcss.dangerHover} onClick={() => setDisabling(g)}>
+              <Button variant="ghost" size="xs" className={`${gcss.dangerHover} ${gcss.hideMobile}`} onClick={() => setDisabling(g)}>
                 停用
               </Button>
             )}
             <Button
               variant="ghost"
               size="xs"
-              className={gcss.dangerHover}
+              className={`${gcss.dangerHover} ${gcss.hideMobile}`}
               disabled={blocker !== null}
               title={blocker ?? undefined}
               onClick={() => setDeleting(g)}
@@ -181,7 +184,7 @@ export function GroupsTab() {
   return (
     <>
       <PageActions>
-        <Button variant="primary" onClick={() => setCreateOpen(true)}>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setCreateOpen(true)}>
           新建用户组
         </Button>
       </PageActions>

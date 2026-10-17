@@ -530,6 +530,7 @@ function GenerationRecordsTable({
   const columns: TableColumn<GenerationJob>[] = [
     {
       key: 'time',
+      hideOnMobile: true,
       header: '时间',
       width: '140px',
       render: (j) => <span className={`${ops.dim} ${ops.num}`}>{formatDateTime(j.created_at)}</span>,
@@ -541,11 +542,12 @@ function GenerationRecordsTable({
         <span className={ops.reasonCell}>
           {j.reason}
           <span className={ops.sub2}>{j.email_prefix}@{j.email_domain}</span>
+          <span className={`${ops.sub2} ${ops.mOnly}`}>{formatDateTime(j.created_at)}</span>
         </span>
       ),
     },
     { key: 'total', header: '数量', align: 'right', mono: true, render: (j) => formatCount(j.total) },
-    { key: 'group', header: '用户组', render: (j) => <span className={ops.dim}>{groupNameFor(groups, j.group_id)}</span> },
+    { key: 'group', hideOnMobile: true, header: '用户组', render: (j) => <span className={ops.dim}>{groupNameFor(groups, j.group_id)}</span> },
     {
       key: 'result',
       header: '结果',

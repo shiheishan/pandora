@@ -149,6 +149,12 @@ function columns(now: Date): TableColumn<UserRow>[] {
           <div className={listCss.whoText}>
             <span className={listCss.name}>{userLabel(u)}</span>
             <span className={listCss.id}>{shortId(u.id)}</span>
+            {/* 手机上套餐列隐藏，套餐与到期并进这一格（样稿 m-only） */}
+            <span className={`${listCss.small} ${listCss.mOnly}`}>
+              {u.current_subscription
+                ? `${u.current_subscription.plan_name} · ${subExpiryView(u.current_subscription.current_period_end, now).text}`
+                : '无套餐'}
+            </span>
           </div>
         </div>
       ),
@@ -164,6 +170,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
     },
     {
       key: 'plan',
+      hideOnMobile: true,
       header: '套餐',
       width: '140px',
       render: (u) => {
@@ -180,6 +187,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
     },
     {
       key: 'traffic',
+      hideOnMobile: true,
       header: '本期流量',
       width: '160px',
       render: (u) => {
@@ -200,6 +208,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
     },
     {
       key: 'balance',
+      hideOnMobile: true,
       header: '余额',
       width: '96px',
       align: 'right',
@@ -208,6 +217,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
     },
     {
       key: 'devices',
+      hideOnMobile: true,
       header: '设备',
       width: '72px',
       align: 'right',
@@ -222,12 +232,14 @@ function columns(now: Date): TableColumn<UserRow>[] {
     },
     {
       key: 'group',
+      hideOnMobile: true,
       header: '用户组',
       width: '96px',
       render: (u) => <span className={listCss.muted}>{u.group_name || '默认'}</span>,
     },
     {
       key: 'seen',
+      hideOnMobile: true,
       header: '最近登录',
       width: '96px',
       align: 'right',
