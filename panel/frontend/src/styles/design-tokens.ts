@@ -18,8 +18,8 @@ const c = (group: TokenGroup, name: string, light: string, dark: string, use: st
 
 // ---------------------------------------------------------------------------
 // 颜色：10-16 起默认是门户样稿 v5 的「森林绿」（另三套配色只记在 dev/prototype/PALETTES.md）。
-// 浅色取样稿 :root；样稿没画深色，深色按同一色相自配。后台没重做，变了值的键在
-// ADMIN_OVERRIDES 里钉回原来的「纸白」，后台看起来不变。
+// 浅色取样稿 :root；样稿没画深色，深色按同一色相自配。后台另有一套黑白灰（样稿 v4），
+// 写在 ADMIN_OVERRIDES，不进这张表。
 // ---------------------------------------------------------------------------
 export const COLOR_TOKENS: readonly ColorToken[] = [
   c('neutral', '--bg', '#f4f5f2', '#0e1210', '页面底色'),
@@ -137,47 +137,48 @@ interface RoleToken {
 const r = (name: string, portal: string, admin: string, use: string): RoleToken => ({ name, portal, admin, use })
 
 export const ROLE_TOKENS: readonly RoleToken[] = [
-  r('--accent', 'var(--brand)', 'var(--text)', '主按钮、开关、选中、进度'),
-  r('--accent-hover', 'var(--brand-hover)', 'var(--text)', '主按钮悬停'),
-  r('--on-accent', 'var(--on-brand)', 'var(--on-ink)', '主按钮上的字'),
-  r('--focus-halo', 'var(--brand-soft)', 'transparent', '输入框聚焦外圈 3px（后台没有）'),
-  r('--focus-ring', 'var(--brand)', 'var(--text)', '键盘焦点外圈'),
-  r('--link', 'var(--brand)', 'var(--text)', '文字链接'),
-  r('--link-hover', 'var(--brand-ink)', 'var(--text-2)', '链接悬停'),
-  r('--link-decoration', 'none', 'underline', '链接下划线'),
-  r('--link-underline', 'transparent', 'var(--border-hover)', '下划线颜色'),
-  r('--body-size', 'var(--fs-body)', 'var(--fs-body-sm)', '正文字号 14 / 13'),
+  r('--accent', 'var(--brand)', 'var(--brand)', '主按钮、开关、选中、进度'),
+  r('--accent-hover', 'var(--brand-hover)', 'var(--brand-hover)', '主按钮悬停'),
+  r('--on-accent', 'var(--on-brand)', 'var(--on-brand)', '主按钮上的字'),
+  r('--focus-halo', 'var(--brand-soft)', 'transparent', '输入框聚焦外圈 3px（后台没有外圈）'),
+  r('--focus-ring', 'var(--brand)', 'var(--info)', '键盘焦点外圈'),
+  r('--link', 'var(--brand)', 'var(--info)', '文字链接'),
+  r('--link-hover', 'var(--brand-ink)', 'var(--info)', '链接悬停'),
+  r('--link-decoration', 'none', 'none', '链接下划线'),
+  r('--link-underline', 'transparent', 'transparent', '下划线颜色'),
+  r('--link-hover-decoration', 'underline', 'none', '链接悬停时的下划线（后台不加）'),
+  r('--body-size', 'var(--fs-body)', 'var(--fs-body)', '正文字号'),
   r('--body-leading', 'var(--lh-body)', 'var(--lh-body-sm)', '正文行高 1.55 / 1.5'),
   r('--h-control', '50px', '32px', '门户主按钮与输入框（样稿 v5 50 高）/ 后台默认按钮与输入框'),
   r('--h-control-sm', '38px', '28px', '门户小按钮 / 后台工具栏与表格内'),
   r('--h-control-xs', '32px', '24px', '门户顶栏控件 / 后台紧凑按钮'),
   r('--pad-button', '22px', '12px', '按钮水平内边距（实心按钮 +2）'),
-  r('--pad-input', '12px', '2px', '输入框水平内边距（后台只有下边线）'),
+  r('--pad-input', '12px', '10px', '输入框水平内边距'),
   r('--h-dialog-action', '50px', '32px', '弹窗按钮高度'),
-  r('--switch-knob-on', '#fff', 'var(--bg)', '开关选中时的圆钮'),
+  r('--switch-knob-on', '#fff', '#fff', '开关选中时的圆钮'),
   r('--radius-control', '14px', 'var(--radius-sm)', '按钮、输入框圆角 14 / 7'),
   r('--radius-card', 'var(--radius-xl)', 'var(--radius-lg)', '卡片圆角 14 / 12'),
   r('--pad-card', 'var(--space-20)', 'var(--space-16)', '卡片内边距 20 / 16'),
-  r('--control-border-width', '1px', '0 0 1px', '输入框边框：四边 / 只有下边线'),
-  r('--control-bg', 'var(--bg)', 'transparent', '输入框底色（门户样稿是页面底色的浅灰）'),
-  r('--popover-border', 'var(--border)', 'var(--text)', '菜单、弹窗、下拉列表的边框色'),
-  r('--popover-shadow', 'var(--shadow)', 'none', '浮层阴影'),
+  r('--control-border-width', '1px', '1px', '输入框边框宽度'),
+  r('--control-bg', 'var(--bg)', 'var(--surface)', '输入框底色'),
+  r('--popover-border', 'var(--border)', 'transparent', '菜单、弹窗、下拉列表的边框色（后台 --shadow 自带描边圈）'),
+  r('--popover-shadow', 'var(--shadow)', 'var(--shadow)', '浮层阴影'),
   r('--label-size', 'var(--fs-caption)', 'var(--fs-body-sm)', '表单字段标签字号'),
-  r('--label-color', 'var(--text-2)', 'var(--text)', '表单字段标签颜色'),
-  r('--label-weight', 'var(--fw-regular)', 'var(--fw-medium)', '表单字段标签字重'),
+  r('--label-color', 'var(--text-2)', 'var(--text-2)', '表单字段标签颜色'),
+  r('--label-weight', 'var(--fw-regular)', 'var(--fw-regular)', '表单字段标签字重'),
   r('--font-ui', 'var(--font-system)', 'var(--font-sans)', '正文字体：门户系统字体 / 后台 Geist'),
-  r('--button-weight', 'var(--fw-semibold)', 'var(--fw-regular)', '按钮字重'),
+  r('--button-weight', 'var(--fw-semibold)', 'var(--fw-medium)', '按钮字重'),
   r('--button-strong-weight', 'var(--fw-semibold)', 'var(--fw-medium)', '实心按钮字重'),
-  r('--button-font-size', '15.5px', '1em', '按钮字号（1em 即跟随上下文，与后台现在一致）'),
-  r('--button-font-size-sm', '14px', '1em', '小号按钮字号（后台另有 admin 选择器压成 12）'),
-  r('--pad-button-sm', '14px', 'calc(var(--pad-button) - 2px)', '小号按钮水平内边距'),
+  r('--button-font-size', '15.5px', '13.5px', '按钮字号'),
+  r('--button-font-size-sm', '14px', '13px', '小号按钮字号'),
+  r('--pad-button-sm', '14px', '10px', '小号按钮水平内边距'),
   r('--button-primary-bg', 'linear-gradient(180deg, var(--brand), var(--brand-deep))', 'var(--accent)', '主按钮底'),
   r('--button-primary-hover-bg', 'linear-gradient(180deg, var(--brand), var(--brand-deep))', 'var(--accent-hover)', '主按钮悬停底'),
   r('--button-primary-border', 'color-mix(in srgb, var(--brand-deep) 55%, var(--shade))', 'transparent', '主按钮边框'),
   r('--button-primary-shadow', 'inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 10px 22px -12px color-mix(in srgb, var(--shade) 90%, transparent)', 'none', '主按钮高光与投影'),
   r('--button-secondary-border', 'transparent', 'var(--border-strong)', '次按钮边框'),
   r('--button-secondary-shadow', '0 0 0 1px var(--border), 0 6px 14px -10px color-mix(in srgb, var(--shade) 40%, transparent)', 'none', '次按钮描边与投影（样稿 .btn.soft）'),
-  r('--button-secondary-hover-bg', 'var(--surface)', 'var(--surface-3)', '次按钮悬停底'),
+  r('--button-secondary-hover-bg', 'var(--surface)', 'var(--surface-2)', '次按钮悬停底'),
   r('--button-hover-filter', 'brightness(1.1)', 'none', '实心与次按钮悬停提亮'),
   r('--button-press', 'translateY(1px)', 'none', '按下位移'),
   r('--control-border-color', 'var(--border)', 'var(--border-strong)', '输入框边框色'),
@@ -186,67 +187,98 @@ export const ROLE_TOKENS: readonly RoleToken[] = [
   r('--dialog-backdrop-filter', 'blur(3px)', 'none', '弹窗遮罩模糊'),
   r('--dialog-action-flex', '1', '0 1 auto', '弹窗底部按钮：门户平分整行'),
   r('--dialog-grow', '0', '1', '弹窗底部左右之间的弹性空白'),
-  r('--segment-pad', '4px', '3px', '分段控件外框内边距'),
-  r('--segment-radius', '14px', 'var(--radius-md)', '分段控件外框圆角'),
-  r('--segment-bg', 'color-mix(in srgb, var(--surface) 80%, transparent)', 'var(--surface-3)', '分段控件底'),
-  r('--segment-ring', '0 0 0 1px var(--border)', 'none', '分段控件外框描边'),
-  r('--segment-h', '36px', '30px', '分段选项高度'),
-  r('--segment-option-pad', '18px', '14px', '分段选项水平内边距'),
-  r('--segment-option-radius', '10px', 'var(--radius-sm)', '分段选项圆角'),
-  r('--segment-font-size', '14px', 'var(--fs-body-sm)', '分段选项字号'),
+  r('--segment-pad', '4px', '2px', '分段控件外框内边距'),
+  r('--segment-radius', '14px', '8px', '分段控件外框圆角'),
+  r('--segment-bg', 'color-mix(in srgb, var(--surface) 80%, transparent)', 'var(--bg)', '分段控件底'),
+  r('--segment-ring', '0 0 0 1px var(--border)', '0 0 0 1px var(--border-strong)', '分段控件外框描边'),
+  r('--segment-h', '36px', '24px', '分段选项高度'),
+  r('--segment-option-pad', '18px', '10px', '分段选项水平内边距'),
+  r('--segment-option-radius', '10px', '6px', '分段选项圆角'),
+  r('--segment-font-size', '14px', '12.5px', '分段选项字号'),
   r('--segment-on-weight', 'var(--fw-semibold)', 'var(--fw-medium)', '选中项字重'),
-  r('--segment-bg-sm', 'var(--bg)', 'var(--surface-3)', '小号分段底（样稿 .me-theme）'),
-  r('--segment-h-sm', '30px', '24px', '小号分段选项高度'),
-  r('--segment-option-pad-sm', '14px', '10px', '小号分段选项水平内边距'),
+  r('--segment-bg-sm', 'var(--bg)', 'var(--bg)', '小号分段底（样稿 .me-theme）'),
+  r('--segment-h-sm', '30px', '22px', '小号分段选项高度'),
+  r('--segment-option-pad-sm', '14px', '8px', '小号分段选项水平内边距'),
   r('--segment-font-size-sm', '13px', 'var(--fs-caption)', '小号分段选项字号'),
   r('--page-bg', 'radial-gradient(var(--border) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--bg)', 'var(--bg)', '页面底：门户点阵底纹（样稿 body）'),
+  r('--control-focus-border', 'var(--accent)', 'var(--text-3)', '输入框聚焦时的边框色'),
+  r('--switch-on', 'var(--accent)', 'var(--ok)', '开关打开时的轨道色（后台绿）'),
+  r('--switch-w', '32px', '30px', '开关轨道宽（高都是 18）'),
+  r('--segment-on-bg', 'var(--surface)', 'var(--surface-3)', '分段控件选中项的底'),
+  r('--tag-h', 'auto', '18px', '标签高度'),
+  r('--tag-pad', '2px 8px', '0 6px', '标签内边距'),
+  r('--tag-font-size', 'var(--fs-caption)', '11.5px', '标签字号'),
+  r('--tag-weight', 'var(--fw-regular)', 'var(--fw-medium)', '标签字重'),
+  r('--button-danger-bg', 'var(--danger)', 'var(--surface)', '危险按钮底（后台红描边白底）'),
+  r('--button-danger-color', 'var(--on-danger)', 'var(--danger)', '危险按钮字色'),
+  r('--button-danger-border', 'transparent', 'var(--danger-line)', '危险按钮边框'),
+  r('--button-danger-hover-bg', 'var(--danger)', 'var(--danger-soft)', '危险按钮悬停底'),
 ]
 
 // ---------------------------------------------------------------------------
-// 后台在全局令牌上的覆盖（10-16 设计稿）：卡片与页面同底、所有圆角归零；
-// 全局颜色换成门户森林绿后，变了值的颜色键也在这里钉回原来的「纸白」（后台还没重做）。
+// 后台在全局令牌上的覆盖（样稿 v4：Vercel 式黑白灰）：后台没有品牌色，
+// --brand 系是墨色（与主按钮同色），蓝色用 --info（链接、焦点圈、进行中）。
 // 只作用于 <html data-app="admin">，写在 roles.css 的 html[data-app='admin'] 两块里；
-// 不进 COLOR_TOKENS（那是 Go 端与门户主题共用的键集），dark 为 null 表示深色沿用 tokens.css。
+// 不进 COLOR_TOKENS（那是 Go 端与门户主题共用的键集）。
 // 圆角另见 ADMIN_RADIUS。
 // ---------------------------------------------------------------------------
 export interface AdminOverride {
   name: string
   light: string
-  dark: string | null
+  dark: string
 }
 
-const o = (name: string, light: string, dark: string | null = null): AdminOverride => ({ name, light, dark })
+const o = (name: string, light: string, dark: string): AdminOverride => ({ name, light, dark })
 
 export const ADMIN_OVERRIDES: readonly AdminOverride[] = [
-  o('--bg', '#f5f4f0', '#111113'),
-  o('--surface', '#f5f4f0', '#111113'),
-  o('--surface-2', '#efede8', '#18181b'),
-  o('--surface-3', '#e8e6e0', '#202023'),
-  o('--border', '#e3e1da', '#2b2b2f'),
-  o('--border-strong', '#d5d2ca', '#37373c'),
-  o('--border-hover', '#c9c6bd', '#4a4a50'),
-  o('--text', '#1c1c1f', '#ecebe7'),
-  o('--text-2', '#62615c', '#9a988f'),
-  o('--text-3', '#6e6c66', '#8a8880'),
-  o('--brand', '#b9442b', '#e46e52'),
-  o('--brand-hover', '#a33a23', '#ec8267'),
-  o('--brand-ink', '#8c3019', '#f2a58f'),
-  o('--brand-soft', '#f6e4de', '#3a231c'),
-  o('--brand-tint', '#fbf3ef', '#201816'),
-  o('--on-brand', '#fff', '#170d0a'),
-  o('--warn', '#9a5c00'),
-  o('--warn-soft', '#fbf0dc'),
-  o('--danger', '#b3263a'),
-  o('--danger-soft', '#f8e1e3'),
-  o('--on-ink', '#fff', '#111113'),
-  o('--hdr', 'rgba(245,244,240,.9)', 'rgba(17,17,19,.88)'),
-  o('--scrim', 'rgba(20,20,24,.4)'),
-  o('--shadow', '0 16px 36px -14px rgba(28,28,31,.25)', '0 16px 40px -12px rgba(0,0,0,.6)'),
-  o('--shadow-segment', '0 1px 2px rgba(20,20,24,.08)', '0 1px 2px rgba(20,20,24,.08)'),
+  o('--bg', '#fafafa', '#000'),
+  o('--surface', '#fff', '#0a0a0a'),
+  o('--surface-2', '#f4f4f4', '#161616'),
+  o('--surface-3', '#ebebeb', '#1f1f1f'),
+  o('--border', '#ebebeb', '#1f1f1f'),
+  o('--border-strong', '#e0e0e0', '#2e2e2e'),
+  o('--border-hover', '#c9c9c9', '#454545'),
+  o('--text', '#171717', '#ededed'),
+  o('--text-2', '#666', '#a1a1a1'),
+  o('--text-3', '#737373', '#8f8f8f'),
+  o('--brand', '#171717', '#ededed'),
+  o('--brand-hover', '#383838', '#fff'),
+  o('--brand-ink', '#171717', '#ededed'),
+  o('--brand-soft', '#ebebeb', '#1f1f1f'),
+  o('--brand-tint', '#f4f4f4', '#161616'),
+  o('--on-brand', '#fff', '#0a0a0a'),
+  o('--brand-deep', '#171717', '#ededed'),
+  o('--brand-line', '#c9c9c9', '#454545'),
+  o('--ok', '#1a8a4f', '#3ecf8e'),
+  o('--ok-soft', '#e8f7ee', 'rgba(62,207,142,.12)'),
+  o('--ok-line', '#b8e6cb', 'rgba(62,207,142,.35)'),
+  o('--warn', '#a35200', '#f5a524'),
+  o('--warn-soft', '#fff4d6', 'rgba(245,165,36,.12)'),
+  o('--warn-line', '#f5d9a3', 'rgba(245,165,36,.35)'),
+  o('--danger', '#d93036', '#ff5f56'),
+  o('--danger-soft', '#fff0f0', 'rgba(255,95,86,.1)'),
+  o('--danger-line', '#f7c5c7', 'rgba(255,95,86,.35)'),
+  o('--danger-tint', '#fff7f7', 'rgba(255,95,86,.06)'),
+  o('--info', '#0070f3', '#3291ff'),
+  o('--info-soft', '#ebf4ff', 'rgba(50,145,255,.12)'),
+  o('--info-line', '#c2dcfc', 'rgba(50,145,255,.35)'),
+  o('--on-ink', '#fff', '#0a0a0a'),
+  o('--hdr', 'rgba(250,250,250,.85)', 'rgba(0,0,0,.85)'),
+  o('--scrim', 'rgba(0,0,0,.18)', 'rgba(0,0,0,.5)'),
+  o('--shadow', '0 0 0 1px #ebebeb,0 12px 32px -12px rgba(0,0,0,.18)', '0 0 0 1px #2e2e2e,0 16px 40px -12px rgba(0,0,0,.8)'),
+  o('--shadow-segment', 'none', 'none'),
+  o('--shade', '#000', '#000'),
 ]
 
-/** 后台所有圆角归零，不分深浅（只写在 html[data-app='admin'] 那一块） */
-export const ADMIN_RADIUS: readonly string[] = RADIUS_SCALE.map((t) => t.name)
+/** 后台圆角（只写在 html[data-app='admin'] 浅色块，深浅色相同） */
+export const ADMIN_RADIUS: readonly { name: string; value: string }[] = [
+  { name: '--radius-tag', value: '4px' },
+  { name: '--radius-sm', value: '7px' },
+  { name: '--radius-md', value: '10px' },
+  { name: '--radius-lg', value: '12px' },
+  { name: '--radius-xl', value: '12px' },
+  { name: '--radius-pill', value: '999px' },
+]
 
 /** 比较 CSS 值时忽略空白、大小写与小数点前的 0：rgba(20, 20, 24, 0.4) ≡ rgba(20,20,24,.4)。 */
 export function normalizeCssValue(value: string): string {

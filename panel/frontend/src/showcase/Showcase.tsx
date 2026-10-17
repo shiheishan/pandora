@@ -37,7 +37,8 @@ function verify(theme: Theme, app: App): { checked: number; mismatches: Mismatch
     ...[...SPACE_SCALE, ...RADIUS_SCALE].map((t) => ({ name: t.name, expected: t.value })),
   ].map((e) => {
     // 后台在全局令牌上有覆盖（roles.css 的 html[data-app='admin']），照覆盖值核对
-    if (app === 'admin' && ADMIN_RADIUS.includes(e.name)) return { name: e.name, expected: '0' }
+    const r = ADMIN_RADIUS.find((x) => x.name === e.name)
+    if (app === 'admin' && r) return { name: e.name, expected: r.value }
     const o = app === 'admin' ? ADMIN_OVERRIDES.find((x) => x.name === e.name) : undefined
     const v = o ? (theme === 'dark' ? o.dark : o.light) : null
     return v == null ? e : { name: e.name, expected: normalizeCssValue(v) }
