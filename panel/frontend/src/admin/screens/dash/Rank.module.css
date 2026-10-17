@@ -1,0 +1,146 @@
+/* ===========================================================================
+ * 仪表盘「流量排行」卡样式（Rank.module.css，样稿 admin-v4 #p-dash .two .box）
+ * 结构：标题 48 / 表头 34 / 8 行每行 40 / 页脚 44，列表区最小 320px
+ * ========================================================================= */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  min-height: 354px; /* 表头 34px + 列表 320px */
+}
+
+/* 表头行（样稿 .lh.rk-g，34 高、12px --text-3、下边线） */
+.headerRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  grid-template-columns: minmax(0, 1fr) 76px 52px;
+}
+
+.alignRight {
+  text-align: right;
+}
+
+/* 列表容器 min-height: 320px（8 × 40），无默认列表样式 */
+.rankList {
+  flex: 1;
+  min-height: 320px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rankItem {
+  margin: 0;
+  padding: 0;
+}
+
+/* 行容器（样稿 .ln.rk-g：40 高、13.5px、下边线、最后一行无下边线、悬停 --surface-2） */
+.rowLink {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 16px;
+  font-size: 13.5px;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  grid-template-columns: minmax(0, 1fr) 76px 52px;
+  transition: background-color 0.15s ease;
+}
+
+.rowLink:hover {
+  background: var(--surface-2);
+}
+
+.rankItem:last-child .rowLink {
+  border-bottom: 0;
+}
+
+/* 名字格（样稿 .bn：相对定位、28 高、左缩 -8px、内边距 0 8px） */
+.barNameCell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 28px;
+  margin-left: -8px;
+  padding: 0 8px;
+}
+
+/* 绝对定位的灰色进度条（--surface-3 底、圆角 5px） */
+.bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 5px;
+  background: var(--surface-3);
+  pointer-events: none;
+}
+
+/* 名字文字（相对定位以浮在 bar 上层，单行省略） */
+.nameText {
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 流量数值格（样稿 .mv：13px、右对齐、等宽数字） */
+.metricVal {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 占比格（样稿 .pc：12.5px、--text-3、右对齐、等宽数字） */
+.percentVal {
+  font-size: 12.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 空状态占位容器：占满至少 320px 高 */
+.emptyWrap {
+  flex: 1;
+  display: flex;
+  min-height: 320px;
+}
+
+/* 骨架屏占位容器：占满至少 320px 高 */
+.skeletonWrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 320px;
+}
+
+/* 卡片页脚左侧文字（13px --text-3、等宽数字） */
+.footText {
+  font-size: 13px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.footSpacer {
+  flex: 1;
+}
+
+/* 窄屏 ≤639px：网格列 minmax(0, 1fr) 68px 46px，左右内边距 14px */
+@media (max-width: 639px) {
+  .headerRow,
+  .rowLink {
+    grid-template-columns: minmax(0, 1fr) 68px 46px;
+    padding: 0 14px;
+  }
+}
