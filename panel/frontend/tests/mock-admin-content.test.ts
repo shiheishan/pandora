@@ -79,7 +79,7 @@ describe('mock api · admin content', () => {
     ])
     expect(themes[0]).toMatchObject({ code: 'paper', is_active: true })
     expect(themes[0]).not.toHaveProperty('custom_css')
-    expect(Object.keys(themes[0]!.tokens.light)).toHaveLength(43)
+    expect(Object.keys(themes[0]!.tokens.light)).toHaveLength(48)
     expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots).toHaveLength(7)
     const dirty = slotSaved.parse(await (await call('POST', '/v1/slots/portal.home.banner', { content: '<b onclick="x()">欢迎</b><script>alert(1)</script>', enabled: true }, 's-1')).json())
     expect(dirty.dropped).toHaveLength(2)

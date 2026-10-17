@@ -4,8 +4,8 @@ import { COLOR_TOKENS } from '../styles/design-tokens'
 import { useAppearance, type Appearance } from './queries'
 
 // ---------------------------------------------------------------------------
-// 后台可以新建主题并切换生效的那一套（推翻了 5.A「只保留默认 · 纸白」）：门户每次加载取生效主题，
-// 默认 · 纸白的值与 tokens.css 相同，换成别的主题时这里写进去的就是那套颜色，刷新页面即生效。
+// 后台可以新建主题并切换生效的那一套（推翻了 5.A「只保留默认主题」）：门户每次加载取生效主题，
+// 内置默认主题（森林绿）的值与 tokens.css 相同，换成别的主题时这里写进去的就是那套颜色，刷新页面即生效。
 // 走 CSSOM 而不是注入 <style>：CSP 的 style-src 没有 unsafe-inline。
 // ---------------------------------------------------------------------------
 export const THEMEABLE_TOKENS: ReadonlySet<string> = new Set(COLOR_TOKENS.map((t) => t.name))

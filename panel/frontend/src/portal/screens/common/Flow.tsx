@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import css from './Flow.module.css'
 
 // ---------------------------------------------------------------------------
-// 购买流程的公共件：会发生什么、单选列表、明细行、退路。只放展示，不取数。
+// 购买流程的公共件：会发生什么、单选列表、小选项。只放展示，不取数。
 // ---------------------------------------------------------------------------
 
 /** 「会发生什么」：每个选择旁边直接给结果 */
@@ -55,58 +55,6 @@ export function Chips({ items, selected, onSelect, label }: { items: readonly Ch
           {it.note && <small className={css.chipNote}>{it.note}</small>}
         </button>
       ))}
-    </div>
-  )
-}
-
-interface RowItem {
-  k: ReactNode
-  v: ReactNode
-  ok?: boolean
-  /** 行下面的展开说明（「怎么算的」） */
-  extra?: ReactNode
-}
-
-export function Rows({ rows }: { rows: readonly RowItem[] }) {
-  return (
-    <dl className={css.rows}>
-      {rows.map((r, i) => (
-        <div key={i}>
-          <div className={r.ok ? `${css.row} ${css.rowOk}` : css.row}>
-            <dt>{r.k}</dt>
-            <dd>{r.v}</dd>
-          </div>
-          {r.extra}
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-export function Notes({ items }: { items: readonly ReactNode[] }) {
-  if (!items.length) return null
-  return (
-    <ul className={css.notes}>
-      {items.map((n, i) => (
-        <li key={i}>{n}</li>
-      ))}
-    </ul>
-  )
-}
-
-/** 主按钮下面隔开的一行退路（「要给别人另买一份？」） */
-export function Alt({ href, children, onClick }: { href?: string; children: ReactNode; onClick?: () => void }) {
-  return (
-    <div className={css.alt}>
-      {href ? (
-        <a className={css.altButton} href={href}>
-          {children} →
-        </a>
-      ) : (
-        <button type="button" className={css.altButton} onClick={onClick}>
-          {children} →
-        </button>
-      )}
     </div>
   )
 }

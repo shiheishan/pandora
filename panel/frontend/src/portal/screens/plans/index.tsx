@@ -1,22 +1,29 @@
 import { useMemo } from 'react'
 import { navigate, useHashLocation } from '../../../core/router'
-import { Empty, Skeleton, Tag } from '../../../ui'
+import { Empty, Segmented, Skeleton, type SegmentedOption } from '../../../ui'
+import { PageHeadAside } from '../../head'
+import { Btn } from '../../kit'
 import { LoadError, Slot } from '../common/Blocks'
 import { listable, usePlans, type PlanKind } from '../common/catalog'
-import { flowCss } from '../common/Flow'
 import { useHoldings, type Holdings } from '../common/holdings'
 import { PlanCard } from '../common/PlanCard'
 import { planCardView } from './labels'
+import { OnceList } from './OnceList'
+import { PickList } from './PickList'
 import css from './Plans.module.css'
 
 // ---------------------------------------------------------------------------
 // 选购：按时间 / 一次性两类套餐；?kind= 指定，缺省按时间（只持有一次性时缺省一次性）。
-// 落点（另开 / 续 / 叠加 / 换掉）在确认页由 landings 让用户选。
 // ---------------------------------------------------------------------------
 
-const TAB_META: Readonly<Record<PlanKind, { title: string; hint: string }>> = {
-  subscription: { title: '按时间', hint: '月 / 季 / 半年 / 年付，每期给流量' },
-  one_time: { title: '一次性', hint: '付一次，流量用完为止' },
+const KIND_OPTIONS: readonly SegmentedOption<PlanKind>[] = [
+  { value: 'subscription', label: '按时间' },
+  { value: 'one_time', label: '一次性' },
+]
+
+const SEG_CAPS: Readonly<Record<PlanKind, string>> = {
+  subscription: '月 / 季 / 半年 / 年付，每期给流量，到下一期重新给满',
+  one_time: '付一次，流量用完为止，不会清零',
 }
 
 function defaultKind(held: Holdings['held'], kinds: ReadonlySet<PlanKind>): PlanKind {
@@ -46,40 +53,49 @@ export default function Plans() {
 
   const list = shown.filter((p) => p.kind === kind)
   return (
-    <div className={flowCss.stack}>
+    <div>
       <Slot name="portal.plans.notice" />
       {showTabs && (
-        <div className={css.seg} role="tablist" aria-label="套餐类型">
-          {(['subscription', 'one_time'] as const).map((k) => (
-            <button key={k} type="button" role="tab" aria-selected={kind === k} onClick={() => setKind(k)} id={`tab-${k}`}>
-              {TAB_META[k].title}
-              <small>{TAB_META[k].hint}</small>
-            </button>
-          ))}
-        </div>
+        <PageHeadAside>
+          <Segmented label="套餐类型" size="md" value={kind} onChange={setKind} options={KIND_OPTIONS} />
+        </PageHeadAside>
       )}
+      <p className={css.segCap}>{SEG_CAPS[kind]}</p>
       {list.length === 0 ? (
         <Empty title="暂时没有可买的套餐" description="新套餐上架后会出现在这里。" />
+      ) : kind === 'subscription' ? (
+        <>
+          <div className={css.plans}>
+            {list.map((plan) => {
+              const v = planCardView(plan, h.held, h.naming)
+              const badge = v.tag
+                ? { text: v.tag.text, tone: v.tag.tone === 'brand' ? ('solid' as const) : ('soft' as const) }
+                : null
+              return (
+                <PlanCard
+                  key={plan.id}
+                  plan={plan}
+                  site={h.site}
+                  badge={badge}
+                  current={v.current}
+                  action={
+                    <Btn
+                      href={v.href}
+                      tone={v.current ? 'hot' : v.primary ? 'primary' : 'soft'}
+                      id={`btn-plan-${plan.id}`}
+                    >
+                      {v.cta}
+                    </Btn>
+                  }
+                  note={v.note}
+                />
+              )
+            })}
+          </div>
+          <PickList plans={list} h={h} />
+        </>
       ) : (
-        <div className={flowCss.cards}>
-          {list.map((plan) => {
-            const v = planCardView(plan, h.held, h.naming)
-            return (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                current={v.current}
-                tag={v.tag ? <Tag tone={v.tag.tone === 'neutral' ? undefined : v.tag.tone}>{v.tag.text}</Tag> : undefined}
-                action={
-                  <a className={v.primary ? flowCss.cta : flowCss.ctaQuiet} href={v.href} id={`btn-plan-${plan.id}`}>
-                    {v.label}
-                  </a>
-                }
-                note={v.note}
-              />
-            )
-          })}
-        </div>
+        <OnceList plans={list} h={h} />
       )}
     </div>
   )

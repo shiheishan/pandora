@@ -3,10 +3,11 @@ import { z } from 'zod'
 import { isApiError, type ApiClient } from '../core/api'
 import type { TokenStore } from '../core/token'
 import { useRuntime } from '../shell/runtime'
-import { Button, Input } from '../ui'
+import { Input } from '../ui'
 import { useCaptcha } from './Captcha'
 import captchaCss from './Captcha.module.css'
 import css from './AuthPage.module.css'
+import { Btn, Icon } from './kit'
 import { useAppearance, useSignupConfig } from './queries'
 
 const startSchema = z.object({ ok: z.literal(true), message: z.string() })
@@ -21,7 +22,13 @@ export async function consumeMailLogin(api: ApiClient, tokens: TokenStore, token
 }
 
 /** 开了人机验证时，与找回密码第 1 步同口径：发信前先过人机验证（action 为 mail_login，与后端一致）。 */
-export function MailLinkLoginForm({ initialError }: { initialError: string | null }) {
+export function MailLinkLoginForm({
+  initialError,
+  onBack,
+}: {
+  initialError: string | null
+  onBack: () => void
+}) {
   const { api } = useRuntime()
   const signup = useSignupConfig()
   const appearance = useAppearance()
@@ -42,6 +49,12 @@ export function MailLinkLoginForm({ initialError }: { initialError: string | nul
     }, 1000)
     return () => window.clearInterval(id)
   }, [cooling])
+
+  const changeEmail = () => {
+    setSent(false)
+    setError(null)
+    setCaptchaError(null)
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -75,35 +88,72 @@ export function MailLinkLoginForm({ initialError }: { initialError: string | nul
     }
   }
 
+  if (!sent) {
+    return (
+      <>
+        <button type="button" className={css.back} onClick={onBack}>
+          <Icon name="chev" size={16} />
+          返回
+        </button>
+        <h2 className={css.h}>用邮件里的链接登录</h2>
+        <p className={css.p}>不用输入密码：我们把登录链接发到你的邮箱，点开就能登录，15 分钟内有效。</p>
+        <form className={css.form} onSubmit={submit} noValidate>
+          <Input
+            label="邮箱"
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            error={error ?? undefined}
+          />
+          {cap.element}
+          {captchaError && (
+            <p className={captchaCss.error} role="alert">
+              {captchaError}
+            </p>
+          )}
+          <Btn type="submit" full busy={busy} className={css.submit}>
+            发送登录链接
+          </Btn>
+        </form>
+      </>
+    )
+  }
+
   return (
-    <form className={css.form} onSubmit={submit} noValidate>
-      {!sent ? (
-        <>
-          <p className={css.muted}>不用输入密码：我们把登录链接发到你的邮箱，点开就能登录，15 分钟内有效。</p>
-          <Input label="邮箱" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} error={error ?? undefined} />
-        </>
-      ) : (
-        <div className={css.sent} role="status">
-          <b className={css.sentTitle}>登录链接已发送</b>
-          <span>
-            如果 {email.trim()} 已注册，去它的收件箱找一封来自 {siteName} 的邮件，点里面的按钮登录。没收到的话看看垃圾邮件。
-          </span>
-        </div>
-      )}
-      {cap.element}
-      {captchaError && (
-        <p className={captchaCss.error} role="alert">
-          {captchaError}
-        </p>
-      )}
-      {sent && error && (
-        <p className={captchaCss.error} role="alert">
-          {error}
-        </p>
-      )}
-      <Button type="submit" variant={sent ? undefined : 'primary'} block busy={busy} disabled={sent && cool > 0}>
-        {sent ? (cool > 0 ? `${cool} 秒后可以重发` : '重新发送') : '发送登录链接'}
-      </Button>
-    </form>
+    <div className={css.mailDone}>
+      <div className={css.mailIcon}>
+        <Icon name="mail" size={28} />
+      </div>
+      <h2 className={css.h}>登录链接已发送</h2>
+      {/* 只让说明进读屏的播报区：重发按钮的倒数每秒都变，放进去会一直念 */}
+      <p className={css.p} role="status">
+        如果 <b>{email.trim()}</b> 已注册，去它的收件箱找一封来自 {siteName} 的邮件，点里面的按钮登录。没收到的话看看垃圾邮件。
+      </p>
+      <form className={css.form} onSubmit={submit} noValidate>
+        {cap.element}
+        {captchaError && (
+          <p className={captchaCss.error} role="alert">
+            {captchaError}
+          </p>
+        )}
+        {error && (
+          <p className={css.formError} role="alert">
+            {error}
+          </p>
+        )}
+        <Btn type="submit" tone="soft" full busy={busy} disabled={cool > 0} className={css.submit}>
+          {cool > 0 ? `${cool} 秒后可以重发` : '重新发送'}
+        </Btn>
+      </form>
+      <div className={css.links}>
+        <button type="button" className={css.linkBtn} onClick={changeEmail}>
+          换个邮箱
+        </button>
+        <button type="button" className={css.linkBtn} onClick={onBack}>
+          返回登录
+        </button>
+      </div>
+    </div>
   )
 }

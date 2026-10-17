@@ -6,7 +6,7 @@ import {
   canCreateCode,
   codeStatusLabel,
   commissionRecords,
-  headline,
+  headlineParts,
   inviteLink,
   inviteUsage,
   parseWithdrawAmount,
@@ -15,6 +15,7 @@ import {
   withdrawBlock,
   withdrawClosedHere,
   withdrawClosedHint,
+  yuanText,
 } from './model'
 
 const SUMMARY = {
@@ -35,7 +36,7 @@ const SUMMARY = {
 }
 
 const WITHDRAW_CLOSED_HINT =
-  '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「全部转入余额」。'
+  '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「转入余额」。'
 
 function commission(over: Partial<Commission> = {}): Commission {
   return commissionSchema.parse({ summary: SUMMARY, entries: [], withdrawals: [], transfers: [], ...over })
@@ -95,9 +96,14 @@ describe('邀请横幅', () => {
   })
 
   it('横幅比例与首单展示；费率为 0 不提佣金', () => {
-    expect(headline(2000, 'every_order')).toBe('好友每次付款，你都拿 20% 佣金')
-    expect(headline(495, 'first_order')).toBe('好友首单付款，你拿 4.95% 佣金')
-    expect(headline(0, 'first_order')).toBe('邀请好友注册')
+    expect(headlineParts(2000, 'every_order')).toEqual({ rate: '20', text: '好友每次付款，你都拿这么多佣金' })
+    expect(headlineParts(495, 'first_order')).toEqual({ rate: '4.95', text: '好友首单付款，你拿这么多佣金' })
+    expect(headlineParts(0, 'first_order')).toEqual({ rate: null, text: '邀请好友注册' })
+  })
+
+  it('yuanText 去掉符号给大号数字用', () => {
+    expect(yuanText(13560)).toBe('135.60')
+    expect(yuanText(123456789)).toBe('1,234,567.89')
   })
 
   it('ratePercentText 整数与小数去尾 0', () => {
@@ -184,10 +190,10 @@ describe('佣金记录', () => {
         withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z')],
       }),
     )
-    expect(rows.map((r) => [r.title, r.ref, r.amount, r.status, r.tone])).toEqual([
-      ['转入余额', undefined, -5000, '已完成', 'minus'],
-      ['好友付款返佣', 'PD-24101', 1180, '可用', 'plus'],
-      ['提现', '支付宝', -12000, '已打款', 'minus'],
+    expect(rows.map((r) => [r.title, r.ref, r.amount, r.status, r.tone, r.icon])).toEqual([
+      ['转入余额', undefined, -5000, '已完成', 'minus', 'wallet'],
+      ['好友付款返佣', 'PD-24101', 1180, '可用', 'plus', 'gift'],
+      ['提现', '支付宝', -12000, '已打款', 'minus', 'out'],
     ])
   })
 

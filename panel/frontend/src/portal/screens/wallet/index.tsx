@@ -1,183 +1,112 @@
 import { useState } from 'react'
-import { formatDateTime, formatMoney } from '../../../core/format'
-import { href } from '../../../core/router'
-import { Button, Card, Empty, Input, QueryView, Select, Skeleton } from '../../../ui'
+import { formatMoney } from '../../../core/format'
+import { navigate } from '../../../core/router'
+import { Empty, QueryView, Skeleton } from '../../../ui'
+import { Btn, BigNumber, GroupHeader, Hero, Meta, Row, Rows, SectionTitle } from '../../kit'
 import { useBalance } from '../../queries'
 import type { PortalScreenProps } from '../index'
-import { methodKey, usePaymentMethods } from '../common/catalog'
-import { endsIntent, recallPayable, useIntentKey, usePlacedOrder } from '../common/intent'
-import { useOrderPayable } from '../common/orders'
-import { PaymentModal, type PayState } from '../common/PayFlow'
-import { useDebounced } from '../common/useDebounced'
-import { useTopup } from './api'
-import { ledgerLabel, parseTopupAmount, TOPUP_PRESETS } from './model'
-import { Redeem } from './Redeem'
+import { GiftHistory, RedeemResult, RedeemSheet, type RedeemDone } from './Redeem'
+import { ledgerByMonth, ledgerView } from './model'
+import { TopupSheet } from './Topup'
 import css from './Wallet.module.css'
 
+const HISTORY_PREVIEW = 8
+
 export default function Wallet({ rest }: PortalScreenProps) {
-  if (rest[0] === 'redeem') return <Redeem />
+  const [topupOpen, setTopupOpen] = useState(false)
+  const [done, setDone] = useState<RedeemDone | null>(null)
+
+  if (rest[0] === 'redeem' && rest[1] === 'done' && done) return <RedeemResult info={done} />
+
+  const redeemOpen = rest[0] === 'redeem'
+
   return (
-    <div className={css.grid}>
-      <div className={css.balanceArea}>
-        <BalanceCard />
-      </div>
-      <div className={css.giftArea}>
-        <a className={css.listRow} href={href('/wallet/redeem')} id="btn-redeem">
-          <span>
-            <b>兑换卡</b>
-            <small>套餐卡、加时长卡、流量重置卡</small>
-          </span>
-          <span aria-hidden="true">›</span>
-        </a>
-      </div>
-      <div className={css.historyArea}>
-        <HistoryCard />
-      </div>
+    <div className={css.page}>
+      <BalanceHero onTopup={() => setTopupOpen(true)} onRedeem={() => navigate('/wallet/redeem', { replace: true })} />
+      <History />
+      <GiftHistory />
+      <TopupSheet open={topupOpen} onClose={() => setTopupOpen(false)} />
+      <RedeemSheet
+        open={redeemOpen}
+        onClose={() => navigate('/wallet', { replace: true })}
+        onDone={(r) => {
+          setDone(r)
+          navigate('/wallet/redeem/done', { replace: true })
+        }}
+      />
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// 账户余额与充值：金额按钮与输入框是元，建单转分；建单成功后走同一个支付弹窗
-// ---------------------------------------------------------------------------
-const FEE_QUOTE_DEBOUNCE_MS = 300
-
-function BalanceCard() {
+function BalanceHero({ onTopup, onRedeem }: { onTopup: () => void; onRedeem: () => void }) {
   const balance = useBalance()
-  const topup = useTopup()
-  const intentKey = useIntentKey()
-  const placed = usePlacedOrder<{ orderId: string; orderNo: string; amount: number }>()
-  const payable = useOrderPayable()
-  const [reopening, setReopening] = useState(false)
-  const [amount, setAmount] = useState('100')
-  const [methodChoice, setMethodChoice] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [pay, setPay] = useState<PayState | null>(null)
-
-  // 手续费报价按停手 300 毫秒后的金额取，不每敲一个字请求一次
-  const settledAmount = useDebounced(amount, FEE_QUOTE_DEBOUNCE_MS)
-  const quotedAmount = parseTopupAmount(settledAmount)
-  const methods = usePaymentMethods(!('error' in quotedAmount) ? quotedAmount.cents : undefined)
-
-  const list = methods.data ?? []
-  const method = list.find((m) => methodKey(m) === methodChoice) ?? list[0] ?? null
-
-  async function recharge() {
-    const parsed = parseTopupAmount(amount)
-    if ('error' in parsed) return setError(parsed.error)
-    if (!method) return setError('暂无可用的支付方式')
-    setError(null)
-    const body = { amount: parsed.cents }
-    // 刚建过同额的充值单、还能付：重开它的支付，不再建第二张；已取消、超时或付掉就忘掉重建
-    setReopening(true)
-    const again = await recallPayable(placed, body, (o) => payable(o.orderId)).finally(() => setReopening(false))
-    if (again) return setPay({ phase: 'redirect', ...again, method })
-    topup.mutate(
-      { amount: parsed.cents, key: intentKey.keyFor(body) },
-      {
-        onSuccess: (order) => {
-          intentKey.reset()
-          const created = { orderId: order.order_id, orderNo: order.order_no, amount: order.amount }
-          placed.remember(body, created)
-          setPay({ phase: 'redirect', ...created, method })
-        },
-        onError: (e) => {
-          if (endsIntent(e)) intentKey.reset()
-          setError(e.message || '充值失败，请稍后重试')
-        },
-      },
-    )
-  }
-
   return (
-    <Card className={css.balance}>
-      <div>
-        <div className={css.caption}>账户余额</div>
-        <div className={css.bigAmount}>{balance.data ? formatMoney(balance.data.balance) : balance.isError ? '—' : <Skeleton width={140} height={40} />}</div>
-        <div className={css.hint}>买套餐、续费都能用，结账时自动先用。不能提现。</div>
+    <Hero as="section" aria-label="账户余额">
+      <div className={css.lbl}>账户余额</div>
+      {balance.data ? (
+        <BigNumber size="lg" prefix="¥" value={formatMoney(balance.data.balance).replace(/^¥/, '')} className={css.amt} />
+      ) : balance.isError ? (
+        <div className={css.amtDash}>—</div>
+      ) : (
+        <Skeleton width={160} height={56} />
+      )}
+      <Meta size="sm">买套餐、续费都能用，结账时自动先用。不能提现。</Meta>
+      <div className={css.acts}>
+        <Btn tone="hot" grow onClick={onTopup}>充值</Btn>
+        <Btn tone="soft" grow onClick={onRedeem}>兑换卡</Btn>
       </div>
-      <div className={css.field}>
-        <div className={css.caption}>充值金额</div>
-        <div className={css.presets} role="radiogroup" aria-label="充值金额">
-          {TOPUP_PRESETS.map((v) => (
-            <button key={v} type="button" role="radio" aria-checked={amount === String(v)} className={css.preset} onClick={() => setAmount(String(v))}>
-              ¥{v}
-            </button>
-          ))}
-        </div>
-        <Input
-          mono
-          inputMode="decimal"
-          aria-label="其他金额（元）"
-          placeholder="或输入其他金额"
-          value={TOPUP_PRESETS.some((v) => String(v) === amount) ? '' : amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))}
-          error={error ?? undefined}
-        />
-      </div>
-      <div className={css.payRow}>
-        {methods.isPending ? (
-          <Skeleton height={40} radius="var(--radius-md)" className={css.grow} />
-        ) : (
-          <Select
-            aria-label="支付方式"
-            fieldClassName={css.grow}
-            value={method ? methodKey(method) : ''}
-            placeholder={list.length ? undefined : '暂无可用的支付方式'}
-            options={list.map((m) => {
-              const label = m.fee && m.fee > 0 ? `${m.label}（手续费 ${formatMoney(m.fee)}）` : m.label
-              return { value: methodKey(m), label }
-            })}
-            onChange={(e) => setMethodChoice(e.target.value)}
-          />
-        )}
-        <Button variant="primary" busy={topup.isPending || reopening} disabled={!method} onClick={() => void recharge()}>
-          充值
-        </Button>
-      </div>
-      <PaymentModal state={pay} onClose={() => setPay(null)} onUnpayable={placed.forget} />
-    </Card>
+    </Hero>
   )
 }
 
-// ---------------------------------------------------------------------------
-// 余额明细（契约待补·前端）：最近 100 条，先显示 8 条
-// ---------------------------------------------------------------------------
-const HISTORY_PREVIEW = 8
-
-function HistoryCard() {
+function History() {
   const balance = useBalance()
   const [all, setAll] = useState(false)
   return (
-    <Card flush title="余额记录" className={css.listCard}>
-      <QueryView query={balance} rows={3} isEmpty={(d) => d.history.length === 0} empty={<Empty bare title="还没有余额变动" description="充值、下单用余额、兑换卡、换套餐退回与佣金转入都会记在这里。" />}>
-        {(d) => (
-          <>
-            <ul className={css.list}>
-              {(all ? d.history : d.history.slice(0, HISTORY_PREVIEW)).map((h, i) => (
-                <li key={`${h.at}-${i}`} className={css.historyRow}>
-                  <span className={css.historyMain}>
-                    <span className={css.historyKind}>{ledgerLabel(h.kind) ?? (h.memo || h.kind)}</span>
-                    <span className={css.historyMeta}>
-                      {formatDateTime(h.at)}
-                      {ledgerLabel(h.kind) && h.memo ? ` · ${h.memo}` : ''}
-                    </span>
-                  </span>
-                  <span className={h.delta > 0 ? css.plus : css.minus}>
-                    {h.delta > 0 ? '+' : ''}
-                    {formatMoney(h.delta)}
-                  </span>
-                </li>
+    <>
+      <SectionTitle className={css.histTitle}>余额记录</SectionTitle>
+      <QueryView
+        query={balance}
+        rows={3}
+        isEmpty={(d) => d.history.length === 0}
+        empty={<Empty bare title="还没有余额变动" description="充值、下单用余额、兑换卡、换套餐退回与佣金转入都会记在这里。" />}
+      >
+        {(d) => {
+          const shown = all ? d.history : d.history.slice(0, HISTORY_PREVIEW)
+          const groups = ledgerByMonth(shown)
+          return (
+            <>
+              {groups.map((g) => (
+                <div key={g.key}>
+                  <GroupHeader>{g.label}</GroupHeader>
+                  <Rows>
+                    {g.rows.map((h) => {
+                      const i = shown.indexOf(h)
+                      const v = ledgerView(h)
+                      return (
+                        <Row
+                          key={`${h.at}-${i}`}
+                          icon={v.icon}
+                          iconStyle={v.out ? 'roundMuted' : 'round'}
+                          title={v.title}
+                          sub={v.sub}
+                          value={v.amount}
+                          valueTone={v.out ? 'num' : 'plus'}
+                        />
+                      )
+                    })}
+                  </Rows>
+                </div>
               ))}
-            </ul>
-            {!all && d.history.length > HISTORY_PREVIEW && (
-              <button type="button" className={css.more} onClick={() => setAll(true)}>
-                显示全部 {d.history.length} 条
-              </button>
-            )}
-          </>
-        )}
+              {!all && d.history.length > HISTORY_PREVIEW && (
+                <button type="button" className={css.more} onClick={() => setAll(true)}>
+                  显示全部 {d.history.length} 条
+                </button>
+              )}
+            </>
+          )
+        }}
       </QueryView>
-    </Card>
+    </>
   )
 }

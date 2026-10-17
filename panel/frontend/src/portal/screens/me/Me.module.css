@@ -1,0 +1,163 @@
+/* 手机「我的」页：资料卡、三格快捷入口、邀请横幅、分组行、退出登录。
+   布局与间距照样稿 #p-me，颜色只用设计令牌，不写死色值。 */
+
+/* 资料卡 */
+.card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  background: radial-gradient(420px 200px at 0% 0%, var(--brand-soft), transparent 75%), var(--surface);
+  box-shadow: var(--lift), 0 0 0 1px var(--brand-line);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.card:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.who {
+  flex: 1;
+  min-width: 0;
+}
+
+.who b {
+  display: flex;
+  align-items: center;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.who b .chip {
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.who small {
+  display: block;
+  margin-top: 3px;
+  font-size: 13.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chev {
+  color: var(--text-3);
+}
+
+/* 三格快捷入口 */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 14px 14px 13px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.tile:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* 图标在标题上方，隔 8px；链接行里 Icon 由套件渲染成 svg */
+.tile svg {
+  color: var(--brand-ink);
+  margin-bottom: 8px;
+}
+
+.tile b {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tile small {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.tile .warn {
+  color: var(--warn);
+}
+
+.tile .hot {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* 邀请横幅 */
+.ref {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 16px 16px 16px 18px;
+  border-radius: 18px;
+  background: var(--brand-deep);
+  color: var(--on-brand);
+  box-shadow: 0 14px 28px -18px color-mix(in srgb, var(--shade) 80%, transparent);
+  text-decoration: none;
+}
+
+.ref:hover {
+  color: var(--on-brand);
+  text-decoration: none;
+}
+
+.refText {
+  flex: 1;
+  min-width: 0;
+}
+
+.refText b {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.refText small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--on-brand) 72%, transparent);
+}
+
+.refNum {
+  font-size: 13.5px;
+  color: var(--on-brand);
+}
+
+.refGo {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--brand-mark);
+  white-space: nowrap;
+}
+
+/* 分组行与退出登录 */
+.rows {
+  margin-top: 14px;
+}
+
+.out {
+  margin-top: 22px;
+}

@@ -1,16 +1,11 @@
-import { useEffect, useState } from 'react'
-import type { z } from 'zod'
+import { useState } from 'react'
 import { isApiError } from '../../../core/api'
-import { Button, Card, ConfirmModal, QueryView, Switch, Tag, useToast } from '../../../ui'
-import css from './Account.module.css'
-import { useBindCode, usePreferences, useSetPreference, useTelegram, useUnbindTelegram, type bindCodeSchema, type Telegram } from './api'
-import { useNow } from './clock'
-import { formatCountdown, PREF_CHANNELS, PREF_ROWS, secondsLeft, telegramDeepLink, type PrefChannel } from './model'
-
-type BindCode = z.output<typeof bindCodeSchema>
-
-const POLL_MS = 3000
-const BOUND_TEXT = 'Telegram 绑定成功'
+import { ConfirmModal, QueryView, Switch, useToast } from '../../../ui'
+import { Btn, Icon } from '../../kit'
+import { usePreferences, useSetPreference, useTelegram, useUnbindTelegram } from './api'
+import css from './Connections.module.css'
+import { PREF_CHANNELS, PREF_ROWS, type PrefChannel } from './model'
+import { TelegramSheet, useTelegramBind } from './TelegramSheet'
 
 function discussLinkHref(link: string | null | undefined): string | null {
   if (link && link.startsWith('https://')) return link
@@ -22,66 +17,93 @@ function discussLinkHref(link: string | null | undefined): string | null {
 // ---------------------------------------------------------------------------
 export function TelegramCard() {
   const toast = useToast()
-  const [code, setCode] = useState<BindCode | null>(null)
-  const now = useNow(code !== null)
-  const left = code ? secondsLeft(Date.parse(code.expires_at), now) : 0
-  const waiting = code !== null && left > 0
   const telegram = useTelegram()
-  const bound = telegram.data?.bound === true
-  const { refetch } = telegram
-
-  // 绑定成功没有实时事件：展示绑定码期间 3 秒重拉一次，绑上了就收起绑定码
-  useEffect(() => {
-    if (!waiting) return
-    const timer = setInterval(async () => {
-      const r = await refetch()
-      if (r.data?.bound) {
-        setCode(null)
-        toast(BOUND_TEXT)
-      }
-    }, POLL_MS)
-    return () => clearInterval(timer)
-  }, [waiting, refetch, toast])
-  const bindDone = () => {
-    setCode(null)
-    toast(BOUND_TEXT)
-  }
-
-  const status = !telegram.data ? null : !telegram.data.enabled && !bound ? '未启用' : bound ? '已绑定' : '未绑定'
-  const discussHref = discussLinkHref(telegram.data?.discuss_link)
-  return (
-    <Card title="Telegram" extra={status && (bound ? <Tag tone="ok">{status}</Tag> : <span className={css.status}>{status}</span>)}>
-      <QueryView query={telegram} rows={1} isEmpty={() => false} empty={null}>
-        {(t) => (t.bound ? <Bound info={t} /> : !t.enabled ? <p className={css.muted}>站点未启用 Telegram 通知。</p> : <Unbound code={code} left={left} onCode={setCode} onBound={bindDone} />)}
-      </QueryView>
-      {discussHref && (
-        <div className={css.actions}>
-          <a className={css.linkButton} href={discussHref} target="_blank" rel="noopener noreferrer">
-            加入用户讨论群 ↗
-          </a>
-          <span className={css.hint}>入群申请可能需要先绑定 Telegram 并有在用的套餐</span>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-function Bound({ info }: { info: Telegram }) {
-  const toast = useToast()
   const unbind = useUnbindTelegram()
+  const bind = useTelegramBind()
+
+  const [open, setOpen] = useState(false)
   const [asking, setAsking] = useState(false)
+
+  const t = telegram.data
+  const bound = t?.bound === true
+  const enabled = t?.enabled === true
+  const username = t?.username
+  const discussHref = discussLinkHref(t?.discuss_link)
+
   return (
-    <>
-      <p className={css.muted}>{info.username ? `已绑定 @${info.username}。` : '已绑定 Telegram。'}到期、流量、工单回复等提醒可以发到 Telegram。</p>
-      {!info.enabled && <p className={css.muted}>站点目前暂停了 Telegram 通知，恢复前不会推送。</p>}
-      <Button block className={css.unbind} onClick={() => setAsking(true)}>
-        解除绑定
-      </Button>
+    <div className={css.card}>
+      <QueryView query={telegram} rows={1} isEmpty={() => false} empty={null}>
+        {() => (
+          <>
+            <div className={css.head}>
+              <span className={css.ri}>
+                <Icon name="send" />
+              </span>
+              <span className={css.text}>
+                Telegram 提醒
+                <small>
+                  {bound ? (
+                    username ? (
+                      <>
+                        已绑定 <b>@{username}</b> · 提醒会发到这个账号
+                      </>
+                    ) : (
+                      '已绑定 Telegram · 提醒会发到这个账号'
+                    )
+                  ) : enabled ? (
+                    '绑定后，到期、流量和工单回复的提醒也能发到 Telegram'
+                  ) : (
+                    '站点未启用 Telegram 通知'
+                  )}
+                </small>
+                {bound && !enabled && (
+                  <small>站点目前暂停了 Telegram 通知，恢复前不会推送。</small>
+                )}
+              </span>
+
+              {bound ? (
+                <button
+                  type="button"
+                  className={css.unlink}
+                  onClick={() => setAsking(true)}
+                >
+                  解除绑定
+                </button>
+              ) : enabled ? (
+                <Btn
+                  tone="soft"
+                  size="sm"
+                  busy={bind.pending && !open}
+                  onClick={() => {
+                    setOpen(true)
+                    bind.request()
+                  }}
+                >
+                  绑定
+                </Btn>
+              ) : null}
+            </div>
+
+            {discussHref && (
+              <div className={css.group}>
+                <a href={discussHref} target="_blank" rel="noopener noreferrer">
+                  加入用户讨论群 ↗
+                </a>
+                <span>入群申请可能需要先绑定 Telegram 并有在用的套餐</span>
+              </div>
+            )}
+          </>
+        )}
+      </QueryView>
+
+      <TelegramSheet open={open} onClose={() => setOpen(false)} bind={bind} />
+
       <ConfirmModal
         open={asking}
         title="解除绑定 Telegram？"
         body="将不再收到 Telegram 推送，之后可以重新绑定。"
         confirmLabel="解除绑定"
+        cancelLabel="再想想"
         tone="danger"
         onCancel={() => setAsking(false)}
         onConfirm={async () => {
@@ -89,72 +111,19 @@ function Bound({ info }: { info: Telegram }) {
             await unbind.mutateAsync()
             toast('已解除绑定')
           } catch (e) {
-            // 404：别处已经解绑，列表随 onSettled 重拉
-            if (!isApiError(e, 'not_found')) toast(e instanceof Error && e.message ? e.message : '解除绑定失败，请稍后重试', 'danger')
+            if (!isApiError(e, 'not_found')) {
+              toast(e instanceof Error && e.message ? e.message : '解除绑定失败，请稍后重试', 'danger')
+            }
           }
           setAsking(false)
         }}
       />
-    </>
-  )
-}
-
-function Unbound({ code, left, onCode, onBound }: { code: BindCode | null; left: number; onCode: (c: BindCode | null) => void; onBound: () => void }) {
-  const toast = useToast()
-  const issue = useBindCode()
-  const telegram = useTelegram()
-  const [checking, setChecking] = useState(false)
-
-  function getCode() {
-    issue.mutate(undefined, {
-      onSuccess: (c) => onCode(c),
-      onError: (e) => {
-        toast(e.message || '获取失败，请稍后重试', 'danger')
-        // 422 站点未启用、409 已绑定：状态变了，重拉
-        if (isApiError(e) && e.status >= 400 && e.status < 500) void telegram.refetch()
-      },
-    })
-  }
-
-  async function check() {
-    setChecking(true)
-    const r = await telegram.refetch()
-    setChecking(false)
-    if (r.data?.bound) onBound()
-    else if (r.data) toast('还没有收到绑定消息，发送后稍等几秒再试')
-  }
-
-  if (code && left > 0) {
-    return (
-      <>
-        <div className={css.codeBox}>
-          <span className={css.muted}>向 @{code.bot_username} 发送：</span>
-          <code className={css.bindCode}>/start {code.code}</code>
-          <span className={css.hint}>{formatCountdown(left)} 内有效</span>
-        </div>
-        <div className={css.actions}>
-          <a className={css.linkButton} href={telegramDeepLink(code.bot_username, code.code)} target="_blank" rel="noopener noreferrer">
-            在 Telegram 中打开
-          </a>
-          <Button variant="outline" busy={checking} onClick={() => void check()}>
-            我已发送，完成绑定
-          </Button>
-        </div>
-      </>
-    )
-  }
-  return (
-    <>
-      <p className={css.muted}>{code ? '绑定码已过期，请重新获取。' : '绑定后，到期、流量和工单回复的提醒也能发到 Telegram。'}</p>
-      <Button block busy={issue.isPending} onClick={getCode}>
-        绑定 Telegram
-      </Button>
-    </>
+    </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// 通知偏好：每点一次改一项，乐观更新、失败回滚
+// 通知方式：3 类 × 2 渠道
 // ---------------------------------------------------------------------------
 const CHANNEL_LABEL: Record<PrefChannel, string> = { email: '邮件', telegram: 'Telegram' }
 
@@ -164,39 +133,43 @@ export function NotificationPrefsCard() {
   const telegram = useTelegram()
   const set = useSetPreference()
   const tg = telegram.data
-  const tgUsable = tg?.enabled === true && tg.bound
+  const tgUsable = tg?.enabled === true && tg.bound === true
 
   return (
-    <Card flush>
-      <div className={css.prefHead} role="presentation">
-        <h3 className={css.prefTitle}>通知方式</h3>
-        {PREF_CHANNELS.map((c) => (
-          <span key={c} className={css.prefCol}>
-            {CHANNEL_LABEL[c]}
-          </span>
-        ))}
+    <div className={css.pref}>
+      <div className={`${css.pf} ${css.hd}`} role="presentation">
+        <span>通知</span>
+        <span>邮件</span>
+        <span>Telegram</span>
       </div>
+
       <QueryView query={prefs} rows={3} isEmpty={(d) => d.length === 0} empty={null}>
         {(list) => (
           <>
             {PREF_ROWS.map((row) => (
-              <div key={row.category} className={css.prefRow}>
-                <span className={css.prefLabel}>
-                  {row.label}
-                  <span className={css.hint}>{row.hint}</span>
+              <div key={row.category} className={css.pf}>
+                <span>
+                  <b>{row.label}</b>
+                  <small>{row.hint}</small>
                 </span>
                 {PREF_CHANNELS.map((channel) => {
                   const p = list.find((x) => x.category === row.category && x.channel === channel)
                   const usable = channel === 'email' || tgUsable
                   return (
-                    <span key={channel} className={css.prefCol}>
+                    <span key={channel} className={css.pfCell}>
                       {p && (
                         <Switch
                           aria-label={`${row.label} · ${CHANNEL_LABEL[channel]}`}
                           checked={p.enabled && usable}
                           disabled={p.locked || !usable}
                           onChange={(e) =>
-                            set.mutate({ category: row.category, channel, enabled: e.target.checked }, { onError: (err) => toast(err.message || '保存失败，已恢复原设置', 'danger') })
+                            set.mutate(
+                              { category: row.category, channel, enabled: e.target.checked },
+                              {
+                                onError: (err) =>
+                                  toast(err.message || '保存失败，已恢复原设置', 'danger'),
+                              },
+                            )
                           }
                         />
                       )}
@@ -205,10 +178,17 @@ export function NotificationPrefsCard() {
                 })}
               </div>
             ))}
-            {tg && !tgUsable && <p className={css.prefNote}>{tg.enabled ? '绑定 Telegram 后可开启 Telegram 推送。' : '站点未启用 Telegram 通知，Telegram 一列不可用。'}</p>}
+
+            {tg && !tgUsable && (
+              <div className={css.note}>
+                {tg.enabled
+                  ? '绑定 Telegram 后可以开启 Telegram 推送。'
+                  : '站点未启用 Telegram 通知，Telegram 一列不能开。'}
+              </div>
+            )}
           </>
         )}
       </QueryView>
-    </Card>
+    </div>
   )
 }

@@ -163,7 +163,8 @@ function grant(state: PortalState, code: string, card: GiftTemplate, choice: Cho
   // 加时长、重置、送流量都要落在某一份上（Go grant 的 needsSub）：一份可落的都没有就拒绝，卡不被用掉
   if ((r.expire_days || r.reset_quota || r.traffic_bytes) && !sub) throw new BillingError(422, 'validation_failed', NO_PLACEMENT)
   if (r.balance) {
-    moveBalance(state, 'gift_card_balance', r.balance, `礼品卡 ${code.slice(0, 12)}…`)
+    // memo 照 Go giftcard grant：「礼品卡兑换：模板名」（门户余额记录不显示 memo）
+    moveBalance(state, 'gift_card_balance', r.balance, `礼品卡兑换：${card.name}`)
     summary.push(`余额 +¥${(r.balance / 100).toFixed(2)}`)
   }
   if (r.traffic_bytes) {
@@ -202,7 +203,8 @@ function grant(state: PortalState, code: string, card: GiftTemplate, choice: Cho
     } else if (target.kind === 'change' && sub) {
       const credit = isLiveSub(sub) ? creditOf(sub, now).credit : 0
       swapPlan(sub, plan, price)
-      if (credit > 0) moveBalance(state, 'plan_change_refund', credit, `兑换${plan.name}，退回`)
+      // memo 照 Go giftcard grant 原话（带「剩余价值」，门户不显示 memo，余额记录副行只写「差额退回」）
+      if (credit > 0) moveBalance(state, 'plan_change_refund', credit, '套餐卡换套餐，原套餐剩余价值退回')
       summary.push(`已换成${plan.name}`)
     } else {
       const fresh = makeSub({ planId: plan.id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: 30, online: 0, sources: 0 })

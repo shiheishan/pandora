@@ -1,36 +1,131 @@
-.layout {
+/* 帮助中心：左目录右文章（样稿 #p-help / .hp…） */
+.hp {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: var(--space-16);
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
 }
 
-.listPane {
+.side {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  position: sticky;
+  top: 40px;
   min-width: 0;
 }
 
-.articlePane {
+.main {
   min-width: 0;
 }
 
+/* 搜索框：本页独有的样子（放大镜在左，48 高圆角 14） */
+.search {
+  position: relative;
+  display: block;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.search input {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  height: 48px;
+  padding: 0 14px 0 43px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  font: 15px var(--font-ui);
+  color: var(--text);
+}
+
+.search input::placeholder {
+  color: var(--text-3);
+}
+
+.search input:focus {
+  box-shadow: var(--lift), 0 0 0 1.5px var(--brand);
+}
+
+/* 内置指南卡：常驻目录上方 */
+.guideCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 15px 14px 15px 15px;
+  border-radius: 18px;
+  background: radial-gradient(280px 140px at 0% 0%, var(--brand-soft), transparent 80%), var(--surface);
+  box-shadow: var(--lift), 0 0 0 1px var(--brand-line);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.guideCard:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.guideCard:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.guideCard[aria-current] {
+  box-shadow: var(--lift), 0 0 0 1.5px var(--brand);
+}
+
+.guideText {
+  min-width: 0;
+}
+
+.guideText b {
+  display: block;
+  font-size: 15px;
+  font-weight: var(--fw-semibold);
+}
+
+.guideText small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.guideChev {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-3);
+}
+
+/* 目录卡：按分类分组；分组线画在下沿，最后一道被卡片圆角裁掉 */
 .toc {
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--lift);
   overflow: hidden;
-  padding: 6px 0;
 }
 
-.group + .group {
-  margin-top: 4px;
+.group {
+  padding: 4px 0 8px;
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .groupTitle {
   margin: 0;
-  padding: 10px 16px 4px;
-  font-size: var(--fs-caption);
+  padding: 14px 18px 6px;
+  font-size: 12.5px;
   font-weight: var(--fw-regular);
-  letter-spacing: 0.04em;
   color: var(--text-3);
 }
 
@@ -42,7 +137,9 @@
 
 .item {
   display: block;
-  padding: 8px 16px;
+  padding: 9px 18px;
+  font-size: 14.5px;
+  line-height: 1.45;
   color: var(--text);
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -60,171 +157,318 @@
 }
 
 .item[aria-current] {
-  background: var(--brand-tint);
+  background: radial-gradient(260px 80px at 0% 50%, var(--brand-soft), transparent 80%), var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--brand);
   font-weight: var(--fw-semibold);
 }
 
-.guideCard {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  text-decoration: none;
-  border-radius: var(--radius-lg);
-}
-
-.guideCard:hover {
-  border-color: var(--border-hover);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.guideCard:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring);
-}
-
-.guideCard[aria-current='page'] {
-  border-color: var(--brand);
-  background: var(--brand-tint);
-}
-
-.guideCardText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.guideCardText small {
-  font-size: 12px;
+/* 搜不到 / 还没有文章：目录卡里的提示 */
+.empty {
+  text-align: center;
+  padding: 28px 20px 24px;
+  font-size: 13.5px;
   color: var(--text-2);
 }
 
-.guideCardArrow {
-  color: var(--text-3);
-  font-size: 18px;
-}
-
-.article {
-  max-width: 760px;
-  padding: 28px 32px;
-}
-
-.back {
-  display: none;
-}
-
-.body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-}
-
-.meta {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
-
-.title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.01em;
-  line-height: var(--lh-heading);
-  overflow-wrap: anywhere;
-}
-
-.heading {
-  margin: 8px 0 0;
-  font-size: 16px;
-  font-weight: var(--fw-semibold);
-  line-height: 1.8;
-}
-
-.para {
-  margin: 0;
+.empty b {
+  display: block;
+  color: var(--text);
   font-size: 15px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
+  margin-bottom: 6px;
 }
 
-.feedback {
+.empty a {
+  margin-top: 14px;
+}
+
+/* 底部「没找到答案？」（搜不到时藏起，目录卡里已有按钮） */
+.ask {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-8);
-  margin-top: 8px;
-  padding-top: 14px;
-  border-top: 1px solid var(--surface-2);
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  box-shadow: 0 0 0 1px var(--border);
   font-size: 13px;
   color: var(--text-2);
 }
 
-@media (max-width: 639px) {
-  .layout {
+.ask a {
+  color: var(--brand);
+  font-weight: var(--fw-semibold);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.ask a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 文章卡与指南卡：页面上各自的唯一 <article> */
+.ha {
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--lift);
+  padding: 30px 40px 0;
+  overflow: hidden;
+}
+
+.back {
+  display: none;
+  color: var(--brand);
+  font-weight: var(--fw-semibold);
+  text-decoration: none;
+  margin-bottom: 12px;
+}
+
+.back:hover {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+.back:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.meta {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.title {
+  margin: 8px 0 18px;
+  font-size: 24px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.p {
+  margin: 0 0 14px;
+  max-width: 620px;
+  font-size: 15.5px;
+  line-height: 1.85;
+  color: var(--text);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.h3 {
+  margin: 26px 0 8px;
+  font-size: 16.5px;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+/* 文末「有帮助吗」：说明文字独占一格，按钮在右；手机上说明独占一行、按钮平分 */
+.fb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 30px -40px 0;
+  padding: 20px 40px 24px;
+  background: var(--surface-2);
+  box-shadow: 0 -1px 0 var(--border);
+  font-size: 14.5px;
+  color: var(--text-2);
+}
+
+.fb > span {
+  margin-right: auto;
+}
+
+.fb > a:focus-visible,
+.fb > button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.thx {
+  color: var(--ok);
+  font-weight: var(--fw-semibold);
+}
+
+/* 指南：设备切换（radiogroup，方向键可换） */
+.dev {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+.devBtn {
+  cursor: pointer;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.devBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.devBtn[aria-checked='true'] {
+  background: var(--brand-deep);
+  color: var(--on-brand);
+  font-weight: var(--fw-semibold);
+}
+
+/* 指南：配置名说明 */
+.hint {
+  width: fit-content;
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--text-2);
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  line-height: 1.7;
+}
+
+/* 指南：每个 App 一段，三步编号 */
+.ga {
+  margin-top: 22px;
+  padding-top: 20px;
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.gaTitle {
+  margin: 0 0 12px;
+  font-size: 16.5px;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.steps {
+  list-style: none;
+  counter-reset: s;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.steps li {
+  counter-increment: s;
+  display: flex;
+  gap: 12px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.steps li::before {
+  content: counter(s);
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font: var(--fw-semibold) 12.5px/24px var(--font-ui);
+  text-align: center;
+}
+
+/* 最后一步是「看到什么算成功」：打勾 */
+.steps li:last-child::before {
+  content: '✓';
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* App 自己的按钮名、页面名（照它的中文界面原样写）：键帽，一眼看出「点这个」 */
+.kbd {
+  display: inline-block;
+  margin: 0 3px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--shade) 16%, transparent),
+    0 2px 0 color-mix(in srgb, var(--shade) 12%, transparent);
+  font: var(--fw-semibold) 13.5px/22px var(--font-ui);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* 指南末尾的退路 */
+.fallback {
+  margin-top: 24px;
+}
+
+@media (max-width: 959px) {
+  /* 手机上目录与文章分两屏 */
+  .hp {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .layout[data-view='list'] .articlePane,
-  .layout[data-view='article'] .listPane {
+  .side {
+    position: static;
+  }
+
+  .hp[data-view='article'] .side {
+    display: none;
+  }
+
+  .hp[data-view='list'] .main {
     display: none;
   }
 
   /* 目录页在窄屏不显示右侧文章，宽屏默认选中的第一篇不该高亮 */
-  .layout[data-view='list'] .item[aria-current] {
+  .hp[data-view='list'] .item[aria-current] {
     background: none;
+    box-shadow: none;
     font-weight: var(--fw-regular);
   }
 
-  .article {
-    padding: 20px var(--pad-card);
+  .ha {
+    padding: 22px 20px 0;
+    border-radius: 22px;
   }
 
   .back {
-    display: inline-block;
-    align-self: flex-start;
-    color: var(--text-2);
-    font-size: 13px;
-    text-decoration: none;
+    display: inline-flex;
   }
 
-  .back:hover {
-    color: var(--text);
-    text-decoration: none;
+  .title {
+    font-size: 21px;
   }
-}
 
-/* 内置说明「在 App 里点一次更新」：每个 App 三步 */
-.guideApp {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
+  .p {
+    font-size: 15px;
+  }
 
-/* App 自己的按钮名、页面名（照它的中文界面原样写）：做成按钮的样子，一眼看出「点这个」 */
-.appButton {
-  display: inline-block;
-  margin: 0 3px;
-  padding: 0 7px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 0.92em;
-  line-height: 1.6;
-  white-space: nowrap;
-}
+  .fb {
+    margin: 26px -20px 0;
+    padding: 18px 20px 22px;
+  }
 
-.steps {
-  margin: 0;
-  padding-left: 1.4em;
-  font-size: 15px;
-  line-height: 1.8;
-  overflow-wrap: anywhere;
+  .fb > span {
+    flex-basis: 100%;
+  }
+
+  .fb > a,
+  .fb > button {
+    flex: 1;
+  }
 }

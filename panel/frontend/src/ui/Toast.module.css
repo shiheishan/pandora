@@ -53,8 +53,9 @@
   }
 }
 
-@media (max-width: 639px) {
+/* 门户 959 以下有悬浮底部标签栏（64 高、离底 12），提示条抬到它上面（样稿 .toast） */
+@media (max-width: 959px) {
   :root[data-app='portal'] .host {
-    bottom: calc(var(--tabbar-h) + 20px);
+    bottom: 92px;
   }
 }

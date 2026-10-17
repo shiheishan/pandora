@@ -148,6 +148,23 @@ export function card(page: Page, title: string): Locator {
   return page.locator('article').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
 }
 
+/**
+ * 我的套餐里的一份，并让它显示出来：手上不止一份时页面顶部有切换条（tablist「你的几份」），
+ * 只显示选中的那份；先点到这一份的 tab（tab 的名字是「短名 + 空白 + 剩余与天数」）。只有一份时直接返回。
+ */
+export async function openCard(page: Page, title: string): Promise<Locator> {
+  // 先等页面出了至少一份（切换条与各份同时渲染），再看有没有切换条
+  await expect(page.locator('article').first()).toBeAttached()
+  const tabs = page.getByRole('tablist', { name: '你的几份' })
+  if ((await tabs.count()) > 0) {
+    const esc = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    await tabs.getByRole('tab', { name: new RegExp(`^${esc}\\s`) }).click()
+  }
+  const c = card(page, title)
+  await expect(c).toBeVisible()
+  return c
+}
+
 /** 选购页、再买一份页里的一张套餐卡（<section>，标题是套餐名，里面有按钮链接） */
 export function planCard(page: Page, name: string): Locator {
   return page

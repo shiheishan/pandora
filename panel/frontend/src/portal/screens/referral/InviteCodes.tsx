@@ -1,12 +1,13 @@
-import { formatDateTime } from '../../../core/format'
-import { Button, Card, Empty, Skeleton, Tag, useToast } from '../../../ui'
+import { Btn, Rows, Row, SectionTitle } from '../../kit'
+import { Empty, Skeleton, Tag, useToast } from '../../../ui'
 import { LoadError } from '../common/Blocks'
 import { copyText } from '../common/clients'
+import { shortDate } from '../common/traffic'
 import { useCreateInviteCode, useInvite } from './api'
 import { activeCodeCount, canCreateCode, codeStatusLabel, inviteLink } from './model'
 import css from './InviteCodes.module.css'
 
-/** 我的邀请码列表：状态、注册人数、访问量，可在上限内再生成 */
+/** 我的邀请码列表（样稿 .codes）：状态、注册人数、访问量，可在上限内再生成 */
 export function InviteCodesCard() {
   const toast = useToast()
   const invite = useInvite()
@@ -30,54 +31,50 @@ export function InviteCodesCard() {
   const maxCodes = data?.max_codes ?? 0
   const canCreate = data ? canCreateCode(data.codes, data.max_codes) : false
 
-  const extra =
+  const aside =
     data === undefined ? (
-      <Skeleton width={180} height={32} />
+      <Skeleton width={160} height={20} />
     ) : (
-      <div className={css.headExtra}>
-        <span className={css.count}>有效 {active}/{maxCodes}</span>
-        <Button
-          size="sm"
-          busy={create.isPending}
-          disabled={!canCreate}
-          title={canCreate ? undefined : `最多同时持有 ${maxCodes} 个有效邀请码`}
-          onClick={onCreate}
-        >
+      <span className={css.aside}>
+        <span className={css.count}>
+          有效 {active}/{maxCodes}
+        </span>
+        <button type="button" className={css.actL} disabled={!canCreate || create.isPending} onClick={onCreate}>
           再生成一个
-        </Button>
-      </div>
+        </button>
+      </span>
     )
 
   return (
-    <Card title="我的邀请码" extra={extra} flush>
+    <section>
+      <SectionTitle aside={aside}>我的邀请码</SectionTitle>
       {invite.isError ? (
-        <div className={css.bodyPad}>
+        <Rows>
           <LoadError error={invite.error} what="邀请码" onRetry={() => void invite.refetch()} />
-        </div>
+        </Rows>
       ) : invite.isPending || !data ? (
-        <div className={css.bodyPad}>
-          <Skeleton height={120} radius="var(--radius-md)" />
-        </div>
+        <Skeleton height={120} />
       ) : data.codes.length === 0 ? (
-        <Empty bare title="还没有邀请码" description="稍后再试或联系客服。" />
+        <Rows>
+          <Empty bare title="还没有邀请码" description="稍后再试或联系客服。" />
+        </Rows>
       ) : (
-        <ul className={css.list}>
+        <Rows className={css.codes}>
           {data.codes.map((c) => (
-            <li key={c.code} className={css.row}>
-              <code className={css.code}>{c.code}</code>
-              <Tag tone={c.status === 'active' ? 'ok' : 'neutral'}>{codeStatusLabel(c.status)}</Tag>
-              <span className={css.meta}>注册 {c.invited} 人</span>
-              <span className={css.meta}>访问 {c.visits} 次</span>
-              <span className={css.date}>{formatDateTime(c.created_at).slice(0, 10)}</span>
-              {c.status === 'active' && (
-                <Button size="sm" variant="outline" onClick={() => void copyLink(c.code)}>
-                  复制链接
-                </Button>
-              )}
-            </li>
+            <Row
+              key={c.code}
+              lead={<span className={css.cd}>{c.code}</span>}
+              title={<Tag tone={c.status === 'active' ? 'ok' : 'neutral'}>{codeStatusLabel(c.status)}</Tag>}
+              sub={`注册 ${c.invited} 人 · 访问 ${c.visits} 次`}
+              value={<span className={css.date}>{shortDate(c.created_at)} 生成</span>}
+              end={c.status === 'active' ? <Btn tone="soft" size="sm" onClick={() => void copyLink(c.code)}>复制链接</Btn> : undefined}
+              className={c.status === 'active' ? undefined : css.off}
+            />
           ))}
-        </ul>
+        </Rows>
       )}
-    </Card>
+      <p className={css.cap}>访问次数按 IP 去重，只作参考。</p>
+      {data && !canCreate && <p className={css.cap}>最多同时持有 {maxCodes} 个有效邀请码。</p>}
+    </section>
   )
 }

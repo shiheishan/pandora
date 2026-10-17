@@ -29,6 +29,11 @@ const SYSTEMS: ReadonlyArray<readonly [RegExp, string]> = [
   [/Linux/, 'Linux'],
 ]
 
+/** 设备图标：手机类系统用手机，其余（含认不出的）用电脑 */
+export function deviceKind(ua: string): 'phone' | 'desk' {
+  return /iPhone|iPad|iOS|Android|HarmonyOS|OpenHarmony/.test(ua) ? 'phone' : 'desk'
+}
+
 export function deviceName(ua: string): string {
   const client = CLIENTS.find(([re]) => re.test(ua))?.[1]
   const system = SYSTEMS.find(([re]) => re.test(ua))?.[1]
@@ -41,6 +46,14 @@ export function lastSeenLabel(at: string, now: Date = new Date()): string {
   const rel = relativeTime(at, now)
   if (rel === '刚刚') return '刚刚活跃'
   return /分钟|小时/.test(rel) ? `${rel}前活跃` : `${rel} 活跃`
+}
+
+/** 登录时间「MM-DD HH:mm」（样稿 `登录于 10-16 09:12`），按浏览器本地时区 */
+export function loginAtLabel(at: string): string {
+  const d = new Date(at)
+  if (Number.isNaN(d.getTime())) return at
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 /** 当前会话排最前，其余按最近活跃倒序（与后端同口径，R62 / R114） */
@@ -90,15 +103,27 @@ export type PrefCategory = (typeof PREF_CATEGORIES)[number]
 export type PrefChannel = (typeof PREF_CHANNELS)[number]
 
 export const PREF_ROWS: ReadonlyArray<{ category: PrefCategory; label: string; hint: string }> = [
-  { category: 'transactional', label: '交易通知', hint: '支付成功等，不可关闭' },
+  { category: 'transactional', label: '交易通知', hint: '支付成功等，不能关' },
   { category: 'service', label: '服务提醒', hint: '到期、流量、工单回复' },
-  { category: 'marketing', label: '营销与群发', hint: '活动与站点群发' },
+  { category: 'marketing', label: '活动与群发', hint: '优惠活动、站点群发' },
 ]
 
 // ---------------------------------------------------------------------------
 // 倒计时
 // ---------------------------------------------------------------------------
 export const secondsLeft = (deadline: number, now: number) => Math.max(0, Math.ceil((deadline - now) / 1000))
+
+/** 后端 BindCodeTTL：绑定码固定 10 分钟 */
+export const BIND_CODE_TTL_MS = 10 * 60_000
+
+/**
+ * 绑定码的本地截止时刻（审计 C3）：取码响应只有绝对时间 expires_at，本机时钟有偏差时直接倒数会错。
+ * 按收到响应的本地时刻起算，剩余时长夹在 (0, 10 分钟] 里；落在外面（时钟偏差、解析失败）就按 10 分钟算。
+ */
+export function bindDeadline(expiresAt: string, receivedAt: number): number {
+  const remaining = Date.parse(expiresAt) - receivedAt
+  return receivedAt + (remaining > 0 && remaining <= BIND_CODE_TTL_MS ? remaining : BIND_CODE_TTL_MS)
+}
 
 /** 125 → 「2:05」 */
 export const formatCountdown = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`

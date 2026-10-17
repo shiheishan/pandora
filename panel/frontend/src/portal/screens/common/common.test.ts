@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
+import { changeHint, copyTabText, eyebrowText, expiryText, goneText, heroTraffic, isExpiredNow, leakSources, lowTip, metaLine, pillText, renewText, resetRow } from './card-text'
 import { APP_UPDATE, guideApps, guideText, parseGuideDevice } from './app-update'
 import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
@@ -169,7 +169,7 @@ describe('orders', () => {
   })
 
   it('待支付期限按 expires_at 倒数', () => {
-    expect(expiryNote('2026-09-24T12:17:30Z', NOW)).toBe('18 分钟内未支付将自动取消')
+    expect(expiryNote('2026-09-24T12:17:30Z', NOW)).toBe('18 分钟后自动取消')
     expect(expiryNote('2026-09-24T11:59:00Z', NOW)).toBe('即将自动取消')
     expect(expiryNote(undefined, NOW)).toBe('请尽快完成支付')
   })
@@ -255,19 +255,62 @@ describe('subscriptions', () => {
     expect(isExpiredNow(sub(), NOW)).toBe(false)
   })
 
-  it('卡片用量：送的流量写在右侧，低于 15% 标快用完了', () => {
-    expect(usageText(sub())).toMatchObject({ label: '本期流量', right: '剩 188G / 共 500G', pct: 62, low: false })
-    const low = sub({
+  // 主卡用的一份：100G、用了 40G、3 台、11 月 5 日到期、续费价 ¥30/月还在卖
+  const card = (over: Partial<Subscription> = {}) =>
+    sub({
       traffic_limit: 100 * GIB,
-      bonus_bytes: 0,
-      traffic_used: 92 * GIB,
-      quotas: [{ metric: 'traffic.bytes', limit: 100 * GIB, bonus_bytes: 0, consumed: 92 * GIB, remaining: 8 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null }],
+      traffic_used: 40 * GIB,
+      device_limit: 3,
+      online_devices: 1,
+      current_period_end: '2026-11-05T12:00:00Z',
+      renew_until: '2026-12-05T12:00:00Z',
+      renewal_price: { id: 'p1m', unit_amount: 3000, billing_interval: 'month', interval_count: 1, available: true },
+      ...over,
     })
-    expect(usageText(low)).toMatchObject({ label: '本期流量 · 快用完了', right: '剩 8G / 共 100G', low: true })
-    expect(usageText({ ...low, bonus_bytes: 30 * GIB, traffic_used: 92 * GIB }).right).toBe('剩 38G / 共 130G（含送的 30G，本期有效）')
-    const once = sub({ plan_kind: 'one_time', bonus_bytes: 10 * GIB, traffic_limit: 100 * GIB, traffic_used: 50 * GIB })
-    expect(usageText(once).right).toContain('（含送的 10G）')
-    expect(usageText({ ...once, plan_kind: 'one_time' }).label).toBe('总流量')
+
+  it('主卡流量：剩余含送的，订阅套餐的送流量本期有效；一次性不清零', () => {
+    expect(heroTraffic(card())).toMatchObject({ big: { value: '60', unit: 'GB' }, ratio: 0.6, usedPct: 40, scope: '本期剩余', total: '100G', bonus: null, tail: '' })
+    expect(heroTraffic(card({ bonus_bytes: 30 * GIB, traffic_used: 92 * GIB }))).toMatchObject({ big: { value: '38', unit: 'GB' }, total: '130G', bonus: '30G', bonusNote: '本期有效', usedPct: 70 })
+    const once = card({ plan_kind: 'one_time', bonus_bytes: 10 * GIB, traffic_used: 50 * GIB })
+    expect(heroTraffic(once)).toMatchObject({ scope: '剩余', bonus: '10G', bonusNote: '', tail: '不清零，用完为止' })
+    expect(heroTraffic(card({ traffic_limit: null }))).toMatchObject({ big: null, ratio: null, total: null })
+  })
+
+  it('流量快用完的提示：过 80% 才有；下一期清零早于到期才说到下一期恢复', () => {
+    const next = { next_reset_at: '2026-10-05T12:00:00Z' }
+    expect(lowTip(card({ traffic_used: 79 * GIB, ...next }), NOW)).toBeNull()
+    expect(lowTip(card({ traffic_used: 85 * GIB, ...next }), NOW)).toEqual({ title: '流量快用完了', text: '本期已用 85%，用完会停，到下一期恢复' })
+    expect(lowTip(card({ traffic_used: 85 * GIB, next_reset_at: '2026-11-05T12:00:00Z' }), NOW)?.text).toBe('本期已用 85%，用完会停，续上后恢复')
+    expect(lowTip(card({ traffic_used: 100 * GIB, ...next }), NOW)).toEqual({ title: '流量用完了', text: '节点已经停了，到下一期恢复' })
+    expect(lowTip(card({ traffic_used: 90 * GIB, plan_kind: 'one_time', ...next }), NOW)?.text).toBe('已用 90%，用完会停')
+  })
+
+  it('主卡文字：眉标、灰字行、续费按钮带价只在那档还在卖时', () => {
+    expect(eyebrowText('Pandora', card())).toBe('Pandora')
+    expect(eyebrowText('Pandora', card({ label: '家里用' }))).toBe('Pandora · 专业版')
+    expect(eyebrowText('Pandora', card({ plan_kind: 'one_time' }))).toBe('Pandora · 一次性')
+    expect(metaLine(card({ online_devices: 2, current_period_end: '2026-11-05T12:03:00Z' }), NOW)).toMatch(/^11月5日 \d\d:03 到期 · 2 \/ 3 台设备在线$/)
+    expect(metaLine(card({ permanent: true, device_limit: null }), NOW)).toBe('没有到期日 · 1 台设备在线 · 不限台数')
+    expect(renewText(card(), NOW)).toBe('续费 · 到 12月5日')
+    const gone = card({ status: 'expired', current_period_end: '2026-09-21T11:00:00Z', renew_until: '2026-10-24T12:00:00Z' })
+    expect(renewText(gone, NOW)).toBe('续费，恢复使用 · ¥30/月')
+    expect(renewText({ ...gone, renewal_price: { ...gone.renewal_price!, available: false } }, NOW)).toBe('续费，恢复使用 · 续到 10月24日')
+    expect(renewText(card({ renew_until: null }), NOW)).toBeNull()
+    expect(pillText(gone, NOW)).toBe('已到期')
+    expect(goneText(gone, NOW)).toBe('9月21日到期了')
+  })
+
+  it('操作行：换套餐的算法说明、重置次数与能用满多少（含送的）、切换条小字', () => {
+    expect(changeHint(card())).toBe('差价按剩余时间算，换之前先看报价')
+    expect(changeHint(card({ plan_kind: 'one_time' }))).toBe('差价按剩余流量和天数算（取少的），换之前先看报价')
+    expect(changeHint(card({ plan_kind: 'one_time', permanent: true }))).toBe('差价按剩余流量算，换之前先看报价')
+    expect(resetRow(card(), NOW)).toBeNull()
+    const r = card({ reset_price: 1500, reset_limit: 2, resets_used: 0, bonus_bytes: 20 * GIB })
+    expect(resetRow(r, NOW)).toEqual({ title: '重置本期流量', sub: '已用的清零，马上能用满 120G · 本期还能买 2 次', price: '¥15', open: true })
+    expect(resetRow({ ...r, resets_used: 2 }, NOW)).toMatchObject({ sub: '本期的 2 次已用完', open: false })
+    expect(resetRow({ ...r, reset_limit: null }, NOW)?.sub).toBe('已用的清零，马上能用满 120G')
+    expect(copyTabText(r, NOW)).toBe('80G · 42 天')
+    expect(copyTabText(card({ permanent: true }), NOW)).toBe('60G · 永久')
   })
 
   it('疑似泄露：近 24 小时来源超过设备上限，过期的不提示', () => {

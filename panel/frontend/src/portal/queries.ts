@@ -146,7 +146,7 @@ export function useSubscriptions<T = Subscription[]>(select?: (subs: Subscriptio
 
 const primaryPlanName = (subs: Subscription[]) => pickPrimary(subs)?.plan_name ?? null
 
-/** 头像菜单的套餐徽标：生效中到期最晚的那份（pickPrimary 只留给外框徽标用）。 */
+/** 侧栏账户菜单与「我的」页的套餐 chip：生效中到期最晚的那份（pickPrimary 只留给外框徽标用）。 */
 export function useActivePlanName(): string | null {
   return useSubscriptions(primaryPlanName).data ?? null
 }
@@ -223,12 +223,71 @@ export function useCommission<T = Commission>(select?: (d: Commission) => T) {
 
 const commissionSummary = (d: Commission) => d.summary
 
-/** 头像菜单的可用佣金提示。 */
+/** 「我的」页邀请横幅的可用佣金。 */
 export function useCommissionAvailable() {
   return useCommission(commissionSummary)
 }
 
-/** 铃铛角标：新通知没有 SSE，按契约 60 秒与窗口聚焦时用 limit=1 刷新 unread。 */
+// ---------------------------------------------------------------------------
+// GET v1/orders?status=pending_payment：侧栏「订单」计数、我的套餐页的待支付横条与订单页的待支付卡共用。
+// 外框与页面共用的键，schema 全字段，只在这里定义一份；screens/common/orders.ts 转出给页面用，
+// 它的 useOpenOrders 与下面 usePendingOrderCount 同键、同请求（不带 limit），只是 select 不同。
+// ---------------------------------------------------------------------------
+const ORDER_KINDS = ['new', 'renewal', 'topup', 'upgrade', 'stack', 'traffic_reset'] as const
+export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
+
+export const orderRowSchema = z.object({
+  id: z.string(),
+  order_no: z.string(),
+  kind: z.enum(ORDER_KINDS),
+  status: z.enum(ORDER_STATUSES),
+  total_amount: z.number().int(),
+  discount_amount: z.number().int(),
+  balance_applied: z.number().int(),
+  payable_amount: z.number().int(),
+  paid_amount: z.number().int(),
+  plan_name: z.string().optional(),
+  cancellable: z.boolean(),
+  // 发起过支付（有过任何一条支付意图）；Go 无 omitempty，恒在。决定显示「我已支付，刷新状态」
+  has_payment_intent: z.boolean(),
+  created_at: z.string(),
+  paid_at: z.string().optional(),
+  cancelled_at: z.string().optional(),
+  cancel_reason: z.string().optional(),
+  expires_at: z.string().optional(),
+  // 修订 R69：周期是首个订单项的快照，Go 带 omitempty，没有周期（充值）时缺席；
+  // 商品名 Go 无 omitempty，恒在（没有订单项时为空串）
+  interval: z.string().optional(),
+  interval_count: z.number().int().optional(),
+  item_name: z.string(),
+})
+export type OrderRow = z.output<typeof orderRowSchema>
+
+export const ordersPageSchema = z.object({
+  orders: z.array(orderRowSchema),
+  total: z.number().int(),
+  // 修订 R69：本人全部订单按筛选段的计数，不受当前筛选影响
+  counts: z.object({ open: z.number().int(), paid: z.number().int(), closed: z.number().int() }),
+})
+export type OrdersPage = z.output<typeof ordersPageSchema>
+
+export const PENDING_ORDERS_KEY = ['portal', 'orders', { status: 'pending_payment' }] as const
+
+const pendingCount = (d: OrdersPage) => d.counts.open
+
+/** 侧栏「订单」徽标与手机「我的」页：待支付几笔；没拿到时为 null（不显示） */
+export function usePendingOrderCount(): number | null {
+  const api = useApi()
+  const { data } = useQuery({
+    queryKey: PENDING_ORDERS_KEY,
+    queryFn: ({ signal }) => api.get('v1/orders', ordersPageSchema, { query: { status: 'pending_payment' }, signal }),
+    select: pendingCount,
+    meta: { topics: ['orders.changed'] },
+  })
+  return data ?? null
+}
+
+/** 侧栏「消息」计数与「我的」页：新通知没有 SSE，按契约 60 秒与窗口聚焦时用 limit=1 刷新 unread。 */
 export function useUnreadCount(): number {
   const api = useApi()
   const { data } = useQuery({

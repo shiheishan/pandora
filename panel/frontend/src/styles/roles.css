@@ -16,23 +16,23 @@
 
   --body-size: var(--fs-body);
   --body-leading: var(--lh-body);
-  /* 控件高度：主按钮与输入框 40，弹窗按钮与菜单项 36，顶栏控件 32 */
-  --h-control: 40px;
-  --h-control-sm: 36px;
+  /* 控件高度：主按钮与输入框 50（样稿 v5），小按钮 38，顶栏控件 32 */
+  --h-control: 50px;
+  --h-control-sm: 38px;
   --h-control-xs: 32px;
-  /* 按钮 16 / 输入框 12 的水平内边距；实心按钮再加 2（规范：主按钮 0 18，次按钮 0 16） */
-  --pad-button: 16px;
+  /* 按钮 22 / 输入框 12 的水平内边距；实心按钮再加 2（样稿 v5：主按钮 0 24） */
+  --pad-button: 22px;
   --pad-input: 12px;
-  /* 弹窗按钮：门户 36 / 9 */
-  --h-dialog-action: 36px;
+  /* 弹窗按钮：门户 50 / 9 */
+  --h-dialog-action: 50px;
   /* 开关选中时的圆钮：门户朱砂底上始终是白 */
   --switch-knob-on: #fff;
-  --radius-control: var(--radius-md);
+  --radius-control: 14px;
   --radius-card: var(--radius-xl);
   --pad-card: var(--space-20);
   /* 输入框四边框、白底 */
   --control-border-width: 1px;
-  --control-bg: var(--surface);
+  --control-bg: var(--bg);
   /* 浮层（菜单、弹窗、抽屉、下拉列表）：浅边框加阴影 */
   --popover-border: var(--border);
   --popover-shadow: var(--shadow);
@@ -40,6 +40,43 @@
   --label-size: var(--fs-caption);
   --label-color: var(--text-2);
   --label-weight: var(--fw-regular);
+  /* 门户正文用系统字体（样稿 v5）；数字与档位名另用 --font-display / --font-serif */
+  --font-ui: var(--font-system);
+  /* --- 按钮、弹窗、分段控件与页面底（样稿 v5） ----------------------------- */
+  --button-weight: var(--fw-semibold);
+  --button-strong-weight: var(--fw-semibold);
+  --button-font-size: 15.5px;
+  --button-font-size-sm: 14px;
+  --pad-button-sm: 14px;
+  --button-primary-bg: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  --button-primary-hover-bg: linear-gradient(180deg, var(--brand), var(--brand-deep));
+  --button-primary-border: color-mix(in srgb, var(--brand-deep) 55%, var(--shade));
+  --button-primary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 10px 22px -12px color-mix(in srgb, var(--shade) 90%, transparent);
+  --button-secondary-border: transparent;
+  --button-secondary-shadow: 0 0 0 1px var(--border), 0 6px 14px -10px color-mix(in srgb, var(--shade) 40%, transparent);
+  --button-secondary-hover-bg: var(--surface);
+  --button-hover-filter: brightness(1.1);
+  --button-press: translateY(1px);
+  --control-border-color: var(--border);
+  --dialog-radius: 26px;
+  --dialog-title-size: 18px;
+  --dialog-backdrop-filter: blur(3px);
+  --dialog-action-flex: 1;
+  --dialog-grow: 0;
+  --segment-pad: 4px;
+  --segment-radius: 14px;
+  --segment-bg: color-mix(in srgb, var(--surface) 80%, transparent);
+  --segment-ring: 0 0 0 1px var(--border);
+  --segment-h: 36px;
+  --segment-option-pad: 18px;
+  --segment-option-radius: 10px;
+  --segment-font-size: 14px;
+  --segment-on-weight: var(--fw-semibold);
+  --segment-bg-sm: var(--bg);
+  --segment-h-sm: 30px;
+  --segment-option-pad-sm: 14px;
+  --segment-font-size-sm: 13px;
+  --page-bg: radial-gradient(var(--border) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--bg);
 }
 
 /* ===========================================================================
@@ -85,21 +122,79 @@
   --label-size: var(--fs-body-sm);
   --label-color: var(--text);
   --label-weight: var(--fw-medium);
+  --font-ui: var(--font-sans);
+  /* --- 按钮、弹窗、分段控件与页面底：取值都等于组件里原来写死的值，后台外观不变 --- */
+  --button-weight: var(--fw-regular);
+  --button-strong-weight: var(--fw-medium);
+  --button-font-size: 1em;
+  --button-font-size-sm: 1em;
+  --pad-button-sm: calc(var(--pad-button) - 2px);
+  --button-primary-bg: var(--accent);
+  --button-primary-hover-bg: var(--accent-hover);
+  --button-primary-border: transparent;
+  --button-primary-shadow: none;
+  --button-secondary-border: var(--border-strong);
+  --button-secondary-shadow: none;
+  --button-secondary-hover-bg: var(--surface-3);
+  --button-hover-filter: none;
+  --button-press: none;
+  --control-border-color: var(--border-strong);
+  --dialog-radius: var(--radius-card);
+  --dialog-title-size: 16px;
+  --dialog-backdrop-filter: none;
+  --dialog-action-flex: 0 1 auto;
+  --dialog-grow: 1;
+  --segment-pad: 3px;
+  --segment-radius: var(--radius-md);
+  --segment-bg: var(--surface-3);
+  --segment-ring: none;
+  --segment-h: 30px;
+  --segment-option-pad: 14px;
+  --segment-option-radius: var(--radius-sm);
+  --segment-font-size: var(--fs-body-sm);
+  --segment-on-weight: var(--fw-medium);
+  --segment-bg-sm: var(--surface-3);
+  --segment-h-sm: 24px;
+  --segment-option-pad-sm: 10px;
+  --segment-font-size-sm: var(--fs-caption);
+  --page-bg: var(--bg);
 }
 
 /* ===========================================================================
  * 后台调色与直角（10-16 设计稿 管理后台.dc.html 的令牌）
  * 卡片与页面同底、层次靠线；所有圆角归零（圆点、头像用 50% 不受影响）。
+ * 全局颜色 10-16 换成门户的森林绿后，后台还没重做：凡是变了值的颜色键都在这里
+ * 钉回原来的「纸白」，后台看起来不变。
  * 选择器用 html[...] 而不是 :root[...]：要压过 tokens.css 的 :root，又要输给
  * :root[data-theme='dark']，深色再由下一块覆盖。值与 design-tokens.ts 的
  * ADMIN_OVERRIDES 同源（tests/tokens.test.ts 核对）。
  * ========================================================================= */
 html[data-app='admin'] {
+  --bg: #f5f4f0;
   --surface: #f5f4f0;
   --surface-2: #efede8;
   --surface-3: #e8e6e0;
   --border: #e3e1da;
   --border-strong: #d5d2ca;
+  --border-hover: #c9c6bd;
+  --text: #1c1c1f;
+  --text-2: #62615c;
+  --text-3: #6e6c66;
+  --brand: #b9442b;
+  --brand-hover: #a33a23;
+  --brand-ink: #8c3019;
+  --brand-soft: #f6e4de;
+  --brand-tint: #fbf3ef;
+  --on-brand: #fff;
+  --warn: #9a5c00;
+  --warn-soft: #fbf0dc;
+  --danger: #b3263a;
+  --danger-soft: #f8e1e3;
+  --on-ink: #fff;
+  --hdr: rgba(245,244,240,.9);
+  --scrim: rgba(20,20,24,.4);
+  --shadow: 0 16px 36px -14px rgba(28,28,31,.25);
+  --shadow-segment: 0 1px 2px rgba(20,20,24,.08);
   --radius-tag: 0;
   --radius-sm: 0;
   --radius-md: 0;
@@ -109,7 +204,24 @@ html[data-app='admin'] {
 }
 
 html[data-app='admin'][data-theme='dark'] {
+  --bg: #111113;
   --surface: #111113;
   --surface-2: #18181b;
   --surface-3: #202023;
+  --border: #2b2b2f;
+  --border-strong: #37373c;
+  --border-hover: #4a4a50;
+  --text: #ecebe7;
+  --text-2: #9a988f;
+  --text-3: #8a8880;
+  --brand: #e46e52;
+  --brand-hover: #ec8267;
+  --brand-ink: #f2a58f;
+  --brand-soft: #3a231c;
+  --brand-tint: #201816;
+  --on-brand: #170d0a;
+  --on-ink: #111113;
+  --hdr: rgba(17,17,19,.88);
+  --shadow: 0 16px 40px -12px rgba(0,0,0,.6);
+  --shadow-segment: 0 1px 2px rgba(20,20,24,.08);
 }

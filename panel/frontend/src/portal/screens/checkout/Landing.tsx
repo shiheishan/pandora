@@ -1,14 +1,16 @@
 import { useEffect } from 'react'
 import { href, navigate } from '../../../core/router'
 import { isApiError } from '../../../core/api'
-import { Card, Skeleton } from '../../../ui'
+import { Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
+import { Btn } from '../../kit'
 import { LoadError } from '../common/Blocks'
 import type { Plan } from '../common/catalog'
-import { ChoiceList, flowCss } from '../common/Flow'
+import { ChoiceList } from '../common/Flow'
 import type { Holdings } from '../common/holdings'
 import { useLandings, type Landing } from '../common/landings'
 import { isLive } from '../common/subscriptions'
+import css from './Checkout.module.css'
 import { landingHref } from './model'
 
 /** 买这个套餐前选「放到哪里」：不预选；只有一个选项时自动跳转 */
@@ -18,10 +20,10 @@ export function LandingChooser({ planId, plan, h, price }: { planId: string; pla
 
   if (landings.isPending) {
     return (
-      <Card aria-busy="true" className={flowCss.narrow}>
+      <div className={css.land} aria-busy="true">
         <Skeleton width={220} height={18} />
         <Skeleton height={160} />
-      </Card>
+      </div>
     )
   }
 
@@ -30,18 +32,16 @@ export function LandingChooser({ planId, plan, h, price }: { planId: string; pla
     const business = isApiError(err) && err.status === 409
     if (business) {
       return (
-        <Card className={flowCss.narrow}>
+        <div className={css.card}>
           <p>{err.message}</p>
-          <a className={flowCss.cta} href={href('/plans')}>
-            去选购
-          </a>
-        </Card>
+          <Btn href={href('/plans')} tone="soft">去选购</Btn>
+        </div>
       )
     }
     return (
-      <Card>
+      <div className={css.card}>
         <LoadError error={err} onRetry={() => void landings.refetch()} what="可选项" />
-      </Card>
+      </div>
     )
   }
 
@@ -54,8 +54,8 @@ export function LandingChooser({ planId, plan, h, price }: { planId: string; pla
   const go = (l: Landing) => goToCheckout(planId, l, price, false)
 
   return (
-    <div className={`${flowCss.stack} ${flowCss.narrow}`} data-screen="checkout-landing">
-      <p className={flowCss.q}>{plan.name}放到哪里？</p>
+    <div className={css.land} data-screen="checkout-landing">
+      <p className={css.landQ}>{plan.name}放到哪里？</p>
       <ChoiceList
         label={`${plan.name}放到哪里`}
         selected={null}
@@ -119,8 +119,8 @@ function AutoLanding({ option, planId, price }: { option: Landing; planId: strin
     goToCheckout(planId, option, price, true)
   }, [option, planId, price])
   return (
-    <Card aria-busy="true" className={flowCss.narrow}>
+    <div className={css.land} aria-busy="true">
       <Skeleton height={200} />
-    </Card>
+    </div>
   )
 }

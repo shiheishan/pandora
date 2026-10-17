@@ -7,9 +7,10 @@
 html,
 body {
   margin: 0;
-  background: var(--bg);
+  /* 门户是点阵底纹（样稿 v5，登录页也有），后台就是 --bg；见 roles.css 的 --page-bg */
+  background: var(--page-bg);
   color: var(--text);
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: var(--body-size);
   line-height: var(--body-leading);
   -webkit-font-smoothing: antialiased;
