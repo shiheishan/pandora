@@ -405,6 +405,70 @@
   .chips2 .am { padding: 0 16px; height: 40px; line-height: 40px; font-size: 14px; }
   .warn-t { font-size: 12.5px; color: var(--warn); margin: 8px 2px 0; }
 
+  /* 工单支持：左列表右会话（参考 Plain / Intercom 的两栏收件箱、Base44 的工单状态与「已解决」收尾） */
+  .tk { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; }
+  .tk-side { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 40px; }
+  .tk-side > .btn { width: 100%; }
+  .tk-list { border-radius: 20px; background: #fff; box-shadow: var(--lift); overflow: hidden; }
+  .ti { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; padding: 14px 16px 15px; }
+  .ti + .ti { box-shadow: 0 -1px 0 var(--line); }
+  .ti:hover { background: var(--paper-2); }
+  .ti.on { background: radial-gradient(260px 120px at 0% 0%, var(--tint), transparent 80%), var(--paper-2); box-shadow: inset 3px 0 0 var(--act); }
+  .ti + .ti.on { box-shadow: inset 3px 0 0 var(--act), 0 -1px 0 var(--line); }
+  .ti-m { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-3); }
+  .ti-m .st { font-size: 11.5px; padding: 1px 7px; }
+  .ti small .mono { font-size: 12px; color: var(--text-3); }
+  .ti-m time { margin-left: auto; }
+  .ti b { display: block; margin-top: 6px; font-size: 14.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .ti small { display: block; margin-top: 4px; font-size: 12.5px; color: var(--text-2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .ti.off b { color: var(--text-2); font-weight: 500; }
+  .st.info { background: var(--tint); color: var(--deep); font-weight: 600; }
+  .tk-help { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.6); box-shadow: 0 0 0 1px var(--line); font-size: 13px; color: var(--text-2); }
+  .tk-help a { color: var(--act); font-weight: 600; margin-left: auto; white-space: nowrap; }
+  .th { display: none; flex-direction: column; border-radius: 24px; background: #fff; box-shadow: var(--lift); min-height: 540px; overflow: hidden; }
+  .th.on { display: flex; }
+  .th-h { display: flex; align-items: flex-start; gap: 16px; padding: 22px 24px 18px; box-shadow: 0 1px 0 var(--line); }
+  .th-h > div:first-child { flex: 1; min-width: 0; }
+  .th-h h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.35; }
+  .th-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; font-size: 13px; color: var(--text-2); }
+  .th-meta .mono { font-size: 12.5px; }
+  .th-meta a { color: var(--act); }
+  .th-acts { display: flex; gap: 8px; flex: none; }
+  .back { display: none; }
+  .msgs { flex: 1; display: flex; flex-direction: column; gap: 18px; padding: 24px; background: radial-gradient(var(--dot) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--paper-2); }
+  .m { max-width: 78%; display: flex; flex-direction: column; gap: 6px; }
+  .m .who { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+  .m .who i { width: 22px; height: 22px; border-radius: 50%; background: var(--deep); color: #fff; font-style: normal; font-size: 11px; display: flex; align-items: center; justify-content: center; }
+  .m p { margin: 0; padding: 12px 15px; border-radius: 4px 18px 18px 18px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 4px 12px -8px rgba(var(--sh), 0.25); font-size: 14.5px; line-height: 1.65; white-space: pre-line; }
+  .m.mine { align-self: flex-end; align-items: flex-end; }
+  .m.mine p { border-radius: 18px 4px 18px 18px; background: var(--deep); color: #fff; box-shadow: none; }
+  .m-sys { align-self: center; font-size: 12.5px; color: var(--text-3); padding: 4px 12px; border-radius: 99px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 0 1px var(--line); }
+  .compose { display: flex; gap: 10px; align-items: flex-end; padding: 14px 16px 16px; box-shadow: 0 -1px 0 var(--line); background: #fff; }
+  .compose textarea { flex: 1; min-height: 50px; max-height: 160px; resize: none; border: 0; border-radius: 14px; padding: 14px 16px; font: 15px/1.5 var(--sans); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); }
+  .compose textarea:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--act); }
+  .th-end { padding: 18px 24px 22px; box-shadow: 0 -1px 0 var(--line); text-align: center; font-size: 14px; color: var(--text-2); }
+  .th-end b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
+  .th-end .ok { width: 36px; height: 36px; margin: 0 auto 10px; border-radius: 50%; background: #e4f1e8; color: #23603c; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+  .th-end .lnk-a { color: var(--act); font-weight: 600; cursor: pointer; }
+  .th-wait { padding: 16px 24px 18px; box-shadow: 0 -1px 0 var(--line); font-size: 14px; color: var(--text-2); display: flex; align-items: center; gap: 10px; }
+  .th-wait i { width: 8px; height: 8px; border-radius: 50%; background: #d08a1a; flex: none; }
+  /* 新建工单（参考 Meta AI 的分类块、BeReal 的「至少 10 个字」、GOAT 的关联订单号） */
+  .nf { padding: 24px 26px 26px; }
+  .nf h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+  .nf .lbl2 { display: block; font-size: 13.5px; color: var(--text-2); margin: 20px 2px 8px; }
+  .nf .lbl2 small { color: var(--text-3); margin-left: 6px; }
+  .cats { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cats button { all: unset; cursor: pointer; padding: 9px 14px; border-radius: 12px; font-size: 14px; background: var(--bg); color: var(--ink); }
+  .cats button.on { background: var(--deep); color: #fff; font-weight: 600; }
+  .nf .code { font-family: var(--sans); font-size: 15px; letter-spacing: 0; height: 48px; }
+  .nf select.code { appearance: none; padding-right: 40px; background: var(--bg) no-repeat right 16px center / 12px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%236a706b' stroke-width='1.6'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E"); }
+  .nf textarea.code { height: 150px; padding: 14px 16px; line-height: 1.6; resize: vertical; }
+  .nf .faint { display: flex; justify-content: space-between; }
+  .nf-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 22px; }
+  .nf-foot .faint { margin: 0; }
+  .tk-empty { text-align: center; padding: 30px 18px; font-size: 13.5px; color: var(--text-2); }
+  .tk-empty b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 6px; }
+
   /* 我的（手机） */
   .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
   .profile .avatar { width: 52px; height: 52px; font-size: 20px; }
@@ -494,6 +558,21 @@
     .codes .cd-c { min-width: 0; font-size: 15.5px; }
     .codes .rv { display: none; }
     .rec .ico { display: none; }
+    /* 工单：手机上列表与会话分两屏 */
+    .tk { grid-template-columns: 1fr; }
+    .tk-side { position: static; }
+    .tk[data-view="detail"] .tk-side { display: none; }
+    .tk[data-view="list"] .tk-main { display: none; }
+    .back { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--act); font-weight: 600; margin-bottom: 12px; cursor: pointer; }
+    .th { min-height: 0; border-radius: 22px; }
+    .th-h { flex-direction: column; gap: 12px; padding: 18px 18px 16px; }
+    .th-h h2 { font-size: 17px; }
+    .th-acts .btn { flex: 1; }
+    .th-acts { width: 100%; }
+    .msgs { padding: 18px 14px; }
+    .m { max-width: 88%; }
+    .compose { padding: 12px; }
+    .nf { padding: 20px 18px 22px; }
   }
 </style>
 </head>
@@ -534,7 +613,7 @@
   <a class="nav-a" data-p="ref" href="#ref"><svg class="i"><use href="#i-gift"/></svg>邀请返利</a>
   <div class="nav-gap"></div>
   <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-bell"/></svg>消息<span class="dot">2</span></a>
-  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-chat"/></svg>工单支持</a>
+  <a class="nav-a" data-p="tickets" href="#tickets"><svg class="i"><use href="#i-chat"/></svg>工单支持</a>
   <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-help"/></svg>帮助中心</a>
   <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-shield"/></svg>账号安全</a>
   <div class="me">
@@ -1154,6 +1233,113 @@
     </div>
   </div>
 
+  <!-- ================= 工单支持 ================= -->
+  <section class="page" id="p-tickets">
+    <div class="col wide">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <h1>工单支持</h1>
+      <div class="tk" data-view="list">
+        <div class="tk-side">
+          <button class="btn" data-tk="new">＋ 提交新工单</button>
+          <nav class="tk-list" aria-label="我的工单">
+            <div class="tk-empty" data-only="empty"><b>还没有工单</b>遇到连接、账单或账号问题，提交工单后客服会在这里回复你。</div>
+            <button class="ti on" data-tk="1" data-only="one multi expired"><span class="ti-m"><span class="st info">客服已回复</span>连接与技术<time>09:40</time></span><b>香港节点晚上 8 点以后很慢</b><small><span class="mono">#TK20261015-K7Q2MXAB</span> · 2 条消息</small></button>
+            <button class="ti" data-tk="2" data-only="one multi expired"><span class="ti-m"><span class="st warn">等待回复</span>账单与支付<time>10-14</time></span><b>续费后到期日没有顺延</b><small><span class="mono">#TK20261014-M3QX7ZPD</span> · 1 条消息</small></button>
+            <button class="ti off" data-tk="3" data-only="one multi expired"><span class="ti-m"><span class="st">已关闭</span>套餐与链接<time>09-28</time></span><b>iPhone 上怎么添加</b><small><span class="mono">#TK20260928-A2B7KQWE</span> · 3 条消息</small></button>
+            <button class="ti off" data-tk="4" data-only="one multi expired"><span class="ti-m"><span class="st">已撤回</span>连接与技术<time>09-20</time></span><b>换新链接以后连不上</b><small><span class="mono">#TK20260920-Q5WZ3RTN</span> · 1 条消息</small></button>
+          </nav>
+          <div class="tk-help"><svg class="i"><use href="#i-help"/></svg>连不上、App 怎么用，帮助中心多半有答案<a href="#tickets">去看看 ›</a></div>
+        </div>
+
+        <div class="tk-main">
+          <a class="back" data-back>‹ 全部工单</a>
+
+          <!-- 客服回复过：给「问题已解决」，不给撤回 -->
+          <article class="th on" id="th-1">
+            <header class="th-h">
+              <div><h2>香港节点晚上 8 点以后很慢</h2><div class="th-meta"><span class="st info">客服已回复</span><span>连接与技术</span><span class="mono">#TK20261015-K7Q2MXAB</span></div></div>
+              <div class="th-acts"><button class="btn soft sm" data-open="tclose">问题已解决</button></div>
+            </header>
+            <div class="msgs">
+              <div class="m mine"><span class="who">我 · 10-15 21:12</span><p>家里用的那份，晚上 8 点以后香港 01、02 都只有 1–2 MB/s，白天正常。用的是 Clash Verge，换过节点也一样。</p></div>
+              <div class="m"><span class="who"><i>客</i>客服 · 09:40</span><p>晚高峰香港线路确实拥堵，我们已经给这两个节点加了带宽。今晚再试一下；还慢的话可以先用新加坡 02，延迟只多 20ms 左右。</p></div>
+            </div>
+            <div class="compose"><textarea rows="1" placeholder="补充信息…" aria-label="补充信息"></textarea><button class="btn">发送</button></div>
+          </article>
+
+          <!-- 客服还没回复：可以撤回；后台开了「须等客服回复」时回复框换成一句话 -->
+          <article class="th" id="th-2">
+            <header class="th-h">
+              <div><h2>续费后到期日没有顺延</h2><div class="th-meta"><span class="st warn">等待回复</span><span>账单与支付</span><span class="mono">#TK20261014-M3QX7ZPD</span><a href="#orders">关联订单 PD-2610-2300 ›</a></div></div>
+              <div class="th-acts"><button class="btn soft sm" data-open="twithdraw">撤回</button></div>
+            </header>
+            <div class="msgs">
+              <div class="m mine"><span class="who">我 · 10-14 18:03</span><p>昨天用支付宝续了一个月，订单显示已支付，但我的套餐里到期日还是原来的 10 月 13 日，没有顺延。</p></div>
+            </div>
+            <div class="th-wait"><i></i>已收到你的消息，请等客服回复后再继续发送。</div>
+          </article>
+
+          <!-- 已关闭：只读，引导新建 -->
+          <article class="th" id="th-3">
+            <header class="th-h">
+              <div><h2>iPhone 上怎么添加</h2><div class="th-meta"><span class="st">已关闭</span><span>套餐与链接</span><span class="mono">#TK20260928-A2B7KQWE</span></div></div>
+            </header>
+            <div class="msgs">
+              <div class="m mine"><span class="who">我 · 09-28 10:20</span><p>买好了，但是不知道 iPhone 上怎么添加，App Store 里搜不到你们的 App。</p></div>
+              <div class="m"><span class="who"><i>客</i>客服 · 09-28 10:46</span><p>我们没有自己的 App，用 Shadowrocket 就行。在「我的套餐」点「添加到 App」，选 Shadowrocket 会自动打开并导入。
+帮助中心也有一篇图文说明。</p></div>
+              <div class="m mine"><span class="who">我 · 09-28 11:02</span><p>好了，可以用了，谢谢！</p></div>
+            </div>
+            <div class="th-end"><div class="ok">✓</div><b>这张工单已关闭</b>还有问题的话，<span class="lnk-a" data-tk="new">提交新工单</span></div>
+          </article>
+
+          <article class="th" id="th-4">
+            <header class="th-h">
+              <div><h2>换新链接以后连不上</h2><div class="th-meta"><span class="st">已撤回</span><span>连接与技术</span><span class="mono">#TK20260920-Q5WZ3RTN</span></div></div>
+            </header>
+            <div class="msgs">
+              <div class="m mine"><span class="who">我 · 09-20 22:14</span><p>刚换了新链接，App 里全部超时。</p></div>
+            </div>
+            <div class="th-end"><b>你撤回了这张工单</b>还有问题的话，<span class="lnk-a" data-tk="new">提交新工单</span></div>
+          </article>
+
+          <!-- 新建：分类（后端固定六类）、关联订单（可选，最近 20 张）、标题、详细描述（至少 10 字） -->
+          <article class="th" id="th-new">
+            <div class="nf">
+              <h2>提交新工单</h2>
+              <p class="faint" style="margin:6px 2px 0;display:block">客服回复后会发消息提醒你。</p>
+              <span class="lbl2">问题分类</span>
+              <div class="cats" role="radiogroup" aria-label="问题分类">
+                <button class="on">一般咨询</button><button>连接与技术</button><button>套餐与链接</button><button>账单与支付</button><button>账号与安全</button><button>举报与投诉</button>
+              </div>
+              <label><span class="lbl2">关联订单<small>可选，账单、支付类问题关联上订单，客服能更快核对</small></span>
+                <select class="code" aria-label="关联订单"><option>不关联订单</option><option>PD-2610-2300 · 专业版 · 月付续费</option><option>PD-2610-2271 · 叠加 · 随用 100G</option><option>PD-2610-2208 · 余额充值</option></select>
+              </label>
+              <label><span class="lbl2">标题</span><input class="code" placeholder="一句话描述问题" maxlength="120" /></label>
+              <label><span class="lbl2">详细描述</span><textarea class="code" placeholder="详细描述：用的是哪个 App、哪个节点、什么时候出现的…" maxlength="5000"></textarea></label>
+              <div class="nf-foot"><span class="faint">至少 10 个字 · 0 / 5000</span><button class="btn hot">提交</button></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sheet" id="sh-tclose" hidden>
+    <div class="sh-card" role="alertdialog" aria-label="问题已经解决了">
+      <div class="sh-top"><b>问题已经解决了？</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">关闭后不能再回复这张工单，如有新问题请重新提交。</p>
+      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn hot" data-close>关闭工单</button></div>
+    </div>
+  </div>
+  <div class="sheet" id="sh-twithdraw" hidden>
+    <div class="sh-card" role="alertdialog" aria-label="撤回工单">
+      <div class="sh-top"><b>撤回工单？</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <p class="sh-p">客服尚未回复，撤回后工单关闭，不计入处理记录。</p>
+      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn danger" data-close>撤回工单</button></div>
+    </div>
+  </div>
+
   <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
   <section class="page" id="p-me">
     <div class="col">
@@ -1172,7 +1358,7 @@
       </div>
       <h3>帮助</h3>
       <div class="rows">
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-chat"/></svg></span><span class="rt">工单支持</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <a class="row" href="#tickets"><span class="ri"><svg class="i"><use href="#i-chat"/></svg></span><span class="rt">工单支持</span><span class="rv">客服回复了 1 张</span><svg class="i chev"><use href="#i-chev"/></svg></a>
         <div class="row"><span class="ri"><svg class="i"><use href="#i-help"/></svg></span><span class="rt">帮助中心</span><svg class="i chev"><use href="#i-chev"/></svg></div>
       </div>
       <h3>设置</h3>
@@ -1193,7 +1379,7 @@
 
 <script>
   // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
-  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'me']
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'me']
   function show() {
     let p = location.hash.slice(1)
     if (!pages.includes(p)) p = 'subs'
@@ -1262,6 +1448,17 @@
   }
   document.querySelectorAll('.seg [data-r]').forEach((el) => el.addEventListener('click', () => rtab(el.dataset.r)))
   if (q.get('r')) rtab(q.get('r'))
+  // 工单：点列表切会话、新建；手机上列表与会话分两屏。?t=1..4|new 预选，&v=detail 手机直接进会话
+  const tkBox = document.querySelector('.tk')
+  function tk(id, detail = true) {
+    document.querySelectorAll('.ti').forEach((el) => el.classList.toggle('on', el.dataset.tk === id))
+    document.querySelectorAll('.th').forEach((el) => el.classList.toggle('on', el.id === 'th-' + id))
+    if (detail) tkBox.dataset.view = 'detail'
+  }
+  document.querySelectorAll('[data-tk]').forEach((el) => el.addEventListener('click', () => { tk(el.dataset.tk); scrollTo(0, 0) }))
+  document.querySelector('[data-back]').addEventListener('click', () => { tkBox.dataset.view = 'list' })
+  if (st === 'empty') tk('new', false)
+  if (q.get('t')) tk(q.get('t'), q.get('v') === 'detail')
   const bar = document.createElement('nav')
   bar.className = 'pal'
   ;[['one', '一份'], ['multi', '三份'], ['expired', '已到期'], ['empty', '没有套餐']].forEach(([k, t]) => {
