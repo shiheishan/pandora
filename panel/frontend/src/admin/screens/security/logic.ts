@@ -87,7 +87,7 @@ export const OUTCOME_TONE: Record<Outcome, TagTone> = { success: 'ok', failure: 
 // 访问日志（安全事件，不是 HTTP 访问日志）
 // ---------------------------------------------------------------------------
 export const ACCESS_PAGE = 50
-/** 实时尾随的轮询间隔：审计表不在 SSE 监听里（契约） */
+/** 实时监控的轮询间隔：审计表不在 SSE 监听里（契约） */
 export const TAIL_MS = 5000
 
 export type AccessView = 'all' | 'error' | 'admin' | 'login' | 'register' | 'subscribe'
@@ -136,6 +136,17 @@ const FETCH_RESULT: Record<string, string> = { ok: '成功', not_found: '链接�
 
 export function isAccessError(item: Pick<AccessItem, 'outcome'>): boolean {
   return item.outcome !== undefined && item.outcome !== 'success' && item.outcome !== 'ok'
+}
+
+export type AccessTone = 'ok' | 'warn' | 'bad' | 'none'
+
+/** 结果色：成功绿；订阅拉取被限流（rate_limited）黄；其余非成功红；没有结果 none */
+export function accessTone(item: Pick<AccessItem, 'outcome'>): AccessTone {
+  const o = item.outcome
+  if (o === undefined) return 'none'
+  if (o === 'success' || o === 'ok') return 'ok'
+  if (o === 'rate_limited') return 'warn'
+  return 'bad'
 }
 
 export function accessOutcomeLabel(item: Pick<AccessItem, 'outcome'>): string {

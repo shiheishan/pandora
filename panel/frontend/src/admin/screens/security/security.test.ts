@@ -3,6 +3,7 @@ import {
   accessDetail,
   accessOutcomeLabel,
   accessQuery,
+  accessTone,
   actorLabel,
   auditQuery,
   authLabel,
@@ -111,6 +112,12 @@ describe('access log', () => {
     expect(isAccessError({ outcome: 'success' })).toBe(false)
     expect(isAccessError({})).toBe(false)
     expect(isAccessError({ outcome: 'not_found' })).toBe(true)
+    expect(accessTone({ outcome: 'ok' })).toBe('ok')
+    expect(accessTone({ outcome: 'success' })).toBe('ok')
+    expect(accessTone({ outcome: 'rate_limited' })).toBe('warn')
+    expect(accessTone({ outcome: 'not_found' })).toBe('bad')
+    expect(accessTone({ outcome: 'failure' })).toBe('bad')
+    expect(accessTone({})).toBe('none')
     expect(accessOutcomeLabel({ outcome: 'failure' })).toBe('失败')
     expect(accessOutcomeLabel({ outcome: 'rate_limited' })).toBe('限流')
     expect(accessOutcomeLabel({ outcome: 'weird' })).toBe('weird')
