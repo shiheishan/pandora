@@ -94,7 +94,7 @@ export interface StatusDotProps {
   className?: string
 }
 
-const statusToneClass: Record<StatusTone, string> = {
+const statusToneClass: Record<StatusTone, string | undefined> = {
   ok: css.statusOk,
   warn: css.statusWarn,
   off: css.statusOff,
