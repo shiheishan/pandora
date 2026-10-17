@@ -71,6 +71,17 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* 只在手机（≤639）出现：列表收起列后，把要紧信息补在留下的格里；显示时回到元素本来的 display */
+.m-only {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .m-only {
+    display: revert;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
