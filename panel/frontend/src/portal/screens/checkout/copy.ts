@@ -36,7 +36,7 @@ export interface ConfirmItem {
   pill?: string
 }
 
-interface ConfirmCopy {
+export interface ConfirmCopy {
   title: string
   /** 续费、新买、叠加、重置：左栏顶上的小卡 */
   item?: ConfirmItem
@@ -290,7 +290,7 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
 // ---------------------------------------------------------------------------
 // 付钱那一块：余额开关、合计、凑最低额的说明、主按钮
 // ---------------------------------------------------------------------------
-interface PayCopy {
+export interface PayCopy {
   /** 余额那一行；null = 不显示（不用付钱或没有余额） */
   balanceLine: { on: boolean; locked: boolean; text: string; strong?: string } | null
   sum: { text: string; strong?: string; after?: string }
