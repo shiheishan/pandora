@@ -400,7 +400,7 @@
   .fld > span { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); margin: 0 2px 8px; }
   .fld > span a { color: var(--act); font-weight: 600; }
   .fld .code { font-family: var(--sans); font-size: 15.5px; letter-spacing: 0; }
-  .fld .code.m { font-family: var(--tw); font-size: 17px; }
+  .fld .code.m { font-family: var(--tw); font-size: 17px; max-width: none; display: block; }
   .chips2 { display: flex; gap: 8px; flex-wrap: wrap; }
   .chips2 .am { padding: 0 16px; height: 40px; line-height: 40px; font-size: 14px; }
   .warn-t { font-size: 12.5px; color: var(--warn); margin: 8px 2px 0; }
@@ -580,7 +580,7 @@
   .ql-time s { display: block; height: 100%; width: 100%; border-radius: 99px; background: var(--act); transition: width 1s linear; }
   .ql-time.low { color: var(--warn); }
   .ql-time.low s { background: #d08a1a; }
-  .ql-time.gone { color: var(--danger); }
+  .ql-time.lapsed { color: var(--danger); }
   .ql-link { margin-top: 18px; justify-content: space-between; height: 48px; background: var(--paper-2); }
   .ql-link code { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
   .ql-link.off { opacity: 0.45; pointer-events: none; }
@@ -594,13 +594,51 @@
   .tgc-h .rt b { font-weight: 600; color: var(--ink); }
   .tgc-h .lnk { margin-left: 0; }
   .tgc [data-tg][hidden] { display: none; }
-  .tgc p { margin: 14px 0 0; font-size: 14px; line-height: 1.65; color: var(--text-2); }
-  .tgc .tg-acts { display: flex; gap: 10px; margin-top: 16px; }
-  .tgc .tg-acts .btn { flex: 1; }
-  .tg-code { margin-top: 16px; padding: 16px 18px; border-radius: 16px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
-  .tg-code span { font-size: 13px; color: var(--text-2); }
-  .tg-code code { display: block; margin: 6px 0 4px; font: 700 24px var(--tw); letter-spacing: 0.06em; color: var(--ink); }
-  .tg-code small { font-size: 12.5px; color: var(--text-3); }
+  /* 设备：整行可点，弹出确认 */
+  button.row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 14px; width: 100%; padding: 0 20px; min-height: 62px; cursor: pointer; transition: background 0.15s, opacity 0.25s, min-height 0.25s; }
+  button.row:hover { background: var(--paper-2); }
+  button.row:focus-visible { outline: 2px solid var(--act); outline-offset: -2px; }
+  .devs .rt b { font-weight: 400; }
+  .devs .row .rv { color: var(--text-2); }
+  .devs .row:hover .rv { color: var(--danger); }
+  .row.leaving { opacity: 0; min-height: 0; height: 0; overflow: hidden; }
+  .cap-a { all: unset; cursor: pointer; color: var(--act); font-weight: 600; }
+  .dev-id { display: flex; align-items: center; gap: 14px; margin: 14px 0 0; padding: 14px 16px; border-radius: 16px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
+  .dev-id .ri { width: 40px; height: 40px; border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: center; color: var(--deep); flex: none; box-shadow: 0 0 0 1px var(--line); }
+  .dev-id .rt b { display: block; font-size: 15.5px; font-weight: 600; }
+  .dev-id .rt small { display: block; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .dev-fx { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .dev-fx li { display: flex; gap: 10px; padding: 0; font-size: 14px; line-height: 1.55; color: var(--text-2); }
+  .dev-fx li::before { content: '–'; flex: none; width: 18px; height: auto; margin: 0; background: none; color: var(--danger); font-weight: 600; text-align: center; }
+  .dev-fx li.keep::before { content: '✓'; color: #23603c; }
+  .toast { position: fixed; left: 50%; bottom: 28px; z-index: 30; max-width: calc(100% - 32px); padding: 12px 18px; border-radius: 14px; background: var(--ink); color: #fff; font-size: 14px; box-shadow: 0 16px 34px -14px rgba(var(--sh), 0.7); opacity: 0; transform: translate(-50%, 16px); transition: opacity 0.2s, transform 0.25s cubic-bezier(0.2, 0.7, 0.2, 1); pointer-events: none; white-space: nowrap; }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+  /* 绑定 Telegram 弹层 */
+  .tg-card { width: 560px; }
+  .tg-flow { display: grid; grid-template-columns: 1fr 168px; gap: 22px; align-items: center; margin-top: 14px; }
+  .tg-how { margin: 0; }
+  .tg-m { display: none; }
+  .qr-box.tg-qr { width: 168px; height: 168px; padding: 12px; border-radius: 18px; }
+  .qr-box.tg-qr .qr-over { border-radius: 18px; }
+  .tg-wait { display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 14px; font-size: 13px; color: var(--text-2); }
+  .tg-wait.lapsed { color: var(--danger); }
+  .tg-wait.lapsed .spin { display: none; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--tint); border-top-color: var(--act); animation: spin 0.9s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tg-man { margin-top: 16px; padding-top: 14px; box-shadow: 0 -1px 0 var(--line); }
+  .tg-man summary { cursor: pointer; font-size: 13.5px; color: var(--text-2); list-style: none; text-align: center; }
+  .tg-man summary::-webkit-details-marker { display: none; }
+  .tg-man summary::after { content: ' ›'; }
+  .tg-man[open] summary::after { content: ' ‹'; }
+  .tg-man p { margin: 12px 2px 8px; font-size: 13.5px; color: var(--text-2); }
+  .tg-man p b { color: var(--ink); font-weight: 600; }
+  .tg-man .linkchip { justify-content: space-between; height: 46px; background: var(--paper-2); }
+  .tg-done { text-align: center; padding: 6px 0 0; }
+  .tg-done .ic { width: 56px; height: 56px; margin: 10px auto 14px; border-radius: 50%; background: #e4f1e8; color: #23603c; display: flex; align-items: center; justify-content: center; animation: rise 0.3s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .tg-done .ic svg { width: 28px; height: 28px; stroke-width: 2.2; }
+  .tg-done > b { display: block; font-size: 19px; font-weight: 600; }
+  .tg-done p { margin: 8px auto 0; max-width: 360px; font-size: 14px; line-height: 1.6; color: var(--text-2); }
+  [data-tgs][hidden] { display: none; }
   .tg-grp { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; box-shadow: 0 -1px 0 var(--line); font-size: 12.5px; color: var(--text-3); }
   .tg-grp a { font-size: 14px; color: var(--act); font-weight: 600; }
   /* 通知方式：3 类 × 2 渠道 */
@@ -837,8 +875,11 @@
     .ql { padding: 0 16px 16px; }
     .row .rt small { font-size: 12.5px; }
     .tgc { padding: 16px; }
-    .tgc .tg-acts { flex-direction: column; }
-    .tgc .tg-acts .btn { flex: none; height: 46px; }
+    .tg-flow { grid-template-columns: 1fr; }
+    .tg-qr { display: none; }
+    .tg-d { display: none; }
+    .tg-m { display: inline; }
+    .toast { bottom: 92px; }
     .pf { grid-template-columns: 1fr 52px 76px; padding: 14px 16px; }
     .pf.hd { padding: 11px 16px; }
     /* 确认页：一列，账单卡排在最后 */
@@ -847,6 +888,73 @@
     .ck-swap { grid-template-columns: 1fr; gap: 10px; }
     .ck-swap > svg { transform: rotate(90deg); margin-left: 6px; }
     .ck-item { flex-wrap: wrap; }
+  }
+
+  /* ---------------- 登录页（参考 Firecrawl 的登录 / 注册两栏、次级登录方式放在按钮下面；
+     Databricks、Coinbase 的验证码页；Felt、Obvious 的「去邮箱查收」） ---------------- */
+  .out .side, .out .tabbar { display: none; }
+  .out main { margin-left: 0; padding: 0 16px; }
+  .au { width: 420px; max-width: 100%; margin: 0 auto; min-height: 100vh; padding: 9vh 0 40px; display: flex; flex-direction: column; }
+  .au [hidden] { display: none !important; }
+  .au-brand { text-align: center; margin-bottom: 26px; }
+  .au-brand .logo { display: inline-block; padding: 0; font-size: 30px; }
+  .au-brand p { margin: 8px 0 0; font-size: 14px; color: var(--text-2); }
+  .au-notice { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 0 1px var(--line); font-size: 13.5px; line-height: 1.55; }
+  .au-notice .k { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); margin-top: 1px; }
+  .au-card { border-radius: 26px; background: #fff; padding: 22px 26px 26px; box-shadow: var(--lift); }
+  .au .seg { display: flex; width: 100%; margin-bottom: 4px; background: var(--bg); box-shadow: none; }
+  .au .seg span { flex: 1; text-align: center; }
+  .au .fld:first-of-type { margin-top: 18px; }
+  .au .fld > span small { font-size: 12.5px; color: var(--text-3); margin-left: 4px; }
+  .au .fld > span a, .au .fld > span button { all: unset; cursor: pointer; color: var(--act); font-weight: 600; font-size: 13px; }
+  .fld .hint { display: block; font-style: normal; font-size: 12.5px; color: var(--text-3); margin: 7px 2px 0; }
+  .au .btn.full { margin-top: 22px; }
+  .au-ok { margin: 16px 0 0; padding: 11px 14px; border-radius: 12px; background: var(--tint); color: var(--deep); font-size: 13.5px; line-height: 1.5; }
+  .au-or { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; font-size: 12.5px; color: var(--text-3); }
+  .au-or::before, .au-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  .au-alt { display: flex; flex-direction: column; gap: 8px; }
+  .au-alt .btn { height: 46px; font-size: 14.5px; font-weight: 500; justify-content: flex-start; padding: 0 16px; gap: 12px; }
+  .au-alt .btn svg { width: 18px; height: 18px; color: var(--deep); }
+  .au-alt .btn small { margin-left: auto; font-size: 12.5px; color: var(--text-3); font-weight: 400; }
+  /* 注册的两步 */
+  .au-steps { display: flex; align-items: center; gap: 10px; margin: 18px 2px 0; font-size: 13px; color: var(--text-3); }
+  .au-steps span { display: flex; align-items: center; gap: 7px; }
+  .au-steps b { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11.5px; background: var(--bg); color: var(--text-2); }
+  .au-steps .on { color: var(--ink); font-weight: 600; }
+  .au-steps .on b { background: var(--deep); color: #fff; }
+  .au-steps .done b { background: var(--tint); color: var(--deep); }
+  .au-steps i { flex: 1; height: 1px; background: var(--line); }
+  .au-sent { margin: 16px 0 0; padding: 12px 14px; border-radius: 12px; background: var(--paper-2); box-shadow: 0 0 0 1px var(--line); font-size: 13.5px; color: var(--text-2); display: flex; justify-content: space-between; gap: 10px; }
+  .au-sent b { color: var(--ink); font-weight: 600; }
+  .au-sent button { all: unset; cursor: pointer; color: var(--act); font-weight: 600; white-space: nowrap; }
+  .fld .code.otp { font-family: var(--tw); font-size: 26px; height: 60px; letter-spacing: 0.5em; text-align: center; padding: 0 0 0 0.5em; }
+  .fld .code.otp::placeholder { font-family: var(--sans); font-size: 15px; letter-spacing: 0; color: var(--text-3); }
+  .au-cap { margin-top: 16px; height: 64px; border-radius: 12px; border: 1px dashed var(--tint-line); display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-3); }
+  .au-acts { display: flex; gap: 10px; margin-top: 22px; }
+  .au-acts .btn { height: 50px; }
+  /* 找回密码、邮件登录、快捷登录：带返回的子页 */
+  .au-back { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin: 0 0 14px -4px; padding: 4px; font-size: 14px; color: var(--text-2); }
+  .au-back svg { width: 16px; height: 16px; transform: rotate(180deg); }
+  .au-back:hover { color: var(--ink); }
+  .au-h { font-size: 21px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .au-p { font-size: 14px; color: var(--text-2); line-height: 1.6; margin: 8px 0 0; }
+  .au-p b { color: var(--ink); font-weight: 600; }
+  .au-how { margin: 18px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; counter-reset: au; }
+  .au-how li { display: flex; gap: 10px; padding: 0; font-size: 14px; line-height: 1.55; color: var(--text-2); counter-increment: au; }
+  .au-how li::before { content: counter(au); flex: none; width: 22px; height: 22px; margin-top: 0; border-radius: 50%; background: var(--tint); color: var(--deep); font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+  .au-how li b { color: var(--ink); font-weight: 600; }
+  /* 邮件已发出 */
+  .au-mail { text-align: center; padding: 8px 0 0; }
+  .au-mail .ic { width: 60px; height: 60px; margin: 6px auto 16px; border-radius: 18px; background: var(--tint); color: var(--deep); display: flex; align-items: center; justify-content: center; }
+  .au-mail .ic svg { width: 28px; height: 28px; }
+  .au-mail .au-p { margin: 10px auto 0; max-width: 320px; }
+  .au-mail .lnks { display: flex; justify-content: center; gap: 22px; margin-top: 16px; }
+  .au-mail .lnks button { all: unset; cursor: pointer; font-size: 14px; color: var(--act); font-weight: 600; }
+  .au-foot { margin-top: auto; padding-top: 28px; text-align: center; font-size: 12.5px; color: var(--text-3); }
+  @media (max-width: 959px) {
+    .au { padding: 36px 0 28px; }
+    .au-brand { margin-bottom: 22px; }
+    .au-card { padding: 18px 18px 22px; border-radius: 22px; }
   }
 </style>
 </head>
@@ -879,6 +987,8 @@
   <symbol id="i-desk" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.5L11 20l3-4.5 5 3.5 2-15z"/><path d="M9 13.5L21 4"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5v16h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/></symbol>
 </svg>
 
@@ -1792,20 +1902,19 @@
       </div>
 
       <h3>登录的设备</h3>
-      <!-- 只列网页登录；不显示 IP 和位置；当前这台置顶、不能下线；下线直接执行 -->
-      <div class="rows">
-        <div class="row static"><span class="ri"><svg class="i"><use href="#i-desk"/></svg></span><span class="rt">Chrome · macOS<span class="st ok">当前</span><small>刚刚活跃 · 登录于 10-16 09:12</small></span></div>
-        <div class="row static"><span class="ri"><svg class="i"><use href="#i-phone"/></svg></span><span class="rt">Safari · iPhone<small>2 小时前活跃 · 登录于 10-12 21:40</small></span><button class="lnk" data-kick>下线</button></div>
-        <div class="row static"><span class="ri"><svg class="i"><use href="#i-desk"/></svg></span><span class="rt">Edge · Windows<small>10-09 活跃 · 登录于 09-30 08:15</small></span><button class="lnk" data-kick>下线</button></div>
+      <!-- 只列网页登录；不显示 IP 和位置；当前这台置顶、不能下线。
+           点别的设备弹出确认（参考 Telegram iOS 的设备页、Pipedrive 的 Your devices）：写清下线影响什么、不影响什么；下线后行收起、底部提示 -->
+      <div class="rows devs">
+        <div class="row static"><span class="ri"><svg class="i"><use href="#i-desk"/></svg></span><span class="rt">Chrome · macOS<span class="st ok">这台设备</span><small>刚刚活跃 · 登录于 10-16 09:12</small></span></div>
+        <button class="row" data-dev="phone"><span class="ri"><svg class="i"><use href="#i-phone"/></svg></span><span class="rt"><b>Safari · iPhone</b><small>2 小时前活跃 · 登录于 10-12 21:40</small></span><span class="rv">下线</span></button>
+        <button class="row" data-dev="desk"><span class="ri"><svg class="i"><use href="#i-desk"/></svg></span><span class="rt"><b>Edge · Windows</b><small>10-09 活跃 · 登录于 09-30 08:15</small></span><span class="rv">下线</span></button>
       </div>
-      <p class="sec-cap" id="kick-note" hidden></p>
+      <p class="sec-cap" data-dev-tip>看到不认识的设备，先让它下线，再<button class="cap-a" data-open="pw">改密码</button>（改完其他设备会全部下线）。</p>
 
       <h3>Telegram</h3>
       <div class="tgc" data-state="unbound">
-        <!-- 未绑定：右边一个小按钮；出码：下面给 /start 指令和两个按钮；已绑定：右边是解除绑定（有确认框） -->
-        <div class="tgc-h"><span class="ri"><svg class="i"><use href="#i-send"/></svg></span><span class="rt">Telegram 提醒<small data-tg="unbound code">绑定后，到期、流量和工单回复的提醒也能发到 Telegram</small><small data-tg="bound">已绑定 <b>@zhangwei</b> · 提醒会发到这个账号</small></span><button class="btn soft sm" data-tg="unbound" data-tgto="code">绑定</button><button class="lnk" data-tg="bound" data-open="tgun">解除绑定</button></div>
-        <div class="tg-code" data-tg="code"><span>在 Telegram 里向 @pandora_example_bot 发送：</span><code>/start 7KQ2MXAB</code><small>4:52 内有效 · 发送后这里会自动变成「已绑定」</small></div>
-        <div class="tg-acts" data-tg="code"><a class="btn" data-tgto="bound">在 Telegram 中打开</a><button class="btn soft" data-tgto="bound">我已发送，完成绑定</button></div>
+        <!-- 未绑定：右边「绑定」打开绑定弹层；已绑定：显示账号，右边解除绑定（有确认框） -->
+        <div class="tgc-h"><span class="ri"><svg class="i"><use href="#i-send"/></svg></span><span class="rt">Telegram 提醒<small data-tg="unbound">绑定后，到期、流量和工单回复的提醒也能发到 Telegram</small><small data-tg="bound">已绑定 <b>@zhangwei</b> · 提醒会发到这个账号</small></span><button class="btn soft sm" data-tg="unbound" data-tg-bind>绑定</button><button class="lnk" data-tg="bound" data-open="tgun">解除绑定</button></div>
         <div class="tg-grp"><a href="#security">加入用户讨论群 ↗</a>入群申请可能需要先绑定 Telegram 并有在用的套餐</div>
       </div>
 
@@ -1819,7 +1928,7 @@
         <div class="pf-note" id="tg-note">绑定 Telegram 后可以开启 Telegram 推送。</div>
       </div>
 
-      <button class="btn soft out-btn">退出登录</button>
+      <button class="btn soft out-btn" onclick="location.hash = '#login'">退出登录</button>
     </div>
   </section>
 
@@ -1848,11 +1957,51 @@
       <div class="sh-acts"><button class="btn soft" data-close>完成</button></div>
     </div>
   </div>
+  <!-- 绑定 Telegram（参考 OKX、X 的扫码关联弹层：左边编号步骤、右边二维码；Oyster 的「换台设备扫」；快捷登录弹层的过期遮罩）：
+       打开弹层就取一次绑定码；二维码就是 t.me 深链，手机相机一扫就进机器人对话；
+       弹层开着时每 3 秒问一次绑上没有，绑上了就地变成完成页，不用再点「我已发送」 -->
+  <div class="sheet" id="sh-tg" hidden>
+    <div class="sh-card tg-card" role="dialog" aria-label="绑定 Telegram">
+      <div class="sh-top"><b>绑定 Telegram</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div data-tgs="wait gone">
+        <div class="tg-flow">
+          <ol class="au-how tg-how">
+            <li><span class="tg-d">点<b>打开 Telegram</b>。Telegram 装在手机上的话，用手机相机扫右边的码。</span><span class="tg-m">点下面的<b>打开 Telegram</b>。</span></li>
+            <li><span>在和 <b>@pandora_example_bot</b> 的对话里点<b>开始</b>。</span></li>
+            <li><span>回到这里，会自动显示绑定好了。</span></li>
+          </ol>
+          <div class="qr-box tg-qr"><svg class="qr" viewBox="0 0 29 29" aria-label="打开 Telegram 机器人的二维码" role="img"></svg><div class="qr-over" hidden><b>已过期</b><button class="btn sm" data-tg-new>重新获取</button></div></div>
+        </div>
+        <a class="btn full" href="#security" data-tg-open>打开 Telegram</a>
+        <div class="tg-wait"><i class="spin"></i><span data-tg-t>正在等你在 Telegram 里点开始 · 9:59 后过期</span></div>
+        <details class="tg-man"><summary>打不开 Telegram？手动发送</summary><p>在 Telegram 里搜 <b>@pandora_example_bot</b>，把下面这行发给它：</p><div class="linkchip"><code>/start 7KQ2MXAB</code><button data-tg-copy>复制</button></div></details>
+      </div>
+      <div class="tg-done" data-tgs="done">
+        <div class="ic"><svg class="i"><use href="#i-check"/></svg></div>
+        <b>已绑定 @zhangwei</b>
+        <p>到期、流量和工单回复的提醒会发到这个 Telegram。哪些要发，在下面的「通知方式」里选。</p>
+        <button class="btn full" data-close>完成</button>
+      </div>
+    </div>
+  </div>
+  <!-- 让某台设备下线：点行打开，内容按那一行填 -->
+  <div class="sheet" id="sh-dev" hidden>
+    <div class="sh-card" role="alertdialog" aria-label="让这台设备下线">
+      <div class="sh-top"><b>让这台设备下线？</b><button class="x" data-close aria-label="关闭">×</button></div>
+      <div class="dev-id"><span class="ri"><svg class="i"><use data-dev-ic href="#i-phone"/></svg></span><span class="rt"><b data-dev-n>Safari · iPhone</b><small data-dev-m>2 小时前活跃 · 登录于 10-12 21:40</small></span></div>
+      <ul class="dev-fx">
+        <li>那台设备再打开这里，要重新登录</li>
+        <li class="keep">已经添加到 App 里的套餐照常能用，不用重新添加</li>
+      </ul>
+      <div class="sh-acts"><button class="btn soft" data-close>取消</button><button class="btn danger" data-dev-go>下线</button></div>
+    </div>
+  </div>
+  <div class="toast" role="status" aria-live="polite"></div>
   <div class="sheet" id="sh-tgun" hidden>
     <div class="sh-card" role="alertdialog" aria-label="解除绑定 Telegram">
       <div class="sh-top"><b>解除绑定 Telegram？</b><button class="x" data-close aria-label="关闭">×</button></div>
       <p class="sh-p">将不再收到 Telegram 推送，之后可以重新绑定。</p>
-      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn danger" data-close data-tgto="unbound">解除绑定</button></div>
+      <div class="sh-acts"><button class="btn soft" data-close>再想想</button><button class="btn danger" data-close data-tg-unbind>解除绑定</button></div>
     </div>
   </div>
 
@@ -2054,8 +2203,91 @@
       <h3>设置</h3>
       <div class="rows">
         <a class="row" href="#security"><span class="ri"><svg class="i"><use href="#i-shield"/></svg></span><span class="rt">账号安全</span><svg class="i chev"><use href="#i-chev"/></svg></a>
-        <div class="row"><span class="ri"><svg class="i"><use href="#i-logout"/></svg></span><span class="rt" style="color:var(--danger)">退出登录</span></div>
+        <a class="row" href="#login"><span class="ri"><svg class="i"><use href="#i-logout"/></svg></span><span class="rt" style="color:var(--danger)">退出登录</span></a>
       </div>
+    </div>
+  </section>
+  <!-- 登录页：没有导航，单独一屏。站点名、标语、公告都由后台设置；页脚照注册方式写 -->
+  <section class="page" id="p-login">
+    <div class="au">
+      <div class="au-brand"><span class="logo">pandora</span><p>一个账号，手机和电脑都能用</p></div>
+      <div class="au-notice" data-an hidden><span class="k">公告</span><span>10 月 20 日 02:00–04:00 系统维护，期间可能无法登录和付款。</span></div>
+      <div class="au-card">
+        <!-- 登录 -->
+        <div class="av" data-av="login">
+          <div class="seg au-tabs" data-regtab><span class="on">登录</span><span data-to="reg">注册</span></div>
+          <p class="au-ok" data-ok hidden>密码已重设，所有设备上的登录都已退出，请用新密码登录。</p>
+          <label class="fld"><span>邮箱</span><input class="code" type="email" autocomplete="username" data-le-email /></label>
+          <label class="fld"><span>密码<button type="button" data-to="forgot">忘记密码？</button></span><input class="code" type="password" autocomplete="current-password" data-le-pw /><em class="err" data-le hidden>邮箱或密码不正确</em></label>
+          <button class="btn full" data-login>登录</button>
+          <div class="au-or">也可以</div>
+          <div class="au-alt">
+            <button class="btn soft" data-to="mail" data-ml><svg class="i"><use href="#i-mail"/></svg>用邮件里的链接登录<small>不用密码</small></button>
+            <button class="btn soft" data-to="quick"><svg class="i"><use href="#i-phone"/></svg>用已登录的设备登录<small>扫码或粘贴链接</small></button>
+          </div>
+        </div>
+        <!-- 注册第一步 -->
+        <div class="av" data-av="reg" hidden>
+          <div class="seg au-tabs"><span data-to="login">登录</span><span class="on">注册</span></div>
+          <div class="au-steps"><span class="on"><b>1</b>邮箱与邀请码</span><i></i><span><b>2</b>验证与密码</span></div>
+          <label class="fld"><span>邮箱</span><input class="code" type="email" autocomplete="username" value="zhang@example.test" /><em class="hint">可用邮箱：gmail.com、qq.com、outlook.com</em></label>
+          <label class="fld"><span><span>邀请码<small data-inv-need>必填，可向好友要</small><small data-inv-opt hidden>选填</small></span></span><input class="code m" autocomplete="off" spellcheck="false" data-inv /><em class="err" data-inv-err hidden>请输入邀请码</em></label>
+          <div class="au-cap" data-cap hidden>人机验证（后台开启时出现在这里）</div>
+          <button class="btn full" data-reg1>发送验证码</button>
+        </div>
+        <!-- 注册第二步 -->
+        <div class="av" data-av="reg2" hidden>
+          <div class="seg au-tabs"><span data-to="login">登录</span><span class="on">注册</span></div>
+          <div class="au-steps"><span class="done"><b>✓</b>邮箱与邀请码</span><i></i><span class="on"><b>2</b>验证与密码</span></div>
+          <p class="au-sent"><span>验证码已发送至 <b>zhang@example.test</b></span><button data-to="reg">改邮箱</button></p>
+          <label class="fld"><span>验证码</span><input class="code otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 位数字" /></label>
+          <label class="fld"><span>设置密码</span><input class="code" type="password" autocomplete="new-password" /><em class="hint">至少 8 位，同时包含字母和数字</em></label>
+          <div class="au-acts"><button class="btn soft" data-to="reg">上一步</button><button class="btn grow" data-done>完成注册</button></div>
+        </div>
+        <!-- 找回密码 -->
+        <div class="av" data-av="forgot" hidden>
+          <button class="au-back" data-to="login"><svg class="i"><use href="#i-chev"/></svg>返回登录</button>
+          <h2 class="au-h">找回密码</h2>
+          <p class="au-p">输入注册时用的邮箱，我们会发一个验证码过去。</p>
+          <label class="fld"><span>邮箱</span><input class="code" type="email" autocomplete="username" value="zhang@example.test" /></label>
+          <button class="btn full" data-to="forgot2">发送验证码</button>
+        </div>
+        <div class="av" data-av="forgot2" hidden>
+          <button class="au-back" data-to="login"><svg class="i"><use href="#i-chev"/></svg>返回登录</button>
+          <h2 class="au-h">找回密码</h2>
+          <p class="au-p">如果 <b>zhang@example.test</b> 已注册，验证码已发送，10 分钟内有效。重设后这个账号在所有设备上的登录都会退出。</p>
+          <label class="fld"><span>验证码</span><input class="code otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 位数字" /></label>
+          <label class="fld"><span>新密码</span><input class="code" type="password" autocomplete="new-password" /><em class="hint">至少 8 位，同时包含字母和数字</em></label>
+          <button class="btn full" data-reset>重设密码</button>
+        </div>
+        <!-- 邮件登录 -->
+        <div class="av" data-av="mail" hidden>
+          <button class="au-back" data-to="login"><svg class="i"><use href="#i-chev"/></svg>返回</button>
+          <h2 class="au-h">用邮件里的链接登录</h2>
+          <p class="au-p">不用输入密码：我们把登录链接发到你的邮箱，点开就能登录，15 分钟内有效。</p>
+          <label class="fld"><span>邮箱</span><input class="code" type="email" autocomplete="username" value="zhang@example.test" /></label>
+          <button class="btn full" data-to="mailsent">发送登录链接</button>
+        </div>
+        <div class="av au-mail" data-av="mailsent" hidden>
+          <div class="ic"><svg class="i"><use href="#i-mail"/></svg></div>
+          <h2 class="au-h">登录链接已发送</h2>
+          <p class="au-p">如果 <b>zhang@example.test</b> 已注册，去它的收件箱找一封来自 pandora 的邮件，点里面的按钮登录。没收到的话看看垃圾邮件。</p>
+          <button class="btn soft full" data-mail-again disabled>60 秒后可以重发</button>
+          <div class="lnks"><button data-to="mail">换个邮箱</button><button data-to="login">返回登录</button></div>
+        </div>
+        <!-- 快捷登录：和账号安全里「在新设备上登录」的二维码弹层配对 -->
+        <div class="av" data-av="quick" hidden>
+          <button class="au-back" data-to="login"><svg class="i"><use href="#i-chev"/></svg>返回</button>
+          <h2 class="au-h">用已登录的设备登录</h2>
+          <ol class="au-how">
+            <li><span>在已经登录的手机或电脑上，打开<b>账号安全 → 在新设备上登录</b>，会出现一个二维码。</span></li>
+            <li><span>用这台设备的相机扫码，直接就登录了。扫不了的话，把那边复制的链接粘贴到下面。</span></li>
+          </ol>
+          <label class="fld"><span>登录链接</span><input class="code m" autocomplete="off" spellcheck="false" placeholder="粘贴链接" data-ql-in /><em class="err" data-ql-err hidden>请粘贴完整的登录链接</em></label>
+          <button class="btn full" data-ql-go>登录</button>
+        </div>
+      </div>
+      <div class="au-foot" data-foot>pandora · 注册已开放 · 需要邀请码</div>
     </div>
   </section>
 </main>
@@ -2069,13 +2301,15 @@
 
 <script>
   // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
-  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'security', 'checkout', 'me']
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'ref', 'tickets', 'msgs', 'help', 'security', 'checkout', 'me', 'login']
   function show() {
     let p = location.hash.slice(1)
     if (!pages.includes(p)) p = 'subs'
     // 桌面没有「我的」页，落回我的套餐
     if (p === 'me' && matchMedia('(min-width: 960px)').matches) p = 'subs'
     document.querySelectorAll('.page').forEach((el) => el.classList.toggle('on', el.id === 'p-' + p))
+    // 登录页单独一屏，不带导航
+    document.body.classList.toggle('out', p === 'login')
     document.querySelectorAll('[data-p]').forEach((el) => el.classList.toggle('on', el.dataset.p === p))
     scrollTo(0, 0)
   }
@@ -2211,8 +2445,7 @@
   if (q.get('hq')) { hsIn.value = q.get('hq'); hsearch() }
   // 账号安全：快捷登录倒数、下线、Telegram 三态（?tg=code|bound 预选）、通知开关、改密码出错演示（?pe=1）
   // 二维码只是样子：按种子画三个定位角加随机点（正式门户用 common/qr.ts 真编码）
-  function drawQr(seed) {
-    const svg = document.querySelector('.qr')
+  function drawQr(seed, svg = document.querySelector('.qr')) {
     let r = seed
     const rnd = () => ((r = (r * 1103515245 + 12345) % 2147483648) / 2147483648)
     const cells = []
@@ -2232,7 +2465,7 @@
     const link = document.querySelector('.ql-link')
     const tick = () => {
       box.classList.toggle('low', left > 0 && left <= 10)
-      box.classList.toggle('gone', left <= 0)
+      box.classList.toggle('lapsed', left <= 0)
       document.querySelector('[data-ql-bar]').style.width = (left / 60) * 100 + '%'
       if (left <= 0) {
         clearInterval(qlTimer)
@@ -2253,13 +2486,34 @@
   document.querySelector('[data-ql-new]').addEventListener('click', () => ql())
   document.querySelector('[data-ql-copy]').addEventListener('click', (e) => { const b = e.currentTarget; b.textContent = '已复制'; setTimeout(() => { b.textContent = '复制' }, 1500) })
   if (q.get('w') === 'ql') ql(!!q.get('qx'))
-  document.querySelectorAll('[data-kick]').forEach((el) => el.addEventListener('click', () => {
-    const row = el.closest('.row')
-    const note = document.getElementById('kick-note')
-    note.textContent = '已将 ' + row.querySelector('.rt').firstChild.textContent + ' 下线'
-    note.hidden = false
-    row.hidden = true
+  // 底部提示
+  let toastTimer
+  function toast(text) {
+    const el = document.querySelector('.toast')
+    el.textContent = text
+    el.classList.add('on')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => el.classList.remove('on'), 2600)
+  }
+  // 设备下线：点行弹确认，确认后行收起、底部提示；?w=dev 预开
+  let devRow = document.querySelector('[data-dev]')
+  document.querySelectorAll('[data-dev]').forEach((row) => row.addEventListener('click', () => {
+    devRow = row
+    document.querySelector('[data-dev-n]').textContent = row.querySelector('.rt b').textContent
+    document.querySelector('[data-dev-m]').textContent = row.querySelector('.rt small').textContent
+    document.querySelector('[data-dev-ic]').setAttribute('href', '#i-' + row.dataset.dev)
+    sheet('dev')
   }))
+  document.querySelector('[data-dev-go]').addEventListener('click', () => {
+    sheet('')
+    const name = devRow.querySelector('.rt b').textContent
+    devRow.classList.add('leaving')
+    setTimeout(() => {
+      devRow.remove()
+      if (!document.querySelector('[data-dev]')) document.querySelector('[data-dev-tip]').textContent = '只有这台设备登录着。'
+    }, 260)
+    toast('已将 ' + name + ' 下线')
+  })
   const tgc = document.querySelector('.tgc')
   function tgState(t) {
     tgc.dataset.state = t
@@ -2268,9 +2522,42 @@
     document.querySelectorAll('[data-tgsw]').forEach((el, i) => { el.disabled = !bound || i === 0; if (!bound) el.setAttribute('aria-checked', 'false'); else if (i < 2) el.setAttribute('aria-checked', 'true') })
     document.getElementById('tg-note').hidden = bound
   }
-  document.querySelectorAll('[data-tgto]').forEach((el) => el.addEventListener('click', () => tgState(el.dataset.tgto)))
+  // 绑定 Telegram 弹层：wait（等你点开始，10 分钟，照 BindCodeTTL）/ gone（过期）/ done（绑上了）。
+  // 样稿里点「打开 Telegram」2.5 秒后当作绑上；?w=tg 预开，&tgx=gone|done 预选
+  const tgSheet = document.getElementById('sh-tg')
+  let tgTimer, tgDoneTimer
+  function tgFlow(s) {
+    clearInterval(tgTimer); clearTimeout(tgDoneTimer)
+    tgSheet.querySelectorAll('[data-tgs]').forEach((el) => { el.hidden = !el.dataset.tgs.split(' ').includes(s) })
+    const wait = tgSheet.querySelector('.tg-wait'), over = tgSheet.querySelector('.qr-over'), open = tgSheet.querySelector('[data-tg-open]'), t = tgSheet.querySelector('[data-tg-t]')
+    if (s === 'done') { tgState('bound'); return }
+    let left = s === 'gone' ? 0 : 599
+    drawQr(Math.floor(Math.random() * 1e6) + 3, tgSheet.querySelector('.qr'))
+    const tick = () => {
+      const gone = left <= 0
+      // 过期后主按钮就地变成「重新获取」，手机上看不到二维码也不会卡住
+      wait.classList.toggle('lapsed', gone); over.hidden = !gone
+      open.textContent = gone ? '重新获取' : '打开 Telegram'
+      open.dataset.gone = gone ? '1' : ''
+      t.textContent = gone ? '绑定码已过期（10 分钟有效）' : '正在等你在 Telegram 里点开始 · ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' 后过期'
+      if (gone) clearInterval(tgTimer)
+      left--
+    }
+    tick()
+    if (s !== 'gone') tgTimer = setInterval(tick, 1000)
+  }
+  document.querySelector('[data-tg-bind]').addEventListener('click', () => { tgFlow('wait'); sheet('tg') })
+  tgSheet.querySelector('[data-tg-new]').addEventListener('click', () => tgFlow('wait'))
+  tgSheet.querySelector('[data-tg-open]').addEventListener('click', (e) => {
+    e.preventDefault()
+    if (e.currentTarget.dataset.gone) tgFlow('wait')
+    else tgDoneTimer = setTimeout(() => tgFlow('done'), 2500)
+  })
+  tgSheet.querySelector('[data-tg-copy]').addEventListener('click', (e) => { const b = e.currentTarget; b.textContent = '已复制'; setTimeout(() => { b.textContent = '复制' }, 1500) })
+  document.querySelector('[data-tg-unbind]').addEventListener('click', () => { tgState('unbound'); toast('已解除绑定') })
   document.querySelectorAll('.sw').forEach((el) => el.addEventListener('click', () => el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true')))
-  tgState(['code', 'bound'].includes(q.get('tg')) ? q.get('tg') : 'unbound')
+  tgState(q.get('tg') === 'bound' ? 'bound' : 'unbound')
+  if (q.get('w') === 'tg') tgFlow(['gone', 'done'].includes(q.get('tgx')) ? q.get('tgx') : 'wait')
   if (q.get('pe')) { const f = document.querySelector('#sh-pw .fld'); f.querySelector('.code').classList.add('bad'); f.querySelector('.err').hidden = false }
   // 确认页：?ck= 选哪种；点「买多久」换账单；余额开关、付款方式、优惠码、起名都在页面里算。?ckx=pending 演示「还有一张没付的单」
   const ck = ['renew', 'change', 'new', 'stack', 'reset', 'land'].includes(q.get('ck')) ? q.get('ck') : 'renew'
@@ -2384,6 +2671,59 @@
   palHref()
   addEventListener('hashchange', palHref)
   document.body.append(bar)
+  // 登录页：?av=login|reg|reg2|forgot|forgot2|mail|mailsent|quick 预选一屏；?reg=open|invite|closed（默认 invite）；
+  // ?ml=0 后台没开邮件登录；?an=1 显示登录页公告；?cap=1 显示人机验证的位置；?le=1 演示密码错误；?ok=1 演示刚重设完密码；?invite=CODE 邀请链接带来的码
+  const REG = ['open', 'invite', 'closed'].includes(q.get('reg')) ? q.get('reg') : 'invite'
+  const au = document.querySelector('.au')
+  let mailTimer = 0
+  function av(v) {
+    if (REG === 'closed' && v.startsWith('reg')) v = 'login'
+    au.querySelectorAll('.av').forEach((el) => { el.hidden = el.dataset.av !== v })
+    au.querySelector('[data-ok]').hidden = true
+    clearInterval(mailTimer)
+    if (v === 'mailsent') {
+      const b = au.querySelector('[data-mail-again]')
+      let n = 60
+      const tick = () => { b.disabled = n > 0; b.textContent = n > 0 ? `${n} 秒后可以重发` : '重新发送'; n-- }
+      tick()
+      mailTimer = setInterval(() => { tick(); if (n < 0) clearInterval(mailTimer) }, 1000)
+    }
+  }
+  au.querySelectorAll('[data-to]').forEach((el) => el.addEventListener('click', () => av(el.dataset.to)))
+  au.querySelector('[data-mail-again]').addEventListener('click', () => av('mailsent'))
+  au.querySelector('[data-foot]').textContent = { open: 'pandora · 注册已开放', invite: 'pandora · 注册已开放 · 需要邀请码', closed: 'pandora · 注册已关闭' }[REG]
+  if (REG === 'closed') au.querySelector('[data-regtab]').hidden = true
+  if (REG === 'open') { au.querySelector('[data-inv-need]').hidden = true; au.querySelector('[data-inv-opt]').hidden = false }
+  if (q.get('ml') === '0') au.querySelector('[data-ml]').hidden = true
+  if (q.get('an')) au.querySelector('[data-an]').hidden = false
+  if (q.get('cap')) au.querySelector('[data-cap]').hidden = false
+  if (q.get('invite')) au.querySelector('[data-inv]').value = q.get('invite').toUpperCase()
+  // 登录：密码空着报「请输入邮箱和密码」，填了就进我的套餐
+  const leEmail = au.querySelector('[data-le-email]'), lePw = au.querySelector('[data-le-pw]'), leErr = au.querySelector('[data-le]')
+  au.querySelector('[data-login]').addEventListener('click', () => {
+    if (!leEmail.value.trim() || !lePw.value) { leErr.textContent = '请输入邮箱和密码'; leErr.hidden = false; lePw.classList.add('bad'); return }
+    location.hash = '#subs'
+  })
+  lePw.addEventListener('input', () => { leErr.hidden = true; lePw.classList.remove('bad') })
+  // 注册第一步：要邀请码时空着不放行
+  const inv = au.querySelector('[data-inv]'), invErr = au.querySelector('[data-inv-err]')
+  inv.addEventListener('input', () => { inv.value = inv.value.toUpperCase(); invErr.hidden = true; inv.classList.remove('bad') })
+  au.querySelector('[data-reg1]').addEventListener('click', () => {
+    if (REG === 'invite' && !inv.value.trim()) { invErr.hidden = false; inv.classList.add('bad'); return }
+    av('reg2')
+  })
+  au.querySelector('[data-done]').addEventListener('click', () => { location.hash = '#subs' })
+  au.querySelector('[data-reset]').addEventListener('click', () => { av('login'); leEmail.value = 'zhang@example.test'; au.querySelector('[data-ok]').hidden = false })
+  // 快捷登录：粘贴的不像链接就报错
+  const qlIn = au.querySelector('[data-ql-in]'), qlErr = au.querySelector('[data-ql-err]')
+  au.querySelector('[data-ql-go]').addEventListener('click', () => {
+    if (!/quick-login\/\w{8,}/.test(qlIn.value)) { qlErr.hidden = false; qlIn.classList.add('bad'); return }
+    location.hash = '#subs'
+  })
+  qlIn.addEventListener('input', () => { qlErr.hidden = true; qlIn.classList.remove('bad') })
+  av(q.get('av') || 'login')
+  if (q.get('le')) { leEmail.value = 'zhang@example.test'; lePw.value = 'password1'; leErr.hidden = false; lePw.classList.add('bad') }
+  if (q.get('ok')) { leEmail.value = 'zhang@example.test'; au.querySelector('[data-ok]').hidden = false }
 </script>
 </body>
 </html>
