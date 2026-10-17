@@ -13,344 +13,92 @@
   gap: 12px;
 }
 
-/* 模板逐行列表 */
-.templateList {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--text);
-}
-
-.templateRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 24px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.templateRowPaused {
-  opacity: 0.6;
-}
-
-.tplFaceCol {
+/* 样稿 .face 模板面额块 */
+.face {
+  width: 108px;
   flex: none;
-  width: 120px;
 }
 
-.tplFace {
-  font-size: 22px;
+.faceNum {
+  display: block;
+  font-size: 17px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 
-.tplKind {
-  color: var(--text-3);
+.faceKind {
+  display: block;
   font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.3;
 }
 
-.tplMainCol {
-  flex: 1 1 260px;
-  min-width: 0;
+/* 批次表当前选中行高亮：样稿 tbody tr.cur td { background: var(--active); } */
+.cur td {
+  background: var(--surface-3);
 }
 
-.tplTitleLine {
+.subLine {
+  display: block;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.warnText {
+  color: var(--warn);
+}
+
+/* 样稿 .link-d 与 .link-b：文字按钮 */
+.linkD {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.linkD:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.linkD:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.linkB {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--info);
+}
+
+.linkB:hover:not(:disabled) {
+  opacity: 0.8;
+}
+
+.linkB:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 表尾左右布局 */
+.tfootRow {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.tfootBtns {
+  display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.tplName {
-  font-weight: 600;
-}
-
-.typeTag {
-  padding: 1px 7px;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.tplMetaLine {
-  margin-top: 2px;
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-.tplActionsCol {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.tplGenBtn {
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--text);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.tplGenBtn:hover {
-  opacity: 0.8;
-}
-
-.tplGenBtn:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.tplPauseBtn {
-  height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.tplPauseBtn:hover {
-  color: var(--text);
-}
-
-.tplPauseBtn:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.tplPauseBtn:disabled,
-.tplGenBtn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-/* 批次与卡码视图 */
-.batchesStack {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.tableWrap {
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-top: 1px solid var(--text);
-  border-bottom: 1px solid var(--border-strong);
-}
-
-.dataTable {
-  width: 100%;
-  min-width: 700px;
-  border-collapse: collapse;
-}
-
-.th {
-  padding: 8px 14px 8px 0;
-  border-bottom: 1px solid var(--border-strong);
-  color: var(--text-3);
-  font-size: 12px;
-  font-weight: 400;
-  text-align: left;
-}
-
-.thRight {
-  text-align: right;
-}
-
-.thQty {
-  width: 90px;
-}
-
-.thAction {
-  width: 100px;
-  padding-right: 0;
-}
-
-.batchTr {
-  border-top: 1px solid var(--border);
-  cursor: pointer;
-}
-
-.batchTr:first-child {
-  border-top: 0;
-}
-
-.batchTrSelected {
-  background: var(--surface-2);
-  box-shadow: inset 2px 0 0 var(--text);
-}
-
-.batchTd {
-  padding: 10px 14px 10px 8px;
-}
-
-.batchTdStandard {
-  padding: 10px 14px 10px 0;
-}
-
-.batchTdQty {
-  padding: 10px 14px 10px 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-align: right;
-}
-
-.batchTdExport {
-  padding: 10px 14px 10px 0;
-  font-size: 12px;
-}
-
-.batchTdBtn {
-  padding: 10px 0;
-  text-align: right;
-}
-
-.exportPending {
-  color: var(--warn);
-}
-
-.exportDone {
-  color: var(--text-3);
-}
-
-.textActionBtn {
-  height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.textActionBtn:hover:not(:disabled) {
-  text-decoration: underline;
-}
-
-.textActionBtn:disabled {
-  color: var(--text-3);
-  cursor: not-allowed;
-}
-
-.textActionBtn:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-/* 卡码区块 */
-.codesSection {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--text);
-}
-
-.codesHeader {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 0 10px;
-}
-
-.codesTitle {
-  flex: 1;
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.codeStatusSelect {
-  flex: none;
-  width: 120px;
-}
-
-.codeGridRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) 60px;
-  gap: 12px;
-  align-items: center;
-  padding: 9px 0;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.codeText {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.whoText {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rightAlign {
-  text-align: right;
-}
-
-.dangerBtn {
-  color: var(--danger) !important;
-}
-
-.emptyBlock {
-  padding: 28px 0;
-  border-top: 1px solid var(--border);
-  color: var(--text-3);
-  text-align: center;
-  font-size: 13px;
-}
-
-/* 使用记录表格 */
-.usagesTable {
-  width: 100%;
-  min-width: 680px;
-  border-collapse: collapse;
-}
-
-.usageTr {
-  border-top: 1px solid var(--border);
-}
-
-.usageTr:first-child {
-  border-top: 0;
-}
-
-.usageTd {
-  padding: 9px 14px 9px 0;
-  font-size: 12px;
-}
-
-.usageTdMono {
-  padding: 9px 14px 9px 0;
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.usageTdRight {
-  padding: 9px 0;
-  text-align: right;
-  font-size: 12px;
-}
-
-/* 弹窗中的小块 */
+/* 弹窗中的小块（GenerateCodes 与 TemplateDrawer 引用） */
 .formSection {
   display: flex;
   flex-direction: column;
@@ -455,18 +203,4 @@
   .prizeRow {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
-}
-
-.subLine {
-  display: block;
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-.thTime {
-  width: 120px;
-}
-
-.usageTdMuted {
-  color: var(--text-2);
 }
