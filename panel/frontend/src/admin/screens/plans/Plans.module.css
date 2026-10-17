@@ -4,15 +4,11 @@
  * ========================================================================= */
 
 /* --- 列表 --- */
+/* 筛选条与表格之间 12（样稿 .filters 的下边距） */
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-16);
-}
-
-/* 状态筛选下拉的宽度 */
-.statusSelect {
-  width: 120px;
+  gap: 12px;
 }
 
 /* 单元格两行布局：主行 + 灰色小字 */
@@ -32,29 +28,32 @@
 
 .nameText {
   overflow: hidden;
-  font-weight: var(--fw-semibold);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.nameTag {
-  flex: none;
-}
-
-/* 灰色小字（代码、价格副行、额度副行） */
+/* 灰色小字（代码、价格副行、额度副行），单独一行 */
 .subText {
+  display: block;
   overflow: hidden;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 等宽（价格、有效订阅数） */
+/* 等宽数字（价格、有效订阅数） */
 .monoText {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* 等宽（套餐代码） */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 线路警告色 */
@@ -62,9 +61,9 @@
   color: var(--warn);
 }
 
-/* 已归档整行降透明度（每格内容外包一层） */
-.archived {
-  opacity: 0.6;
+/* 已归档：整行半透明（Table 的 rowClassName） */
+.archivedRow > td {
+  opacity: 0.5;
 }
 
 /* 窄屏防竖排：主文字单行不换行 */

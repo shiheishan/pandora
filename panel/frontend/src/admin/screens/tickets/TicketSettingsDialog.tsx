@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Switch, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
-import css from './Tickets.module.css'
+import css from './Composer.module.css'
 
 const SETTINGS_KEY = ['admin', 'tickets', 'settings'] as const
 

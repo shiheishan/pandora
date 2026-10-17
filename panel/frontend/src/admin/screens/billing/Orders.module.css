@@ -1,0 +1,118 @@
+/* 订单列表与详情页共用样式 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.small {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.manualTag {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tone_ok {
+  color: var(--ok);
+}
+
+.tone_warn {
+  color: var(--warn);
+}
+
+.tone_danger {
+  color: var(--danger);
+}
+
+.tone_info {
+  color: var(--info);
+}
+
+.tone_neutral {
+  color: var(--text-3);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--h-control-sm);
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+}
+
+.chipClose {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.chipClose:hover {
+  background: var(--surface-3);
+}
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.dialogText {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.footerText {
+  color: var(--text-2);
+}
+
+
+/* 只在手机（≤639）显示：被 hideOnMobile 收起的列，把要紧的信息挪到留下的格里（样稿 .m-only） */
+.mOnly {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .mOnly {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-3);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+  }
+}

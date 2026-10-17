@@ -1,75 +1,95 @@
-/* 用户组页：页头 + 整宽表格 + 页脚 */
-.page {
+/* 用户组页签（样稿 admin-v4）：页头由外框画，本页只有 boxed 表格 + 表尾与两个弹窗 */
+
+/* 停用的行整行变淡，操作列（最后一格）不淡（样稿 .dimrow） */
+.dimRow td:not(:last-child) {
+  opacity: 0.5;
+}
+
+/* 用户组列的两行 */
+.stack {
   display: flex;
   flex-direction: column;
-  gap: var(--space-16);
+  gap: 2px;
   min-width: 0;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  min-width: 0;
-}
-
-.header h2 {
-  margin: 0;
-  font-size: var(--fs-h3);
-  font-weight: var(--fw-semibold);
-}
-
-.tableWrap {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-
-.tableWrap table {
-  table-layout: fixed;
-}
-
-.tableWrap td {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-8) var(--space-16);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.footHint {
-  color: var(--text-3);
 }
 
 .groupName {
   font-weight: var(--fw-medium);
 }
 
+/* 第二行：描述 · 标识（样稿 td .sub2） */
+.sub {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* 灰字（节点池、被引用两列，样稿 .dim / .muted） */
+.muted {
+  color: var(--text-3);
+}
+
+/* 操作列（样稿 .pact）：四个文字操作，间隔 12px */
 .rowActions {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  font-size: var(--fs-caption);
+  gap: var(--space-12);
+  white-space: nowrap;
 }
 
-.actionSep {
-  width: 1px;
-  height: 12px;
-  margin: 0 2px;
-  background: var(--border-strong);
+/* 「查看成员」（样稿 .link-b）：蓝字 13px，后台悬停本就不加下划线 */
+.viewLink {
+  color: var(--info);
+  font-size: 13px;
+  text-decoration: none;
 }
 
+.viewLink:hover {
+  color: var(--info);
+}
+
+/* 「停用 / 启用」「删除」（样稿 .link-d）：灰字悬停变红；多套一层类压过 ui Button ghost 的悬停提色 */
+.rowActions .dangerHover:not(:disabled):hover {
+  color: var(--danger);
+}
+
+/* 表尾（样稿 .tfoot；容器由 ui Table 的 footer 提供，这里只排内容） */
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  color: var(--text-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.footSpacer {
+  flex: 1;
+}
+
+.footHint {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+@media (max-width: 639px) {
+  .footHint {
+    display: none;
+  }
+}
+
+/* ===========================================================================
+ * 弹窗（编辑 / 新建共用）
+ * ========================================================================= */
 .formStack {
   display: flex;
   flex-direction: column;
@@ -119,3 +139,9 @@
   color: var(--text);
 }
 
+/* 手机上隐藏的行内操作（样稿 .hide-m） */
+@media (max-width: 639px) {
+  .rowActions .hideMobile {
+    display: none;
+  }
+}

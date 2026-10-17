@@ -9,6 +9,7 @@ import {
   activePrices,
   activeTierPrice,
   autoCode,
+  basicFacts,
   basicBody,
   basicForm,
   basicProblems,
@@ -38,6 +39,7 @@ import {
   parseAmount,
   parseOptionalInt,
   periodLabel,
+  perMonthNote,
   planListView,
   planSubtitle,
   poolBindingWarning,
@@ -303,7 +305,7 @@ describe('detail shell', () => {
   })
 
   it('builds subtitle and liveness', () => {
-    expect(planSubtitle(planDetail())).toBe('订阅套餐 · standard · 12 个有效订阅')
+    expect(planSubtitle(planDetail())).toBe('订阅套餐 · 12 个有效订阅')
     expect(isLive(planDetail())).toBe(true)
     expect(isLive(planDetail({ status: 'archived' }))).toBe(false)
     expect(draftVersion(planDetail())).toBeUndefined()
@@ -317,44 +319,49 @@ describe('detail shell', () => {
 describe('overviewNotes', () => {
   it('describes archived plans', () => {
     const notes = overviewNotes(planDetail({ status: 'archived', pool_ids: [], allow_new_purchase: false }))
-    expect(notes).toEqual(['已归档：用户端不再展示、不能新购，老用户不能续费，已有订阅到期后结束。'])
+    expect(notes).toEqual([{ text: '已归档：用户端不再展示、不能新购，老用户不能续费，已有订阅到期后结束。' }])
   })
 
   it('warns about empty lines and no deliverable nodes', () => {
-    expect(overviewNotes(planDetail({ pool_ids: [] }))[0]).toContain('还没有绑定线路')
-    expect(overviewNotes(planDetail({ node_count: 0 }))[0]).toContain('没有可下发的节点')
+    expect(overviewNotes(planDetail({ pool_ids: [] }))[0]!.text).toContain('还没有绑定线路')
+    expect(overviewNotes(planDetail({ pool_ids: [] }))[0]!.action).toEqual({ label: '去线路', tab: 'pools' })
+    expect(overviewNotes(planDetail({ node_count: 0 }))[0]!.text).toContain('没有可下发的节点')
+    expect(overviewNotes(planDetail({ node_count: 0 }))[0]!.action).toEqual({ label: '去线路', tab: 'pools' })
   })
 
   it('explains closed new purchase per kind', () => {
-    expect(overviewNotes(planDetail({ allow_new_purchase: false }))[0]).toContain('已有订阅照常续费')
-    expect(overviewNotes(planDetail({ kind: 'one_time', allow_new_purchase: false }))[0]).toContain('已买的照常用到期')
+    expect(overviewNotes(planDetail({ allow_new_purchase: false }))[0]!.text).toContain('已有订阅照常续费')
+    expect(overviewNotes(planDetail({ kind: 'one_time', allow_new_purchase: false }))[0]!.text).toContain('已买的照常用到期')
   })
 
   it('explains draft versions', () => {
     const draft = version({ id: 'v2', version: 2, status: 'draft', published_at: null })
     const p = planDetail({ status: 'draft', versions: [draft], version: null })
-    expect(overviewNotes(p)).toContain('还没上架：发布草稿 v2 后开始售卖。')
+    expect(overviewNotes(p).map((n) => n.text)).toContain('还没上架：发布草稿 v2 后开始售卖。')
+    expect(overviewNotes(p)[0]!.action).toEqual({ label: '去发布', tab: 'versions' })
     const live = planDetail({ versions: [version(), draft], draft_version: 2 })
-    expect(overviewNotes(live)).toContain('有一个未发布的草稿 v2：发布后新购使用它，老用户下个周期切换。')
-    expect(overviewNotes(planDetail({ kind: 'one_time', versions: [version(), draft], draft_version: 2 }))).toContain(
+    expect(overviewNotes(live).map((n) => n.text)).toContain('有一个未发布的草稿 v2：发布后新购使用它，老用户下个周期切换。')
+    expect(overviewNotes(live).find((n) => n.text.includes('未发布的草稿'))!.action).toEqual({ label: '去发布', tab: 'versions' })
+    expect(overviewNotes(planDetail({ kind: 'one_time', versions: [version(), draft], draft_version: 2 })).map((n) => n.text)).toContain(
       '有一个未发布的草稿 v2：发布后新购使用它，已买的不受影响。',
     )
   })
 })
 
 describe('overviewGroups', () => {
-  it('renders basic, usage, reset off, sales for a subscription', () => {
+  it('renders usage, reset off, sales for a subscription', () => {
     const groups = overviewGroups(planDetail({ description: null, reset: null }))
-    expect(groups.map((g) => g.key)).toEqual(['basic', 'usage', 'reset', 'sales'])
-    expect(groups[0]!.rows).toEqual([
-      { k: '名称', v: '标准套餐' },
-      { k: '代码', v: 'standard', mono: true },
-      { k: '说明', v: '未填写', muted: true },
+    expect(groups.map((g) => g.key)).toEqual(['usage', 'reset', 'sales'])
+    expect(groups[0]!.rows[0]).toEqual({ k: '每周期流量', v: '10.0 GB' })
+    expect(groups[0]!.rows[3]).toEqual({ k: '版本', v: 'v1' })
+    expect(groups[1]!.rows).toEqual([{ k: '状态', v: '未开启', muted: true }])
+    expect(groups[2]!.rows).toEqual([
+      { k: '可见范围', v: '所有人可见' },
+      { k: '新购', v: '允许' },
+      { k: '续费', v: '允许' },
+      { k: '从其他套餐变更', v: '允许' },
+      { k: '推荐标记', v: '无' },
     ])
-    expect(groups[1]!.rows[0]).toEqual({ k: '每周期流量', v: '10.0 GB' })
-    expect(groups[1]!.rows[3]).toEqual({ k: '版本', v: 'v1' })
-    expect(groups[2]!.rows).toEqual([{ k: '状态', v: '未开启', muted: true }])
-    expect(groups[3]!.rows[1]).toEqual({ k: '新购 / 续费 / 变更', v: '允许 · 允许 · 允许' })
   })
 
   it('renders reset on, group visibility and draft version note', () => {
@@ -374,12 +381,13 @@ describe('overviewGroups', () => {
     ])
     const sales = groups.find((g) => g.key === 'sales')!
     expect(sales.rows[0]).toEqual({ k: '可见范围', v: '指定用户组可见 · 2 个用户组' })
-    expect(groups[1]!.rows[3]).toEqual({ k: '版本', v: 'v1 · 草稿 v2 待发布' })
+    expect(groups[0]!.rows[3]).toEqual({ k: '版本', v: 'v1 · 草稿 v2 待发布' })
   })
 
-  it('renders the one-time price group last', () => {
+  it('renders the one-time price group last without renewal row in sales', () => {
     const p = planDetail({ kind: 'one_time', allow_renewal: false, prices: [price({ id: 'o', billing_interval: 'one_time', unit_amount: 9900, validity_days: 90 })] })
     const groups = overviewGroups(p)
+    expect(groups.find((g) => g.key === 'sales')!.rows.map((r) => r.k)).toEqual(['可见范围', '新购', '从其他套餐变更', '推荐标记'])
     expect(groups[groups.length - 1]).toEqual({
       key: 'once',
       title: '价格与有效期',
@@ -394,6 +402,25 @@ describe('overviewGroups', () => {
   })
 })
 
+describe('basicFacts', () => {
+  it('subscription with description', () => {
+    expect(basicFacts(planDetail({ description: '说明文字' }))).toEqual([
+      { k: '名称', v: '标准套餐' },
+      { k: '代码', v: 'standard', mono: true },
+      { k: '说明', v: '说明文字' },
+      { k: '类型', v: '订阅套餐', hint: '按时间算，每周期清零' },
+    ])
+  })
+  it('one-time without description', () => {
+    expect(basicFacts(planDetail({ kind: 'one_time', description: null }))).toEqual([
+      { k: '名称', v: '标准套餐' },
+      { k: '代码', v: 'standard', mono: true },
+      { k: '说明', v: '未填写', muted: true },
+      { k: '类型', v: '一次性套餐', hint: '按流量算，用完即止' },
+    ])
+  })
+})
+
 describe('price lists', () => {
   it('lists live prices first by tier then archived by created_at desc', () => {
     const p = planDetail({
@@ -404,7 +431,15 @@ describe('price lists', () => {
       ],
     })
     expect(priceListRows(p).map((r) => r.id)).toEqual(['y', 'a2', 'a1'])
-    expect(priceListRows(p)[0]).toEqual({ id: 'y', label: '每年', amount: '¥258.00', active: true, tier: 'year:1' })
+    expect(priceListRows(p)[0]).toEqual({ id: 'y', label: '每年', amount: '¥258.00', active: true, tier: 'year:1', note: '折合每月 ¥21.50' })
+  })
+
+  it('computes perMonthNote', () => {
+    expect(perMonthNote(45000, 12, 4500)).toBe('折合每月 ¥37.50，省 17%')
+    expect(perMonthNote(25800, 12, null)).toBe('折合每月 ¥21.50')
+    expect(perMonthNote(4500, 1, 4500)).toBe('')
+    expect(perMonthNote(30000, 12, 2500)).toBe('折合每月 ¥25.00')
+    expect(perMonthNote(0, 12, 2500)).toBe('')
   })
 
   it('finds the active tier price', () => {

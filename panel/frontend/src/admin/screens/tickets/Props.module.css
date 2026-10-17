@@ -1,0 +1,157 @@
+.props {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 4px 0 16px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.props h4 {
+  margin: 0;
+  padding: 14px 16px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.pr {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.pr > span:first-child {
+  color: var(--text-3);
+}
+
+.fieldBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.closedReason {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.v {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.v span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.link {
+  color: var(--info);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.pd {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pd_low {
+  background: var(--border-hover);
+}
+
+.pd_normal {
+  background: var(--text-3);
+}
+
+.pd_high {
+  background: var(--warn);
+}
+
+.pd_urgent {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.sla {
+  margin: 2px 16px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.slaRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.slaRow + .slaRow {
+  border-top: 1px solid var(--border);
+}
+
+.slaLabel {
+  color: var(--text-3);
+  flex: 1;
+}
+
+.sla_danger {
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+.sla_warn {
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.sla_ok {
+  color: var(--ok);
+  white-space: nowrap;
+}
+
+.sla_neutral {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.escalate {
+  margin: 14px 16px 0;
+  width: calc(100% - 32px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.hint {
+  margin: 6px 16px 0;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+}

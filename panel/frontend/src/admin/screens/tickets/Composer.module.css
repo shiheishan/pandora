@@ -1,0 +1,300 @@
+/* 回复框根（样稿 .cmp） */
+.composer {
+  margin: 8px 16px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.composer:focus-within {
+  border-color: var(--border-hover);
+}
+
+.composer.note {
+  border-style: dashed;
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+}
+
+/* 快捷回复行（样稿 .qr） */
+.macros {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 0;
+  /* 不裁切：「全部 N」浮层从这一行向上弹出；放不下时 chip 自己缩短省略 */
+  min-width: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.macroLabel {
+  flex: none;
+}
+
+.macroHint {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* chip（样稿 .chip） */
+.macro,
+.macroAll {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  max-width: 160px;
+  height: 24px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 文字 chip 用块级才能省略号截断 */
+.macro {
+  display: block;
+  line-height: 22px;
+}
+
+.macro:hover,
+.macroAll:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.macroAllWrap {
+  position: relative;
+  flex: none;
+}
+
+.macroAll {
+  flex: none;
+  gap: 4px;
+  max-width: none;
+}
+
+.macroAllOpen {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.macroAllCaret {
+  flex: none;
+}
+
+.macroAllScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.macroAllPanel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--popover-shadow);
+}
+
+.macroAllSearch {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.macroAllList {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.macroAllItem {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.macroAllItem:hover {
+  background: var(--surface-2);
+}
+
+.macroAllTitle {
+  font-size: 12.5px;
+  font-weight: var(--fw-medium);
+}
+
+.macroAllBody {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macroAllEmpty {
+  padding: 20px 12px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-align: center;
+}
+
+.macroManage {
+  all: unset;
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.macroManage:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 样稿 .cmp textarea */
+.textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.55;
+  resize: vertical;
+  outline: none;
+}
+
+.textarea::placeholder {
+  color: var(--text-3);
+}
+
+.error {
+  margin: 0;
+  padding: 0 12px 6px;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+/* 底栏（样稿 .cbar） */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 8px 12px;
+}
+
+/* 快捷回复管理 / 工单设置表单 */
+.macroForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.macroList {
+  display: flex;
+  flex-direction: column;
+  max-height: max(160px, calc(100vh - 360px));
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.macroItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.macroItem:last-child {
+  border-bottom: 0;
+}
+
+.macroText {
+  flex: 1;
+  min-width: 0;
+}
+
+.macroTitle {
+  font-weight: var(--fw-medium);
+}
+
+.macroBody {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macroActionDanger {
+  color: var(--danger);
+}
+
+.macroActionDanger:hover {
+  background: var(--danger-tint);
+}
+
+@media (max-width: 639px) {
+  .composer {
+    margin: 8px 10px 10px;
+  }
+
+  .macros > button.macro:nth-of-type(n + 3) {
+    display: none;
+  }
+}

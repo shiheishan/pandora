@@ -1,129 +1,106 @@
 /* ===========================================================================
- * 页面外壳：顶部工具栏在双栏外，双栏只有顶部一条墨线（10-16 设计稿）
+ * 工单页三栏骨架与左栏（列表）样式（按样稿 admin-v4 还原）
+ * 全幅模式：页面占据全高网格，两列：340px minmax(0, 1fr)
  * ========================================================================= */
 .screen {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-}
-
-.page {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  /* 设计稿 minmax(240, 340)；960 宽时内容区只剩 ~700，左栏按比例收，别把右栏挤到三行控件 */
-  grid-template-columns: minmax(240px, min(340px, 38%)) minmax(0, 1fr);
-  height: calc(100vh - 240px);
-  min-height: 520px;
-  overflow: hidden;
-  border: 0;
-  border-top: 1px solid var(--text);
-  border-radius: 0;
+  grid-template-columns: 340px minmax(0, 1fr);
   background: var(--surface);
 }
 
-.spacer {
+/* 栏间与行内弹性空白 */
+.sp {
   flex: 1;
 }
 
-/* -------------------------------------------------------------------------
- * 手机（≤639px）：双栏变单栏，按选中态用 pickList / pickDetail 二选一显示；
- * 两个修饰类只在窄屏生效，宽屏两栏照旧
- * ------------------------------------------------------------------------- */
-@media (max-width: 639px) {
-  .page {
-    grid-template-columns: minmax(0, 1fr);
-    height: auto;
-    min-height: 0;
-    overflow: visible;
-  }
-
-  /* 没选中：只显示左栏列表（第一个子元素），隐藏右栏详情 */
-  .page.pickList > :last-child {
-    display: none;
-  }
-
-  /* 已选中：只显示右栏详情（最后一个子元素），隐藏左栏列表 */
-  .page.pickDetail > :first-child {
-    display: none;
-  }
-
-  /* 详情栏在窄屏不再有固定高度，改由对话区自己撑开 */
-  .page.pickDetail .messages {
-    max-height: 60vh;
-  }
-}
-
-/* 窄屏选中时显示在双栏上方的「返回工单列表」文字按钮，宽屏隐藏 */
-.pickBack {
-  display: none;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-caption);
-  text-align: left;
-  cursor: pointer;
-}
-
-.pickBack:hover {
-  color: var(--text);
-}
-
-@media (max-width: 639px) {
-  .pickBack {
-    display: inline-block;
-  }
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-}
-
 /* ===========================================================================
- * 左栏：筛选、搜索、列表
+ * 左栏（Queue）：列表栏
  * ========================================================================= */
 .queue {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--surface-3);
+  border-right: 1px solid var(--border);
 }
 
-.queueHead {
+/* 栏头 52 高，内边距 0 8px 0 16px */
+.head {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding: 10px;
-  border-bottom: 1px solid var(--surface-3);
+  align-items: center;
+  gap: 2px;
+  height: 52px;
+  padding: 0 8px 0 16px;
+  flex: none;
 }
 
-/* 五个筛选页签挤在 340 宽里：每段等分 */
+.head h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.count {
+  margin-left: 8px;
+  font-size: 13px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「⋯」更多操作按钮（样稿 .ib） */
+.moreBtn {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.moreBtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.help {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 搜索框行（样稿 .tks） */
+.search {
+  padding: 0 12px;
+  flex: none;
+}
+
+/* 筛选页签（样稿 .tkf） */
 .filters {
-  display: flex;
-  width: 100%;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--border);
+  flex: none;
 }
 
-/* 压过 ui/FilterTabs 的 .tab 内边距：五段等分，不留两侧空白 */
-.filters > button[role='radio'] {
-  flex: 1;
-  min-width: 0;
-  padding-inline: 2px;
-}
-
-.queueList {
+/* 工单列表可滚动容器（样稿 .tkis） */
+.list {
   flex: 1;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-.queueSkeleton {
+.skeleton {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: var(--space-12);
+  gap: 8px;
+  padding: 12px;
 }
 
 .rows {
@@ -132,15 +109,15 @@
   list-style: none;
 }
 
+/* 列表单行（样稿 .tki） */
 .row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-12) 14px;
-  border-bottom: 1px solid var(--surface-2);
-  background: var(--surface);
-  color: var(--text);
+  display: block;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
   text-decoration: none;
+  color: var(--text);
 }
 
 .row:hover {
@@ -148,573 +125,161 @@
   color: var(--text);
 }
 
-.rowOn,
+.rowOn {
+  background: var(--surface-3);
+}
+
 .rowOn:hover {
   background: var(--surface-3);
 }
 
-.rowTop {
+.rowOn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text);
+}
+
+/* 第一行：优先级圆点 + 标题 + 等待时长 */
+.r1 {
   display: flex;
   align-items: center;
-  gap: var(--space-8);
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.r1 b {
+  flex: 1;
   min-width: 0;
-}
-
-.pri {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.pri_low {
-  background: var(--border-hover);
-}
-
-.pri_mid {
-  background: var(--warn);
-}
-
-.pri_high {
-  background: var(--danger);
-}
-
-.no {
-  min-width: 0;
+  font-weight: 400;
   overflow: hidden;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.rowBottom {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-8);
-  min-width: 0;
+.rowUnread .r1 b {
+  font-weight: 600;
 }
 
-.escalatedMark {
-  color: var(--danger);
-  font-size: var(--fs-caption);
-  white-space: nowrap;
-}
-
-.wait {
-  flex: none;
-  margin-left: auto;
+.tm {
+  font-size: 12px;
   color: var(--text-3);
-  font-size: var(--fs-caption);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 第二行：邮箱 · 分类（· 指派人） */
+.r2 {
+  margin: 3px 0 0 16px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 第三行：状态标签 + 已升级 + 短工单号 + SLA 超时 */
+.r3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 0 0 16px;
+  font-size: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-3);
 }
 
 .late {
   color: var(--danger);
-}
-
-.subject {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.unread {
-  font-weight: var(--fw-semibold);
+/* 优先级圆点（样稿 .pd） */
+.pd {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--border-hover);
 }
 
-.meta {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.pd_low {
+  background: var(--border-hover);
+}
+
+.pd_normal {
+  background: var(--text-3);
+}
+
+.pd_high {
+  background: var(--warn);
+}
+
+.pd_urgent {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
 }
 
 .more {
   display: flex;
   justify-content: center;
-  padding: var(--space-12);
+  padding: 12px;
 }
 
 /* ===========================================================================
- * 右栏：详情头、对话、回复框
+ * 响应式
  * ========================================================================= */
-.detail {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
+@media (max-width: 1279px) {
+  .screen {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  .screen {
+    /* 高度由外框 .bleedCol 给（窄屏已减去顶栏），这里不再算 */
+    grid-template-columns: 1fr;
+  }
+
+  /* 单栏模式：选了详情则藏列表，没选详情藏右侧 Detail */
+  .pickList > :nth-child(2) {
+    display: none;
+  }
+
+  .pickDetail > :first-child {
+    display: none;
+  }
+
+  /* 栏头的 h1、计数、PageHelpTip 隐藏，「⋯」挪到搜索框右侧 */
+  .queue {
+    position: relative;
+    border-right: 0;
+  }
+
+  .head {
+    position: absolute;
+    right: 8px;
+    top: 0;
+    height: 48px;
+    padding: 0;
+    z-index: 2;
+  }
+
+  .head h1,
+  .count,
+  .help {
+    display: none;
+  }
+
+  .search {
+    padding: 8px 52px 0 12px;
+  }
 }
 
-.detailEmpty {
-  align-self: center;
-}
-
-.detailSkeleton {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  padding: 18px;
-}
-
-.detailHead {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--surface-3);
-}
-
-.titleRow {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.titleBox {
-  flex: 1;
-  min-width: 0;
-}
-
-.title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: var(--fw-semibold);
-  overflow-wrap: anywhere;
-}
-
-.subline {
-  margin-top: 2px;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.sla {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4) var(--space-16);
-  font-size: var(--fs-caption);
-}
-
-.sla_neutral {
-  color: var(--text-2);
-}
-
-.sla_ok {
-  color: var(--ok);
-}
-
-.sla_warn {
-  color: var(--warn);
-}
-
-.sla_danger {
-  color: var(--danger);
-}
-
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.inline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.linkButton {
-  display: inline-flex;
-  align-items: center;
-  height: var(--h-control-sm);
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-caption);
-  text-decoration: none;
-}
-
-.linkButton:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-
-/* 设计稿：「升级到 L2」危险色描边的次按钮 */
-.escalate:not(:disabled) {
-  border-color: var(--danger-line);
-  color: var(--danger);
-}
-
-.escalate:not(:disabled):hover {
-  background: var(--danger-tint);
-}
-
-.messages {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px;
-  background: var(--surface-2);
-}
-
-.msgLeft,
-.msgRight {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.msgLeft {
-  align-items: flex-start;
-}
-
-.msgRight {
-  align-items: flex-end;
-}
-
-.msgMeta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.bubble_user,
-.bubble_agent,
-.bubble_note {
-  max-width: 76%;
-  padding: 10px var(--space-12);
-  border: 1px solid;
-  border-radius: 10px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.bubble_user {
-  border-color: var(--border);
-  background: var(--surface);
-  color: var(--text);
-}
-
-.bubble_agent {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--on-ink);
-}
-
-/* 内部备注：黄色虚线气泡（待补·前端） */
-.bubble_note {
-  border-style: dashed;
-  border-color: var(--warn-line);
-  background: var(--warn-soft);
-  color: var(--text);
-}
-
-.noteTag {
-  padding: 0 6px;
-  border-radius: var(--radius-tag);
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-/* 系统消息：居中灰色小字（待补·前端） */
-.system {
-  align-self: center;
-  max-width: 80%;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  text-align: center;
-}
-
-.composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding: var(--space-12) 14px;
-  border-top: 1px solid var(--surface-3);
-}
-
-/* -------------------------------------------------------------------------
- * 快捷回复条（10-16 设计稿）：一行放不下就截断，右侧「全部 N」浮层与「管理」
- * ------------------------------------------------------------------------- */
-.macros {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-}
-
-/* 前 4 个 chip 所在的弹性区：超出就收掉，不让换行把回复框顶高 */
-.macroChips {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  align-items: center;
-  gap: 6px;
-}
-
-.macroLabel {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  white-space: nowrap;
-}
-
-.macro,
-.macroManage {
-  height: 24px;
-  padding: 0 var(--space-8);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
-/* chip：最多 160 宽，超出省略 */
-.macro {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.macro:hover {
-  border-color: var(--border-hover);
-  color: var(--text);
-}
-
-/* 「全部 N」按钮：开着的浮层锚点 */
-.macroAllWrap {
-  position: relative;
-  flex: none;
-}
-
-.macroAll {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  height: 24px;
-  padding: 0 var(--space-8);
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-caption);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.macroAllOpen,
-.macroAll:hover {
-  border-color: var(--text);
-}
-
-.macroAllCaret {
-  flex: none;
-}
-
-/* 点外面关闭用的透明遮罩：垫在浮层（z-index 40）下面 */
-.macroAllScrim {
-  position: fixed;
-  inset: 0;
-  z-index: 39;
-}
-
-/* 浮层：锚在按钮上方，宽 340，纯组件态弹层（不用 dialog，避免和 Composer 所在层级纠缠） */
-.macroAllPanel {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 6px);
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  width: 340px;
-  max-width: calc(100vw - 32px);
-  border: 1px solid var(--text);
-  background: var(--surface);
-}
-
-.macroAllSearch {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  height: 28px;
-  padding: 8px 12px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  outline: none;
-}
-
-.macroAllList {
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.macroAllItem {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px var(--space-12);
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.macroAllItem:hover {
-  background: var(--surface-2);
-}
-
-.macroAllTitle {
-  font-size: 12.5px;
-  font-weight: var(--fw-medium);
-}
-
-.macroAllBody {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.macroAllEmpty {
-  padding: 20px var(--space-12);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  text-align: center;
-}
-
-.macroDivider {
-  flex: none;
-  align-self: stretch;
-  width: 1px;
-  background: var(--border);
-}
-
-/* 「管理」：无边框的文字小按钮 */
-.macroManage {
-  flex: none;
-  border: 0;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.macroManage:hover {
-  background: var(--surface-3);
-  color: var(--text);
-}
-
-.macroHint {
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-}
-
-.noteInput {
-  border-style: dashed;
-  background: var(--warn-soft);
-}
-
-.composerBar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.dialogText {
-  margin: 0 0 var(--space-12);
-  color: var(--text-2);
-}
-
-/* ===========================================================================
- * 快捷回复管理（列表 + 底部新增）
- * ========================================================================= */
-.macroForm {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-}
-
-.macroList {
-  display: flex;
-  flex-direction: column;
-  max-height: max(160px, calc(100vh - 360px));
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.macroItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.macroItem:last-child {
-  border-bottom: 0;
-}
-
-.macroText {
-  flex: 1;
-  min-width: 0;
-}
-
-.macroTitle {
-  font-weight: var(--fw-medium);
-}
-
-.macroBody {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 「修改」「删除」小文字按钮（设计稿） */
-.macroAction {
-  flex: none;
-  height: 24px;
-  padding: 0 var(--space-8);
-  border: 0;
-  background: transparent;
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
-.macroAction:hover {
-  background: var(--surface-3);
-}
-
-.macroActionDanger {
-  color: var(--danger);
-}
-
-.macroActionDanger:hover {
-  background: var(--danger-tint);
-}
