@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>门户样稿 v5 · 配色对比</title>
+<!-- 样稿专用：正式实现时字体自托管（CSP font-src 'self'） -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Noto+Serif+SC:wght@900&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* A 朱砂墨：墨色做主色，朱砂只点在 logo、进度条末端、链接（参考 Wealthsimple 的克制 + 我们 logo 的红点） */
+    --bg: #f3f3f1;
+    --sh: 28, 26, 24;
+    --ink: #161616;
+    --text-2: #6b6a66;
+    --text-3: #9c9b96;
+    --paper-2: #f7f7f5;
+    --paper-3: #f1f1ee;
+    --tint: #ecebe7;
+    --tint-line: #d9d7d1;
+    --deep: #1b1b1c;
+    --act: #b23a26;
+    --mark: #c9432d;
+    --btn: linear-gradient(180deg, #303033, #161618);
+    --btn-border: #0b0b0c;
+    --btn-glow: rgba(10, 10, 12, 0.85);
+    --hot: linear-gradient(180deg, #303033, #161618);
+    --hot-border: #0b0b0c;
+    --bar: linear-gradient(90deg, #1b1b1c 0%, #3a3a3c 55%, #c9432d 100%);
+    --dot: rgba(var(--sh), 0.07);
+    --line: rgba(var(--sh), 0.08);
+    --warn: #8a5a00;
+    --warn-bg: #fbf1dc;
+    --danger: #a3283a;
+    --danger-bg: #f9e4e6;
+    --tw: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+    --serif-zh: 'Courier Prime', 'Noto Serif SC', 'Songti SC', serif;
+    --sans: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    --lift: 0 0 0 1px rgba(var(--sh), 0.035), 0 30px 60px -32px rgba(var(--sh), 0.22), 0 6px 16px -8px rgba(var(--sh), 0.09);
+    --nav-w: 232px;
+  }
+  /* B 深海珊瑚：深海军蓝做主色，珊瑚红做重点动作（参考 Monzo） */
+  :root[data-pal='b'] {
+    --bg: #f0f3f6;
+    --sh: 14, 32, 52;
+    --ink: #0f1c2b;
+    --text-2: #5d6a78;
+    --text-3: #93a0ad;
+    --paper-2: #f6f8fa;
+    --paper-3: #eef2f6;
+    --tint: #e0eaf3;
+    --tint-line: #c0d2e2;
+    --deep: #112231;
+    --act: #cf4630;
+    --mark: #ff6a4d;
+    --btn: linear-gradient(180deg, #213a52, #112231);
+    --btn-border: #08131d;
+    --btn-glow: rgba(8, 22, 36, 0.85);
+    --hot: linear-gradient(180deg, #f6694f, #dc4a31);
+    --hot-border: #b9381f;
+    --bar: linear-gradient(90deg, #112231 0%, #2a4863 50%, #ff6a4d 100%);
+  }
+  /* C 雾蓝：冷白底、长春花蓝做主色、淡紫做铺底（参考 Mercury） */
+  :root[data-pal='c'] {
+    --bg: #f4f5f8;
+    --sh: 34, 38, 80;
+    --ink: #161925;
+    --text-2: #656b7b;
+    --text-3: #9aa0ae;
+    --paper-2: #f8f9fc;
+    --paper-3: #f1f2f8;
+    --tint: #e7e8fb;
+    --tint-line: #c9cdf4;
+    --deep: #2c3170;
+    --act: #4b55d1;
+    --mark: #5e6af0;
+    --btn: linear-gradient(180deg, #6470f2, #4a55d6);
+    --btn-border: #3d47b9;
+    --btn-glow: rgba(60, 70, 190, 0.6);
+    --hot: linear-gradient(90deg, #3f49c4 0%, #5763e6 55%, #7e8bfa 100%);
+    --hot-border: #363fae;
+    --bar: linear-gradient(90deg, #4a55d6 0%, #7380f5 60%, #b3bbff 100%);
+  }
+  /* D 森林绿：v4 原样的绿（来自 Laper 参考图），留档对比 */
+  :root[data-pal='d'] {
+    --bg: #f4f5f2;
+    --sh: 20, 40, 30;
+    --ink: #141715;
+    --text-2: #6a706b;
+    --text-3: #969b96;
+    --paper-2: #f6f8f6;
+    --paper-3: #f3f6f4;
+    --tint: #dfe8e1;
+    --tint-line: #b4c8ba;
+    --deep: #1f3d2b;
+    --act: #2c5a3f;
+    --mark: #4cbb72;
+    --btn: linear-gradient(180deg, #2c5a3f, #1f3d2b);
+    --btn-border: #10251a;
+    --btn-glow: rgba(16, 37, 26, 0.9);
+    --hot: linear-gradient(90deg, #1f3d2b 0%, #2c5a3f 45%, #4cbb72 100%);
+    --hot-border: #10251a;
+    --bar: linear-gradient(90deg, #1f3d2b, #4cbb72);
+  }
+  .logo::after { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mark); margin-left: 3px; }
+  /* 样稿专用：配色切换 */
+  .pal { position: fixed; top: 16px; right: 16px; z-index: 9; display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px var(--line), 0 10px 24px -14px rgba(var(--sh), 0.5); font-size: 13px; }
+  .pal a { padding: 6px 12px; border-radius: 9px; color: var(--text-2); }
+  .pal a.on { background: var(--deep); color: #fff; }
+  .shot .pal { display: none; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased;
+    background: radial-gradient(var(--dot) 1px, transparent 1.3px) 0 0 / 16px 16px, var(--bg);
+    min-height: 100vh;
+  }
+  svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  a { color: inherit; text-decoration: none; }
+  .num { font-family: var(--tw); font-weight: 700; letter-spacing: -0.02em; }
+
+  /* ---------------- 左侧窄导航 ---------------- */
+  .side {
+    position: fixed; inset: 0 auto 0 0; width: var(--nav-w); padding: 26px 16px 18px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .logo { font-family: var(--tw); font-weight: 700; font-size: 24px; letter-spacing: -0.03em; padding: 0 12px 26px; }
+  .nav-a {
+    display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: 11px;
+    font-size: 14.5px; color: var(--text-2); transition: background 0.15s, color 0.15s;
+  }
+  .nav-a:hover { color: var(--ink); background: rgba(255, 255, 255, 0.6); }
+  .nav-a.on { color: var(--ink); font-weight: 600; background: #fff; box-shadow: 0 1px 2px rgba(var(--sh), 0.06), 0 6px 14px -10px rgba(var(--sh), 0.35); }
+  .nav-a.on svg { color: var(--act); }
+  .nav-a .dot { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; background: var(--deep); color: #fff; font-size: 11.5px; display: flex; align-items: center; justify-content: center; }
+  .nav-gap { height: 18px; }
+  .me {
+    margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px;
+    background: rgba(255, 255, 255, 0.7); box-shadow: 0 0 0 1px var(--line);
+  }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--tint); color: var(--deep); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; flex: none; }
+  .me .who { min-width: 0; flex: 1; }
+  .me .who b { display: block; font-size: 14px; font-weight: 600; }
+  .me .who span { font-size: 12.5px; color: var(--text-2); }
+  .me .who .num { font-size: 13.5px; color: var(--ink); }
+  .icon-btn { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--text-2); cursor: pointer; }
+  .icon-btn:hover { background: var(--bg); color: var(--ink); }
+
+  /* ---------------- 内容区 ---------------- */
+  main { margin-left: var(--nav-w); padding: 40px 48px 96px; }
+  .col { max-width: 720px; margin: 0 auto; }
+  .col.wide { max-width: 1040px; }
+  .page { display: none; }
+  .page.on { display: block; animation: rise 0.35s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .page.on { animation: none; } }
+  h1 { font-size: 28px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 22px; }
+  .h-row { display: flex; align-items: baseline; justify-content: space-between; }
+  .h-row a { font-size: 14px; color: var(--text-2); }
+  h3 { font-size: 13px; font-weight: 500; color: var(--text-2); margin: 34px 4px 10px; letter-spacing: 0.02em; }
+
+  /* 横条提醒（原概览的公告与待支付） */
+  .note { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.75); box-shadow: 0 0 0 1px var(--line); font-size: 14px; margin-bottom: 10px; }
+  .note .k { font-size: 12px; padding: 2px 8px; border-radius: 6px; flex: none; }
+  .note .k.warn { background: var(--warn-bg); color: var(--warn); }
+  .note .k.danger { background: var(--danger-bg); color: var(--danger); }
+  .note .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note .t small { color: var(--text-2); font-size: 13px; margin-left: 6px; }
+  .note .go { color: var(--act); font-weight: 600; white-space: nowrap; }
+
+  /* 档位名 */
+  .eyebrow { font-family: var(--tw); font-size: 20px; color: #2a2e2b; line-height: 1; }
+  .tag {
+    display: inline-block; margin: 10px 0 0 -10px; padding: 6px 12px 7px; background: #fff; border-radius: 10px;
+    font-family: var(--serif-zh); font-weight: 900; font-size: 32px; line-height: 1.1; letter-spacing: 0.01em;
+    text-shadow: 0 0 1px rgba(20, 23, 21, 0.35), 0 1px 2px rgba(20, 23, 21, 0.18);
+    box-shadow: 0 1px 0 #fff inset, 0 10px 20px -12px rgba(var(--sh), 0.45);
+  }
+
+  /* 我的套餐主卡 */
+  .hero {
+    position: relative; border-radius: 28px; padding: 32px 34px 30px; margin-top: 18px;
+    background: radial-gradient(640px 300px at 0% 0%, var(--tint), transparent 70%), linear-gradient(180deg, var(--paper-2), #fff);
+    box-shadow: var(--lift), 0 0 0 1.5px var(--tint-line);
+  }
+  .pill { position: absolute; top: 30px; right: 30px; font-size: 13px; padding: 5px 12px; border-radius: 99px; background: #fff; box-shadow: 0 4px 10px -6px rgba(var(--sh), 0.35); }
+  .big { font-size: 72px; line-height: 0.9; }
+  .unit { font-family: var(--tw); font-size: 22px; margin-left: 6px; }
+  .meta { font-size: 14.5px; color: var(--text-2); }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .bar { height: 12px; border-radius: 99px; background: rgba(var(--sh), 0.08); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06); overflow: hidden; margin: 20px 0 12px; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--bar); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); transition: width 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s; }
+  .page.on .bar i { width: var(--w); }
+  .hero-foot { display: flex; gap: 12px; margin-top: 26px; align-items: center; }
+  .linkchip { display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 14px; border-radius: 14px; background: #fff; box-shadow: 0 0 0 1px var(--line); font-size: 13.5px; color: var(--text-2); white-space: nowrap; }
+  .linkchip code { font-family: var(--tw); font-size: 15px; color: var(--ink); }
+  .linkchip button { all: unset; cursor: pointer; color: var(--act); font-weight: 600; margin-left: 4px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 50px; padding: 0 24px; border-radius: 14px; cursor: pointer;
+    font: 600 15.5px var(--sans); color: #fff; white-space: nowrap; border: 1px solid var(--btn-border);
+    background: var(--btn);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 10px 22px -12px var(--btn-glow);
+    transition: transform 0.15s ease, filter 0.2s ease;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:active { transform: translateY(1px); }
+  .btn.hot { background: var(--hot); border-color: var(--hot-border); }
+  .btn.soft { background: #fff; color: var(--ink); border: 0; box-shadow: 0 0 0 1px var(--line), 0 6px 14px -10px rgba(var(--sh), 0.4); }
+  .btn.grow { flex: 1; }
+
+  /* Netflix 式操作行 */
+  .rows { border-radius: 20px; background: #fff; box-shadow: var(--lift); overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 14px; padding: 0 20px; min-height: 62px; cursor: pointer; transition: background 0.15s; }
+  .row + .row { box-shadow: 0 -1px 0 var(--line); }
+  .row:hover { background: var(--paper-2); }
+  .row .ri { width: 36px; height: 36px; border-radius: 10px; background: var(--bg); display: flex; align-items: center; justify-content: center; color: var(--deep); flex: none; }
+  .row .rt { flex: 1; min-width: 0; font-size: 15px; }
+  .row .rt small { display: block; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .row .rv { font-size: 14px; color: var(--text-2); white-space: nowrap; }
+  .row .rv.num { color: var(--ink); font-size: 15.5px; }
+  .row .rv.plus { color: var(--act); }
+  .row > svg.chev { width: 18px; height: 18px; color: var(--text-3); }
+
+  /* 选购卡（同 v3） */
+  .seg { display: inline-flex; padding: 4px; border-radius: 14px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 0 0 1px var(--line); }
+  .seg span { padding: 8px 18px; border-radius: 10px; font-size: 14px; color: var(--text-2); cursor: pointer; }
+  .seg .on { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 2px 6px -2px rgba(var(--sh), 0.25); }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 22px; }
+  .plan { position: relative; border-radius: 26px; padding: 30px 28px 26px; display: flex; flex-direction: column; background: linear-gradient(180deg, #fff 0%, var(--paper-2) 50%, var(--paper-3) 100%); box-shadow: var(--lift); }
+  .plan.pop { background: radial-gradient(480px 340px at 0% 0%, var(--tint), transparent 75%), linear-gradient(180deg, var(--paper-3), var(--paper-2)); box-shadow: var(--lift), 0 0 0 1.5px var(--tint-line); }
+  .plan .badge { position: absolute; top: 26px; right: 24px; font-size: 13px; padding: 5px 12px; border-radius: 99px; background: #fff; box-shadow: 0 4px 10px -6px rgba(var(--sh), 0.35); }
+  .plan .desc { color: var(--text-2); font-size: 14px; margin: 12px 0 22px; }
+  .price { display: flex; align-items: baseline; gap: 6px; }
+  .price .cur { font-family: var(--tw); font-weight: 700; font-size: 26px; }
+  .price .num { font-size: 46px; line-height: 1; }
+  .price small { font-size: 14.5px; color: var(--text-2); }
+  .alt { font-size: 13px; color: var(--text-3); margin-top: 10px; }
+  .alt b { color: var(--text-2); font-weight: 600; }
+  .rule { height: 1px; background: linear-gradient(90deg, rgba(var(--sh), 0.1), transparent); margin: 24px 0 6px; }
+  ul { list-style: none; padding: 0; margin: 0 0 28px; flex: 1; }
+  li { display: flex; gap: 12px; font-size: 15px; color: var(--text-2); line-height: 1.5; padding: 10px 0; }
+  li::before { content: ''; flex: none; width: 15px; height: 15px; margin-top: 4px; background: no-repeat center/15px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23141715' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E"); }
+  li b { color: var(--ink); font-weight: 600; }
+
+  /* 钱包 */
+  .balance { border-radius: 28px; padding: 32px 34px; background: radial-gradient(640px 300px at 0% 0%, var(--tint), transparent 70%), linear-gradient(180deg, var(--paper-2), #fff); box-shadow: var(--lift), 0 0 0 1.5px var(--tint-line); }
+  .balance .lbl { font-size: 14px; color: var(--text-2); }
+  .balance .amt { font-size: 60px; line-height: 1; margin: 12px 0 8px; }
+  .balance .amt .cur { font-size: 30px; margin-right: 4px; }
+  .balance .acts { display: flex; gap: 12px; margin-top: 26px; }
+  .group-h { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); margin: 30px 6px 10px; }
+  .ico { width: 38px; height: 38px; border-radius: 50%; background: var(--bg); display: flex; align-items: center; justify-content: center; color: var(--deep); flex: none; }
+  .ico.out { color: var(--text-2); }
+
+  /* 订单 */
+  .ord .rt b { font-weight: 600; }
+  .st { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--bg); color: var(--text-2); margin-left: 8px; font-weight: 400; }
+  .st.ok { background: #e4f1e8; color: #23603c; } /* 已支付保持语义绿 */
+  .st.warn { background: var(--warn-bg); color: var(--warn); }
+
+  /* 我的（手机） */
+  .profile { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .profile .avatar { width: 52px; height: 52px; font-size: 20px; }
+  .profile b { font-size: 20px; font-weight: 600; display: block; }
+  .profile span { color: var(--text-2); font-size: 14px; }
+
+  /* ---------------- 手机底部标签栏 ---------------- */
+  .tabbar { display: none; }
+  .only-m { display: none; }
+
+  @media (max-width: 959px) {
+    .side { display: none; }
+    main { margin-left: 0; padding: 22px 16px 110px; }
+    .only-m { display: block; }
+    .tabbar {
+      display: flex; position: fixed; left: 12px; right: 12px; bottom: 12px; height: 64px; border-radius: 22px; justify-content: space-around; align-items: center;
+      background: rgba(255, 255, 255, 0.86); backdrop-filter: blur(16px) saturate(1.4); box-shadow: 0 0 0 1px var(--line), 0 16px 34px -18px rgba(var(--sh), 0.5);
+    }
+    .tabbar a { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11.5px; color: var(--text-3); width: 72px; position: relative; }
+    .tabbar a.on { color: var(--deep); font-weight: 600; }
+    .tabbar a .dot { position: absolute; top: -2px; right: 18px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+    .m-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+    .m-top .logo { padding: 0; font-size: 22px; }
+    h1 { font-size: 24px; }
+    .hero, .balance { padding: 26px 22px 24px; border-radius: 24px; }
+    .pill { top: 24px; right: 20px; }
+    .big { font-size: 60px; }
+    .hero-foot { flex-direction: column; align-items: stretch; }
+    .linkchip { justify-content: space-between; }
+    .plans { grid-template-columns: 1fr; gap: 18px; }
+    .plan { padding: 26px 22px 22px; border-radius: 24px; }
+    .note .t small { display: none; }
+    .row { padding: 0 16px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-subs" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+  <symbol id="i-plans" viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2L5 8z"/><path d="M9 8a3 3 0 0 1 6 0"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18"/><path d="M16 15h2"/></symbol>
+  <symbol id="i-orders" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z"/><path d="M9 8h6M9 12h6"/></symbol>
+  <symbol id="i-gift" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="1.5"/><rect x="3" y="7" width="18" height="4" rx="1"/><path d="M12 7v13"/><path d="M12 7c-1.5-3.5-5.5-3-4 0M12 7c1.5-3.5 5.5-3 4 0"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4l2-2z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h14l-3-3M20 16H6l3 3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1"/><path d="M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 15h4"/></symbol>
+  <symbol id="i-in" viewBox="0 0 24 24"><path d="M12 4v13M6 11l6 6 6-6"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M12 20V7M6 13l6-6 6 6"/></symbol>
+  <symbol id="i-renew" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h5v16h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/></symbol>
+</svg>
+
+<aside class="side">
+  <div class="logo">pandora</div>
+  <a class="nav-a" data-p="subs" href="#subs"><svg class="i"><use href="#i-subs"/></svg>我的套餐</a>
+  <a class="nav-a" data-p="plans" href="#plans"><svg class="i"><use href="#i-plans"/></svg>选购</a>
+  <a class="nav-a" data-p="wallet" href="#wallet"><svg class="i"><use href="#i-wallet"/></svg>钱包</a>
+  <div class="nav-gap"></div>
+  <a class="nav-a" data-p="orders" href="#orders"><svg class="i"><use href="#i-orders"/></svg>订单<span class="dot">2</span></a>
+  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-gift"/></svg>邀请返利</a>
+  <div class="nav-gap"></div>
+  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-bell"/></svg>消息<span class="dot">2</span></a>
+  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-chat"/></svg>工单支持</a>
+  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-help"/></svg>帮助中心</a>
+  <a class="nav-a" data-p="x" href="#subs"><svg class="i"><use href="#i-shield"/></svg>账号安全</a>
+  <div class="me">
+    <div class="avatar">张</div>
+    <div class="who"><b>张伟</b><span>余额 <span class="num">¥26.50</span></span></div>
+    <span class="icon-btn" title="切换到深色模式"><svg class="i" style="width:18px;height:18px"><use href="#i-moon"/></svg></span>
+  </div>
+</aside>
+
+<main>
+  <!-- ================= 我的套餐 ================= -->
+  <section class="page" id="p-subs">
+    <div class="col">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <div class="h-row"><h1>我的套餐</h1></div>
+
+      <a class="note" href="#orders"><span class="k warn">待支付</span><span class="t">专业版 · 续费 <b class="num">¥59.00</b><small>18 分钟内未支付将自动取消</small></span><span class="go">去支付 ›</span></a>
+      <a class="note" href="#subs"><span class="k danger">重要</span><span class="t">9 月 28 日凌晨 2:00–3:00 香港节点维护</span><span class="go">查看 ›</span></a>
+
+      <div class="hero">
+        <span class="pill">还剩 <b>42</b> 天</span>
+        <div class="eyebrow">Pandora</div>
+        <div><span class="tag">专业版</span></div>
+        <div style="margin-top:36px"><span class="num big">208</span><span class="unit">GB</span></div>
+        <div class="meta" style="margin-top:10px">本期剩余 · 共 <b>520 GB</b>，含送的 <b>20 GB</b></div>
+        <div class="bar"><i style="--w:40%"></i></div>
+        <div class="meta" style="font-size:14px">11 月 27 日 16:03 到期 · 3 / 5 台设备在线</div>
+        <div class="hero-foot">
+          <button class="btn hot grow">添加到 App</button>
+          <button class="btn soft">续费 · 到 12 月 27 日</button>
+        </div>
+      </div>
+
+      <h3>这一份</h3>
+      <div class="rows">
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-link"/></svg></span><span class="rt">链接<small>App 里显示为 Pandora · 专业版</small></span><span class="rv"><code class="num" style="font-weight:400">····PQsM</code></span><span class="rv plus" style="font-weight:600">复制</span></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt">节点和每天用量</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换个套餐<small>差价按剩余时间算，换之前先看报价</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-edit"/></svg></span><span class="rt">起个名字</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt">换新链接<small>旧链接立刻失效，App 里要重新添加</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+      </div>
+
+      <h3>更多</h3>
+      <div class="rows">
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-plus"/></svg></span><span class="rt">再买一份，分开用<small>单独的链接、单独的流量，和现在的互不影响</small></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-card"/></svg></span><span class="rt">有卡？去兑换</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 选购 ================= -->
+  <section class="page" id="p-plans">
+    <div class="col wide">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <div class="h-row"><h1>选购</h1><div class="seg"><span class="on">按时间</span><span>一次性</span></div></div>
+      <div class="plans">
+        <article class="plan">
+          <div class="eyebrow">Pandora</div><div><span class="tag">标准版</span></div>
+          <p class="desc">日常浏览与社交</p>
+          <div class="price"><span class="cur">¥</span><span class="num">29</span><small>/ 月</small></div>
+          <div class="alt">季付 <b>¥79</b> · 半年 <b>¥149</b> · 年付 <b>¥299</b></div>
+          <div class="rule"></div>
+          <ul><li><span>每期 <b>200 GB</b> 流量</span></li><li><span><b>3 台</b>设备同时用</span></li><li><span><b>常规</b>线路</span></li><li><span>不限速</span></li><li><span>流量重置 <b>¥10</b> / 次，每期 <b>2 次</b></span></li></ul>
+          <button class="btn">买标准版</button>
+        </article>
+        <article class="plan pop">
+          <span class="badge">你在用</span>
+          <div class="eyebrow">Pandora</div><div><span class="tag">专业版</span></div>
+          <p class="desc">亚太精选与欧美线路</p>
+          <div class="price"><span class="cur">¥</span><span class="num">59</span><small>/ 月</small></div>
+          <div class="alt">季付 <b>¥159</b> · 年付 <b>¥599</b></div>
+          <div class="rule"></div>
+          <ul><li><span>每期 <b>500 GB</b> 流量</span></li><li><span><b>5 台</b>设备同时用</span></li><li><span><b>亚太精选 + 欧美</b>线路</span></li><li><span><b>流媒体</b>解锁</span></li><li><span>流量重置 <b>¥10</b> / 次，<b>不限</b>次数</span></li></ul>
+          <button class="btn hot">续费专业版</button>
+        </article>
+        <article class="plan">
+          <div class="eyebrow">Pandora</div><div><span class="tag">家庭版</span></div>
+          <p class="desc">一家人一起用</p>
+          <div class="price"><span class="cur">¥</span><span class="num">49</span><small>/ 月</small></div>
+          <div class="alt">季付 <b>¥139</b> · 年付 <b>¥499</b></div>
+          <div class="rule"></div>
+          <ul><li><span>每期 <b>300 GB</b> 流量</span></li><li><span><b>6 台</b>设备同时用</span></li><li><span><b>常规</b>线路</span></li><li><span>限速 <b>100 Mbps</b></span></li><li><span>流量重置 <b>¥15</b> / 次，<b>不限</b>次数</span></li></ul>
+          <button class="btn">买家庭版</button>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 钱包 ================= -->
+  <section class="page" id="p-wallet">
+    <div class="col">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <h1>钱包</h1>
+      <div class="balance">
+        <div class="lbl">账户余额 · 买套餐、续费时自动先用</div>
+        <div class="amt num"><span class="cur">¥</span>26.50</div>
+        <div class="acts"><button class="btn hot grow">充值</button><button class="btn soft grow">兑换卡</button></div>
+      </div>
+
+      <div class="group-h"><span>2026 年 10 月</span><span>收入 ¥126.50 · 支出 ¥20.00</span></div>
+      <div class="rows">
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-card"/></svg></span><span class="rt">礼品卡<small>10-12 17:03 · GC-0915-…</small></span><span class="rv num plus">+¥10.00</span></div>
+        <div class="row"><span class="ico out"><svg class="i"><use href="#i-out"/></svg></span><span class="rt">下单用余额<small>10-10 17:03 · 订单 PD-2003</small></span><span class="rv num">−¥20.00</span></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt">充值<small>10-07 17:03 · 支付宝</small></span><span class="rv num plus">+¥100.00</span></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt">佣金转入<small>10-01 17:03</small></span><span class="rv num plus">+¥16.50</span></div>
+      </div>
+      <div class="group-h"><span>2026 年 9 月</span><span>收入 ¥38.80 · 支出 ¥88.80</span></div>
+      <div class="rows">
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt">挂账转入<small>09-24 17:03</small></span><span class="rv num plus">+¥5.00</span></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-swap"/></svg></span><span class="rt">换套餐退回<small>09-16 17:03 · 差额退回</small></span><span class="rv num plus">+¥3.80</span></div>
+        <div class="row"><span class="ico out"><svg class="i"><use href="#i-out"/></svg></span><span class="rt">人工调整<small>09-13 17:03 · 重复充值退回</small></span><span class="rv num">−¥88.80</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 订单 ================= -->
+  <section class="page" id="p-orders">
+    <div class="col">
+      <div class="m-top only-m"><span class="logo">pandora</span></div>
+      <h1>订单</h1>
+      <div class="group-h"><span>待支付</span><span>超时自动取消</span></div>
+      <div class="rows ord">
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 续费</b><span class="st warn">待支付</span><small>PD-2609-3397 · 18 分钟内未支付将自动取消</small></span><span class="rv num">¥59.00</span><button class="btn" style="height:38px;padding:0 16px;font-size:14px">去支付</button></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt"><b>余额充值</b><span class="st warn">待支付</span><small>PD-2301 · 25 分钟内未支付将自动取消</small></span><span class="rv num">¥50.00</span><button class="btn" style="height:38px;padding:0 16px;font-size:14px">去支付</button></div>
+      </div>
+      <div class="group-h"><span>2026 年 10 月</span><span>已支付 ¥177.20</span></div>
+      <div class="rows ord">
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 月付续费</b><small>PD-23002 · 10-13 17:03</small></span><span class="rv num">¥47.20</span><span class="st ok">已支付</span></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-plans"/></svg></span><span class="rt"><b>流量版 · 一次性</b><small>PD-23003 · 10-10 17:03</small></span><span class="rv num">¥30.00</span><span class="st ok">已支付</span></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-in"/></svg></span><span class="rt"><b>余额充值</b><small>PD-23004 · 10-07 17:03</small></span><span class="rv num">¥100.00</span><span class="st ok">已支付</span></div>
+        <div class="row"><span class="ico out"><svg class="i"><use href="#i-chart"/></svg></span><span class="rt"><b>重置本期流量</b><small>PD-23005 · 10-04 17:03</small></span><span class="rv num">¥10.00</span><span class="st">已取消</span></div>
+      </div>
+      <div class="group-h"><span>2026 年 9 月</span><span>已支付 ¥59.00</span></div>
+      <div class="rows ord">
+        <div class="row"><span class="ico out"><svg class="i"><use href="#i-plans"/></svg></span><span class="rt"><b>标准版 · 年付</b><small>PD-23006 · 09-26 17:03</small></span><span class="rv num">¥299.00</span><span class="st">已取消</span></div>
+        <div class="row"><span class="ico"><svg class="i"><use href="#i-renew"/></svg></span><span class="rt"><b>专业版 · 月付续费</b><small>PD-23007 · 09-12 17:03</small></span><span class="rv num">¥59.00</span><span class="st ok">已支付</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 我的（手机标签；桌面上这些在侧栏） ================= -->
+  <section class="page" id="p-me">
+    <div class="col">
+      <div class="m-top only-m"><span class="logo">pandora</span><span class="icon-btn"><svg class="i"><use href="#i-moon"/></svg></span></div>
+      <div class="profile"><div class="avatar">张</div><div><b>张伟</b><span>user@example.test</span></div></div>
+      <div class="balance" style="padding:24px 22px">
+        <div class="lbl">余额</div>
+        <div class="amt num" style="font-size:46px"><span class="cur" style="font-size:24px">¥</span>26.50</div>
+        <div class="acts" style="margin-top:18px"><a class="btn hot grow" href="#wallet" style="height:44px">充值</a><a class="btn soft grow" href="#wallet" style="height:44px">兑换卡</a></div>
+      </div>
+      <h3>账户</h3>
+      <div class="rows">
+        <a class="row" href="#orders"><span class="ri"><svg class="i"><use href="#i-orders"/></svg></span><span class="rt">订单</span><span class="rv">2 笔待支付</span><svg class="i chev"><use href="#i-chev"/></svg></a>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-gift"/></svg></span><span class="rt">邀请返利</span><span class="rv">可提 <span class="num" style="color:var(--ink)">¥135.60</span></span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-bell"/></svg></span><span class="rt">消息</span><span class="rv">2 条未读</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+      </div>
+      <h3>帮助</h3>
+      <div class="rows">
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-chat"/></svg></span><span class="rt">工单支持</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-help"/></svg></span><span class="rt">帮助中心</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+      </div>
+      <h3>设置</h3>
+      <div class="rows">
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-shield"/></svg></span><span class="rt">账号安全</span><svg class="i chev"><use href="#i-chev"/></svg></div>
+        <div class="row"><span class="ri"><svg class="i"><use href="#i-logout"/></svg></span><span class="rt" style="color:var(--danger)">退出登录</span></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <a data-p="subs" href="#subs"><svg class="i"><use href="#i-subs"/></svg>套餐</a>
+  <a data-p="plans" href="#plans"><svg class="i"><use href="#i-plans"/></svg>选购</a>
+  <a data-p="wallet" href="#wallet"><svg class="i"><use href="#i-wallet"/></svg>钱包</a>
+  <a data-p="me" href="#me"><svg class="i"><use href="#i-user"/></svg>我的<span class="dot"></span></a>
+</nav>
+
+<script>
+  // 样稿用的极简路由：#subs / #plans / #wallet / #orders / #me
+  const pages = ['subs', 'plans', 'wallet', 'orders', 'me']
+  function show() {
+    let p = location.hash.slice(1)
+    if (!pages.includes(p)) p = 'subs'
+    // 桌面没有「我的」页，落回我的套餐
+    if (p === 'me' && matchMedia('(min-width: 960px)').matches) p = 'subs'
+    document.querySelectorAll('.page').forEach((el) => el.classList.toggle('on', el.id === 'p-' + p))
+    document.querySelectorAll('[data-p]').forEach((el) => el.classList.toggle('on', el.dataset.p === p))
+    scrollTo(0, 0)
+  }
+  addEventListener('hashchange', show)
+  show()
+
+  // 配色切换：?pal=a|b|c|d，&shot=1 截图时隐藏切换条
+  const q = new URLSearchParams(location.search)
+  const pal = ['a', 'b', 'c', 'd'].includes(q.get('pal')) ? q.get('pal') : 'a'
+  document.documentElement.dataset.pal = pal
+  if (q.get('shot')) document.documentElement.classList.add('shot')
+  const bar = document.createElement('nav')
+  bar.className = 'pal'
+  ;[['a', 'A 朱砂墨'], ['b', 'B 深海珊瑚'], ['c', 'C 雾蓝'], ['d', 'D 森林绿']].forEach(([k, t]) => {
+    const a = document.createElement('a')
+    a.textContent = t
+    a.href = '?pal=' + k + location.hash
+    a.className = k === pal ? 'on' : ''
+    a.addEventListener('click', (e) => { e.preventDefault(); location.href = '?pal=' + k + location.hash })
+    bar.append(a)
+  })
+  document.body.append(bar)
+</script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>门户新样稿</title>
+<!-- 样稿专用：正式实现时字体自托管（CSP font-src 'self'） -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #f5f6f3;
+    --dot: rgba(30, 50, 40, 0.09);
+    --surface: #ffffff;
+    --surface-fade: #f2f4f1;
+    --sage: #e1e9e3;
+    --sage-line: #b9cbbf;
+    --line: #e6e8e3;
+    --ink: #161917;
+    --text-2: #6a706b;
+    --text-3: #8d928d;
+    --green-900: #1d3a2b;
+    --green-800: #24493a;
+    --green-600: #2f6a4a;
+    --green-400: #45b26d;
+    --typewriter: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+    --sans: -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 18px 40px -22px rgba(25, 45, 35, 0.28),
+      0 2px 6px -2px rgba(25, 45, 35, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
+    background-size: 14px 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+
+  /* 顶栏 */
+  header { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .logo { font-family: var(--typewriter); font-weight: 700; font-size: 22px; letter-spacing: -0.02em; }
+  nav { display: flex; gap: 22px; font-size: 14px; color: var(--text-2); }
+  nav b { color: var(--ink); font-weight: 600; }
+
+  h1 { font-size: 26px; font-weight: 600; margin: 28px 0 6px; letter-spacing: -0.01em; }
+  .lede { color: var(--text-2); font-size: 14px; margin: 0 0 22px; }
+
+  /* 档位名：打字机字 + 白色标签 */
+  .brand-sm { font-family: var(--typewriter); font-size: 20px; color: var(--ink); line-height: 1; }
+  .tag {
+    display: inline-block; margin: 6px 0 0 -8px; padding: 4px 10px 2px;
+    background: #fff; border-radius: 8px;
+    font-family: var(--typewriter); font-weight: 700; font-size: 32px; line-height: 1.1; letter-spacing: -0.01em;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 6px 14px -8px rgba(20, 40, 30, 0.35);
+  }
+
+  /* 我的套餐主卡 */
+  .hero {
+    display: grid; grid-template-columns: 1.1fr 1fr; gap: 0;
+    border-radius: 22px; overflow: hidden; box-shadow: var(--shadow-card);
+    background: linear-gradient(180deg, var(--sage) 0%, #f3f6f3 70%);
+    border: 1px solid var(--sage-line);
+  }
+  .hero-l { padding: 26px 28px; }
+  .hero-r { padding: 26px 28px; background: rgba(255, 255, 255, 0.55); border-left: 1px solid rgba(185, 203, 191, 0.6); display: flex; flex-direction: column; gap: 14px; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: #fff; border: 1px solid var(--line); color: var(--green-800); }
+  .big { font-family: var(--typewriter); font-weight: 700; font-size: 56px; letter-spacing: -0.03em; line-height: 1; }
+  .unit { font-family: var(--typewriter); font-size: 20px; margin-left: 4px; }
+  .meta { font-size: 13px; color: var(--text-2); }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .bar { height: 10px; border-radius: 99px; background: rgba(29, 58, 43, 0.1); overflow: hidden; margin: 16px 0 10px; }
+  .bar i { display: block; height: 100%; width: 40%; border-radius: 99px; background: linear-gradient(90deg, var(--green-800), var(--green-400)); }
+  .link-box { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
+  .link-box code { font-family: var(--typewriter); font-size: 15px; flex: 1; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 46px; padding: 0 18px; border-radius: 12px; border: 0; cursor: pointer;
+    font: 600 15px var(--sans); color: #fff;
+    background: linear-gradient(90deg, var(--green-900), var(--green-600));
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 8px 18px -10px rgba(20, 50, 35, 0.7);
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: translateY(1px); }
+  .btn.hot { background: linear-gradient(90deg, var(--green-800), var(--green-400)); }
+  .btn.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); box-shadow: none; height: 38px; font-size: 14px; }
+  .btn.full { width: 100%; }
+  .quick { display: flex; gap: 8px; }
+  .quick .btn { flex: 1; }
+
+  /* 选购卡 */
+  .seg { display: inline-flex; padding: 4px; border-radius: 12px; background: #fff; border: 1px solid var(--line); margin: 36px 0 18px; }
+  .seg span { padding: 7px 16px; border-radius: 9px; font-size: 14px; color: var(--text-2); }
+  .seg .on { background: var(--green-900); color: #fff; }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+  .plan {
+    position: relative; border-radius: 22px; padding: 26px 24px 24px; display: flex; flex-direction: column;
+    background: linear-gradient(180deg, #fff 0%, var(--surface-fade) 100%);
+    border: 1px solid var(--line); box-shadow: var(--shadow-card);
+  }
+  .plan.pop { background: linear-gradient(180deg, var(--sage) 0%, #f6f8f6 55%, #fff 100%); border-color: var(--sage-line); }
+  .plan .badge { position: absolute; top: 22px; right: 20px; font-size: 12px; padding: 4px 10px; border-radius: 99px; background: #fff; border: 1px solid var(--line); }
+  .plan .desc { color: var(--text-2); font-size: 13px; margin: 10px 0 18px; }
+  .price { font-family: var(--typewriter); font-weight: 700; font-size: 40px; letter-spacing: -0.02em; }
+  .price small { font-family: var(--sans); font-size: 14px; font-weight: 400; color: var(--text-2); margin-left: 4px; }
+  ul { list-style: none; padding: 0; margin: 22px 0 26px; display: flex; flex-direction: column; gap: 13px; flex: 1; }
+  li { display: flex; gap: 10px; font-size: 14px; color: var(--text-2); line-height: 1.45; }
+  li::before { content: ''; flex: none; width: 14px; height: 14px; margin-top: 3px;
+    background: no-repeat center/14px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23161917' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E"); }
+  li b { color: var(--ink); font-weight: 600; }
+
+  /* 状态条 */
+  .status {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 18px; padding: 10px 18px; border-radius: 99px;
+    background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); border: 1px solid var(--line);
+    box-shadow: 0 10px 30px -14px rgba(20, 40, 30, 0.35); font-size: 13px; color: var(--text-2); white-space: nowrap;
+  }
+  .status b { color: var(--ink); font-weight: 600; }
+  .status .sep { width: 1px; height: 14px; background: var(--line); }
+  .status .num { font-family: var(--typewriter); font-weight: 700; font-size: 15px; color: var(--ink); }
+
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; }
+    .hero-r { border-left: 0; border-top: 1px solid rgba(185, 203, 191, 0.6); }
+    .plans { grid-template-columns: 1fr; }
+    nav { display: none; }
+    .status { gap: 10px; padding: 9px 14px; }
+    .status .wide { display: none; }
+    .wrap { padding: 0 16px 110px; }
+    .hero-l, .hero-r { padding: 22px 20px; }
+  }
+  .btn { white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo">pandora</span>
+    <nav><b>我的套餐</b><span>选购</span><span>钱包</span></nav>
+  </header>
+
+  <h1>下午好，张伟</h1>
+  <p class="lede">你的套餐运行正常，下次到期在 11 月 27 日。</p>
+
+  <section class="hero">
+    <div class="hero-l">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><div class="brand-sm">Pandora</div><div class="tag">专业版</div></div>
+        <span class="pill">还剩 42 天</span>
+      </div>
+      <div style="margin-top:28px"><span class="big">208</span><span class="unit">GB</span></div>
+      <div class="meta" style="margin-top:6px">本期剩余 · 共 <b>520 GB</b>（含送的 <b>20 GB</b>）</div>
+      <div class="bar"><i></i></div>
+      <div class="meta">11 月 27 日 16:03 到期 · 节点和每天用量 ›</div>
+    </div>
+    <div class="hero-r">
+      <div class="meta">订阅链接 · App 里显示为 <b>Pandora · 专业版</b></div>
+      <div class="link-box"><code>····PQsM</code><button class="btn ghost">复制</button></div>
+      <button class="btn hot full">添加到 App</button>
+      <div class="quick">
+        <button class="btn ghost">续费</button>
+        <button class="btn ghost">换套餐</button>
+        <button class="btn ghost">换新链接</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="seg"><span class="on">按时间</span><span>一次性</span></div>
+
+  <section class="plans">
+    <article class="plan">
+      <div class="brand-sm">Pandora</div><div><span class="tag">标准版</span></div>
+      <p class="desc">日常浏览与社交，全部常规线路</p>
+      <div class="price">¥29<small>/ 月</small></div>
+      <ul>
+        <li><span>每期 <b>200 GB</b> 流量</span></li>
+        <li><span><b>3</b> 台设备同时用</span></li>
+        <li><span>全部 <b>常规</b> 线路</span></li>
+        <li><span>3 个月 <b>¥79</b> · 半年 <b>¥149</b> · 1 年 <b>¥299</b></span></li>
+        <li><span>流量重置 ¥10 / 次，每期最多 <b>2</b> 次</span></li>
+      </ul>
+      <button class="btn full">买标准版</button>
+    </article>
+
+    <article class="plan pop">
+      <span class="badge">你在用</span>
+      <div class="brand-sm">Pandora</div><div><span class="tag">专业版</span></div>
+      <p class="desc">亚太精选与欧美线路，流媒体解锁</p>
+      <div class="price">¥59<small>/ 月</small></div>
+      <ul>
+        <li><span>每期 <b>500 GB</b> 流量</span></li>
+        <li><span><b>5</b> 台设备同时用</span></li>
+        <li><span><b>亚太精选</b> + 欧美线路</span></li>
+        <li><span><b>流媒体</b> 解锁</span></li>
+        <li><span>3 个月 <b>¥159</b> · 1 年 <b>¥599</b></span></li>
+      </ul>
+      <button class="btn hot full">续费专业版</button>
+    </article>
+
+    <article class="plan">
+      <div class="brand-sm">Pandora</div><div><span class="tag">家庭版</span></div>
+      <p class="desc">一家人一起用，设备数更多</p>
+      <div class="price">¥49<small>/ 月</small></div>
+      <ul>
+        <li><span>每期 <b>300 GB</b> 流量</span></li>
+        <li><span><b>6</b> 台设备同时用</span></li>
+        <li><span>限速 <b>100 Mbps</b></span></li>
+        <li><span>3 个月 <b>¥139</b> · 1 年 <b>¥499</b></span></li>
+        <li><span>流量重置 ¥15 / 次，<b>不限</b>次数</span></li>
+      </ul>
+      <button class="btn full">买家庭版</button>
+    </article>
+  </section>
+</div>
+
+<div class="status">
+  <b>张伟</b><span class="wide">专业版</span><span class="sep wide"></span>
+  <span>余额 <span class="num">¥26.50</span></span><span class="sep"></span>
+  <span class="wide">可提佣金 <span class="num">¥135.60</span></span><span class="sep"></span>
+  <b>＋ 充值</b>
+</div>
+</body>
+</html>
