@@ -5,8 +5,8 @@ import { addInterval, gate, isDead, isLiveSub, isRevivable, portalState, subPerm
 import { applyBalance, waiveSmallDue, type Balance } from './purchase.ts'
 // ---------------------------------------------------------------------------
 // 统一报价：POST /v1/me/checkout/quote 与建单接口共用。
-// total = max(0, subtotal − discount − credit)；剩余价值 credit = 本期实付 × min(剩余时间比, 剩余流量比)，
-// 永久的一次性只看流量比，向下取整；过期 30 天内的那份为 0。建单带 as_of + expect 按 as_of 重算比对，不符 409 quote_changed。
+// total = max(0, subtotal − discount − credit)；剩余价值 credit：订阅套餐 = 本期实付 × 剩余付费时间比；
+// 一次性 = 本期实付 × min(剩余时间比, 剩余流量比)，永久的只看流量比；向下取整；过期 30 天内的那份为 0。建单带 as_of + expect 按 as_of 重算比对，不符 409 quote_changed。
 // ---------------------------------------------------------------------------
 const DAY_MS = 86_400_000
 /** as_of 只接受 [now-10min, now]（允许 5 秒时钟误差） */
@@ -47,30 +47,36 @@ export interface QuoteRow {
 }
 
 export function creditOf(sub: SubFixture, at: number): { credit: number; detail: CreditDetail } {
+  // 口径照 Go order/service/proration.go：订阅套餐只按剩余付费时间算，不看流量（明细的流量两项为 0）；
+  // 一次性取剩余时间比与剩余流量比里小的，永久的时间比视为 1、天数为 0/0；流量上限不含送的；
+  // 天数向下取整，ratio_ppm 与钱都向下截断。mock 不记送的天数，付费时长 = 周期起止。
   const plan = findPlan(sub.plan_id)
   const start = new Date(sub.current_period_start).getTime()
   const end = new Date(sub.current_period_end).getTime()
   const live = isLiveSub(sub)
-  const timeRatio = live && end > start ? Math.min(1, Math.max(0, (end - at) / (end - start))) : 0
-  const used = usedBytes(sub)
-  const limit = sub.limitBytes
-  const bonus = sub.bonusBytes
-  const trafficLeft = limit === null ? 0 : Math.max(0, limit + bonus - used)
-  const trafficTotal = limit === null ? 0 : limit + bonus
-  const trafficRatio = !live ? 0 : limit === null ? 1 : trafficTotal > 0 ? trafficLeft / trafficTotal : 1
-  const permanentOne = plan?.kind === 'one_time' && subPermanent(sub)
-  const ratio = permanentOne ? trafficRatio : Math.min(timeRatio, trafficRatio)
-  return {
-    credit: Math.floor(sub.amount * ratio),
-    detail: {
-      paid: sub.amount,
-      days_left: live ? Math.max(0, Math.ceil((end - at) / DAY_MS)) : 0,
-      days_total: Math.max(1, Math.round((end - start) / DAY_MS)),
-      traffic_left: trafficLeft,
-      traffic_total: trafficTotal,
-      ratio_ppm: Math.round(ratio * 1_000_000),
-    },
+  const once = plan?.kind === 'one_time'
+  const permanent = once && subPermanent(sub)
+  const span = Math.max(0, end - start)
+  const remaining = live ? Math.min(span - (at - start), end - at, span) : 0
+  const cap = sub.limitBytes
+  const trafficTotal = once && cap !== null ? Math.max(cap, 0) : 0
+  const trafficLeft = once && cap !== null ? Math.max(Math.min(cap - usedBytes(sub), cap), 0) : 0
+  const detail: CreditDetail = {
+    paid: sub.amount,
+    days_left: permanent ? 0 : Math.floor(Math.max(0, remaining) / DAY_MS),
+    days_total: permanent ? 0 : Math.floor(span / DAY_MS),
+    traffic_left: trafficLeft,
+    traffic_total: trafficTotal,
+    ratio_ppm: 0,
   }
+  if (!live || sub.amount <= 0) return { credit: 0, detail }
+  let ratio: number
+  if (permanent) ratio = 1
+  else if (span <= 0 || remaining <= 0) return { credit: 0, detail }
+  else ratio = remaining / span
+  if (once && cap !== null) ratio = cap <= 0 ? 0 : Math.min(ratio, trafficLeft / cap)
+  detail.ratio_ppm = Math.floor(ratio * 1_000_000)
+  return { credit: Math.floor(sub.amount * ratio), detail }
 }
 
 function periodEndMs(start: number, plan: CatalogPlan, price: CatalogPrice): number {

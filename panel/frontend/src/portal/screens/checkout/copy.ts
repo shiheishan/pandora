@@ -4,6 +4,7 @@ import { day, devicesText, gb, leftOf, money, moneyShort, periodLabel, type Nami
 import type { BalanceSplit, Quote, QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { pickTrafficQuota } from '../common/traffic'
+import { expiryText, titleOf } from '../common/card-text'
 import type { Target } from './model'
 
 // ---------------------------------------------------------------------------
@@ -28,8 +29,19 @@ interface ConfirmCtx {
 
 export type Note = string | { b: string; rest: string }
 
+/** 左栏顶上那张小卡（样稿 .ck-item）：贴纸名、一行事实、右侧灰字 */
+export interface ConfirmItem {
+  name: string
+  facts: string
+  pill?: string
+}
+
 interface ConfirmCopy {
   title: string
+  /** 续费、新买、叠加、重置：左栏顶上的小卡 */
+  item?: ConfirmItem
+  /** 换套餐：「现在 → 换成」两格（样稿 .ck-swap） */
+  swap?: { from: ConfirmItem; to: ConfirmItem }
   /** 主按钮的动作：「续费」「换成进阶版」「买一份新的」「叠加」 */
   verb: string
   callout: string[]
@@ -61,6 +73,18 @@ function trafficOf(plan: Plan | undefined, sub: Subscription | undefined): strin
   if (plan) return planTraffic(plan)
   const limit = sub ? pickTrafficQuota(sub.quotas)?.limit : null
   return limit ? `每期 ${gb(limit)}` : '不限流量'
+}
+
+/** 「3 台设备」「设备不限台数」 */
+const devicesFact = (n: number | null) => (n === null ? '设备不限台数' : `${devicesText(n)}设备`)
+
+/** 流量那一格去掉「每期 / 共」前缀后的量：「100G」「不限」 */
+const amountOf = (traffic: string) => traffic.replace(/^(每期|共) /, '').replace('不限流量', '不限')
+
+/** 换套餐的流量一句（审计 #15：按时间的套餐说「每期」，不说「每月」）：「每期流量 500G → 300G」；跨类型「流量 每期 100G → 共 50G」 */
+function trafficShift(from: string, to: string): string {
+  const per = (t: string) => t.startsWith('每期 ') || t === '不限流量'
+  return per(from) && per(to) ? `每期流量 ${amountOf(from)} → ${amountOf(to)}` : `流量 ${from} → ${to}`
 }
 
 /** 换大还是换便宜：按月价比，没有月价按这一档与原来的价钱比 */
@@ -109,6 +133,7 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
     return {
       title: verb,
       verb,
+      item: { name: titleOf(sub), facts: `${sub.label ? `${sub.plan_name} · ` : ''}${trafficOf(plan, sub)} · ${devicesFact(sub.device_limit)}`, pill: expired ? '已到期' : expiryText(sub, now).main },
       callout: [expired ? `付款后马上恢复使用。从今天起算，到 ${end}；过期那 ${expiredDays(sub, now)} 天不补。链接不变，设备上不用重新添加。` : `到期日 ${prev} → ${end}。链接不变，现在用的设备不用重新添加。`],
       rows: [...(m ? [{ k: '给', v: naming.dn(sub) }] : []), { k: `${sub.plan_name} · ${tier(row)}`, v: money(row.subtotal) }, ...coupon(row), { k: '到期日', v: expired ? `今天起，到 ${end}` : `${prev} → ${end}` }],
       notes:
@@ -138,6 +163,11 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
     return {
       title: `叠加到${who}`,
       verb: '叠加',
+      item: {
+        name: titleOf(sub),
+        facts: `一次性 · ${sub.permanent || row.validity_days === null ? '永久有效' : `有效 ${row.validity_days} 天`} · ${devicesFact(sub.device_limit)}`,
+        pill: left === null ? '不限流量' : `剩 ${gb(left)}`,
+      },
       callout: [`叠加后还是原来那个链接，不用重新添加。`],
       rows: [
         ...(m ? [{ k: '叠加到', v: naming.dn(sub) }] : []),
@@ -162,28 +192,45 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
       : [
           up
             ? `现在就换成${np}：链接不变，不用重新添加。${op}今天停用。`
-            : `现在就换成${np}：链接不变。每月流量 ${trafficOf(c.oldPlan, sub).replace(/^每\S+ /, '')} → ${trafficOf(plan, undefined).replace(/^每\S+ /, '')}、设备 ${devicesText(sub.device_limit)} → ${devicesText(plan.max_devices)}，今天生效。${row.refund > 0 ? `多出的 ${money(row.refund)} 退到钱包余额。` : ''}`,
+            : `现在就换成${np}：链接不变。${trafficShift(trafficOf(c.oldPlan, sub), trafficOf(plan, undefined))}、设备 ${devicesText(sub.device_limit)} → ${devicesText(plan.max_devices)}，今天生效。${row.refund > 0 ? `多出的 ${money(row.refund)} 退到钱包余额。` : ''}`,
           onceTarget ? '' : `从今天起重新算一期，到期 ${prev} → ${end}。`,
         ].filter(Boolean)
     const d = row.credit_detail
-    const calc = d
-      ? `${op}这期付了 ${money(d.paid)}。还剩 ${d.days_left}/${d.days_total} 天（${pct(d.days_total ? d.days_left / d.days_total : 0)}），流量还剩 ${gb(d.traffic_left)}/${gb(d.traffic_total)}（${pct(d.traffic_total ? d.traffic_left / d.traffic_total : 0)}），按少的那项算：${money(d.paid)} × ${pct(d.ratio_ppm / 1_000_000)} = ${money(row.credit)}。按下单那一刻算；送的天数不算钱。`
-      : undefined
+    // 审计 #3：口径照 Go order/service/proration.go——原来是订阅套餐只按剩余付费时间算（credit_detail 的流量恒为 0），
+    // 一次性取剩余天数与剩余流量里少的那个，永久的只看流量；流量上限不含送的
+    const oldOnce = sub.plan_kind === 'one_time'
+    const oldPermanent = oldOnce && sub.permanent
+    const ratio = d ? pct(d.ratio_ppm / 1_000_000) : ''
+    const daysPart = d ? `还剩 ${d.days_left}/${d.days_total} 天（${pct(d.days_total ? d.days_left / d.days_total : 0)}）` : ''
+    const trafficPart = d ? `流量还剩 ${gb(d.traffic_left)}/${gb(d.traffic_total)}（${pct(d.traffic_total ? d.traffic_left / d.traffic_total : 0)}）` : ''
+    const calc = !d
+      ? undefined
+      : !oldOnce
+        ? `${op}这期付了 ${money(d.paid)}。${daysPart}，${money(d.paid)} × ${ratio} = ${money(row.credit)}。按下单那一刻算；送的天数不算钱。`
+        : oldPermanent
+          ? `${op}付了 ${money(d.paid)}。${trafficPart}，${money(d.paid)} × ${ratio} = ${money(row.credit)}。按下单那一刻算；送的流量不算钱。`
+          : `${op}付了 ${money(d.paid)}。${daysPart}，${trafficPart}，按少的那项算：${money(d.paid)} × ${ratio} = ${money(row.credit)}。按下单那一刻算；送的天数和流量不算钱。`
     const notes: Note[] = []
     if (row.credit > 0 && d) {
+      const unused = !oldOnce ? `${op}这期没用完的 ${d.days_left} 天` : oldPermanent ? `${op}没用完的 ${gb(d.traffic_left)}` : `${op}没用完的 ${gb(d.traffic_left)} 和 ${d.days_left} 天`
       notes.push({
-        b: `${op}这期没用完的 ${gb(d.traffic_left)} 和 ${d.days_left} 天，已经按 ${money(row.credit)} 算给你了`,
+        b: `${unused}，已经按 ${money(row.credit)} 算给你了`,
         rest: `（先抵${np}的 ${money(row.subtotal - row.discount)}，${row.refund > 0 ? `多的 ${money(row.refund)} 退到钱包` : row.total > 0 ? `还需付 ${money(row.total)}` : '正好抵完'}）。从今天起按${np}（${trafficOf(plan, undefined)}）重新算。`,
       })
     }
     if (row.refund > 0) notes.push(`退回的 ${money(row.refund)} 在「钱包」里，可以用来续费、买套餐，不能提现。`)
-    if (!up && d && d.days_total && d.traffic_total && d.traffic_left / d.traffic_total < d.days_left / d.days_total - 0.05) {
-      notes.push(`你的流量用得比天数快，现在换只能算回 ${money(row.credit)}。不急的话，快到期时再换更划算。`)
+    // 只有一次性（非永久）才会因为流量用得快少算钱
+    if (oldOnce && !oldPermanent && !up && d && d.days_total && d.traffic_total && d.traffic_left / d.traffic_total < d.days_left / d.days_total - 0.05) {
+      notes.push(`你的流量用得比天数快，现在换只能算回 ${money(row.credit)}。不急的话，等这份用得差不多了再换更划算。`)
     }
     const endRow = onceTarget ? validityRow(row, now) : { k: '到期日', v: expired ? `今天起，到 ${end}` : `${prev} → ${end}` }
     return {
       title: `换成${np}`,
       verb: `换成${np}`,
+      swap: {
+        from: { name: titleOf(sub), facts: `${trafficOf(c.oldPlan, sub)} · ${devicesFact(sub.device_limit)}` },
+        to: { name: np, facts: `${planTraffic(plan)} · ${devicesFact(plan.max_devices)}` },
+      },
       callout,
       formula: row.credit > 0 || row.discount > 0 ? changeFormula(row) : undefined,
       rows: [
@@ -206,6 +253,7 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
     const existing = held.length === 1 ? `你现在的${held[0]!.plan_name}` : `现有的 ${held.length} 份`
     const tierLabel = once ? '一次性' : tier(row)
     return {
+      item: { name: plan.name, facts: `${once ? '一次性 · ' : ''}${planTraffic(plan)} · ${devicesFact(plan.max_devices)}` },
       title: held.length ? '再买一份' : `买${plan.name}`,
       verb: held.length ? '买一份新的' : `买${plan.name}`,
       callout: [held.length ? `会得到一个新链接，要在用它的设备上添加到 App。${existing}不受影响，各自到期、各自算流量。` : '会得到一个链接，在要用的设备上添加到 App 就能用。'],
@@ -214,11 +262,14 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
     }
   }
   if (target.kind === 'reset' && sub) {
-    const { left } = leftOf(sub)
-    const limit = pickTrafficQuota(sub.quotas)?.limit
+    // 重置只把已用清零、送的流量保留：重置后能用满「上限 + 送的」（leftOf 的 total）
+    const { left, total, used } = leftOf(sub)
+    const scope = sub.plan_kind === 'one_time' ? '有效期内' : '本期'
+    const times = sub.reset_limit === null ? '不限次数' : `${scope}还能买 ${Math.max(0, sub.reset_limit - sub.resets_used)} 次`
     return {
       title: '重置流量',
       verb: '重置',
+      item: { name: titleOf(sub), facts: `${sub.label ? `${sub.plan_name} · ` : ''}${scope}已用 ${gb(used)}${total !== null ? ` / ${gb(total)}` : ''}`, pill: times },
       callout: [
         m
           ? `把「${naming.dn(sub)}」这一期已用的流量清零，马上生效。链接不变，到期时间不变。`
@@ -228,7 +279,7 @@ export function confirmCopy(c: ConfirmCtx): ConfirmCopy {
         ...(m ? [{ k: '重置', v: naming.dn(sub) }] : []),
         { k: '重置流量', v: money(row.subtotal) },
         ...coupon(row),
-        ...(limit !== null && limit !== undefined && left !== null ? [{ k: '重置后能用', v: `${gb(left)} → ${gb(limit)}` }] : []),
+        ...(total !== null && left !== null ? [{ k: '重置后能用', v: `${gb(left)} → ${gb(total)}` }] : []),
       ],
       notes: ['只清这一期已用的流量；到期时间都不变。', ...(sub.traffic_used === 0 ? ['这一期还没用流量，现在重置不会多出流量。'] : [])],
     }
