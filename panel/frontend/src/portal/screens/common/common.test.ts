@@ -169,7 +169,7 @@ describe('orders', () => {
   })
 
   it('待支付期限按 expires_at 倒数', () => {
-    expect(expiryNote('2026-09-24T12:17:30Z', NOW)).toBe('18 分钟内未支付将自动取消')
+    expect(expiryNote('2026-09-24T12:17:30Z', NOW)).toBe('18 分钟后自动取消')
     expect(expiryNote('2026-09-24T11:59:00Z', NOW)).toBe('即将自动取消')
     expect(expiryNote(undefined, NOW)).toBe('请尽快完成支付')
   })

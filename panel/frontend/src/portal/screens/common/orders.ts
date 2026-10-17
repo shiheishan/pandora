@@ -2,44 +2,11 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { z } from 'zod'
 import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
+import { ordersPageSchema, orderRowSchema, PENDING_ORDERS_KEY, type OrderRow } from '../../queries'
 import { endsIntent } from './intent'
 
-const ORDER_KINDS = ['new', 'renewal', 'topup', 'upgrade', 'stack', 'traffic_reset'] as const
-export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const
-
-export const orderRowSchema = z.object({
-  id: z.string(),
-  order_no: z.string(),
-  kind: z.enum(ORDER_KINDS),
-  status: z.enum(ORDER_STATUSES),
-  total_amount: z.number().int(),
-  discount_amount: z.number().int(),
-  balance_applied: z.number().int(),
-  payable_amount: z.number().int(),
-  paid_amount: z.number().int(),
-  plan_name: z.string().optional(),
-  cancellable: z.boolean(),
-  // 发起过支付（有过任何一条支付意图）；Go 无 omitempty，恒在。决定显示「我已支付，刷新状态」
-  has_payment_intent: z.boolean(),
-  created_at: z.string(),
-  paid_at: z.string().optional(),
-  cancelled_at: z.string().optional(),
-  cancel_reason: z.string().optional(),
-  expires_at: z.string().optional(),
-  // 修订 R69：周期是首个订单项的快照，Go 带 omitempty，没有周期（充值）时缺席；
-  // 商品名 Go 无 omitempty，恒在（没有订单项时为空串）
-  interval: z.string().optional(),
-  interval_count: z.number().int().optional(),
-  item_name: z.string(),
-})
-export type OrderRow = z.output<typeof orderRowSchema>
-
-export const ordersPageSchema = z.object({
-  orders: z.array(orderRowSchema),
-  total: z.number().int(),
-  // 修订 R69：本人全部订单按筛选段的计数，不受当前筛选影响
-  counts: z.object({ open: z.number().int(), paid: z.number().int(), closed: z.number().int() }),
-})
+// 订单行与列表页的 schema、待支付查询键归外框 portal/queries.ts（侧栏待支付数与这里同一个键，只留一份定义），这里转出给页面用
+export { ORDER_STATUSES, orderRowSchema, ordersPageSchema, PENDING_ORDERS_KEY, type OrderRow } from '../../queries'
 
 /** 价格周期 → 「月付 / 季付 / 年付」；billing_interval 取值见 00003 的 CHECK。 */
 const NAMED_PERIODS: Readonly<Record<string, string>> = {
@@ -81,23 +48,15 @@ export function orderTitle(o: Pick<OrderRow, 'kind' | 'plan_name' | 'item_name' 
   }
 }
 
-/** 待支付条的期限：后端 30 分钟过期，按 expires_at 倒数。 */
+/** 待支付卡的倒计时（样稿「18 分钟后自动取消」）：后端 30 分钟过期，按 expires_at 倒数，页面每 30 秒重算一次。 */
 export function expiryNote(expiresAt: string | undefined, now: Date = new Date()): string {
   if (!expiresAt) return '请尽快完成支付'
   const minutes = Math.ceil((new Date(expiresAt).getTime() - now.getTime()) / 60_000)
-  return minutes > 0 ? `${minutes} 分钟内未支付将自动取消` : '即将自动取消'
+  return minutes > 0 ? `${minutes} 分钟后自动取消` : '即将自动取消'
 }
 
-/** 概览顶部待支付条：契约写的是 status=pending_payment。 */
-export function usePendingOrders() {
-  const api = useApi()
-  return useQuery({
-    queryKey: ['portal', 'orders', { status: 'pending_payment' }],
-    queryFn: ({ signal }) => api.get('v1/orders', ordersPageSchema, { query: { status: 'pending_payment' }, signal }),
-    select: (d) => d.orders,
-    meta: { topics: ['orders.changed'] },
-  })
-}
+/** 列表行与收据里的短时间「10-13 17:03」（浏览器本地时区，与 formatDateTime 同口径） */
+export const shortDateTime = (at: string) => formatDateTime(at).slice(5)
 
 // ---------------------------------------------------------------------------
 // GET v1/orders/{id}（修订 R69 的明细字段）：支付回跳后的结果确认与订单页的明细共用
@@ -203,7 +162,6 @@ export function useOrderPayable(): (orderId: string) => Promise<boolean> {
 // 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 三类计数）
 // 设计的「全部」= 除待支付外的所有状态；待支付在顶部单独成卡
 // ---------------------------------------------------------------------------
-const OPEN_STATUSES = ['pending_payment'] as const
 export const ORDER_FILTERS = {
   all: ['paid', 'fulfilled', 'cancelled', 'expired'],
   paid: ['paid', 'fulfilled'],
@@ -229,13 +187,16 @@ export function useOrderPages(filter: OrderFilter) {
   })
 }
 
-/** 顶部待支付卡片：pending_payment */
+/**
+ * 顶部待支付卡片：与外框侧栏的待支付数同一个查询（同键、同请求，queries.ts 的 PENDING_ORDERS_KEY），
+ * 不带 limit（后端默认 20 条）；count 用 counts.open（超过 20 张时也准）
+ */
 export function useOpenOrders() {
   const api = useApi()
   return useQuery({
-    queryKey: ['portal', 'orders', { status: OPEN_STATUSES.join(',') }],
-    queryFn: ({ signal }) => api.get('v1/orders', ordersPageSchema, { query: { status: OPEN_STATUSES.join(','), limit: 20 }, signal }),
-    select: (d) => d.orders,
+    queryKey: PENDING_ORDERS_KEY,
+    queryFn: ({ signal }) => api.get('v1/orders', ordersPageSchema, { query: { status: 'pending_payment' }, signal }),
+    select: (d) => ({ orders: d.orders, count: d.counts.open }),
     meta: { topics: ['orders.changed'] },
   })
 }
@@ -327,11 +288,16 @@ export function archivedRefundText(surchargeKept: number | undefined): string {
   return surchargeKept > 0 ? '应付金额已转入钱包余额（支付手续费不退）' : '付的钱已转入钱包余额'
 }
 
-/** 展开区「结果」（契约门户-04 订单详情映射） */
-export function orderResult(
-  o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'surcharge_kept'>,
-): string {
-  const method = o.payments.length ? payMethodName(o.payments) : ''
+/** 后端的取消原因：已知的码换成话，认不出的英文码（形如 user_cancelled）不露给用户，写「已取消」；后台填的中文原因照写 */
+function cancelText(reason: string | undefined): string {
+  if (!reason || reason === 'user_cancelled') return '已由您取消'
+  if (reason === 'expired') return '超时未支付，已自动取消'
+  return /^[a-z0-9_]+$/.test(reason) ? '已取消' : reason
+}
+
+/** 展开区第一行「结果」（样稿 .rc-res：「已续上，有效期至 2026-11-13」） */
+export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'expires_at' | 'surcharge_kept'>): string {
+  const until = o.subscription_period_end ? `，有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : ''
   switch (o.status) {
     case 'fulfilled':
     case 'paid':
@@ -339,12 +305,13 @@ export function orderResult(
       if (o.kind === 'stack') return '已叠加，总流量加上了'
       if (o.kind === 'traffic_reset') return '本期流量已清零'
       if (o.kind === 'upgrade') return '已换好套餐，链接不变'
-      return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
+      if (o.kind === 'renewal') return `已续上${until}`
+      return `已开通${until}`
     case 'expired':
       return '超时未支付，已自动取消'
     case 'cancelled':
       if (o.cancel_reason === 'plan_archived') return `套餐已停售，没有开通；${archivedRefundText(o.surcharge_kept)}`
-      return !o.cancel_reason || o.cancel_reason === 'user_cancelled' ? '已由您取消' : o.cancel_reason
+      return cancelText(o.cancel_reason)
     default:
       return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'
   }
@@ -353,24 +320,69 @@ export function orderResult(
 // 收款记录库里只有 succeeded（00012_payment.sql）；认不出的原样显示
 const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功' }
 
-/** 展开区事实行（契约门户-04 待补·前端）：订单号、时间、结果、金额拆分、支付记录 */
-export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
+/** 收据金额行（样稿 .rc-ln）：minus 为真时金额前写「−」；total 是底下加粗的合计行；code 是优惠码小标签 */
+export interface ReceiptLine {
+  k: string
+  v: string
+  minus?: boolean
+  total?: boolean
+  code?: string
+}
+
+/** 支付记录一行（样稿 .rc-pay）：method 给图标用（alipay / wxpay / 其他） */
+export interface ReceiptPayment {
+  name: string
+  method: string
+  meta: string
+  amount: string
+}
+
+export interface Receipt {
+  /** ok：已支付（✓）；否则是灰色的「–」 */
+  result: { text: string; ok: boolean }
+  lines: ReceiptLine[]
+  payments: ReceiptPayment[]
+}
+
+/**
+ * 展开收据（样稿 .rc）：
+ * - 「实付」是渠道实收（payments 合计，与完成页 paidText 同口径），不是 paid_amount（库里恒等于订单总额、含余额那部分）；
+ *   全部用余额付的写「全部用余额」（审计 #6）。
+ * - 换套餐单（upgrade）的总额里扣了「原套餐没用完的部分」，详情里没有这一项，前端不用差值去算：
+ *   不写「原价」，改写「订单金额」= total_amount，优惠只作说明（已含在订单金额里），再列余额与实付（审计 #7）。
+ * - 已取消 / 超时的单，冻结的余额已退回，写「用了余额（已退回）」；待支付的单底下写「还要付」。
+ */
+export function orderReceipt(o: OrderDetail): Receipt {
   const money = (m: number) => formatMoney(m)
-  const original = o.items.reduce((n, i) => n + i.line_amount, 0)
-  const facts = [
-    { k: '订单号', v: o.order_no },
-    { k: '下单时间', v: formatDateTime(o.created_at) },
-    { k: '结果', v: orderResult(o) },
-    { k: '原价', v: money(original) },
-  ]
-  if (o.discount_amount > 0) facts.push({ k: '优惠', v: `−${money(o.discount_amount)}${o.coupon_code ? `（${o.coupon_code}）` : ''}` })
-  if (o.balance_applied > 0) facts.push({ k: '用了余额', v: `−${money(o.balance_applied)}` })
-  if (PAID_STATUSES.has(o.status)) facts.push({ k: '实付', v: money(o.paid_amount) })
-  if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
-  for (const p of o.payments) {
-    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+  const paid = PAID_STATUSES.has(o.status)
+  const pending = o.status === 'pending_payment'
+  const closed = !paid && !pending
+  const lines: ReceiptLine[] = []
+  const code = o.coupon_code
+  if (o.kind === 'upgrade') {
+    lines.push({ k: '订单金额', v: money(o.total_amount) })
+    if (o.discount_amount > 0) lines.push({ k: '其中优惠', v: money(o.discount_amount), ...(code ? { code } : {}) })
+  } else {
+    lines.push({ k: '原价', v: money(o.items.reduce((n, i) => n + i.line_amount, 0)) })
+    if (o.discount_amount > 0) lines.push({ k: '优惠', v: money(o.discount_amount), minus: true, ...(code ? { code } : {}) })
   }
-  return facts
+  if (o.balance_applied > 0) lines.push({ k: closed ? '用了余额（已退回）' : '用了余额', v: money(o.balance_applied), minus: true })
+  if (paid) {
+    const online = o.payments.reduce((n, p) => n + p.amount, 0)
+    lines.push({ k: '实付', v: online > 0 ? money(online) : o.balance_applied > 0 ? '全部用余额' : money(0), total: true })
+  } else if (pending) {
+    lines.push({ k: '还要付', v: money(o.payable_amount), total: true })
+  }
+  return {
+    result: { text: orderResult(o), ok: paid },
+    lines,
+    payments: o.payments.map((p) => ({
+      name: payMethodName([p]),
+      method: p.method ?? '',
+      meta: `${shortDateTime(p.created_at)} · ${PAYMENT_STATUS[p.status] ?? p.status}`,
+      amount: money(p.amount),
+    })),
+  }
 }
 
 /**
