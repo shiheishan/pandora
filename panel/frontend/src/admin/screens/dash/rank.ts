@@ -95,14 +95,12 @@ export function rankView(
     }
   })
 
-  let footer = ''
+  let footer = `合计 ${formatBytes(isNode ? data.totals.reported_bytes : data.totals.attributed_bytes)}`
   if (isNode) {
-    footer = `合计 ${formatBytes(data.totals.reported_bytes)}`
     if (!empty && nodesOnline != null) {
       footer += ` · ${nodesOnline.online}/${nodesOnline.total} 节点在线`
     }
   } else {
-    footer = `合计 ${formatBytes(data.totals.attributed_bytes)}`
     if (!empty) {
       const sumSharePct = formatSharePct(listSum, denominator)
       footer += ` · 前 ${rows.length} 名占 ${sumSharePct}`
