@@ -5,6 +5,8 @@
   justify-content: center;
   gap: 8px;
   height: var(--h-control);
+  /* 竖排的 flex 容器里 .grow 的 flex-basis 0 会让 height 失效、压成一行字高，min-height 兜住 */
+  min-height: var(--h-control);
   padding: 0 24px;
   border-radius: var(--radius-control);
   border: 1px solid var(--button-primary-border);
@@ -76,6 +78,7 @@
 
 .sm {
   height: var(--h-control-sm);
+  min-height: var(--h-control-sm);
   padding: 0 14px;
   border-radius: 11px;
   font-size: var(--button-font-size-sm);
