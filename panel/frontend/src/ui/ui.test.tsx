@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { Cancel01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { ApiError } from '../core/api'
 import {
   Button,
@@ -8,6 +9,7 @@ import {
   CountBadge,
   Drawer,
   Empty,
+  IconButton,
   Input,
   Menu,
   Modal,
@@ -35,6 +37,14 @@ describe('Button', () => {
     const out = html(<Button busy>发布配置</Button>)
     expect(out).toContain('disabled=""')
     expect(out).toContain('aria-busy="true"')
+  })
+
+  it('IconButton renders accessible labels and svg icon', () => {
+    const out = html(<IconButton label="关闭" icon={Cancel01Icon} />)
+    expect(out).toContain('aria-label="关闭"')
+    expect(out).toContain('title="关闭"')
+    expect(out).toContain('type="button"')
+    expect(out).toContain('<svg')
   })
 })
 
@@ -95,6 +105,12 @@ describe('form controls', () => {
     const out = html(<Switch aria-label="启用" defaultChecked />)
     expect(out).toContain('type="checkbox"')
     expect(out).toContain('role="switch"')
+  })
+
+  it('Switch supports tone="danger" and does not leak tone attribute to DOM', () => {
+    const out = html(<Switch aria-label="暂停" tone="danger" readOnly checked />)
+    expect(out).toContain('role="switch"')
+    expect(out).not.toContain('tone=')
   })
 
   it('Checkbox ties its label to the input with an explicit for/id, keeping a caller id', () => {

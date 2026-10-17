@@ -1,4 +1,4 @@
-export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
+export { Button, IconButton, type ButtonProps, type ButtonSize, type ButtonVariant, type IconButtonProps } from './Button'
 export { Card, type CardProps } from './Card'
 export { Checkbox, type CheckboxProps } from './Checkbox'
 export { Drawer, type DrawerProps } from './Drawer'
