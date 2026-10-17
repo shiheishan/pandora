@@ -168,6 +168,11 @@
     flex-basis: 100%;
   }
 
+  /* 有前导（状态点、图标、头像，最宽 32）时主文案与它同行，只让出前导那一格 */
+  .lead + .main {
+    flex-basis: calc(100% - 48px);
+  }
+
   .value {
     min-width: 0;
     text-align: left;
