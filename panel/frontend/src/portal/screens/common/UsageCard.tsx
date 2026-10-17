@@ -1,6 +1,6 @@
 import { formatBytes } from '../../../core/format'
 import { href } from '../../../core/router'
-import { Card, Empty, Skeleton } from '../../../ui'
+import { Empty, Skeleton } from '../../../ui'
 import { LoadError } from './Blocks'
 import css from './common.module.css'
 import { useSubscriptionUsage } from './subscriptions'
@@ -20,17 +20,18 @@ export function UsageCard({ subscriptionId, summary, resetAt, resetPrice }: Usag
 
   if (usage.isPending) {
     return (
-      <Card aria-busy="true" className={css.usage}>
+      <section className={css.usage} aria-busy="true">
         <Skeleton width={180} height={18} />
         <Skeleton height={120} radius="var(--radius-md)" />
-      </Card>
+      </section>
     )
   }
   if (usage.isError) {
     return (
-      <Card title="本期用量" className={css.usage}>
+      <section className={css.usage}>
+        <h2 className={css.usageName}>本期用量</h2>
         <LoadError error={usage.error} onRetry={() => void usage.refetch()} what="用量" />
-      </Card>
+      </section>
     )
   }
 
@@ -40,7 +41,7 @@ export function UsageCard({ subscriptionId, summary, resetAt, resetPrice }: Usag
   const dense = chart.bars.length > 40
 
   return (
-    <Card className={css.usage}>
+    <section className={css.usage}>
       <div className={css.usageHead}>
         <div className={css.usageTitle}>
           <div className={css.usageTitleRow}>
@@ -98,6 +99,6 @@ export function UsageCard({ subscriptionId, summary, resetAt, resetPrice }: Usag
       ) : (
         <Empty bare title="本期还没有用量记录" description="App 连上节点后，每天的用量会显示在这里。" />
       )}
-    </Card>
+    </section>
   )
 }
