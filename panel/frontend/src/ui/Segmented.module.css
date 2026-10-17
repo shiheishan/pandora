@@ -3,19 +3,20 @@
   /* 放进纵向 flex 容器时不被拉伸成整行 */
   width: fit-content;
   max-width: 100%;
-  padding: 3px;
-  border-radius: var(--radius-md);
-  background: var(--surface-3);
+  padding: var(--segment-pad);
+  border-radius: var(--segment-radius);
+  background: var(--segment-bg);
+  box-shadow: var(--segment-ring);
 }
 
 .option {
-  height: 30px;
-  padding: 0 14px;
+  height: var(--segment-h);
+  padding: 0 var(--segment-option-pad);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--segment-option-radius);
   background: transparent;
   color: var(--text-2);
-  font-size: var(--fs-body-sm);
+  font-size: var(--segment-font-size);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -27,7 +28,7 @@
 .on {
   background: var(--surface);
   color: var(--text);
-  font-weight: var(--fw-medium);
+  font-weight: var(--segment-on-weight);
   box-shadow: var(--shadow-segment);
 }
 
@@ -36,8 +37,14 @@
   outline-offset: 1px;
 }
 
+/* 小号分段（样稿 .me-theme）：换底色、去掉外框描边 */
+.sm {
+  background: var(--segment-bg-sm);
+  box-shadow: none;
+}
+
 .sm .option {
-  height: 24px;
-  padding: 0 10px;
-  font-size: var(--fs-caption);
+  height: var(--segment-h-sm);
+  padding: 0 var(--segment-option-pad-sm);
+  font-size: var(--segment-font-size-sm);
 }

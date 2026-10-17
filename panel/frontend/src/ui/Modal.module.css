@@ -20,6 +20,7 @@
 
 .overlay::backdrop {
   background: var(--scrim);
+  backdrop-filter: var(--dialog-backdrop-filter);
 }
 
 /* 弹窗开着时页面本身不滚动 */
@@ -35,7 +36,7 @@
   max-height: min(760px, calc(100vh - 32px));
   padding: 0;
   border: 1px solid var(--popover-border);
-  border-radius: var(--radius-card);
+  border-radius: var(--dialog-radius);
   background: var(--surface);
   box-shadow: var(--popover-shadow);
   animation: rise 0.18s ease-out;
@@ -71,7 +72,7 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--dialog-title-size);
   font-weight: var(--fw-semibold);
 }
 
@@ -101,7 +102,12 @@
 }
 
 .grow {
-  flex: 1;
+  flex: var(--dialog-grow);
+}
+
+/* 门户：底部按钮平分整行；后台 0 1 auto 不变 */
+.foot > button {
+  flex: var(--dialog-action-flex);
 }
 
 .divided .head,
@@ -140,7 +146,7 @@
   .panel {
     width: 100% !important;
     max-height: 90dvh;
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
     animation-name: slide-up;
   }
 
