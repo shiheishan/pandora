@@ -7,7 +7,8 @@ import css from './DetailPage.module.css'
 export interface DetailPageTabs<T extends string> {
   /** 页签组的无障碍名称 */
   label: string
-  items: readonly { value: T; label: ReactNode }[]
+  /** badge：页签名后的计数（读屏单独读，不混进页签名） */
+  items: readonly { value: T; label: ReactNode; badge?: ReactNode }[]
   value: T
   onChange: (value: T) => void
 }

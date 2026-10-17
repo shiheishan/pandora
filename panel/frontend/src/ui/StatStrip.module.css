@@ -29,7 +29,8 @@
 }
 
 @media (max-width: 959px) {
-  .strip {
+  /* 三格以内一行放得下，四格起才折成两列（免得三格时空出一格） */
+  .strip:has(> :nth-child(4)) {
     grid-auto-flow: row;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
