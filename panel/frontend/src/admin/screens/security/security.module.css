@@ -16,11 +16,6 @@
   flex: 1;
 }
 
-/* 工具条换行时也贴右（960 下审计的「导出」） */
-.push {
-  margin-left: auto;
-}
-
 .search {
   width: 260px;
 }
@@ -51,29 +46,8 @@
   outline-offset: 1px;
 }
 
-.panel {
-  min-width: 0;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 0;
-  background: var(--surface);
-}
-
-.pager {
-  border-top: 1px solid var(--border);
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
 .strong {
   font-weight: var(--fw-medium);
-}
-
-.muted {
-  color: var(--text-2);
 }
 
 .faint {
@@ -100,35 +74,43 @@
   white-space: nowrap;
 }
 
-/* ui/Table 是自动布局，nowrap 的文本会按内容撑宽列；审计表在这里改成固定布局，省略号按列宽截断。
- * 最小 880：1280 下铺满，960 下按 ui/Table 的约定在面板内横向滚动，不把列挤没 */
-.fixedTable table {
+/* ---- 审计日志表格 -------------------------------------------------------- */
+.auditTableHost {
+  min-width: 0;
+}
+
+.auditTableHost table {
   min-width: 880px;
   table-layout: fixed;
 }
 
-.cellWho {
+.auditWho {
   display: block;
   max-width: 220px;
 }
 
-.cellWhoMain {
+.auditWhoMain {
   display: block;
 }
 
-.cellWhoKind {
+.auditWhoSub {
   display: block;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-size: 12.5px;
 }
 
 .cellObject {
   display: block;
+  color: var(--text-2);
 }
 
 .cellAction {
   font-size: var(--fs-caption);
   white-space: nowrap;
+}
+
+.authMuted {
+  color: var(--text-2);
 }
 
 /* ---- 弹窗表单 ------------------------------------------------------------ */
@@ -305,87 +287,80 @@
   font-size: 13px;
 }
 
-/* ---- 降级开关 ------------------------------------------------------------ */
-.switchList {
-  min-width: 0;
-  border-top: 1px solid var(--border-strong);
-}
-
-.switchRow {
+/* ---- 降级开关（样稿 .swt / .sst）----------------------------------------- */
+.swt {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 24px;
-  padding: 14px 16px;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
   border-bottom: 1px solid var(--border);
 }
 
-.switchRow:last-child {
+.swt:last-child {
   border-bottom: 0;
 }
 
-/* 降级中：左侧 2px 红竖线并缩进，开关底色跟着转危险色 */
-.switchOn {
-  --accent: var(--danger);
-
-  box-shadow: inset 2px 0 0 var(--danger);
-  padding-left: 12px;
+.swtPaused {
+  background: var(--danger-soft);
 }
 
-/* 核心项：开关画成打开但禁用（Switch 自带的禁用半透明），绿色轨道 */
-.switchLocked {
-  --accent: var(--ok);
-}
-
-.switchMain {
-  flex: 1 1 360px;
+.swtMain {
+  flex: 1;
   min-width: 0;
+  display: grid;
+  gap: 3px;
+  font-size: 13px;
 }
 
-.switchTitle {
+.swtTitle {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.switchName {
+.swtName {
+  font-size: 13.5px;
+  font-weight: 500;
   color: var(--text);
-  font-weight: var(--fw-semibold);
   white-space: nowrap;
 }
 
-.switchDesc {
-  margin-top: 2px;
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.switchNote {
-  margin: 4px 0 0;
-  color: var(--warn);
-  font-size: var(--fs-caption);
-}
-
-.switchReason {
-  margin-top: 4px;
-  color: var(--danger);
-  font-size: var(--fs-caption);
-}
-
-.switchStatus {
-  flex: none;
-  width: 72px;
+.swtCode {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
   color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
-  text-align: right;
 }
 
-.danger {
+.swtDesc {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.swtImp {
+  font-size: 12.5px;
+  color: var(--warn);
+  line-height: 1.6;
+}
+
+.swtWhy {
+  font-size: 12.5px;
   color: var(--danger);
+  line-height: 1.6;
 }
 
-.ok {
-  color: var(--ok);
+.sst {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sstPaused {
+  color: var(--danger);
 }

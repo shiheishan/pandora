@@ -81,7 +81,7 @@ export function authLabel(ctx: AuditEvent['auth_context']): { label: string; str
 }
 
 export const OUTCOME_LABEL: Record<Outcome, string> = { success: '成功', failure: '失败', denied: '拒绝', partial: '部分成功' }
-export const OUTCOME_TONE: Record<Outcome, TagTone> = { success: 'ok', failure: 'danger', denied: 'danger', partial: 'warn' }
+export const OUTCOME_TONE: Record<Outcome, TagTone> = { success: 'ok', failure: 'danger', denied: 'warn', partial: 'info' }
 
 // ---------------------------------------------------------------------------
 // 访问日志（安全事件，不是 HTTP 访问日志）

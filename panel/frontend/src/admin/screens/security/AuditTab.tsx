@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Input, Modal, Pager, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
+import { Button, Empty, Input, Modal, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
+import { PageActions } from '../../kit'
 import { ACTOR_LABEL, actorLabel, AUDIT_PAGE, authLabel, clockTime, EMPTY_AUDIT_FILTER, exportQuery, hasAuditFilter, objectLabel, OUTCOME_LABEL, OUTCOME_TONE, validateExportRange, type AuditFilter } from './logic'
 import { useAudit, useFailure, useInvalidateSecurity } from './queries'
 import { ACTOR_KINDS, OUTCOMES, type ActorKind, type AuditEvent, type Outcome } from './schemas'
@@ -24,17 +25,18 @@ const columns: TableColumn<AuditEvent>[] = [
     header: '操作人',
     width: '20%',
     render: (e) => (
-      <span className={css.cellWho} title={`${ACTOR_LABEL[e.actor_kind]}${e.actor_email ? ` · ${e.actor_email}` : ''}`}>
-        <span className={`${css.ellipsis} ${css.cellWhoMain}`}>{actorLabel(e)}</span>
-        <span className={css.cellWhoKind}>{ACTOR_LABEL[e.actor_kind]}</span>
+      <span className={css.auditWho} title={`${ACTOR_LABEL[e.actor_kind]}${e.actor_email ? ` · ${e.actor_email}` : ''}`}>
+        <span className={`${css.ellipsis} ${css.auditWhoMain}`}>{actorLabel(e)}</span>
+        <span className={css.auditWhoSub}>{ACTOR_LABEL[e.actor_kind]}</span>
       </span>
     ),
   },
   {
     key: 'action',
     header: '动作',
+    mono: true,
     render: (e) => (
-      <span className={`${css.mono} ${css.ellipsis} ${css.cellAction}`} title={e.action}>
+      <span className={`${css.ellipsis} ${css.cellAction}`} title={e.action}>
         {e.action}
       </span>
     ),
@@ -43,25 +45,32 @@ const columns: TableColumn<AuditEvent>[] = [
     key: 'object',
     header: '对象',
     render: (e) => (
-      <span className={`${css.ellipsis} ${css.cellObject} ${css.muted}`} title={e.reason ? `原因：${e.reason}` : (e.resource_id ?? undefined)}>
+      <span className={`${css.ellipsis} ${css.cellObject}`} title={e.reason ? `原因：${e.reason}` : (e.resource_id ?? undefined)}>
         {objectLabel(e)}
       </span>
     ),
   },
-  { key: 'ip', header: '来源 IP', width: '120px', render: (e) => <span className={css.time}>{e.source_ip ?? '—'}</span> },
+  {
+    key: 'ip',
+    header: '来源 IP',
+    width: '120px',
+    mono: true,
+    render: (e) => <span className={css.time}>{e.source_ip ?? '—'}</span>,
+  },
   {
     key: 'auth',
     header: '认证',
     width: '80px',
     render: (e) => {
       const a = authLabel(e.auth_context)
-      return <span className={`${css.nowrap} ${a.strong ? css.strong : css.faint}`}>{a.label}</span>
+      return <span className={`${css.nowrap} ${a.strong ? css.strong : css.authMuted}`}>{a.label}</span>
     },
   },
   {
     key: 'outcome',
     header: '结果',
     width: '90px',
+    align: 'right',
     render: (e) => <Tag tone={OUTCOME_TONE[e.outcome]}>{OUTCOME_LABEL[e.outcome]}</Tag>,
   },
 ]
@@ -95,17 +104,18 @@ export function AuditTab() {
 
   return (
     <div className={css.stack}>
+      <PageActions>
+        <Button onClick={() => setExporting(true)}>导出</Button>
+      </PageActions>
+
       <div className={css.toolbar}>
         <Input size="sm" aria-label="搜索审计日志" fieldClassName={css.search} placeholder="操作人、动作或对象" value={search} onChange={(e) => setSearch(e.target.value)} />
         <Input size="sm" mono aria-label="动作前缀" fieldClassName={css.prefix} placeholder="动作前缀，如 order." value={filter.action} onChange={(e) => patch({ action: e.target.value })} />
         <Select size="sm" aria-label="操作者类型" emptyOption="全部操作者" value={filter.actor} options={ACTOR_KINDS.map((k) => ({ value: k, label: ACTOR_LABEL[k] }))} onChange={(e) => patch({ actor: e.target.value as ActorKind | '' })} />
         <Select size="sm" aria-label="结果" emptyOption="全部结果" value={filter.outcome} options={OUTCOMES.map((o) => ({ value: o, label: OUTCOME_LABEL[o] }))} onChange={(e) => patch({ outcome: e.target.value as Outcome | '' })} />
-        <Button size="sm" className={css.push} onClick={() => setExporting(true)}>
-          导出
-        </Button>
       </div>
 
-      <div className={`${css.panel} ${css.fixedTable}`}>
+      <div className={css.auditTableHost}>
         <QueryView
           query={audit}
           rows={8}
@@ -118,12 +128,40 @@ export function AuditTab() {
             )
           }
         >
-          {(page) => (
-            <>
-              <Table label="审计日志" columns={columns} rows={page.events} rowKey={(e) => e.id} />
-              <Pager className={css.pager} total={page.total} limit={AUDIT_PAGE} offset={offset} onChange={setOffset} />
-            </>
-          )}
+          {(page) => {
+            const total = page.total
+            const pageCount = Math.max(1, Math.ceil(total / AUDIT_PAGE))
+            const pageIndex = Math.floor(offset / AUDIT_PAGE) + 1
+            const atStart = offset === 0
+            const atEnd = offset + AUDIT_PAGE >= total
+            const singlePage = pageCount <= 1
+            const prevDisabled = atStart || singlePage
+            const nextDisabled = atEnd || singlePage
+
+            return (
+              <Table
+                boxed
+                label="审计日志"
+                columns={columns}
+                rows={page.events}
+                rowKey={(e) => e.id}
+                footer={
+                  <>
+                    <span>
+                      第 {pageIndex} / {pageCount} 页 · 共 {formatCount(total)} 条
+                    </span>
+                    <span className={css.spacer} />
+                    <Button size="sm" disabled={prevDisabled} onClick={() => setOffset(Math.max(0, offset - AUDIT_PAGE))}>
+                      上一页
+                    </Button>
+                    <Button size="sm" disabled={nextDisabled} onClick={() => setOffset(offset + AUDIT_PAGE)}>
+                      下一页
+                    </Button>
+                  </>
+                }
+              />
+            )
+          }}
         </QueryView>
       </div>
 
