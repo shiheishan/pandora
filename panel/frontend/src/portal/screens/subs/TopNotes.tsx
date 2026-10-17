@@ -3,7 +3,7 @@ import { formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Note, Sheet } from '../../kit'
 import { useAnnouncements, type Announcement } from '../common/announcements'
-import { expiryNote, orderTitle, usePendingOrders } from '../common/orders'
+import { expiryNote, orderTitle, useOpenOrders } from '../common/orders'
 import css from './Subs.module.css'
 
 export function TopNotes() {
@@ -18,12 +18,13 @@ export function TopNotes() {
   }, [])
 
   const announcementsQuery = useAnnouncements()
-  const pendingOrdersQuery = usePendingOrders()
+  // 与外框侧栏的待支付数同一个查询（useOpenOrders 同键）
+  const pendingOrdersQuery = useOpenOrders()
 
   const criticalAnnouncements = (announcementsQuery.data ?? []).filter(
     (a) => a.severity === 'critical',
   )
-  const pendingOrders = pendingOrdersQuery.data ?? []
+  const pendingOrders = pendingOrdersQuery.data?.orders ?? []
 
   if (criticalAnnouncements.length === 0 && pendingOrders.length === 0) {
     return null
