@@ -1,12 +1,12 @@
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
-import { Button, Switch, TextArea, useToast } from '../../../ui'
+import { Button, Switch, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { okSchema, useInvalidateTickets, useMacros, type Macro, type TicketDetail } from './api'
+import css from './Composer.module.css'
 import { MacroManager } from './MacroManager'
 import { MESSAGE_MAX } from './model'
-import css from './Tickets.module.css'
 
 type Mode = 'reply' | 'resolve'
 
@@ -21,6 +21,7 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
   const macros = useMacros()
   const replyKey = useIntentKey()
   const resolveKey = useIntentKey()
+  const errorId = useId()
   const [body, setBody] = useState('')
   const [note, setNote] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +33,7 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
   const text = body.trim()
   const length = [...text].length
   const tooLong = length > MESSAGE_MAX
+  const displayError = error ?? (tooLong ? `最多 ${MESSAGE_MAX} 字（现在 ${length}）` : null)
 
   const submit = async (mode: Mode) => {
     if (busy) return
@@ -90,28 +92,30 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
   const hasMore = all.length > MACRO_CHIPS
 
   return (
-    <div className={css.composer}>
+    <div className={note ? `${css.composer} ${css.note}` : css.composer}>
       <div className={css.macros}>
         {macros.isError ? (
           <span className={css.macroHint}>快捷回复读取失败</span>
         ) : (
-          <div className={css.macroChips}>
-            <span className={css.macroLabel}>快捷回复</span>
-            {chips.map((m) => (
-              <button key={m.id} type="button" className={css.macro} title={m.body} onClick={() => applyMacro(m)}>
-                {m.title}
-              </button>
-            ))}
-          </div>
+          <span className={css.macroLabel}>快捷回复</span>
         )}
-        {hasMore && <MacroAllButton macros={all} onUse={applyMacro} />}
-        <span className={css.macroDivider} aria-hidden="true" />
+        {!macros.isError &&
+          chips.map((m) => (
+            <button key={m.id} type="button" className={css.macro} title={m.body} onClick={() => applyMacro(m)}>
+              {m.title}
+            </button>
+          ))}
+        {!macros.isError && hasMore && <MacroAllButton macros={all} onUse={applyMacro} />}
+        <span className={css.spacer} aria-hidden="true" />
         <button type="button" className={css.macroManage} onClick={() => setManaging(true)}>
           {all.length === 0 ? '添加快捷回复' : '管理'}
         </button>
       </div>
-      <TextArea
+      <textarea
+        className={css.textarea}
         aria-label={note ? '内部备注' : '回复内容'}
+        aria-invalid={displayError ? true : undefined}
+        aria-describedby={displayError ? errorId : undefined}
         rows={3}
         value={body}
         onChange={(e) => {
@@ -120,18 +124,21 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
         }}
         onKeyDown={onKeyDown}
         placeholder={note ? '写给其他客服看的备注，用户看不到，⌘↵ 添加' : '回复用户，⌘↵ 发送'}
-        className={note ? css.noteInput : undefined}
-        error={error ?? (tooLong ? `最多 ${MESSAGE_MAX} 字（现在 ${length}）` : undefined)}
       />
-      <div className={css.composerBar}>
+      {displayError && (
+        <p id={errorId} role="alert" className={css.error}>
+          {displayError}
+        </p>
+      )}
+      <div className={css.bar}>
         <Switch label="内部备注" checked={note} onChange={(e) => setNote(e.target.checked)} />
-        <div className={css.spacer} />
+        <span className={css.spacer} aria-hidden="true" />
         {!note && (
-          <Button size="md" busy={busy === 'resolve'} disabled={busy !== null} onClick={() => void submit('resolve')}>
+          <Button size="sm" busy={busy === 'resolve'} disabled={busy !== null} onClick={() => void submit('resolve')}>
             回复并解决
           </Button>
         )}
-        <Button size="md" variant="primary" busy={busy === 'reply'} disabled={busy !== null} onClick={() => void submit('reply')}>
+        <Button size="sm" variant="primary" busy={busy === 'reply'} disabled={busy !== null} onClick={() => void submit('reply')}>
           {note ? '添加备注' : '发送回复'}
         </Button>
       </div>

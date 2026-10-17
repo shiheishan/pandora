@@ -1,3 +1,4 @@
+import { PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
@@ -6,10 +7,10 @@ import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, Modal, QueryView, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
 import { useFailure } from '../../actions'
+import { PageActions } from '../../kit'
 import { groupSavedSchema, okSchema, useInvalidateUsers, useUserGroups, type UserGroup } from './api'
 import { EXCLUSIVE_NONE_HINT, GROUP_DISABLE_NOTICE, GROUP_DELETE_NOTICE, exclusivePoolsLabel, groupBlocker, groupRefs } from './model'
 import gcss from './Groups.module.css'
-import css from './Users.module.css'
 
 interface EditDraft {
   id: string
@@ -107,13 +108,15 @@ export function GroupsTab() {
       key: 'name',
       header: '用户组',
       render: (g) => (
-        <span className={css.stack}>
+        <span className={gcss.stack}>
           <span className={gcss.groupName}>
             {g.name}
             {g.status === 'disabled' ? <> <Tag tone="neutral">已停用</Tag></> : null}
           </span>
-          <span className={css.small}>
-            {g.description || '—'} · <span className={css.mono}>{g.code}</span>
+          {/* 有描述写「描述 · 」，没有只写标识（样稿 td .sub2 + .mono） */}
+          <span className={gcss.sub}>
+            {g.description ? `${g.description} · ` : ''}
+            <span className={gcss.code}>{g.code}</span>
           </span>
         </span>
       ),
@@ -121,44 +124,51 @@ export function GroupsTab() {
     { key: 'users', header: '成员', width: '72px', align: 'right', mono: true, render: (g) => formatCount(g.users) },
     {
       key: 'pools',
+      hideOnMobile: true,
       header: '可用节点池',
-      width: '130px',
+      width: '140px',
       render: (g) => (
-        <span className={css.muted} title={g.exclusive_pools.length ? undefined : EXCLUSIVE_NONE_HINT}>
+        <span className={gcss.muted} title={g.exclusive_pools.length ? undefined : EXCLUSIVE_NONE_HINT}>
           {exclusivePoolsLabel(g)}
         </span>
       ),
     },
-    { key: 'refs', header: '被引用', width: '150px', render: (g) => <span className={css.muted}>{groupRefs(g)}</span> },
+    // groupRefs 空时返回 '—'（model.ts），那时写「未被引用」
+    {
+      key: 'refs',
+      hideOnMobile: true,
+      header: '被引用',
+      width: '150px',
+      render: (g) => <span className={gcss.muted}>{groupRefs(g) === '—' ? '未被引用' : groupRefs(g)}</span>,
+    },
     {
       key: 'ops',
       header: '',
-      width: '280px',
+      width: '240px',
       align: 'right',
       render: (g) => {
         const blocker = groupBlocker(g)
         return (
           <span className={gcss.rowActions}>
-            <a className={css.link} href={href('/users/list', { g: g.id })}>
+            <a className={gcss.viewLink} href={href('/users/list', { g: g.id })}>
               查看成员
             </a>
-            <Button size="xs" variant="ghost" onClick={() => openEdit(g)}>
+            <Button variant="link" size="xs" className={gcss.hideMobile} onClick={() => openEdit(g)}>
               编辑
             </Button>
-            <span className={gcss.actionSep} aria-hidden="true" />
             {g.status === 'disabled' ? (
-              <Button size="xs" variant="ghost" busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
+              <Button variant="ghost" size="xs" className={`${gcss.dangerHover} ${gcss.hideMobile}`} busy={statusBusy === g.id} onClick={() => void setStatus(g, false)}>
                 启用
               </Button>
             ) : (
-              <Button size="xs" variant="ghost" onClick={() => setDisabling(g)}>
+              <Button variant="ghost" size="xs" className={`${gcss.dangerHover} ${gcss.hideMobile}`} onClick={() => setDisabling(g)}>
                 停用
               </Button>
             )}
             <Button
-              size="xs"
               variant="ghost"
-              className={blocker ? undefined : css.dangerText}
+              size="xs"
+              className={`${gcss.dangerHover} ${gcss.hideMobile}`}
               disabled={blocker !== null}
               title={blocker ?? undefined}
               onClick={() => setDeleting(g)}
@@ -171,30 +181,13 @@ export function GroupsTab() {
     },
   ]
 
-  const foot = groups.data
-    ? (() => {
-        const d = groups.data
-        const disabledCount = d.filter((g) => g.status === 'disabled').length
-        const memberTotal = d.reduce((a, g) => a + g.users, 0)
-        return (
-          <footer className={gcss.foot}>
-            <span>
-              共 {formatCount(d.length)} 个用户组 · {formatCount(disabledCount)} 个已停用 · {formatCount(memberTotal)} 位成员
-            </span>
-            <span className={gcss.footHint}>在用户详情的「资料」里给单个用户分配用户组</span>
-          </footer>
-        )
-      })()
-    : null
-
   return (
-    <div className={gcss.page}>
-      <header className={gcss.header}>
-        <h2>用户组</h2>
-        <Button variant="primary" onClick={() => setCreateOpen(true)}>
+    <>
+      <PageActions>
+        <Button variant="primary" icon={PlusSignIcon} onClick={() => setCreateOpen(true)}>
           新建用户组
         </Button>
-      </header>
+      </PageActions>
       <QueryView
         query={groups}
         rows={4}
@@ -207,13 +200,30 @@ export function GroupsTab() {
           />
         }
       >
-        {(d) => (
-          <div className={gcss.tableWrap}>
-            <Table label="用户组" columns={columns} rows={d} rowKey={(g) => g.id} />
-          </div>
-        )}
+        {(d) => {
+          const disabledCount = d.filter((g) => g.status === 'disabled').length
+          const memberTotal = d.reduce((a, g) => a + g.users, 0)
+          return (
+            <Table
+              boxed
+              label="用户组"
+              columns={columns}
+              rows={d}
+              rowKey={(g) => g.id}
+              rowClassName={(g) => (g.status === 'disabled' ? gcss.dimRow : undefined)}
+              footer={
+                <div className={gcss.foot}>
+                  <span>
+                    共 {formatCount(d.length)} 个用户组 · {formatCount(disabledCount)} 个已停用 · {formatCount(memberTotal)} 位成员
+                  </span>
+                  <span className={gcss.footSpacer} />
+                  <span className={gcss.footHint}>在用户详情的「资料」里给单个用户分配用户组</span>
+                </div>
+              }
+            />
+          )
+        }}
       </QueryView>
-      {foot}
       <EditGroupModal
         draft={editing}
         error={editError}
@@ -245,7 +255,7 @@ export function GroupsTab() {
         onConfirm={remove}
         onCancel={() => setDeleting(null)}
       />
-    </div>
+    </>
   )
 }
 
@@ -275,7 +285,7 @@ function EditGroupModal({
       subtitle={
         g ? (
           <>
-            标识 <code className={css.mono}>{g.code}</code> · 创建后不能修改
+            标识 <code className={gcss.code}>{g.code}</code> · 创建后不能修改
           </>
         ) : null
       }

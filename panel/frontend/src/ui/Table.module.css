@@ -143,9 +143,14 @@
   font-size: 13px;
 }
 
-/* 列的 hideOnMobile：手机上整列（col、表头、单元格）都不出现 */
+/* 列的 hideOnMobile：手机上整列（col、表头、单元格）都不出现；
+   有列收起的表在手机上按屏宽排，不再撑 560 最小宽横向滚动 */
 @media (max-width: 639px) {
   .hideMobile {
     display: none;
+  }
+
+  .fitMobile {
+    min-width: 0;
   }
 }

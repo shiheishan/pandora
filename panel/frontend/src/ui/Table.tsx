@@ -91,7 +91,7 @@ export function Table<T>({
   return (
     <div className={cn(css.root, boxed && css.boxed, footer != null && css.hasFooter)}>
       <div className={css.scroll}>
-        <table className={css.table} aria-label={label} aria-busy={loading || undefined}>
+        <table className={cn(css.table, columns.some((c) => c.hideOnMobile) && css.fitMobile)} aria-label={label} aria-busy={loading || undefined}>
           <colgroup>
             {selection && <col className={css.pickCol} />}
             {columns.map((c) => (

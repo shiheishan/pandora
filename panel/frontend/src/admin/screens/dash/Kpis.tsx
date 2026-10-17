@@ -1,35 +1,42 @@
 import type { UseQueryResult } from '@tanstack/react-query'
-import { Skeleton } from '../../../ui'
-import type { NodeTraffic, Overview } from './api'
+import { Card } from '../../../ui'
+import type { Overview } from './api'
 import css from './Dash.module.css'
-import { kpiTiles } from './model'
-import { CardError, PanelHead, targetHref, toneText } from './parts'
+import { asOfText, kpiTiles } from './model'
+import { ArrowLink, CardError, PanelSkeleton, Section } from './parts'
 
-export function Kpis({ overview, traffic }: { overview: UseQueryResult<Overview>; traffic: UseQueryResult<NodeTraffic> }) {
-  const loading = overview.isPending || traffic.isPending
-  const tiles = kpiTiles(overview.data, traffic.data)
+export function Kpis({ overview }: { overview: UseQueryResult<Overview> }) {
+  const { data, isPending, isError, error, refetch, dataUpdatedAt } = overview
 
   return (
-    <section aria-labelledby="dash-kpis">
-      <PanelHead id="dash-kpis" title="今日概况" hint="今日" />
-      {overview.isError && (
-        <CardError what="今日概况" error={overview.error} onRetry={() => void overview.refetch()} />
-      )}
-      {loading ? (
-        <Skeleton height={92} />
-      ) : (
-        <div className={css.kpiGrid}>
-          {tiles.map((t) => (
-            <a key={t.key} className={css.kpiTile} href={targetHref(t.target)} title={t.tip}>
-              <span className={css.kpiLabel}>{t.label}</span>
-              <span className={t.muted ? `${css.kpiValue} ${css.kpiValueMuted}` : css.kpiValue}>{t.value}</span>
-              <span className={`${css.kpiSub} ${(t.subTone && toneText(t.subTone)) ?? css.kpiSubMuted}`}>
-                {t.sub || ' '}
-              </span>
-            </a>
-          ))}
-        </div>
-      )}
-    </section>
+    <Section
+      id="dash-today"
+      title="今天"
+      sub={data ? asOfText(new Date(dataUpdatedAt)) : undefined}
+      extra={<ArrowLink to={{ module: 'billing', tab: 'orders' }}>看订单</ArrowLink>}
+    >
+      <Card flush>
+        {isPending ? (
+          <PanelSkeleton rows={2} height={28} />
+        ) : isError && !data ? (
+          <CardError what="今日概况" error={error} onRetry={() => void refetch()} />
+        ) : data ? (
+          <div className={css.kpis}>
+            {kpiTiles(data).map((tile) => (
+              <div key={tile.key} className={css.kp}>
+                <div className={css.l}>{tile.label}</div>
+                <div className={css.v}>
+                  {tile.value}
+                  {tile.cents != null && <small>{tile.cents}</small>}
+                </div>
+                <div className={css.d}>
+                  {tile.compare.label} <b>{tile.compare.value}</b>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </Card>
+    </Section>
   )
 }

@@ -4,7 +4,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, Modal, TextArea, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
 import { macroSavedSchema, okSchema, useInvalidateTickets, type Macro } from './api'
-import css from './Tickets.module.css'
+import css from './Composer.module.css'
 
 const TITLE_MAX = 20
 const BODY_MAX = 5000

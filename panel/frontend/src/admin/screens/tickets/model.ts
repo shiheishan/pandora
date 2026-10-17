@@ -81,11 +81,12 @@ function isOpenStatus(status: TicketStatus): boolean {
   return status !== 'resolved' && status !== 'closed'
 }
 
-export const PRIORITY_VIEW: Record<TicketPriority, { label: string; dot: 'low' | 'mid' | 'high'; strong: boolean }> = {
-  low: { label: '低', dot: 'low', strong: false },
-  normal: { label: '中', dot: 'mid', strong: false },
-  high: { label: '高', dot: 'high', strong: false },
-  urgent: { label: '紧急', dot: 'high', strong: true },
+/** 优先级文案；圆点颜色按优先级值本身取（样稿 .pd.low / normal / high / urgent） */
+export const PRIORITY_LABELS: Record<TicketPriority, string> = {
+  low: '低',
+  normal: '中',
+  high: '高',
+  urgent: '紧急',
 }
 
 export const CATEGORY_LABELS: Record<TicketCategory, string> = {
@@ -115,12 +116,21 @@ function span(seconds: number): string {
   return `${Math.floor(hours / 24)} 天`
 }
 
-/** 队列行右侧：等待时长 = now − last_reply_at（契约：包含 system 与内部备注，近似值） */
+/**
+ * 队列行第一行右侧的等待时长（样稿「等 1 小时 30 分」）：= now − last_reply_at（契约：包含 system 与内部备注，近似值）；
+ * 等待用户回复的给「已回复」，已解决 / 已关闭的给「已结束」。late = SLA 已超时且工单没结束（第三行右侧标红「SLA 超时」）
+ */
 export function waitLabel(t: Pick<Ticket, 'status' | 'last_reply_at' | 'sla_breached'>, now: Date): { text: string; late: boolean } {
   if (!isOpenStatus(t.status)) return { text: '已结束', late: false }
+  const late = t.sla_breached === true
+  if (t.status === 'pending_user') return { text: '已回复', late }
   const seconds = (now.getTime() - new Date(t.last_reply_at).getTime()) / 1000
-  const text = `等待 ${span(Math.max(0, seconds))}`
-  return t.sla_breached ? { text: `${text} · SLA 超时`, late: true } : { text, late: false }
+  return { text: `等 ${span(Math.max(0, seconds))}`, late }
+}
+
+/** 列表行第三行的短编号：工单号后 6 位 */
+export function shortNo(ticketNo: string): string {
+  return ticketNo.slice(-6)
 }
 
 interface SlaLine {
@@ -129,13 +139,13 @@ interface SlaLine {
   tone: 'ok' | 'warn' | 'danger' | 'neutral'
 }
 
-/** 详情头的 SLA：首次响应与解决两条，已完成 / 剩余 / 已超时（待补·前端） */
+/** 属性栏「时限」的两行：首次响应与解决时限，已完成 / 剩余 / 已超时 */
 export function slaLines(t: Pick<TicketDetail, 'status' | 'sla_first_response_due' | 'sla_resolution_due' | 'first_responded_at' | 'resolved_at'>, now: Date): SlaLine[] {
   const lines: SlaLine[] = []
   const due = (at: string) => (new Date(at).getTime() - now.getTime()) / 1000
   if (t.first_responded_at) {
     lines.push({ label: '首次响应', text: `已响应 · ${messageTime(t.first_responded_at, now)}`, tone: 'ok' })
-  } else if (t.sla_first_response_due) {
+  } else {
     const left = due(t.sla_first_response_due)
     lines.push(
       !isOpenStatus(t.status)
@@ -145,11 +155,9 @@ export function slaLines(t: Pick<TicketDetail, 'status' | 'sla_first_response_du
           : { label: '首次响应', text: `剩 ${span(left)}`, tone: left < 3600 ? 'warn' : 'neutral' },
     )
   }
-  if (t.sla_resolution_due) {
-    const left = due(t.sla_resolution_due)
-    if (!isOpenStatus(t.status)) lines.push({ label: '解决时限', text: t.resolved_at ? `已解决 · ${messageTime(t.resolved_at, now)}` : '已结束', tone: 'ok' })
-    else lines.push(left < 0 ? { label: '解决时限', text: `已超时 ${span(-left)}`, tone: 'danger' } : { label: '解决时限', text: `剩 ${span(left)}`, tone: left < 3600 ? 'warn' : 'neutral' })
-  }
+  const left = due(t.sla_resolution_due)
+  if (!isOpenStatus(t.status)) lines.push({ label: '解决时限', text: t.resolved_at ? `已解决 · ${messageTime(t.resolved_at, now)}` : '已结束', tone: 'ok' })
+  else lines.push(left < 0 ? { label: '解决时限', text: `已超时 ${span(-left)}`, tone: 'danger' } : { label: '解决时限', text: `剩 ${span(left)}`, tone: left < 3600 ? 'warn' : 'neutral' })
   return lines
 }
 
@@ -167,6 +175,18 @@ export function messageTime(at: string, now: Date): string {
   return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}-${md}`
 }
 
+/** 对话里的日期分隔（样稿 .day）：今天 / 昨天 / 09-22，跨年带年份 */
+export function dayLabel(at: string, now: Date): string {
+  const d = new Date(at)
+  if (Number.isNaN(d.getTime())) return at
+  if (d.toDateString() === now.toDateString()) return '今天'
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return '昨天'
+  const p = (n: number) => String(n).padStart(2, '0')
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}-${md}`
+}
+
 /**
  * 系统消息正文是后端拼的「客服将工单状态改为 resolved：原因」，状态码是英文；
  * 只把「改为 <状态码>」里的码换成界面上的叫法，其余原样
@@ -177,10 +197,10 @@ export function systemText(body: string): string {
 
 type BubbleKind = 'user' | 'agent' | 'note' | 'system'
 
-export function messageView(m: Message, userEmail: string | undefined, now: Date): { kind: BubbleKind; who: string; at: string } {
+export function messageView(m: Message, userEmail: string, now: Date): { kind: BubbleKind; who: string; at: string } {
   const kind: BubbleKind = m.author_kind === 'system' ? 'system' : m.internal_note ? 'note' : m.author_kind
   // 契约映射：who = author_name ?? (user ? user_email : '客服')
-  const who = m.author_name ?? (m.author_kind === 'user' ? (userEmail ?? '用户') : m.author_kind === 'system' ? '系统' : '客服')
+  const who = m.author_name ?? (m.author_kind === 'user' ? userEmail || '用户' : m.author_kind === 'system' ? '系统' : '客服')
   return { kind, who, at: messageTime(m.created_at, now) }
 }
 

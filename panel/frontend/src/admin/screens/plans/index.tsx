@@ -1,8 +1,8 @@
 import { useCallback } from 'react'
-import { navigate, useHashLocation } from '../../../core/router'
+import { href, navigate, useHashLocation } from '../../../core/router'
 import type { AdminScreenProps } from '../index'
 import { isDetailTab, isKindFilter, isStatusFilter, type DetailTab } from './model'
-import { PlanDetailModal } from './PlanDetail'
+import { PlanDetailPage } from './PlanDetail'
 import { PlanList, type ListState } from './PlanList'
 
 /** 地址：/plans、/plans/<id>、/plans/<id>/<prices|pools|versions>；查询串 kind、status、q */
@@ -36,19 +36,23 @@ export default function Plans({ rest }: AdminScreenProps) {
     [selected, tab, state.kind, state.status, state.q, query],
   )
 
-  return (
-    <>
-      <PlanList
-        state={state}
-        onChange={onChange}
-        onOpen={(id) => navigate(path(id), { query: query(state) })}
-      />
-      <PlanDetailModal
+  // rest[0] 非空是详情整页（外框此时不画页头与页签栏），否则是列表
+  if (selected) {
+    return (
+      <PlanDetailPage
         id={selected}
         tab={tab}
+        back={{ href: href('/plans', query(state)), label: '套餐' }}
         onTab={(t) => navigate(path(selected, t), { replace: true, query: query(state) })}
-        onClose={() => navigate(path(null), { query: query(state) })}
       />
-    </>
+    )
+  }
+
+  return (
+    <PlanList
+      state={state}
+      onChange={onChange}
+      onOpen={(id) => navigate(path(id), { query: query(state) })}
+    />
   )
 }

@@ -2,8 +2,8 @@ import { formatCount, formatMoney } from '../../../core/format'
 import type { ActivityPoint, RevenuePoint } from './api'
 import { formatPercent, percentChange } from './model'
 
-export const REVENUE_VIEW = { width: 600, height: 180 } as const
-export const ACTIVITY_VIEW = { width: 600, height: 150 } as const
+export const REVENUE_VIEW = { width: 600, height: 240 } as const
+export const ACTIVITY_VIEW = { width: 600, height: 240 } as const
 
 /**
  * 格式化坐标轴短写。
@@ -40,6 +40,18 @@ export function niceTop(max: number): number {
   return 10 * base
 }
 
+/** 计数轴的顶：>= max 的最小「1、2、5 × 10^k」，且不小于 10。例：0→10、7→10、11→20、48→50、412→500、5200→10000 */
+export function niceCount(max: number): number {
+  if (max <= 10) return 10
+  const power = Math.floor(Math.log10(max))
+  const base = 10 ** power
+  const fraction = max / base
+  if (fraction <= 1) return base
+  if (fraction <= 2) return 2 * base
+  if (fraction <= 5) return 5 * base
+  return 10 * base
+}
+
 /**
  * '2026-10-16' 或 '10-16' -> '10月16日'（月、日去前导零：'03-05' -> '3月5日'）
  */
@@ -61,28 +73,20 @@ export function hoverIndex(offsetX: number, width: number, length: number): numb
 }
 
 /**
- * 生成平滑 SVG 曲线路径。
- * 点坐标：
- * x = values.length === 1 ? width / 2 : i / (values.length - 1) * width
- * y = height - Math.max(0, v) / max * height（max<=0 时当 1）
- * 路径：M x0 y0，之后每段用 Catmull-Rom 转三次贝塞尔：
- * 对 i 从 0 到 n-2，p0 = P[i-1] ?? P[i], p1 = P[i], p2 = P[i+1], p3 = P[i+2] ?? p2
- * c1 = p1 + (p2 - p0)/6, c2 = p2 - (p3 - p1)/6；追加 C c1x c1y c2x c2y p2x p2y
- * 所有数字 toFixed(1)，用空格分隔。
- * 只有 1 个点时返回 M x y 后接 L x y（同一点，保证 path 合法）；0 个点返回 ''。
+ * 柱状图的悬停：offsetX 落在第几根柱（floor(offsetX / width * length)，夹在 [0, length-1]）；width<=0 或 length<=0 时 0
  */
-export function smoothPath(values: readonly number[], max: number, width: number, height: number): string {
-  const n = values.length
+export function barHoverIndex(offsetX: number, width: number, length: number): number {
+  if (width <= 0 || length <= 0) return 0
+  const idx = Math.floor((offsetX / width) * length)
+  return Math.max(0, Math.min(length - 1, idx))
+}
+
+/**
+ * 按给定点（已是 viewBox 坐标）画 Catmull-Rom 平滑曲线；算法与 smoothPath 相同。0 点 ''，1 点 'M x y L x y'
+ */
+export function pathThrough(points: readonly { x: number; y: number }[]): string {
+  const n = points.length
   if (n === 0) return ''
-
-  const effectiveMax = max <= 0 ? 1 : max
-  const points = values.map((v, i) => {
-    const x = n === 1 ? width / 2 : (i / (n - 1)) * width
-    const clampedV = Math.max(0, v)
-    const y = height - (clampedV / effectiveMax) * height
-    return { x, y }
-  })
-
   if (n === 1) {
     const pt = points[0]!
     const xStr = pt.x.toFixed(1)
@@ -110,6 +114,27 @@ export function smoothPath(values: readonly number[], max: number, width: number
   return d
 }
 
+/**
+ * 生成平滑 SVG 曲线路径。
+ * 点坐标：
+ * x = values.length === 1 ? width / 2 : i / (values.length - 1) * width
+ * y = height - Math.max(0, v) / max * height（max<=0 时当 1）
+ */
+export function smoothPath(values: readonly number[], max: number, width: number, height: number): string {
+  const n = values.length
+  if (n === 0) return ''
+
+  const effectiveMax = max <= 0 ? 1 : max
+  const points = values.map((v, i) => {
+    const x = n === 1 ? width / 2 : (i / (n - 1)) * width
+    const clampedV = Math.max(0, v)
+    const y = height - (clampedV / effectiveMax) * height
+    return { x, y }
+  })
+
+  return pathThrough(points)
+}
+
 // ---------------------------------------------------------------------------
 // 收入图模型
 // ---------------------------------------------------------------------------
@@ -123,14 +148,12 @@ export interface ChartMark {
 export interface RevenueChart {
   empty: boolean
   total: number
-  previousTotal: number
   delta: number | null
   deltaText: string
   up: boolean
-  average: number
-  peak: { value: number; label: string }
   ticks: { topPct: number; label: string }[]
   path: string
+  area: string
   marks: ChartMark[]
   axis: [string, string]
 }
@@ -142,23 +165,8 @@ export function revenueChart(points: readonly RevenuePoint[], previousTotal: num
     (p) => p.displayed_net === 0 && p.actual_credit === 0 && p.actual_debit === 0 && p.adjustment === 0,
   )
   const delta = percentChange(total, previousTotal)
-  const deltaText = delta === null ? '—' : formatPercent(delta)
+  const deltaText = delta === null ? '' : formatPercent(delta)
   const up = delta === null || delta >= 0
-  const average = n > 0 ? Math.round(total / n) : 0
-
-  let peak = { value: 0, label: '—' }
-  if (n > 0) {
-    let maxPoint = points[0]!
-    for (let i = 1; i < n; i++) {
-      if (points[i]!.displayed_net > maxPoint.displayed_net) {
-        maxPoint = points[i]!
-      }
-    }
-    peak = {
-      value: maxPoint.displayed_net,
-      label: monthDay(maxPoint.date),
-    }
-  }
 
   const maxNet = n > 0 ? Math.max(...points.map((p) => p.displayed_net)) : 0
   const top = niceTop(maxNet)
@@ -171,6 +179,10 @@ export function revenueChart(points: readonly RevenuePoint[], previousTotal: num
 
   const netValues = points.map((p) => p.displayed_net)
   const path = smoothPath(netValues, top, REVENUE_VIEW.width, REVENUE_VIEW.height)
+  const area =
+    path === ''
+      ? ''
+      : `${path} L ${REVENUE_VIEW.width} ${REVENUE_VIEW.height} L 0 ${REVENUE_VIEW.height} Z`
 
   const marks: ChartMark[] = points.map((p, i) => {
     const xPct = n === 1 ? 50 : (i / (n - 1)) * 100
@@ -189,14 +201,12 @@ export function revenueChart(points: readonly RevenuePoint[], previousTotal: num
   return {
     empty,
     total,
-    previousTotal,
     delta,
     deltaText,
     up,
-    average,
-    peak,
     ticks,
     path,
+    area,
     marks,
     axis,
   }
@@ -205,6 +215,13 @@ export function revenueChart(points: readonly RevenuePoint[], previousTotal: num
 // ---------------------------------------------------------------------------
 // 注册与活跃图模型
 // ---------------------------------------------------------------------------
+
+export interface ActivityBar {
+  xPct: number
+  wPct: number
+  hPct: number
+  last: boolean
+}
 
 export interface ActivityMark {
   xPct: number
@@ -217,7 +234,8 @@ export interface ActivityChart {
   empty: boolean
   registeredTotal: number
   activeAverage: number
-  registeredPath: string
+  ticks: { topPct: number; label: string }[]
+  bars: ActivityBar[]
   activePath: string
   marks: ActivityMark[]
   axisStart: string
@@ -233,24 +251,52 @@ export function activityChart(points: readonly ActivityPoint[]): ActivityChart {
   const activeAverage = n > 0 ? Math.round(activeTotal / n) : 0
 
   const maxReg = n > 0 ? Math.max(...points.map((p) => p.registered)) : 0
-  const regMax = Math.max(1, maxReg)
+  const regTop = niceCount(maxReg)
 
   const maxAct = n > 0 ? Math.max(...points.map((p) => p.active_users)) : 0
-  const actMax = Math.max(1, maxAct)
+  const actTop = niceCount(maxAct)
 
-  const regScaledValues = points.map((p) => p.registered * 0.7)
-  const registeredPath = smoothPath(regScaledValues, regMax, ACTIVITY_VIEW.width, ACTIVITY_VIEW.height)
+  const bw = n > 0 ? 100 / n : 0
+  const bars: ActivityBar[] =
+    n === 0
+      ? []
+      : points.map((p, i) => {
+          const hPct = regTop > 0 ? (p.registered / regTop) * 100 : 0
+          return {
+            xPct: i * bw + bw * 0.22,
+            wPct: bw * 0.56,
+            hPct,
+            last: i === n - 1,
+          }
+        })
 
-  const actValues = points.map((p) => p.active_users)
-  const activePath = smoothPath(actValues, actMax, ACTIVITY_VIEW.width, ACTIVITY_VIEW.height)
+  const activePoints =
+    n === 0
+      ? []
+      : points.map((p, i) => {
+          const x = ((i + 0.5) / n) * ACTIVITY_VIEW.width
+          const y = ACTIVITY_VIEW.height - (p.active_users / actTop) * ACTIVITY_VIEW.height
+          return { x, y }
+        })
+  const activePath = pathThrough(activePoints)
 
-  const marks: ActivityMark[] = points.map((p, i) => {
-    const xPct = n === 1 ? 50 : (i / (n - 1)) * 100
-    const regYPct = (1 - (p.registered * 0.7) / regMax) * 100
-    const actYPct = (1 - p.active_users / actMax) * 100
-    const label = `${monthDay(p.day)} · 注册 ${formatCount(p.registered)} · 活跃 ${formatCount(p.active_users)}`
-    return { xPct, regYPct, actYPct, label }
-  })
+  const marks: ActivityMark[] =
+    n === 0
+      ? []
+      : points.map((p, i) => {
+          const xPct = ((i + 0.5) / n) * 100
+          const hPct = regTop > 0 ? (p.registered / regTop) * 100 : 0
+          const regYPct = 100 - hPct
+          const actYPct = (1 - p.active_users / actTop) * 100
+          const label = `${monthDay(p.day)} · 注册 ${formatCount(p.registered)} · 日活 ${formatCount(p.active_users)}`
+          return { xPct, regYPct, actYPct, label }
+        })
+
+  const ticks = [
+    { topPct: 0, label: formatCount(regTop) },
+    { topPct: 50, label: formatCount(Math.round(regTop / 2)) },
+    { topPct: 100, label: '0' },
+  ]
 
   const axisStart = n > 0 ? monthDay(points[0]!.day) : ''
 
@@ -258,7 +304,8 @@ export function activityChart(points: readonly ActivityPoint[]): ActivityChart {
     empty,
     registeredTotal,
     activeAverage,
-    registeredPath,
+    ticks,
+    bars,
     activePath,
     marks,
     axisStart,
