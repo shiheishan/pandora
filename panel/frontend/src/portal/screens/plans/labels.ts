@@ -11,6 +11,8 @@ import { isLive, type Subscription } from '../common/subscriptions'
 export interface PlanCardView {
   tag: { text: string; tone: 'brand' | 'ok' | 'neutral' } | null
   label: string
+  /** 按时间卡片上的按钮字（样稿：买标准版 / 续费专业版）；一次性列表照样稿用 label */
+  cta: string
   href: string
   primary: boolean
   note: string | null
@@ -51,6 +53,8 @@ export function planCardView(plan: Plan, held: readonly Subscription[], naming: 
         : '买这个'
     : '买这个'
 
+  const cta = label === '续费' ? `续费${plan.name}` : label === '买这个' ? `买${plan.name}` : label
+
   const hrefOut = held.length === 0 ? href('/checkout', { new: plan.id }) : href('/checkout', { plan: plan.id })
 
   const primary = Boolean(owner) || plan.recommended
@@ -75,5 +79,5 @@ export function planCardView(plan: Plan, held: readonly Subscription[], naming: 
     note = '下一步选：另开一份，或换掉现在的一份'
   }
 
-  return { tag, label, href: hrefOut, primary, note, current }
+  return { tag, label, cta, href: hrefOut, primary, note, current }
 }

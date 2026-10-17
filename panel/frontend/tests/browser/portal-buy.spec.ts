@@ -13,7 +13,7 @@ test('A：新购、另买一份、续费', async ({ browser, world }) => {
 
   await step(page, 'A1', async () => {
     await nav(page, '选购')
-    await planCard(page, std.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, std.name).getByRole('link', { name: `买${std.name}` }).click()
     await expect(page.getByRole('heading', { level: 1, name: `买${std.name}` })).toBeVisible()
     await expect(page.getByRole('radio', { name: /^1 个月/ })).toHaveAttribute('aria-checked', 'true')
     await expect(page.getByText('要付 ¥30.00', { exact: true })).toBeVisible()
@@ -137,7 +137,7 @@ test('A0：同款已有待付款单', async ({ browser, world }) => {
   await step(page, 'A0', async () => {
     await leavePending(page, std.id, `买${std.name}，付 ¥30.00`)
     await nav(page, '选购')
-    await planCard(page, std.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, std.name).getByRole('link', { name: `买${std.name}` }).click()
     await clickBuyIfQuoted(page, `买${std.name}，付 ¥30.00`)
     const seen = await pendingNotice(page)
     await expect(page.getByRole('button', { name: '取消它' }), `页面上看到的：${seen}`).toBeVisible()
@@ -158,7 +158,7 @@ test('A0b：那张待付款单已超过付款期限', async ({ browser, world })
     // 只改 orders.expires_at，不动预留：释放任务按预留的到期找单，不会在测试中途把它关掉
     sql('付款期限拨到过去', expireOrderSql(orderId))
     await nav(page, '选购')
-    await planCard(page, std.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, std.name).getByRole('link', { name: `买${std.name}` }).click()
     await clickBuyIfQuoted(page, `买${std.name}，付 ¥30.00`)
     const seen = await pendingNotice(page)
     await expect(page.getByRole('button', { name: '取消它' }), `页面上看到的：${seen}`).toBeVisible()

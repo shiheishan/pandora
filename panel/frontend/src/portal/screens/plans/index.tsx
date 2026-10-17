@@ -84,7 +84,7 @@ export default function Plans() {
                       tone={v.current ? 'hot' : v.primary ? 'primary' : 'soft'}
                       id={`btn-plan-${plan.id}`}
                     >
-                      {v.label}
+                      {v.cta}
                     </Btn>
                   }
                   note={v.note}

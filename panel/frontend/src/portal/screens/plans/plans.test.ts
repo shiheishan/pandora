@@ -12,7 +12,7 @@ const onceHeld = sub({ plan_id: 'once', plan_name: '流量版', plan_kind: 'one_
 describe('选购页套餐卡', () => {
   it('没有份：?new=，小字今天起到', () => {
     const v = planCardView(STD, [], makeNaming([], undefined), NOW)
-    expect(v).toMatchObject({ label: '买这个', href: href('/checkout', { new: 'std' }), primary: true, tag: { text: '推荐', tone: 'brand' } })
+    expect(v).toMatchObject({ label: '买这个', cta: `买${STD.name}`, href: href('/checkout', { new: 'std' }), primary: true, tag: { text: '推荐', tone: 'brand' } })
     expect(v.note).toMatch(/^今天起到 11月\d+日$/)
   })
 
@@ -20,6 +20,7 @@ describe('选购页套餐卡', () => {
     const v = planCardView(STD, [one], makeNaming([one], undefined), NOW)
     expect(v).toMatchObject({
       label: '续费',
+      cta: `续费${STD.name}`,
       href: href('/checkout', { plan: 'std' }),
       primary: true,
       current: true,
@@ -32,6 +33,7 @@ describe('选购页套餐卡', () => {
     const v = planCardView(ONCE, [onceHeld], makeNaming([onceHeld], undefined), NOW)
     expect(v).toMatchObject({
       label: '再买一份',
+      cta: '再买一份',
       href: href('/checkout', { plan: 'once' }),
       note: '下一步选：叠加到原来那份，或另开一份',
     })
@@ -52,6 +54,7 @@ describe('选购页套餐卡', () => {
     const v = planCardView({ ...STD, id: 'pro', name: '进阶版' }, [one], makeNaming([one], undefined), NOW)
     expect(v).toMatchObject({
       label: '买这个',
+      cta: '买进阶版',
       href: href('/checkout', { plan: 'pro' }),
       note: '下一步选：另开一份，或换掉现在的一份',
       current: false,

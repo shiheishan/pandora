@@ -123,7 +123,9 @@ test('C3：后台待支付，用户在门户付', async ({ browser, world }) => 
     const row = await text(pending)
     await pending.getByRole('button', { name: '去支付' }).click()
     const modal = portal.getByRole('dialog')
-    await submit(portal, modal.getByRole('button', { name: '支付宝' }))
+    // 10-16 起付款方式是单选行，选好再点「去支付 ¥…」
+    await modal.getByRole('radio', { name: /^支付宝/ }).click()
+    await submit(portal, modal.getByRole('button', { name: /^去支付/ }))
     const paid = await payByCashier(modal, world, '30.00')
     await expect(modal.getByText(/已开通，有效期至/)).toBeVisible({ timeout: 20_000 })
     const ok = await text(modal.getByText(/已开通，有效期至/))

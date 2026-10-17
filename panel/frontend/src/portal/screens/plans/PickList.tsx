@@ -76,7 +76,7 @@ export function PickList({ plans, h, className }: PickListProps) {
                   tone={v.current ? 'hot' : v.primary ? 'primary' : 'soft'}
                   id={`btn-pick-${plan.id}`}
                 >
-                  {v.label}
+                  {v.cta}
                 </Btn>
               </div>
               {v.note && <p className={css.next}>{v.note}</p>}

@@ -11,7 +11,7 @@ test('C5：超时单', async ({ browser, world }) => {
 
   await step(page, 'C5', async () => {
     await nav(page, '选购')
-    await planCard(page, basic.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, basic.name).getByRole('link', { name: `买${basic.name}` }).click()
     await submit(page, page.getByRole('button', { name: `买${basic.name}，付 ¥10.00` }))
     await expect(page).toHaveURL(/#\/checkout\/pay\//)
     await expect(page.getByRole('link', { name: /在这台电脑上付款|付款页/ })).toBeVisible()
@@ -31,7 +31,7 @@ test('C5：超时单', async ({ browser, world }) => {
   await step(page, 'C5b', async () => {
     await submit(page, page.getByRole('button', { name: '取消这张单，重新下单' }))
     await expect(page).toHaveURL(/#\/plans/)
-    await planCard(page, basic.name).getByRole('link', { name: '买这个' }).click()
+    await planCard(page, basic.name).getByRole('link', { name: `买${basic.name}` }).click()
     await submit(page, page.getByRole('button', { name: `买${basic.name}，付 ¥10.00` }))
     const paid = await payByCashier(page, world, '10.00')
     await expect(page.getByRole('heading', { name: '新的一份买好了' })).toBeVisible({ timeout: 20_000 })
