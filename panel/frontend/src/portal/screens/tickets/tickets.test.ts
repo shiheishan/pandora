@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ticketDetailSchema, ticketRowSchema, type TicketDetail } from './api'
-import { authorLabel, canClose, canReply, canWithdraw, messageTime, ticketRoute, ticketStatus, validateTicket } from './model'
+import { authorLabel, canClose, canReply, canWithdraw, listTime, messageTime, ticketRoute, ticketStatus, validateTicket } from './model'
 
 const ROW = {
   id: 't1',
@@ -93,6 +93,12 @@ describe('消息时间', () => {
     expect(messageTime(new Date(2026, 8, 24, 9, 5).toISOString(), now)).toBe('09:05')
     expect(messageTime(new Date(2026, 8, 12, 20, 0).toISOString(), now)).toBe('09-12 20:00')
     expect(messageTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe('2025-12-31 08:00')
+  })
+
+  it('列表时间：今天时分，今年月-日，更早年-月-日', () => {
+    expect(listTime(new Date(2026, 8, 24, 9, 40).toISOString(), now)).toBe('09:40')
+    expect(listTime(new Date(2026, 8, 14, 18, 3).toISOString(), now)).toBe('09-14')
+    expect(listTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe('2025-12-31')
   })
 })
 

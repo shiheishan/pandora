@@ -1,11 +1,11 @@
-import { relativeTime } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
-import { Button, Card, CountBadge, Empty, QueryView, Segmented, Tag, useToast } from '../../../ui'
+import { CountBadge, Empty, QueryView, Segmented, Tag, useToast } from '../../../ui'
+import { GroupHeader, IconDisc, Rows } from '../../kit'
 import { SEVERITY_LABEL, useAnnouncements } from '../common/announcements'
 import { shortDate } from '../common/traffic'
 import { useMarkAllRead, useMarkRead, useNotifications, type Notification } from './api'
 import css from './Messages.module.css'
-import { messageTab, notificationTarget, type MessageTab } from './model'
+import { groupByDay, messageTab, notificationIcon, notificationTarget, noticeTime, type MessageTab } from './model'
 
 export default function Messages() {
   const { query } = useHashLocation()
@@ -34,21 +34,22 @@ export default function Messages() {
         />
         {tab === 'notifications' && <ReadAll unread={unread} />}
       </div>
-      <Card flush className={css.listCard}>
-        {tab === 'notifications' ? <NotificationList /> : <AnnouncementList />}
-      </Card>
+      {tab === 'notifications' ? <NotificationList /> : <AnnouncementList />}
     </div>
   )
 }
 
+// ---------------------------------------------------------------------------
+// 全部标为已读：文字按钮（样稿 .read-all）
+// ---------------------------------------------------------------------------
 function ReadAll({ unread }: { unread: number }) {
   const toast = useToast()
   const readAll = useMarkAllRead()
   return (
-    <Button
-      size="sm"
-      disabled={unread === 0}
-      busy={readAll.isPending}
+    <button
+      type="button"
+      className={css.readAll}
+      disabled={unread === 0 || readAll.isPending}
       onClick={() =>
         readAll.mutate(undefined, {
           onSuccess: () => toast('已全部标为已读'),
@@ -57,12 +58,13 @@ function ReadAll({ unread }: { unread: number }) {
       }
     >
       全部标为已读
-    </Button>
+    </button>
   )
 }
 
 // ---------------------------------------------------------------------------
-// 通知：点开先标已读（不等它回来），有去处再跳
+// 通知：按「今天 / 更早」分组；点开先标已读（不等它回来），有去处再跳
+// 已读且没有去处的（如「套餐已到期」）是不可点的 div
 // ---------------------------------------------------------------------------
 function NotificationList() {
   const notifications = useNotifications()
@@ -79,50 +81,93 @@ function NotificationList() {
       query={notifications}
       rows={3}
       isEmpty={(d) => d.notifications.length === 0}
-      empty={<Empty bare title="还没有通知" description="订单支付、工单回复、套餐到期与流量提醒会发到这里。" />}
+      empty={
+        <Rows>
+          <Empty bare title="还没有通知" description="订单支付、工单回复、套餐到期与流量提醒会发到这里。" />
+        </Rows>
+      }
     >
-      {(d) => (
-        <ul className={css.list}>
-          {d.notifications.map((n) => (
-            <li key={n.id}>
-              <button type="button" className={css.row} data-unread={!n.read_at || undefined} onClick={() => open(n)}>
-                <span className={css.dot} aria-label={n.read_at ? undefined : '未读'} />
-                <span className={css.main}>
-                  <span className={css.title}>{n.subject}</span>
-                  {n.body && <span className={css.body}>{n.body}</span>}
-                </span>
-                <span className={css.at}>{n.sent_at ? relativeTime(n.sent_at) : ''}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      {(d) =>
+        groupByDay(d.notifications).map((g) => (
+          <section key={g.label}>
+            <GroupHeader>{g.label}</GroupHeader>
+            <Rows as="ul" className={css.list}>
+              {g.items.map((n) => {
+                const target = notificationTarget(n.code)
+                const clickable = target !== null || !n.read_at
+                const inner = (
+                  <>
+                    <IconDisc name={notificationIcon(n.code)} className={css.ntIco} />
+                    <span className={css.text}>
+                      {!n.read_at && <span className={css.sr}>未读：</span>}
+                      <b>{n.subject}</b>
+                      {n.body && <p>{n.body}</p>}
+                    </span>
+                    <span className={css.side}>
+                      {n.sent_at ? noticeTime(n.sent_at) : ''}
+                      <i aria-hidden="true" />
+                    </span>
+                  </>
+                )
+                return (
+                  <li key={n.id}>
+                    {clickable ? (
+                      <button type="button" className={css.nt} data-unread={!n.read_at || undefined} onClick={() => open(n)}>
+                        {inner}
+                      </button>
+                    ) : (
+                      <div className={css.nt}>{inner}</div>
+                    )}
+                  </li>
+                )
+              })}
+            </Rows>
+          </section>
+        ))
+      }
     </QueryView>
   )
 }
 
 // ---------------------------------------------------------------------------
-// 公告：最多 20 条，置顶优先；published_at 可为 null（修订 R71）时不显示日期
+// 公告：最多 20 条，置顶优先；published_at 可为 null（修订 R71）时不显示日期。
+// 等级用左侧色条 + 文字标签；正文完整显示（pre-line，不截断）
 // ---------------------------------------------------------------------------
 function AnnouncementList() {
   const announcements = useAnnouncements()
   return (
-    <QueryView query={announcements} rows={3} empty={<Empty bare title="暂时没有公告" description="维护通知与活动会在这里发布。" />}>
+    <QueryView
+      query={announcements}
+      rows={3}
+      empty={
+        <Rows>
+          <Empty bare title="暂时没有公告" description="维护通知与活动会在这里发布。" />
+        </Rows>
+      }
+    >
       {(list) => (
-        <ul className={css.list}>
-          {list.map((a) => (
-            <li key={a.id} className={css.row}>
-              <span className={css.dot} data-severity={a.severity} aria-label={SEVERITY_LABEL[a.severity] || undefined} />
-              <span className={css.main}>
-                <span className={css.title}>
-                  {a.pinned && <Tag tone="brand">置顶</Tag>} {a.title}
-                </span>
-                {a.body && <span className={css.body}>{a.body}</span>}
-              </span>
-              <span className={css.at}>{a.published_at ? shortDate(a.published_at) : ''}</span>
-            </li>
-          ))}
-        </ul>
+        <Rows as="ul" className={css.anList}>
+          {list.map((a) => {
+            const label = SEVERITY_LABEL[a.severity]
+            return (
+              <li key={a.id} className={css.an} data-severity={a.severity} data-pinned={a.pinned || undefined}>
+                <div className={css.anText}>
+                  {(a.pinned || label) && (
+                    <div className={css.tags}>
+                      {a.pinned && <Tag tone="brandSolid">置顶</Tag>}
+                      {a.severity === 'critical' && <Tag tone="danger">{label}</Tag>}
+                      {a.severity === 'warning' && <Tag tone="warn">{label}</Tag>}
+                      {a.severity === 'notice' && <Tag tone="brand">{label}</Tag>}
+                    </div>
+                  )}
+                  <b>{a.title}</b>
+                  {a.body && <p>{a.body}</p>}
+                </div>
+                <span className={css.date}>{a.published_at ? shortDate(a.published_at) : ''}</span>
+              </li>
+            )
+          })}
+        </Rows>
       )}
     </QueryView>
   )

@@ -16,12 +16,18 @@ export function ratePercentText(bp: number): string {
   return `${intPart}.${decPart.toString().padStart(2, '0')}`
 }
 
-/** 横幅标题：按计佣范围写（R81 / R114），first_order 才说「首单」；费率为 0 时不提佣金 */
-export function headline(directRateBP: number, scope: Commission['summary']['scope']): string {
-  if (directRateBP <= 0) return '邀请好友注册'
+/**
+ * 邀请卡标题（样稿 .inv-h）：大号比例 + 一句话，按计佣范围写（R81 / R114），first_order 才说「首单」；
+ * 费率为 0 时不提佣金，rate 为 null、只写「邀请好友注册」
+ */
+export function headlineParts(directRateBP: number, scope: Commission['summary']['scope']): { rate: string | null; text: string } {
+  if (directRateBP <= 0) return { rate: null, text: '邀请好友注册' }
   const rate = ratePercentText(directRateBP)
-  return scope === 'first_order' ? `好友首单付款，你拿 ${rate}% 佣金` : `好友每次付款，你都拿 ${rate}% 佣金`
+  return { rate, text: scope === 'first_order' ? '好友首单付款，你拿这么多佣金' : '好友每次付款，你都拿这么多佣金' }
 }
+
+/** 金额去掉 ¥ 符号，给大号数字用（符号单独做小字）；只用于非负金额 */
+export const yuanText = (minor: number) => formatMoney(minor).replace('¥', '')
 
 /** 当前仍为有效的邀请码个数（可同时持有上限由 max_codes 约束） */
 export function activeCodeCount(codes: readonly InviteCode[]): number {
@@ -84,11 +90,11 @@ export function withdrawClosedHere(summary: Commission['summary']): boolean {
 
 /**
  * 关提现时的提示，提现开着时为 null。
- * 解冻的自动转余额，关闭前已可提现的部分要自己点「全部转入余额」（后端只自动转关闭后解冻的条目）。
+ * 解冻的自动转余额，关闭前已可提现的部分要自己点「转入余额」（后端只自动转关闭后解冻的条目）。
  */
 export function withdrawClosedHint(summary: Commission['summary']): string | null {
   if (summary.withdraw_enabled) return null
-  return '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「全部转入余额」。'
+  return '提现已关闭，佣金解冻后会自动转入余额，可直接用余额购买与续费。关闭前已可提现的部分不会自动转，请点「转入余额」。'
 }
 
 /** 提现表单锁住的理由：后端同一时间只允许一笔在途（含打款中）；可用额不到最低额也提不了 */
@@ -105,8 +111,10 @@ export function withdrawBlock(summary: Commission['summary']): string | null {
 // ---------------------------------------------------------------------------
 /** plus 入账；minus 出账；void 没有生效（冲销、驳回、失败退回），金额划掉 */
 type RecordTone = 'plus' | 'minus' | 'void'
+/** 行首图标（样稿 .rec .ico）：返佣 gift、转入余额 wallet、提现 out */
+type RecordIcon = 'gift' | 'wallet' | 'out'
 
-interface CommissionRecord {
+export interface CommissionRecord {
   key: string
   title: string
   /** 佣金对应的订单号；与标题分开，窄屏换行时整段不拆 */
@@ -117,6 +125,7 @@ interface CommissionRecord {
   amount: number
   status: string
   tone: RecordTone
+  icon: RecordIcon
   at: string
 }
 
@@ -164,12 +173,13 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
       ...(e.order_no ? { ref: e.order_no } : {}),
       meta,
       amount: e.amount,
+      icon: 'gift',
       at: e.created_at,
       ...entryStatus(e),
     })
   })
   for (const t of c.transfers) {
-    rows.push({ key: `t${t.ledger_txn_id}`, title: '转入余额', meta: shortDate(t.created_at), amount: -t.amount, status: '已完成', tone: 'minus', at: t.created_at })
+    rows.push({ key: `t${t.ledger_txn_id}`, title: '转入余额', meta: shortDate(t.created_at), amount: -t.amount, status: '已完成', tone: 'minus', icon: 'wallet', at: t.created_at })
   }
   for (const w of c.withdrawals) {
     const reason = w.status === 'rejected' && w.reject_reason ? ` · ${w.reject_reason}` : ''
@@ -179,6 +189,7 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
       ref: withdrawMethodLabel(w.method),
       meta: shortDate(w.requested_at) + reason,
       amount: -w.amount,
+      icon: 'out',
       at: w.requested_at,
       ...WITHDRAWAL_STATUS[w.status],
     })
