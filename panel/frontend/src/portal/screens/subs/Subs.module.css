@@ -1,190 +1,181 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-16);
+  gap: 18px;
   min-width: 0;
-}
-
-/* 宽屏两张卡并排，窄屏一列 */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
-  align-items: start;
-  gap: var(--space-16);
 }
 
 /* ===========================================================================
- * 卡片下面：再买一份、兑换
+ * 顶部横条（TopNotes）
  * ========================================================================= */
-.addRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  width: 100%;
-  padding: 16px var(--pad-card);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-}
-
-.addRow:hover {
-  background: var(--surface-2);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.addIcon {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--brand-soft);
-  color: var(--brand-ink);
-  font-size: 17px;
-  line-height: 1;
-}
-
-.addText b {
-  display: block;
-  font-size: var(--fs-h3);
-  font-weight: var(--fw-semibold);
-}
-
-.addText small {
-  color: var(--text-2);
-  font-size: 13px;
-}
-
-.foot {
-  text-align: center;
-}
-
-/* ===========================================================================
- * 子页：流量不够、换个套餐、节点与用量
- * ========================================================================= */
-
-/* 主按钮下面隔一条线的一行文字链（换大套餐） */
-.aside {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 6px;
-  margin-top: var(--space-8);
-  padding-top: var(--space-12);
-  border-top: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.optRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  padding: 14px 0;
-  border-top: 1px solid var(--border);
-}
-
-.optRow:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.optRow:last-child {
-  padding-bottom: 0;
-}
-
-.optText {
-  min-width: 0;
-}
-
-.optText b {
-  font-size: var(--fs-h3);
-  font-weight: var(--fw-semibold);
-}
-
-.optText small {
-  display: block;
-  color: var(--text-2);
-  font-size: 13px;
-}
-
-.optResult {
-  color: var(--text) !important;
-}
-
-.optButton {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  height: var(--h-control-sm);
-  padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.optButton:hover {
-  background: var(--surface-3);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
-  align-items: stretch;
-  gap: var(--space-16);
-}
-
-.listCard {
-  min-height: 0;
-}
-
-.list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.nodeRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 56px;
-  align-items: center;
-  gap: var(--space-12);
-  padding: 10px var(--pad-card);
-  border-top: 1px solid var(--border);
-}
-
-.nodeName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nodeProto {
-  color: var(--text-2);
-  font-size: 13px;
-}
-
-.nodeRate {
-  text-align: right;
-}
-
-.listSkeleton {
+.notes {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 0 var(--pad-card) var(--pad-card);
 }
 
-.cardNote {
+.eyebrowLine {
+  margin: 0 0 12px;
+  font-size: 12.5px;
   color: var(--text-3);
-  font-size: var(--fs-caption);
+}
+
+.annBody {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.num {
+  font-family: var(--font-display);
+}
+
+/* ===========================================================================
+ * 多份切换条（Copies）
+ * ========================================================================= */
+.copies {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px;
+}
+
+.copies::-webkit-scrollbar {
+  display: none;
+}
+
+.cp {
+  min-width: 128px;
+  padding: 11px 16px 12px;
+  border-radius: 14px;
+  border: 0;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  box-shadow: 0 0 0 1px var(--border);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: background 0.15s, box-shadow 0.15s;
+  color: inherit;
+}
+
+.cp b {
+  font-size: 14.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.cp small {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.cp:hover {
+  background: var(--surface);
+}
+
+.cp[aria-selected='true'] {
+  background: var(--surface);
+  box-shadow: 0 0 0 1.5px var(--brand-line), 0 8px 18px -12px color-mix(in srgb, var(--shade) 50%, transparent);
+}
+
+.cp:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.warnDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  display: inline-block;
+  flex: none;
+}
+
+/* ===========================================================================
+ * 空状态（Hero tone="empty"）
+ * ========================================================================= */
+.gone {
+  margin: 22px 0 0;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.gap10 {
+  margin-top: 10px;
+}
+
+.steps {
+  display: flex;
+  gap: 10px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 10px 10px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.steps b {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  flex: none;
+}
+
+.heroFoot {
+  display: flex;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.moreTitle {
+  margin-top: 10px;
+}
+
+/* ===========================================================================
+ * 响应式适配
+ * ========================================================================= */
+@media (max-width: 959px) {
+  .heroFoot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gone {
+    font-size: 26px;
+  }
+
+  .steps {
+    flex-direction: column;
+  }
 }

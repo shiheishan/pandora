@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Holdings } from '../common/holdings'
 import { ImportSheet, type ImportTarget } from '../common/ImportSheet'
 import type { Subscription } from '../common/subscriptions'
+import type { CopyActions } from './Copy'
 import { RenameSheet } from './RenameSheet'
 import { RotateSheet } from './RotateSheet'
 
@@ -10,7 +11,7 @@ export function useSheets(h: Holdings) {
   const [importing, setImporting] = useState<ImportTarget | null>(null)
   const [renaming, setRenaming] = useState<Subscription | null>(null)
   const [rotating, setRotating] = useState<Subscription | null>(null)
-  const actions = {
+  const actions: CopyActions = {
     onImport: (sub: Subscription) => {
       const url = h.urlOf(sub.id)
       if (url) setImporting({ sub, url })
