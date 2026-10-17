@@ -23,6 +23,10 @@
     transform 0.15s;
 }
 
+.button svg {
+  flex: none;
+}
+
 .button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -56,12 +60,6 @@
 .dialog {
   --h: var(--h-dialog-action);
   --pad: calc(var(--pad-button) - 2px);
-}
-
-/* 后台工具栏（28）与紧凑按钮（24）用 12px 字 */
-:root[data-app='admin'] .sm,
-:root[data-app='admin'] .xs {
-  font-size: var(--fs-caption);
 }
 
 /* --- 变体 ---------------------------------------------------------------- */
@@ -112,8 +110,13 @@
 }
 
 .danger {
-  background: var(--danger);
-  color: var(--on-danger);
+  background: var(--button-danger-bg);
+  border-color: var(--button-danger-border);
+  color: var(--button-danger-color);
+}
+
+.danger:not(:disabled):hover {
+  background: var(--button-danger-hover-bg);
 }
 
 .link {
@@ -129,6 +132,18 @@
 
 .link:not(:disabled):hover {
   color: var(--link-hover);
+}
+
+/* 只有图标的按钮（样稿 .ib）：方形、无底无框，悬停浅底 */
+.icon {
+  width: var(--h);
+  padding: 0;
+  color: var(--text-2);
+}
+
+.icon:not(:disabled):hover {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 /* 实心与次按钮悬停提亮、按下位移（角色令牌：后台 none，外观不变） */

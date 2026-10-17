@@ -2,16 +2,14 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 24px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--text);
+  gap: 8px;
 }
 
 .end {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .search {
@@ -22,7 +20,7 @@
 
 .icon {
   position: absolute;
-  left: 2px;
+  left: 10px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-3);
@@ -36,22 +34,22 @@
   width: 100%;
   min-width: 0;
   height: var(--h-control);
-  padding: 0 2px 0 22px;
-  border: 0;
-  border-bottom: 1px solid var(--border-strong);
-  border-radius: 0;
-  background: transparent;
+  padding: 0 10px 0 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   color: var(--text);
   font: inherit;
+  font-size: 13.5px;
   outline: none;
 }
 
 .input:hover {
-  border-bottom-color: var(--border-hover);
+  border-color: var(--border-hover);
 }
 
 .input:focus {
-  border-bottom-color: var(--text);
+  border-color: var(--text-3);
 }
 
 .input::placeholder {

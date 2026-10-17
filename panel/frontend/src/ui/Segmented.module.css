@@ -26,7 +26,7 @@
 }
 
 .on {
-  background: var(--surface);
+  background: var(--segment-on-bg);
   color: var(--text);
   font-weight: var(--segment-on-weight);
   box-shadow: var(--shadow-segment);

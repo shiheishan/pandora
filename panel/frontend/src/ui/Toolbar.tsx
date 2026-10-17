@@ -23,12 +23,12 @@ export function Toolbar({ children, end, className }: ToolbarProps) {
 export interface SearchFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'size'> {
   /** 无障碍名称（必填，搜索框没有可见标签） */
   'aria-label': string
-  /** 宽度，默认 240px */
+  /** 宽度，默认 320px */
   width?: number | string
 }
 
 export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(function SearchField(
-  { 'aria-label': ariaLabel, width = 240, className, ...rest },
+  { 'aria-label': ariaLabel, width = 320, className, ...rest },
   ref,
 ) {
   return (

@@ -108,6 +108,58 @@ describe('Table sorting and footer', () => {
     expect(withFooter).toContain('共 2 项 · 已完成 1')
   })
 
+  it('supports boxed prop', () => {
+    const unboxed = html(
+      <Table
+        label="测试列表"
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+      />,
+    )
+    expect(unboxed).not.toMatch(/class="[^"]*boxed[^"]*"/)
+
+    const boxed = html(
+      <Table
+        label="测试列表"
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        boxed
+      />,
+    )
+    expect(boxed).toMatch(/class="[^"]*boxed[^"]*"/)
+  })
+
+  it('supports rowClassName prop', () => {
+    const out = html(
+      <Table
+        label="测试列表"
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowClassName={(r) => (r.id === '2' ? 'is-current' : undefined)}
+      />,
+    )
+
+    // 第二行带 is-current，第一行没有
+    expect(out).toMatch(/<tr[^>]*class="[^"]*is-current[^"]*"[^>]*>[\s\S]*?beta/)
+    expect(out).not.toMatch(/<tr[^>]*class="[^"]*is-current[^"]*"[^>]*>[\s\S]*?alpha/)
+  })
+
+  it('renders footer element when provided as ReactNode', () => {
+    const out = html(
+      <Table
+        label="测试列表"
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        footer={<span>共 2 条</span>}
+      />,
+    )
+    expect(out).toContain('<span>共 2 条</span>')
+  })
+
   it('supports stickyHeader prop', () => {
     const out = html(
       <Table

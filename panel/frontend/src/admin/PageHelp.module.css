@@ -1,47 +1,49 @@
 .wrap {
+  position: relative;
   display: inline-flex;
-  align-items: center;
 }
 
 .trigger {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
   padding: 0;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  white-space: nowrap;
+  color: var(--text-2);
   cursor: help;
-  transition: color 0.15s ease;
 }
 
 .trigger:hover,
 .trigger:focus-visible,
 .trigger.open {
+  background: var(--surface-2);
   color: var(--text);
 }
 
-.label {
-  display: inline;
+.trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 0;
 }
 
 .tooltip {
   position: absolute;
   right: 0;
   top: 100%;
-  z-index: 70;
-  margin-top: 8px;
+  margin-top: 6px;
   width: 400px;
   max-width: calc(100vw - 48px);
   padding: 14px 16px;
-  background: var(--text);
-  color: var(--on-ink);
-  font-size: var(--fs-caption);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-2);
+  box-shadow: var(--popover-shadow);
+  border: 1px solid var(--popover-border);
+  font-size: 12.5px;
   line-height: 1.65;
+  z-index: 70;
   pointer-events: none;
   text-align: left;
   white-space: normal;
@@ -56,15 +58,16 @@
 }
 
 .sectionTitle {
-  font-weight: 600;
-  font-size: 12.5px;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  font-size: 13px;
   margin-bottom: 8px;
 }
 
 .section + .section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--on-ink) 18%, transparent);
+  border-top: 1px solid var(--border);
 }
 
 .list {
@@ -84,11 +87,12 @@
 }
 
 .term {
-  font-weight: 600;
+  color: var(--text);
+  font-weight: var(--fw-medium);
 }
 
 @media (max-width: 639px) {
-  .label {
+  .wrap {
     display: none;
   }
 }

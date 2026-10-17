@@ -7,6 +7,8 @@ export type MenuEntry =
       kind?: 'item'
       key: string
       label: ReactNode
+      /** 左侧图标（Hugeicons 16px），颜色随文字 */
+      icon?: ReactNode
       onSelect: () => void
       /** 右侧辅助信息（余额等），--text-3 等宽数字 */
       hint?: ReactNode
@@ -19,8 +21,20 @@ export type MenuEntry =
       kind: 'toggle'
       key: string
       label: ReactNode
+      /** 左侧图标（Hugeicons 16px），颜色随文字 */
+      icon?: ReactNode
       checked: boolean
       onChange: (checked: boolean) => void
+    }
+  | {
+      /** 一行里的小分段单选（如「外观 浅色 / 深色」）：选项是 menuitemradio，点了不收起菜单 */
+      kind: 'choice'
+      key: string
+      label: ReactNode
+      icon?: ReactNode
+      options: readonly { value: string; label: ReactNode }[]
+      value: string
+      onChange: (value: string) => void
     }
   | { kind: 'separator'; key: string }
 
@@ -158,6 +172,45 @@ export function Menu({
           )}
           {entries.map((entry) => {
             if (entry.kind === 'separator') return <div key={entry.key} role="separator" className={css.separator} />
+            if (entry.kind === 'choice') {
+              // choice 是 group + 一排 menuitemradio，每个选项占一个 slot、进方向键顺序；点选项不收起菜单
+              return (
+                <div
+                  key={entry.key}
+                  role="group"
+                  aria-label={typeof entry.label === 'string' ? entry.label : undefined}
+                  className={css.choice}
+                >
+                  {entry.icon != null && (
+                    <span className={css.icon} aria-hidden="true">
+                      {entry.icon}
+                    </span>
+                  )}
+                  <span className={css.label}>{entry.label}</span>
+                  <span className={css.seg}>
+                    {entry.options.map((option) => {
+                      const slot = index++
+                      return (
+                        <button
+                          key={option.value}
+                          ref={(el) => {
+                            items.current[slot] = el
+                          }}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={option.value === entry.value}
+                          tabIndex={-1}
+                          className={cx(css.segOption, option.value === entry.value && css.segOn)}
+                          onClick={() => entry.onChange(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      )
+                    })}
+                  </span>
+                </div>
+              )
+            }
             const slot = index++
             const ref = (el: HTMLButtonElement | null) => {
               items.current[slot] = el
@@ -174,6 +227,11 @@ export function Menu({
                   className={css.item}
                   onClick={() => entry.onChange(!entry.checked)}
                 >
+                  {entry.icon != null && (
+                    <span className={css.icon} aria-hidden="true">
+                      {entry.icon}
+                    </span>
+                  )}
                   <span className={css.label}>{entry.label}</span>
                   <span className={cx(css.switch, entry.checked && css.switchOn)} aria-hidden="true" />
                 </button>
@@ -194,6 +252,11 @@ export function Menu({
                   entry.onSelect()
                 }}
               >
+                {entry.icon != null && (
+                  <span className={css.icon} aria-hidden="true">
+                    {entry.icon}
+                  </span>
+                )}
                 <span className={css.label}>{entry.label}</span>
                 {entry.hint != null && <span className={css.hint}>{entry.hint}</span>}
               </button>

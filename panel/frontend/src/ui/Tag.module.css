@@ -2,9 +2,12 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-4);
-  padding: 2px 8px;
+  box-sizing: border-box;
+  height: var(--tag-h);
+  padding: var(--tag-pad);
   border-radius: var(--radius-tag);
-  font-size: var(--fs-caption);
+  font-size: var(--tag-font-size);
+  font-weight: var(--tag-weight);
   line-height: 1.5;
   white-space: nowrap;
 }

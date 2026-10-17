@@ -48,10 +48,14 @@ export interface TableProps<T> {
   sort?: TableSort
   /** 点可排序的表头：同一列再点切换方向，换列时由调用方决定初始方向 */
   onSortChange?: (key: string) => void
-  /** 表格下方的一行说明（计数、合计），12px 灰字 */
+  /** 表尾一行（样稿 .tfoot，48 高）：计数、分页按钮；内容自己用 flex 排，组件只给容器 */
   footer?: ReactNode
   /** 表头吸顶（表格放在自己滚动的容器里时用） */
   stickyHeader?: boolean
+  /** 装进盒子（样稿 .box）：白底、1px 描边、圆角 12、溢出裁切；列表页一般都开 */
+  boxed?: boolean
+  /** 给某一行加 className（如「当前选中」「已归档置灰」）；返回 undefined 不加 */
+  rowClassName?: (row: T) => string | undefined
 }
 
 export function Table<T>({
@@ -67,6 +71,8 @@ export function Table<T>({
   onSortChange,
   footer,
   stickyHeader,
+  boxed,
+  rowClassName,
 }: TableProps<T>) {
   const keys = rows.map(rowKey)
   const picked = selection ? keys.filter((k) => selection.selected.has(k)).length : 0
@@ -81,7 +87,7 @@ export function Table<T>({
   const span = columns.length + (selection ? 1 : 0)
 
   return (
-    <div className={cn(css.root, footer != null && css.hasFooter)}>
+    <div className={cn(css.root, boxed && css.boxed, footer != null && css.hasFooter)}>
       <div className={css.scroll}>
         <table className={css.table} aria-label={label} aria-busy={loading || undefined}>
           <colgroup>
@@ -175,7 +181,7 @@ export function Table<T>({
                 return (
                   <tr
                     key={key}
-                    className={cn(isPicked && css.picked, onRowClick && css.clickable)}
+                    className={cn(isPicked && css.picked, onRowClick && css.clickable, rowClassName?.(row))}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     tabIndex={onRowClick ? 0 : undefined}
                     onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}

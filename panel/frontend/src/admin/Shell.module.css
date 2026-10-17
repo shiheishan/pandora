@@ -1,88 +1,111 @@
 .frame {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  min-height: 100vh;
   background: var(--bg);
 }
 
-.body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
 .main {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
 }
 
-.pageHead {
+.page {
+  flex: 1;
+  min-width: 0;
+  padding: 28px 32px 72px;
+}
+
+.col {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.bleed {
+  padding: 0;
+}
+
+.bleedCol {
+  height: 100vh;
+  min-height: 560px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 28px 40px 0;
 }
 
-.tabBar {
-  position: relative;
+.head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--border);
-  justify-content: flex-end;
+  gap: 10px;
+  min-height: 32px;
 }
 
-.tabBar > [role='tablist'] {
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.count {
+  display: contents;
+}
+
+.spacer {
   flex: 1;
-  min-width: 0;
-  border-bottom: 0;
 }
 
-.content {
-  flex: 1;
-  min-width: 0;
-  padding: 28px 40px 64px;
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-@media (max-width: 959px) {
-  .pageHead {
-    padding-left: 24px;
-    padding-right: 24px;
-  }
-
-  .content {
-    padding-left: 24px;
-    padding-right: 24px;
-  }
+.actions:empty {
+  display: none;
 }
 
-@media (max-width: 639px) {
-  .pageHead {
-    padding: 16px 16px 0;
-  }
-
-  .content {
-    padding: 20px 16px 64px;
-  }
-
-  .scrim {
-    position: fixed;
-    inset: 56px 0 0 0;
-    z-index: 39;
-    background: rgb(0 0 0 / 0.32);
-  }
+.tabs {
+  margin: 18px 0 20px;
 }
 
 .scrim {
   display: none;
 }
 
-@media (max-width: 639px) {
+@media (max-width: 959px) {
+  .frame {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .scrim {
     display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 34;
+    background: var(--scrim);
+  }
+
+  .bleedCol {
+    height: calc(100vh - 52px);
   }
 }
+
+@media (max-width: 639px) {
+  .page {
+    padding: 24px 16px 72px;
+  }
+
+  .bleed {
+    padding: 0;
+  }
+
+  .head {
+    display: none;
+  }
+
+  .tabs {
+    margin-top: 0;
+  }
+}
+

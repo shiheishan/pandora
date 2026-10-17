@@ -35,7 +35,8 @@ function screenCalls(key: ModuleKey): Array<{ method: string; path: string }> {
 
 describe('admin module registry · sidebar', () => {
   it('puts every module exactly once in the NAV_GROUPS group its MODULES entry names', () => {
-    const placed = NAV_GROUPS.flatMap(([group, members]) => members.map((key) => `${key}@${group}`)).sort()
+    // 第一组（仪表盘、工单）不画组标题，标题为 null，按组内模块自己的 group 记
+    const placed = NAV_GROUPS.flatMap(([group, members]) => members.map((key) => `${key}@${group ?? MODULES[key].group}`)).sort()
     expect(placed).toEqual(keys.map((key) => `${key}@${MODULES[key].group}`).sort())
   })
 })

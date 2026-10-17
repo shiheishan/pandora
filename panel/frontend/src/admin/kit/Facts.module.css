@@ -1,0 +1,187 @@
+/* 头像：样稿 .av */
+.avatar {
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  flex: none;
+}
+
+.avatarSm {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.avatarLg {
+  width: 44px;
+  height: 44px;
+  font-size: 16px;
+}
+
+@media (max-width: 639px) {
+  .avatarLg {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* 右栏条目：样稿 .dside .sk */
+.facts {
+  margin: 0;
+}
+
+.fact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+
+.fact:last-child {
+  border-bottom: 0;
+}
+
+.factLabel {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.factValue {
+  margin: 0;
+  min-width: 0;
+}
+
+.factAction {
+  margin: 0;
+  align-self: center;
+}
+
+/* 键值行：样稿 .kv / .dpage .kv */
+.kv {
+  --kv-label: 120px;
+}
+
+.kvRow {
+  display: grid;
+  grid-template-columns: var(--kv-label) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 36px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kvRow:last-child {
+  border-bottom: 0;
+}
+
+.kvLabel {
+  color: var(--text-2);
+}
+
+.kvValue {
+  min-width: 0;
+}
+
+.kvAction {
+  justify-self: end;
+}
+
+.kvMuted {
+  opacity: 0.5;
+}
+
+.kvBoxed {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0 16px;
+}
+
+/* 状态点：样稿 .st */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.statusOk {
+  color: var(--ok);
+}
+
+.statusWarn {
+  color: var(--warn);
+}
+
+.statusBad {
+  color: var(--danger);
+}
+
+.statusOff {
+  color: var(--text-3);
+}
+
+.statusText {
+  color: var(--text);
+}
+
+/* 分节标题：样稿 .dh3 / .sect */
+.sectionBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.sectionGroup {
+  margin: 24px 0 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.sectionGroup:first-child {
+  margin-top: 0;
+}
+
+.hintBlock {
+  font-weight: 400;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.hintGroup {
+  font-weight: 400;
+  font-size: 12.5px;
+  color: var(--text-3);
+  margin-left: 6px;
+}
+
+.sectionAction {
+  margin-left: auto;
+}

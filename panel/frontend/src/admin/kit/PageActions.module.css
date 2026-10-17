@@ -1,0 +1,9 @@
+/* 页头计数：样稿 .ph .cnt */
+.count {
+  font: 13px var(--font-mono);
+  color: var(--text-3);
+  padding: 1px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  align-self: center;
+}

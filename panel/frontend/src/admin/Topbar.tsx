@@ -1,146 +1,33 @@
-import { Moon02Icon, Search01Icon, SidebarLeftIcon, Sun03Icon } from '@hugeicons-pro/core-stroke-rounded'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { navigate } from '../core/router'
-import { toggleTheme, useTheme } from '../core/theme'
-import { Logo } from '../shell/Logo'
-import { signOut, useRuntime } from '../shell/runtime'
-import { Menu } from '../ui'
-import { EventsCapsule } from './EventsCapsule'
-import { identityLabels, useAdminMe } from './me'
-import { useAdminSiteName } from './site'
+import { IconButton } from '../ui'
+import { EventsTrigger } from './EventsCapsule'
+import { MENU_ICON } from './nav-icons'
 import css from './Topbar.module.css'
 
 export interface TopbarProps {
-  collapsed: boolean
-  /** 窄屏抽屉模式：按钮文案用「打开/关闭导航」 */
-  narrow?: boolean
-  onToggleSidebar: () => void
-  onOpenPalette: () => void
-  onChangePassword: () => void
-  onBindTelegram: () => void
+  /** 当前模块名，显示在中间 */
+  title: string
+  /** 抽屉是否打开（汉堡按钮的 aria-expanded） */
+  navOpen: boolean
+  onOpenNav: () => void
+  /** 页面主按钮的插槽：窄屏时页面经 kit 的 PageActions 把按钮渲染到这里 */
+  actionsRef?: (el: HTMLDivElement | null) => void
 }
 
-export function Topbar({
-  collapsed,
-  narrow,
-  onToggleSidebar,
-  onOpenPalette,
-  onChangePassword,
-  onBindTelegram,
-}: TopbarProps) {
-  const me = useAdminMe()
-  const siteName = useAdminSiteName()
-  const theme = useTheme()
-  const runtime = useRuntime()
-  const who = identityLabels(me.data)
-
-  const isDark = theme === 'dark'
-  const themeLabel = isDark ? '切换到浅色模式' : '切换到深色模式'
-  const sidebarLabel = narrow
-    ? collapsed ? '打开导航' : '关闭导航'
-    : collapsed ? '展开侧栏' : '收起侧栏'
+export function Topbar(p: TopbarProps) {
+  const { title, navOpen, onOpenNav, actionsRef } = p
 
   return (
-    <header className={css.topbar}>
-      <span className={css.brandLogo}>
-        <Logo size={18} wordmark={false} />
-      </span>
-
-      <span className={css.brandText}>
-        <span className={css.siteName} title={siteName}>
-          {siteName}
-        </span>
-        <span className={css.release}>{__APP_RELEASE__}</span>
-      </span>
-
-      <button
-        type="button"
-        className={`${css.iconButton} ${css.toggleSidebar}`}
-        onClick={onToggleSidebar}
-        aria-label={sidebarLabel}
-        title={sidebarLabel}
+    <header className={css.top}>
+      <IconButton
+        label="打开导航"
+        icon={MENU_ICON}
+        onClick={onOpenNav}
         aria-controls="admin-sidebar"
-        aria-expanded={!collapsed}
-      >
-        <HugeiconsIcon icon={SidebarLeftIcon} size={16} strokeWidth={1.75} aria-hidden="true" />
-      </button>
-
-      <div className={css.searchWrap}>
-        <button
-          type="button"
-          className={css.searchButton}
-          onClick={onOpenPalette}
-          aria-label="搜索或跳转（⌘K）"
-        >
-          <HugeiconsIcon
-            icon={Search01Icon}
-            size={16}
-            strokeWidth={1.75}
-            className={css.searchIcon}
-            aria-hidden="true"
-          />
-          <span className={css.searchText}>搜索用户、订单、节点，或跳转到模块</span>
-          <kbd className={css.searchKbd}>⌘K</kbd>
-        </button>
-      </div>
-
-      <button
-        type="button"
-        className={css.iconButton}
-        onClick={toggleTheme}
-        aria-label={themeLabel}
-        title={themeLabel}
-      >
-        <HugeiconsIcon
-          icon={isDark ? Sun03Icon : Moon02Icon}
-          size={16}
-          strokeWidth={1.75}
-          aria-hidden="true"
-        />
-      </button>
-
-      <EventsCapsule onOpen={(path) => navigate(path)} />
-
-      <div className={css.accountMenuWrap}>
-        <Menu
-          label="账户"
-          align="end"
-          triggerLabel={`${who.title}，账户菜单`}
-          triggerClassName={css.avatarButton}
-          menuClassName={css.accountMenu}
-          trigger={who.initial}
-          header={
-            <div className={css.accountHeader}>
-              <div className={css.whoTitle}>{who.title}</div>
-              <div className={css.whoSubtitle} title={who.subtitle}>
-                {who.subtitle}
-              </div>
-            </div>
-          }
-          entries={[
-            {
-              key: 'password',
-              label: '修改我的密码',
-              onSelect: onChangePassword,
-            },
-            {
-              key: 'telegram',
-              label: '绑定 Telegram',
-              onSelect: onBindTelegram,
-            },
-            {
-              kind: 'separator',
-              key: 'sep',
-            },
-            {
-              key: 'logout',
-              label: '退出登录',
-              danger: true,
-              onSelect: () => void signOut(runtime),
-            },
-          ]}
-        />
-      </div>
+        aria-expanded={navOpen}
+      />
+      <b className={css.title}>{title}</b>
+      <div ref={actionsRef} className={css.actions} />
+      <EventsTrigger variant="top" />
     </header>
   )
 }

@@ -84,17 +84,17 @@ describe('admin overrides', () => {
 
   it.each(ADMIN_OVERRIDES.map((t) => [t.name, t] as const))('%s', (name, token) => {
     expect(normalizeCssValue(lightBlock.get(name) ?? 'missing')).toBe(normalizeCssValue(token.light))
-    expect(darkBlock.get(name) ?? null).toBe(token.dark)
+    expect(normalizeCssValue(darkBlock.get(name) ?? 'missing')).toBe(normalizeCssValue(token.dark))
   })
 
-  it('zeroes every radius', () => {
-    for (const name of ADMIN_RADIUS) expect(lightBlock.get(name), name).toBe('0')
+  it('uses the admin radius scale', () => {
+    for (const t of ADMIN_RADIUS) expect(lightBlock.get(t.name), t.name).toBe(t.value)
   })
 
   it('declares nothing beyond ADMIN_OVERRIDES and ADMIN_RADIUS', () => {
-    const names = [...ADMIN_OVERRIDES.map((t) => t.name), ...ADMIN_RADIUS].sort()
-    expect([...lightBlock.keys()].sort()).toEqual(names)
-    expect([...darkBlock.keys()].sort()).toEqual(ADMIN_OVERRIDES.filter((t) => t.dark != null).map((t) => t.name).sort())
+    const lightNames = [...ADMIN_OVERRIDES.map((t) => t.name), ...ADMIN_RADIUS.map((t) => t.name)].sort()
+    expect([...lightBlock.keys()].sort()).toEqual(lightNames)
+    expect([...darkBlock.keys()].sort()).toEqual(ADMIN_OVERRIDES.map((t) => t.name).sort())
   })
 })
 

@@ -2,8 +2,8 @@
  * 语义色 · 浅色
  *
  * 10-16 起是门户样稿 v5 的「森林绿」，与 design-tokens.ts 的 COLOR_TOKENS 逐值一致
- *（tests/tokens.test.ts 守住）。后台没重做，变了值的键在 roles.css 的
- * html[data-app='admin'] 里钉回原来的「纸白」。
+ *（tests/tokens.test.ts 守住）。后台的黑白灰（样稿 v4）写在 roles.css 的
+ * html[data-app='admin'] 两块里，不改这里。
  * 主题只有 light / dark 两档，由 <html data-theme> 决定，默认 light（theme-boot.js）。
  * ========================================================================= */
 :root {
