@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, ConfirmModal, Input, QueryView, Select, Table, useToast } from '../../../ui'
@@ -57,16 +57,14 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
   const [inputError, setInputError] = useState<string | undefined>()
   const [alert, setAlert] = useState<string | undefined>()
   const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(null)
-  const [scope, setScope] = useState(() => defaultScopeValue(saved))
+  const [pickedScope, setScope] = useState(() => defaultScopeValue(saved))
 
   const ugForScope = useMemo(() => userGroups.map((g) => ({ id: g.id, name: g.name })), [userGroups])
   const scopeOptions = useMemo(() => domainScopeOptions(saved, ugForScope), [saved, ugForScope])
   const rows = useMemo(() => flattenDomains(saved, ugForScope), [saved, ugForScope])
 
   // 保存后配置刷新：当前选的作用范围已不在选项里（如组刚被整组删掉）时退回缺省值
-  useEffect(() => {
-    setScope((cur) => (scopeOptions.some((o) => o.value === cur) ? cur : defaultScopeValue(saved)))
-  }, [saved, scopeOptions])
+  const scope = scopeOptions.some((o) => o.value === pickedScope) ? pickedScope : defaultScopeValue(saved)
 
   const save = useMutation({
     mutationFn: (body: { groups: DomainGroupBody[] }) => api.put('v1/subscription-domains', domainConfigSchema, { body }),

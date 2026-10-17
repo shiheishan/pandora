@@ -5,7 +5,7 @@ import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
-import { PageActions } from '../../kit'
+import { PageActions, StatusDot } from '../../kit'
 import {
   createServerBody,
   deleteServerNotice,
