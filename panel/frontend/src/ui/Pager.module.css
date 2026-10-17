@@ -7,3 +7,8 @@
   color: var(--text-2);
   font-size: var(--fs-caption);
 }
+
+.inline {
+  padding: 0;
+  margin-left: auto;
+}
