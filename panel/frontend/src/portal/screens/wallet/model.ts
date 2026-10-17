@@ -1,5 +1,7 @@
 import { formatMoney } from '../../../core/format'
+import type { IconName } from '../../kit'
 import { validityText } from '../common/catalog'
+import { shortDateTime } from '../common/orders'
 import { day, gb, money, periodLabel, type Naming } from '../common/purchase'
 import type { Subscription } from '../common/subscriptions'
 import { compactBytes } from '../common/traffic'
@@ -18,7 +20,7 @@ export function parseTopupAmount(input: string): { cents: number } | { error: st
   return { cents }
 }
 
-/** 契约门户-05 余额明细的 kind 映射；未知类型返回 null，由调用方显示 memo */
+/** 契约门户-05 余额明细的 kind 映射；未知类型返回 null */
 const LEDGER: Readonly<Record<string, string>> = {
   balance_topup: '充值',
   balance_hold: '下单用余额',
@@ -32,8 +34,79 @@ const LEDGER: Readonly<Record<string, string>> = {
 }
 export const ledgerLabel = (kind: string): string | null => LEDGER[kind] ?? null
 
+/**
+ * 余额记录副行时间后面的固定短语（审计 #5）：明细每行只有 kind / delta / memo / at，memo 是后端写给对账看的
+ * （「换套餐剩余价值退回余额」、原因码 user_cancelled、「礼品卡兑换：模板名」……），不露给用户；
+ * 只有人工调整显示 memo（管理员填的原因）。没有短语的只写时间。
+ */
+const LEDGER_NOTE: Readonly<Record<string, string>> = {
+  balance_hold: '结账时先用余额',
+  balance_release: '订单没付成，余额退回',
+  plan_change_refund: '差额退回',
+  gift_card_balance: '兑换余额卡',
+}
+
+const LEDGER_ICON: Readonly<Record<string, IconName>> = {
+  balance_topup: 'in',
+  balance_hold: 'out',
+  plan_change_refund: 'swap',
+  balance_release: 'in',
+  commission_to_balance: 'gift',
+  gift_card_balance: 'card',
+  late_payment_applied: 'in',
+  late_payment_suspense: 'in',
+}
+
+export interface LedgerView {
+  title: string
+  /** 副行：「10-12 17:03 · 差额退回」 */
+  sub: string
+  icon: IconName
+  /** 出账（delta < 0）用灰色圆标，入账用主题色圆标 */
+  out: boolean
+  /** 「+¥10.00」/「−¥20.00」 */
+  amount: string
+}
+
+export function ledgerView(h: { kind: string; delta: number; memo: string; at: string }): LedgerView {
+  const out = h.delta < 0
+  const note = h.kind === 'balance_adjusted' ? h.memo.trim() : (LEDGER_NOTE[h.kind] ?? '')
+  return {
+    title: ledgerLabel(h.kind) ?? (out ? '余额支出' : '余额入账'),
+    sub: [shortDateTime(h.at), note].filter(Boolean).join(' · '),
+    icon: out ? 'out' : (LEDGER_ICON[h.kind] ?? 'in'),
+    out,
+    amount: `${out ? '−' : '+'}${formatMoney(Math.abs(h.delta))}`,
+  }
+}
+
+/** 余额记录按月分组（浏览器本地时区，与订单页 groupByMonth 同口径），保持原有顺序；不算月度合计（只拿得到最近 100 条，合计会不准） */
+export function ledgerByMonth<T extends { at: string }>(rows: readonly T[]): Array<{ key: string; label: string; rows: T[] }> {
+  const groups: Array<{ key: string; label: string; rows: T[] }> = []
+  for (const row of rows) {
+    const d = new Date(row.at)
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}`
+    let g = groups.find((x) => x.key === key)
+    if (!g) {
+      g = { key, label: `${d.getFullYear()} 年 ${d.getMonth() + 1} 月`, rows: [] }
+      groups.push(g)
+    }
+    g.rows.push(row)
+  }
+  return groups
+}
+
 /** 卡码只收字母数字（服务端也转大写去空白）；输入里的空格与连字符之外的符号原样留给后端判 */
 export const normalizeGiftCode = (raw: string) => raw.replace(/\s+/g, '').toUpperCase()
+
+/** 卡面上方的小字（样稿 .gc .eyebrow「套餐卡」）：只有一种奖励时叫那种卡，几种混在一起叫「礼品卡」 */
+export function giftKind(card: GiftCard): string {
+  if (card.type === 'plan') return '套餐卡'
+  if (card.type === 'mystery') return '盲盒'
+  const r = card.rewards
+  const kinds = [r.balance ? '余额卡' : '', r.traffic_bytes ? '送流量卡' : '', r.expire_days ? '加时长卡' : '', r.reset_quota ? '流量重置卡' : ''].filter(Boolean)
+  return kinds.length === 1 ? kinds[0]! : '礼品卡'
+}
 
 /** 卡面大字：余额 / 流量 / 延期 / 套餐 / 盲盒 */
 export function giftFace(card: GiftCard): string {
@@ -164,7 +237,7 @@ export function redeemViews(c: RedeemCtx, options: readonly PlacementOption[], d
           label: noDefault ? `把${m ? `「${sn}」` : '现在'}的${plan}${up ? '升级成' : '换成'}${np}` : m ? `换掉「${sn}」` : `把现在的${plan}换成${np}`,
           desc: [noDefault ? '' : end, '链接不变', back, gift].filter(Boolean).join(' · '),
           badge,
-          sentence: `${who}今天换成${np}，从今天起算${end ? `，${end}` : '，永久有效'}。链接不变${back ? `；${plan}这期还没用完的天数和流量按 ${money(credit)} 算给你，退到钱包余额（在「钱包」里，可用于续费、加流量、买套餐）` : ''}${gift ? `；${gift}` : ''}。`,
+          sentence: `${who}今天换成${np}，从今天起算${end ? `，${end}` : '，永久有效'}。链接不变${back ? `；${plan}这期还没用完的部分按 ${money(credit)} 算给你，退到钱包余额（在「钱包」里，可用于续费、买套餐）` : ''}${gift ? `；${gift}` : ''}。`,
           verb: `兑换，换成${np}`,
         }
       }

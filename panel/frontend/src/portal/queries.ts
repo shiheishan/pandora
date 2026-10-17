@@ -229,9 +229,9 @@ export function useCommissionAvailable() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/orders?status=pending_payment：侧栏「订单」计数与我的套餐页的待支付横条共用。
-// 外框与页面共用的键，schema 全字段；screens/common/orders.ts 里还有一份同样的定义，
-// 之后应改成从这里 import（同一键只留一份 schema）。
+// GET v1/orders?status=pending_payment：侧栏「订单」计数、我的套餐页的待支付横条与订单页的待支付卡共用。
+// 外框与页面共用的键，schema 全字段，只在这里定义一份；screens/common/orders.ts 转出给页面用，
+// 它的 useOpenOrders 与下面 usePendingOrderCount 同键、同请求（不带 limit），只是 select 不同。
 // ---------------------------------------------------------------------------
 const ORDER_KINDS = ['new', 'renewal', 'topup', 'upgrade', 'stack', 'traffic_reset'] as const
 export const ORDER_STATUSES = ['pending_payment', 'paid', 'fulfilled', 'cancelled', 'expired'] as const

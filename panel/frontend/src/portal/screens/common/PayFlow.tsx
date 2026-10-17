@@ -1,18 +1,19 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useBalance } from '../../queries'
 import { useApi } from '../../../shell/runtime'
-import { Button, Modal, Skeleton } from '../../../ui'
+import { Skeleton } from '../../../ui'
+import { Btn, cx, Icon, Num, Sheet } from '../../kit'
 import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
 import { detectDevice } from './clients'
 import { feeLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
-import { archivedRefundText, isPlanArchivedRefund, PAID_STATUSES, rebuyQuery, useCancelOrder, useOrder, type OrderDetail } from './orders'
+import { archivedRefundText, isPlanArchivedRefund, orderTitle, PAID_STATUSES, rebuyQuery, useCancelOrder, useOrder, type OrderDetail } from './orders'
 import { afterOrderCheck, payFailureAction, PAY_IN_PROGRESS_MAX_RETRIES } from './payRetry'
 import { QrCode } from './qr'
 import { formatDate } from './traffic'
@@ -64,7 +65,7 @@ function useRefreshAccount() {
   return () => void client.invalidateQueries({ queryKey: ['portal'] })
 }
 
-const TITLES: Record<PayState['phase'], string> = { redirect: '付款', done: '支付成功', confirm: '正在确认支付结果', choose: '选择支付方式' }
+const TITLES: Record<PayState['phase'], string> = { redirect: '付款', done: '支付成功', confirm: '正在确认支付结果', choose: '去支付' }
 
 /**
  * onUnpayable：支付接口确认订单已不可支付（别处取消、已超时或已付掉等）时调用，
@@ -87,7 +88,7 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
   const [paidHere, setPaidHere] = useState<string | null>(null)
   const title = !state ? '' : (state.phase === 'confirm' && confirm.paid) || paidHere === stateOrder(state) ? '支付成功' : TITLES[state.phase]
   return (
-    <Modal open={state !== null} onClose={close} title={title} className={css.modal}>
+    <Sheet open={state !== null} onClose={close} title={title}>
       {state?.phase === 'choose' && <Choose state={state} onPick={(method) => setPicked({ orderId: state.orderId, method })} onLater={close} />}
       {state?.phase === 'redirect' &&
         (paidHere === state.orderId ? (
@@ -109,24 +110,93 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
         ))}
       {state?.phase === 'done' && <Done orderId={state.orderId} onClose={close} />}
       {state?.phase === 'confirm' && <Confirming confirm={confirm} onClose={close} />}
-    </Modal>
+    </Sheet>
   )
 }
 
 const stateOrder = (s: PayState) => s.orderId
 
 // ---------------------------------------------------------------------------
-// 选支付方式：列当前可用的方式（GET v1/payment-methods，修订 R61）
+// 付款方式单选（样稿 .pays / .pay）
 // ---------------------------------------------------------------------------
-function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
-  const methods = usePaymentMethods(state.amount)
-  const order = useOrder(state.orderId)
+
+/** 选中的付款方式：按 key 找，找不到（还没选、列表变了）取第一个；没有方式时为 null */
+export function pickMethod(list: readonly PaymentMethod[] | undefined, key: string): PaymentMethod | null {
+  if (!list || list.length === 0) return null
+  if (key) {
+    const hit = list.find((m) => methodKey(m) === key)
+    if (hit) return hit
+  }
+  return list[0] ?? null
+}
+
+interface MethodsQuery {
+  data?: readonly PaymentMethod[]
+  isPending: boolean
+  isError: boolean
+  refetch: () => unknown
+}
+
+export function MethodMark({ method }: { method: string | undefined }) {
+  if (method === 'alipay') {
+    return (
+      <span className={cx(css.pi, css.piAli)} aria-hidden="true">
+        支
+      </span>
+    )
+  }
+  if (method === 'wxpay' || method === 'wechat') {
+    return (
+      <span className={cx(css.pi, css.piWx)} aria-hidden="true">
+        微
+      </span>
+    )
+  }
   return (
-    <div className={css.body}>
-      <div className={css.amount}>{formatMoney(state.amount)}</div>
-      <div className={css.note}>订单 {state.orderNo}</div>
+    <span className={cx(css.pi, css.piOther)} aria-hidden="true">
+      <Icon name="card" size={17} />
+    </span>
+  )
+}
+
+/** 样稿 .sh-lbl + .pays：付款方式单选行（钱包充值、订单页去支付共用） */
+export function PayMethodPicker({
+  methods,
+  selected,
+  onSelect,
+  label = '支付方式',
+}: {
+  methods: MethodsQuery
+  selected: PaymentMethod | null
+  onSelect: (m: PaymentMethod) => void
+  label?: string
+}) {
+  const labelId = useId()
+  const list = methods.data ?? []
+  const selectedKey = selected ? methodKey(selected) : ''
+
+  const onRadiogroupKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (list.length === 0) return
+    const vertical = e.key === 'ArrowDown' || e.key === 'ArrowUp'
+    const horizontal = e.key === 'ArrowRight' || e.key === 'ArrowLeft'
+    if (!vertical && !horizontal) return
+    e.preventDefault()
+    const idx = list.findIndex((m) => methodKey(m) === selectedKey)
+    const cur = idx >= 0 ? idx : 0
+    const next =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight' ? (cur + 1) % list.length : (cur - 1 + list.length) % list.length
+    const m = list[next]
+    if (!m) return
+    onSelect(m)
+    const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+    buttons[next]?.focus()
+  }
+
+  return (
+    <div className={css.picker}>
+      <div className={css.pickLabel} id={labelId}>{label}</div>
       {methods.isPending ? (
-        <Skeleton height={40} radius="var(--radius-md)" />
+        <Skeleton height={56} radius="14px" />
       ) : methods.isError ? (
         <div className={css.error} role="alert">
           支付方式读取失败，
@@ -134,30 +204,66 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
             重试
           </button>
         </div>
-      ) : methods.data.length === 0 ? (
+      ) : list.length === 0 ? (
         <div className={css.hint}>暂无可用的支付方式，请稍后再试。</div>
       ) : (
-        <div className={css.methods}>
-          {methods.data.map((m) => {
+        <div className={css.pays} role="radiogroup" aria-labelledby={labelId} onKeyDown={onRadiogroupKeyDown}>
+          {list.map((m, i) => {
+            const on = selected !== null && methodKey(m) === methodKey(selected)
             const line = feeLine(m)
+            const tab = on || (selected === null && i === 0) ? 0 : -1
             return (
-              <Button key={methodKey(m)} block onClick={() => onPick(m)}>
-                {m.label}
-                {line && (
-                  <>
-                    <br />
-                    <small className={css.note}>{line}</small>
-                  </>
-                )}
-              </Button>
+              <button
+                key={methodKey(m)}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                tabIndex={tab}
+                className={cx(css.pay, on && css.payOn)}
+                onClick={() => onSelect(m)}
+              >
+                <MethodMark method={m.method} />
+                <span className={css.pt}>
+                  {m.label}
+                  {line && <small>{line}</small>}
+                </span>
+                <span className={css.dot} aria-hidden="true" />
+              </button>
             )
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 选支付方式：列当前可用的方式（GET v1/payment-methods，修订 R61）
+// ---------------------------------------------------------------------------
+function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
+  const methods = usePaymentMethods(state.amount)
+  const order = useOrder(state.orderId)
+  const [key, setKey] = useState('')
+  const method = pickMethod(methods.data, key)
+  return (
+    <div className={css.sheetBody}>
+      <div className={css.ps}>
+        <span className={css.psWhat}>
+          {order.data ? orderTitle(order.data) : '订单'}
+          <small>
+            <Num>{state.orderNo}</Num>
+          </small>
+        </span>
+        <Num className={css.psAmt}>{formatMoney(state.amount)}</Num>
+      </div>
+      <PayMethodPicker methods={methods} selected={method} onSelect={(m) => setKey(methodKey(m))} />
+      <Btn tone="hot" full disabled={!method} onClick={() => method && onPick(method)}>
+        去支付 <Num>{formatMoney(method?.total ?? state.amount)}</Num>
+      </Btn>
+      {order.data && <SwitchToBalance order={order.data} onLeave={onLater} />}
       <button type="button" className={css.later} onClick={onLater}>
         稍后支付
       </button>
-      {order.data && <SwitchToBalance order={order.data} onLeave={onLater} />}
     </div>
   )
 }
@@ -174,9 +280,12 @@ export function SwitchToBalance({ order, onLeave }: { order: OrderDetail; onLeav
   const left = balance.data?.balance ?? 0
   if (!rebuy || left <= 0 || order.status !== 'pending_payment') return null
   return (
-    <div className={css.switchBalance}>
-      <p>余额还有 {formatMoney(left)}。想用余额付：先取消这张单（不扣钱，用过的优惠码退回），再按现在的价格回到确认页，余额自动用上。</p>
-      <Button
+    <div className={css.swb}>
+      <p>
+        余额还有 <b><Num>{formatMoney(left)}</Num></b>。想用余额付：先取消这张单（不扣钱，用过的优惠码退回），再按现在的价格回到确认页，余额自动用上。
+      </p>
+      <Btn
+        tone="soft"
         size="sm"
         busy={cancel.isPending}
         onClick={() =>
@@ -187,7 +296,7 @@ export function SwitchToBalance({ order, onLeave }: { order: OrderDetail; onLeav
         }
       >
         取消这张单，改用余额付
-      </Button>
+      </Btn>
     </div>
   )
 }
@@ -342,7 +451,9 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
   return (
     <div className={css.body} data-screen="pay">
       <p className={css.note}>用{method.label}付</p>
-      <div className={css.amount}>{formatMoney(finalAmount)}</div>
+      <div className={css.amount}>
+        <Num>{formatMoney(finalAmount)}</Num>
+      </div>
       {note && <div className={css.hint}>{note}</div>}
       {inProgressWaiting ? (
         <div className={css.hint}>正在发起支付，请稍候…</div>
@@ -352,28 +463,28 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
             {error}
           </div>
           {!closed && !unsupported && !final && (
-            <Button variant="primary" block onClick={retryPay} busy={pay.isPending}>
+            <Btn tone="primary" full onClick={retryPay} busy={pay.isPending}>
               重试
-            </Button>
+            </Btn>
           )}
           {isPaymentLapsed(pay.error) && (
-            <Button variant="primary" block busy={cancel.isPending} onClick={() => cancel.mutate(orderId, { onSuccess: () => (afterCancel ? afterCancel() : onLater?.()) })}>
+            <Btn tone="primary" full busy={cancel.isPending} onClick={() => cancel.mutate(orderId, { onSuccess: () => (afterCancel ? afterCancel() : onLater?.()) })}>
               {lapsedCancelLabel(pay.error)}
-            </Button>
+            </Btn>
           )}
           {archived && (
-            <Button variant="primary" block onClick={toWallet}>
+            <Btn tone="primary" full onClick={toWallet}>
               去钱包看看
-            </Button>
+            </Btn>
           )}
         </>
       ) : !redirect ? (
         <div className={css.hint}>正在准备付款…</div>
       ) : phone ? (
         <>
-          <a className={css.open} href={redirect} onClick={() => setOpened(true)} id="btn-open-pay">
+          <Btn href={redirect} tone="hot" full onClick={() => setOpened(true)} id="btn-open-pay">
             打开{method.label}付款
-          </a>
+          </Btn>
           {after}
           <details className={css.others}>
             <summary>用另一台手机扫码</summary>
@@ -394,17 +505,17 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
         </>
       ) : (
         <>
-          <a className={css.open} href={redirect} onClick={() => setOpened(true)} id="btn-open-pay">
+          <Btn href={redirect} tone="hot" full onClick={() => setOpened(true)} id="btn-open-pay">
             打开{method.label}付款页
-          </a>
+          </Btn>
           <p className={css.hint}>付款页上有二维码，用手机{method.label}扫一下。</p>
           {after}
         </>
       )}
       {!closed && (
-        <Button block onClick={check} busy={query.isPending} id="btn-paid">
+        <Btn tone="soft" full onClick={check} busy={query.isPending} id="btn-paid">
           我已付款
-        </Button>
+        </Btn>
       )}
       {outcome && (
         <div className={outcome.kind === 'failed' ? css.error : css.hint} role="status">
@@ -412,9 +523,9 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
         </div>
       )}
       {outcome?.wallet && !archived && (
-        <Button variant="primary" block onClick={toWallet}>
+        <Btn tone="primary" full onClick={toWallet}>
           去钱包看看
-        </Button>
+        </Btn>
       )}
       {onOtherMethod && !closed && (
         <button type="button" className={css.later} onClick={onOtherMethod}>
@@ -461,9 +572,9 @@ function SuccessBody({ order, loading, onClose }: { order: OrderDetail | undefin
         ✓
       </div>
       <div className={css.note}>{loading ? <Skeleton width={160} height={16} /> : order ? paySuccessText(order) : '订单已完成'}</div>
-      <Button
-        variant="primary"
-        block
+      <Btn
+        tone="primary"
+        full
         data-autofocus
         onClick={() => {
           onClose()
@@ -471,7 +582,7 @@ function SuccessBody({ order, loading, onClose }: { order: OrderDetail | undefin
         }}
       >
         完成
-      </Button>
+      </Btn>
     </div>
   )
 }
@@ -529,19 +640,20 @@ function Confirming({ confirm, onClose }: { confirm: ReturnType<typeof useConfir
           订单 {order.data.order_no} · {formatMoney(order.data.payable_amount)}
         </div>
       )}
-      <Button block onClick={onClose} data-autofocus>
+      <Btn tone="soft" full onClick={onClose} data-autofocus>
         {message ? '查看订单' : '稍后查看'}
-      </Button>
+      </Btn>
       {order.data && isPlanArchivedRefund(order.data) && (
-        <Button
-          block
+        <Btn
+          tone="soft"
+          full
           onClick={() => {
             onClose()
             navigate('/wallet')
           }}
         >
           去钱包看看
-        </Button>
+        </Btn>
       )}
     </div>
   )

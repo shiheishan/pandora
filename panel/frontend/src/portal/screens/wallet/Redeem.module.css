@@ -1,0 +1,88 @@
+.p {
+  font-size: 14px;
+  color: var(--text-2);
+  margin: 0 0 16px;
+}
+
+.code {
+  font-family: var(--font-display);
+  font-size: 17px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.go {
+  margin-top: 16px;
+}
+
+.link {
+  all: unset;
+  cursor: pointer;
+  display: block;
+  margin: 14px auto 0;
+  font-size: 14px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.link:hover {
+  color: var(--text);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.gc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background:
+    radial-gradient(360px 160px at 0% 0%, var(--brand-soft), transparent 75%),
+    var(--surface-2);
+  box-shadow: 0 0 0 1px var(--brand-line);
+}
+
+.gcName {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 900;
+  font-size: 24px;
+  color: var(--text);
+}
+
+.gcCode {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.gcNote {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 2px 0 0;
+}
+
+.error {
+  font-size: 13.5px;
+  color: var(--danger);
+  margin: 10px 2px 0;
+}
+
+.hint {
+  font-size: 13.5px;
+  color: var(--text-3);
+  margin: 4px 6px;
+}
+
+.history {
+  margin-top: 34px;
+}
+
+.historyTitle {
+  margin: 0 4px 10px;
+}
