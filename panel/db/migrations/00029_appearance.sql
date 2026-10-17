@@ -39,44 +39,46 @@ CREATE TABLE site_slots (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- 内置主题「默认 · 纸白」，装好即生效。两组取值与前端 styles/design-tokens.ts 的 COLOR_TOKENS 逐字一致
+-- 内置主题「默认 · 森林绿」（code 仍是 paper），装好即生效。两组取值与前端 styles/design-tokens.ts 的 COLOR_TOKENS 逐字一致
 -- （appearance service 的 seed 测试逐条对照）；站点名 Pandora。
 INSERT INTO site_themes (code, name, is_builtin, is_active, tokens, branding)
-VALUES ('paper', '默认 · 纸白', true, true,
+VALUES ('paper', '默认 · 森林绿', true, true,
   '{
     "light":{
-      "--bg":"#f5f4f0","--surface":"#fff","--surface-2":"#f9f8f5",
-      "--surface-3":"#efede8","--border":"#e7e5df","--border-strong":"#dcd9d1",
-      "--border-hover":"#c9c6bd","--text":"#1c1c1f","--text-2":"#62615c",
-      "--text-3":"#6e6c66","--brand":"#b9442b","--brand-hover":"#a33a23",
-      "--brand-ink":"#8c3019","--brand-soft":"#f6e4de","--brand-tint":"#fbf3ef",
-      "--on-brand":"#fff","--ok":"#1f7a4f","--ok-soft":"#e3f3ea",
-      "--ok-line":"#c9f0d8","--warn":"#9a5c00","--warn-soft":"#fbf0dc",
-      "--warn-line":"#f0d9b0","--danger":"#b3263a","--danger-soft":"#f8e1e3",
+      "--bg":"#f4f5f2","--surface":"#fff","--surface-2":"#f6f8f6",
+      "--surface-3":"#eef1ee","--border":"#e4e8e5","--border-strong":"#d5dcd7",
+      "--border-hover":"#b9c3bc","--text":"#141715","--text-2":"#6a706b",
+      "--text-3":"#969b96","--brand":"#2c5a3f","--brand-hover":"#244c35",
+      "--brand-ink":"#1f3d2b","--brand-soft":"#dfe8e1","--brand-tint":"#f3f7f4",
+      "--on-brand":"#fff","--brand-deep":"#1f3d2b","--brand-line":"#b4c8ba",
+      "--brand-mark":"#4cbb72","--ok":"#1f7a4f","--ok-soft":"#e3f3ea",
+      "--ok-line":"#c9f0d8","--warn":"#8a5a00","--warn-soft":"#fbf1dc",
+      "--warn-line":"#f0d9b0","--danger":"#a3283a","--danger-soft":"#f9e4e6",
       "--danger-line":"#eec3c8","--danger-tint":"#fdf3f3","--info":"#34507c",
       "--info-soft":"#e6ebf3","--info-line":"#cdd6e4","--on-ink":"#fff",
-      "--hdr":"rgba(245,244,240,.9)","--scrim":"rgba(20,20,24,.4)","--shadow":"0 16px 36px -14px rgba(28,28,31,.25)",
-      "--on-danger":"#fff","--toast-ok":"#6fcf9b","--toast-danger":"#f07a86",
-      "--shadow-segment":"0 1px 2px rgba(20,20,24,.08)","--sidebar":"#151518","--sidebar-active":"#26262a",
-      "--sidebar-text":"#ecebe7","--sidebar-text-2":"#9a988f","--sidebar-text-3":"#8a8880",
-      "--sidebar-brand":"#e46e52"
+      "--hdr":"rgba(244,245,242,.9)","--scrim":"rgba(20,40,30,.28)","--shadow":"0 24px 48px -20px rgba(20,40,30,.5)",
+      "--shade":"#14281e","--lift":"0 0 0 1px rgba(20,40,30,.035),0 30px 60px -32px rgba(20,40,30,.22),0 6px 16px -8px rgba(20,40,30,.09)","--on-danger":"#fff",
+      "--toast-ok":"#6fcf9b","--toast-danger":"#f07a86","--shadow-segment":"0 2px 6px -2px rgba(20,40,30,.25)",
+      "--sidebar":"#151518","--sidebar-active":"#26262a","--sidebar-text":"#ecebe7",
+      "--sidebar-text-2":"#9a988f","--sidebar-text-3":"#8a8880","--sidebar-brand":"#e46e52"
     },
     "dark":{
-      "--bg":"#111113","--surface":"#1a1a1d","--surface-2":"#1f1f22",
-      "--surface-3":"#26262a","--border":"#2b2b2f","--border-strong":"#37373c",
-      "--border-hover":"#4a4a50","--text":"#ecebe7","--text-2":"#9a988f",
-      "--text-3":"#8a8880","--brand":"#e46e52","--brand-hover":"#ec8267",
-      "--brand-ink":"#f2a58f","--brand-soft":"#3a231c","--brand-tint":"#201816",
-      "--on-brand":"#170d0a","--ok":"#6fcf9b","--ok-soft":"#15271e",
+      "--bg":"#0e1210","--surface":"#161b18","--surface-2":"#1a201c",
+      "--surface-3":"#202722","--border":"#262e29","--border-strong":"#2f3832",
+      "--border-hover":"#46524a","--text":"#e7ebe7","--text-2":"#9ba59e",
+      "--text-3":"#7a847d","--brand":"#5cbf83","--brand-hover":"#72cc95",
+      "--brand-ink":"#a5dcb8","--brand-soft":"#1d3125","--brand-tint":"#141b16",
+      "--on-brand":"#06120b","--brand-deep":"#3f9c66","--brand-line":"#2f4c3a",
+      "--brand-mark":"#4cbb72","--ok":"#6fcf9b","--ok-soft":"#15271e",
       "--ok-line":"#1f3a2b","--warn":"#f0b35a","--warn-soft":"#2c2213",
       "--warn-line":"#4a3a1c","--danger":"#f07a86","--danger-soft":"#2c1519",
       "--danger-line":"#4d252b","--danger-tint":"#221417","--info":"#93b1dc",
-      "--info-soft":"#172031","--info-line":"#2a3a52","--on-ink":"#111113",
-      "--hdr":"rgba(17,17,19,.88)","--scrim":"rgba(0,0,0,.55)","--shadow":"0 16px 40px -12px rgba(0,0,0,.6)",
-      "--on-danger":"#1a0f12","--toast-ok":"#1f7a4f","--toast-danger":"#b3263a",
-      "--shadow-segment":"0 1px 2px rgba(20,20,24,.08)","--sidebar":"#0a0a0b","--sidebar-active":"#1f1f22",
-      "--sidebar-text":"#ecebe7","--sidebar-text-2":"#9a988f","--sidebar-text-3":"#8a8880",
-      "--sidebar-brand":"#e46e52"
+      "--info-soft":"#172031","--info-line":"#2a3a52","--on-ink":"#0e1210",
+      "--hdr":"rgba(14,18,16,.88)","--scrim":"rgba(0,0,0,.55)","--shadow":"0 24px 48px -20px rgba(0,0,0,.7)",
+      "--shade":"#000","--lift":"0 0 0 1px rgba(255,255,255,.04),0 30px 60px -32px rgba(0,0,0,.7),0 6px 16px -8px rgba(0,0,0,.4)","--on-danger":"#1a0f12",
+      "--toast-ok":"#1f7a4f","--toast-danger":"#b3263a","--shadow-segment":"0 2px 6px -2px rgba(0,0,0,.5)",
+      "--sidebar":"#0a0a0b","--sidebar-active":"#1f1f22","--sidebar-text":"#ecebe7",
+      "--sidebar-text-2":"#9a988f","--sidebar-text-3":"#8a8880","--sidebar-brand":"#e46e52"
     }
   }'::jsonb,
   '{"site_name":"Pandora"}'::jsonb);

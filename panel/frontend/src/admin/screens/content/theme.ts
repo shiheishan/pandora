@@ -99,7 +99,7 @@ interface ThemeRequest {
 }
 
 /**
- * 两组令牌一律补满 43 个：来源主题缺的键（旧主题、只存了几个键的自定义主题）用设计稿默认值，
+ * 两组令牌一律补满 48 个：来源主题缺的键（旧主题、只存了几个键的自定义主题）用设计稿默认值，
  * 白名单外的键丢掉——保存时整组提交，后端不会再收到不认识的键
  */
 function fullTokens(source: Theme | null): ThemeRequest['tokens'] {

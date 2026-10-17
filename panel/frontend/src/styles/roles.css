@@ -40,6 +40,8 @@
   --label-size: var(--fs-caption);
   --label-color: var(--text-2);
   --label-weight: var(--fw-regular);
+  /* 门户正文用系统字体（样稿 v5）；数字与档位名另用 --font-display / --font-serif */
+  --font-ui: var(--font-system);
 }
 
 /* ===========================================================================
@@ -85,21 +87,44 @@
   --label-size: var(--fs-body-sm);
   --label-color: var(--text);
   --label-weight: var(--fw-medium);
+  --font-ui: var(--font-sans);
 }
 
 /* ===========================================================================
  * 后台调色与直角（10-16 设计稿 管理后台.dc.html 的令牌）
  * 卡片与页面同底、层次靠线；所有圆角归零（圆点、头像用 50% 不受影响）。
+ * 全局颜色 10-16 换成门户的森林绿后，后台还没重做：凡是变了值的颜色键都在这里
+ * 钉回原来的「纸白」，后台看起来不变。
  * 选择器用 html[...] 而不是 :root[...]：要压过 tokens.css 的 :root，又要输给
  * :root[data-theme='dark']，深色再由下一块覆盖。值与 design-tokens.ts 的
  * ADMIN_OVERRIDES 同源（tests/tokens.test.ts 核对）。
  * ========================================================================= */
 html[data-app='admin'] {
+  --bg: #f5f4f0;
   --surface: #f5f4f0;
   --surface-2: #efede8;
   --surface-3: #e8e6e0;
   --border: #e3e1da;
   --border-strong: #d5d2ca;
+  --border-hover: #c9c6bd;
+  --text: #1c1c1f;
+  --text-2: #62615c;
+  --text-3: #6e6c66;
+  --brand: #b9442b;
+  --brand-hover: #a33a23;
+  --brand-ink: #8c3019;
+  --brand-soft: #f6e4de;
+  --brand-tint: #fbf3ef;
+  --on-brand: #fff;
+  --warn: #9a5c00;
+  --warn-soft: #fbf0dc;
+  --danger: #b3263a;
+  --danger-soft: #f8e1e3;
+  --on-ink: #fff;
+  --hdr: rgba(245,244,240,.9);
+  --scrim: rgba(20,20,24,.4);
+  --shadow: 0 16px 36px -14px rgba(28,28,31,.25);
+  --shadow-segment: 0 1px 2px rgba(20,20,24,.08);
   --radius-tag: 0;
   --radius-sm: 0;
   --radius-md: 0;
@@ -109,7 +134,24 @@ html[data-app='admin'] {
 }
 
 html[data-app='admin'][data-theme='dark'] {
+  --bg: #111113;
   --surface: #111113;
   --surface-2: #18181b;
   --surface-3: #202023;
+  --border: #2b2b2f;
+  --border-strong: #37373c;
+  --border-hover: #4a4a50;
+  --text: #ecebe7;
+  --text-2: #9a988f;
+  --text-3: #8a8880;
+  --brand: #e46e52;
+  --brand-hover: #ec8267;
+  --brand-ink: #f2a58f;
+  --brand-soft: #3a231c;
+  --brand-tint: #201816;
+  --on-brand: #170d0a;
+  --on-ink: #111113;
+  --hdr: rgba(17,17,19,.88);
+  --shadow: 0 16px 40px -12px rgba(0,0,0,.6);
+  --shadow-segment: 0 1px 2px rgba(20,20,24,.08);
 }

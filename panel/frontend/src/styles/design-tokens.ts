@@ -17,51 +17,57 @@ const c = (group: TokenGroup, name: string, light: string, dark: string, use: st
 })
 
 // ---------------------------------------------------------------------------
-// 颜色：前 33 个与模块文件 html:root / [data-theme="dark"] 逐字一致；
-// supplement 组来自规范页组件区 L / D 对象里模块文件没有收成变量的值。
+// 颜色：10-16 起默认是门户样稿 v5 的「森林绿」（另三套配色只记在 dev/prototype/PALETTES.md）。
+// 浅色取样稿 :root；样稿没画深色，深色按同一色相自配。后台没重做，变了值的键在
+// ADMIN_OVERRIDES 里钉回原来的「纸白」，后台看起来不变。
 // ---------------------------------------------------------------------------
 export const COLOR_TOKENS: readonly ColorToken[] = [
-  c('neutral', '--bg', '#f5f4f0', '#111113', '页面底色'),
-  c('neutral', '--surface', '#fff', '#1a1a1d', '卡片、输入框、表格、菜单'),
-  c('neutral', '--surface-2', '#f9f8f5', '#1f1f22', '列表行悬停、次级底'),
-  c('neutral', '--surface-3', '#efede8', '#26262a', '分段控件底、菜单项悬停、中性标签、骨架块'),
-  c('neutral', '--border', '#e7e5df', '#2b2b2f', '卡片描边、分隔线'),
-  c('neutral', '--border-strong', '#dcd9d1', '#37373c', '输入框和次按钮的描边'),
-  c('neutral', '--border-hover', '#c9c6bd', '#4a4a50', '描边悬停、关闭态开关'),
-  c('neutral', '--text', '#1c1c1f', '#ecebe7', '正文、标题、Toast 底、后台主按钮'),
-  c('neutral', '--text-2', '#62615c', '#9a988f', '辅助说明、未选中导航'),
-  c('neutral', '--text-3', '#6e6c66', '#8a8880', '占位符、表头、时间戳'),
+  c('neutral', '--bg', '#f4f5f2', '#0e1210', '页面底色'),
+  c('neutral', '--surface', '#fff', '#161b18', '卡片、输入框、表格、菜单'),
+  c('neutral', '--surface-2', '#f6f8f6', '#1a201c', '列表行悬停、次级底'),
+  c('neutral', '--surface-3', '#eef1ee', '#202722', '分段控件底、菜单项悬停、中性标签、骨架块'),
+  c('neutral', '--border', '#e4e8e5', '#262e29', '卡片描边、分隔线'),
+  c('neutral', '--border-strong', '#d5dcd7', '#2f3832', '输入框和次按钮的描边'),
+  c('neutral', '--border-hover', '#b9c3bc', '#46524a', '描边悬停、关闭态开关'),
+  c('neutral', '--text', '#141715', '#e7ebe7', '正文、标题、Toast 底、后台主按钮'),
+  c('neutral', '--text-2', '#6a706b', '#9ba59e', '辅助说明、未选中导航'),
+  c('neutral', '--text-3', '#969b96', '#7a847d', '占位符、表头、时间戳、箭头'),
 
-  c('brand', '--brand', '#b9442b', '#e46e52', '门户主按钮、链接、进度条'),
-  c('brand', '--brand-hover', '#a33a23', '#ec8267', '悬停和按下'),
-  c('brand', '--brand-ink', '#8c3019', '#f2a58f', '浅底上的文字、链接悬停'),
-  c('brand', '--brand-soft', '#f6e4de', '#3a231c', '头像、公告横幅、聚焦外圈、进度条轨道'),
-  c('brand', '--brand-tint', '#fbf3ef', '#201816', '套餐卡底色'),
-  c('brand', '--on-brand', '#fff', '#170d0a', '朱砂实心底上的字'),
+  c('brand', '--brand', '#2c5a3f', '#5cbf83', '门户主按钮、链接、选中图标、焦点框'),
+  c('brand', '--brand-hover', '#244c35', '#72cc95', '悬停和按下'),
+  c('brand', '--brand-ink', '#1f3d2b', '#a5dcb8', '浅底上的文字、链接悬停'),
+  c('brand', '--brand-soft', '#dfe8e1', '#1d3125', '头像、序号圆、主卡光晕、聚焦外圈'),
+  c('brand', '--brand-tint', '#f3f7f4', '#141b16', '选中行与套餐卡的浅底'),
+  c('brand', '--on-brand', '#fff', '#06120b', '主题色实心底上的字'),
+  c('brand', '--brand-deep', '#1f3d2b', '#3f9c66', '主按钮渐变的深端、推荐角标、选中金额格'),
+  c('brand', '--brand-line', '#b4c8ba', '#2f4c3a', '主卡与选中项的描边'),
+  c('brand', '--brand-mark', '#4cbb72', '#4cbb72', 'Logo 圆点、进度条与强调按钮渐变的亮端'),
 
   c('status', '--ok', '#1f7a4f', '#6fcf9b', '在线、已支付、已打款、生效中'),
   c('status', '--ok-soft', '#e3f3ea', '#15271e', '成功标签底'),
   c('status', '--ok-line', '#c9f0d8', '#1f3a2b', '成功描边'),
-  c('status', '--warn', '#9a5c00', '#f0b35a', '待处理、维护中、7 天内到期、流量 ≥ 80%'),
-  c('status', '--warn-soft', '#fbf0dc', '#2c2213', '警告标签底'),
+  c('status', '--warn', '#8a5a00', '#f0b35a', '待处理、维护中、7 天内到期、流量 ≥ 80%'),
+  c('status', '--warn-soft', '#fbf1dc', '#2c2213', '警告标签底'),
   c('status', '--warn-line', '#f0d9b0', '#4a3a1c', '警告描边'),
-  c('status', '--danger', '#b3263a', '#f07a86', '离线、欠费、失败、危险操作、流量 ≥ 95%'),
-  c('status', '--danger-soft', '#f8e1e3', '#2c1519', '危险标签底'),
+  c('status', '--danger', '#a3283a', '#f07a86', '离线、欠费、失败、危险操作、流量 ≥ 95%'),
+  c('status', '--danger-soft', '#f9e4e6', '#2c1519', '危险标签底'),
   c('status', '--danger-line', '#eec3c8', '#4d252b', '危险描边'),
   c('status', '--danger-tint', '#fdf3f3', '#221417', '危险区块极浅底'),
   c('status', '--info', '#34507c', '#93b1dc', '处理中、客服已回复、人工确认'),
   c('status', '--info-soft', '#e6ebf3', '#172031', '信息标签底'),
   c('status', '--info-line', '#cdd6e4', '#2a3a52', '信息描边'),
 
-  c('overlay', '--on-ink', '#fff', '#111113', '墨色实心底上的字（后台主按钮）'),
-  c('overlay', '--hdr', 'rgba(245,244,240,.9)', 'rgba(17,17,19,.88)', '半透明顶栏'),
-  c('overlay', '--scrim', 'rgba(20,20,24,.4)', 'rgba(0,0,0,.55)', '弹窗遮罩'),
-  c('overlay', '--shadow', '0 16px 36px -14px rgba(28,28,31,.25)', '0 16px 40px -12px rgba(0,0,0,.6)', '菜单、Toast、弹窗'),
+  c('overlay', '--on-ink', '#fff', '#0e1210', '墨色实心底上的字（后台主按钮）'),
+  c('overlay', '--hdr', 'rgba(244,245,242,.9)', 'rgba(14,18,16,.88)', '半透明顶栏'),
+  c('overlay', '--scrim', 'rgba(20,40,30,.28)', 'rgba(0,0,0,.55)', '弹窗遮罩'),
+  c('overlay', '--shadow', '0 24px 48px -20px rgba(20,40,30,.5)', '0 24px 48px -20px rgba(0,0,0,.7)', '菜单、Toast、弹窗'),
+  c('overlay', '--shade', '#14281e', '#000', '半透明分隔线、点阵底纹、阴影的基色（按比例混透明）'),
+  c('overlay', '--lift', '0 0 0 1px rgba(20,40,30,.035),0 30px 60px -32px rgba(20,40,30,.22),0 6px 16px -8px rgba(20,40,30,.09)', '0 0 0 1px rgba(255,255,255,.04),0 30px 60px -32px rgba(0,0,0,.7),0 6px 16px -8px rgba(0,0,0,.4)', '门户卡片的浮起阴影'),
 
   c('supplement', '--on-danger', '#fff', '#1a0f12', '危险实心按钮上的字'),
   c('supplement', '--toast-ok', '#6fcf9b', '#1f7a4f', 'Toast 成功圆点（反色底）'),
   c('supplement', '--toast-danger', '#f07a86', '#b3263a', 'Toast 错误圆点（反色底）'),
-  c('supplement', '--shadow-segment', '0 1px 2px rgba(20,20,24,.08)', '0 1px 2px rgba(20,20,24,.08)', '分段控件选中'),
+  c('supplement', '--shadow-segment', '0 2px 6px -2px rgba(20,40,30,.25)', '0 2px 6px -2px rgba(0,0,0,.5)', '分段控件选中'),
   c('supplement', '--sidebar', '#151518', '#0a0a0b', '后台侧栏（两种模式下都是深底）'),
   c('supplement', '--sidebar-active', '#26262a', '#1f1f22', '侧栏当前菜单底'),
   c('supplement', '--sidebar-text', '#ecebe7', '#ecebe7', '侧栏字标、当前菜单'),
@@ -159,10 +165,12 @@ export const ROLE_TOKENS: readonly RoleToken[] = [
   r('--label-size', 'var(--fs-caption)', 'var(--fs-body-sm)', '表单字段标签字号'),
   r('--label-color', 'var(--text-2)', 'var(--text)', '表单字段标签颜色'),
   r('--label-weight', 'var(--fw-regular)', 'var(--fw-medium)', '表单字段标签字重'),
+  r('--font-ui', 'var(--font-system)', 'var(--font-sans)', '正文字体：门户系统字体 / 后台 Geist'),
 ]
 
 // ---------------------------------------------------------------------------
-// 后台在全局令牌上的覆盖（10-16 设计稿）：卡片与页面同底、所有圆角归零。
+// 后台在全局令牌上的覆盖（10-16 设计稿）：卡片与页面同底、所有圆角归零；
+// 全局颜色换成门户森林绿后，变了值的颜色键也在这里钉回原来的「纸白」（后台还没重做）。
 // 只作用于 <html data-app="admin">，写在 roles.css 的 html[data-app='admin'] 两块里；
 // 不进 COLOR_TOKENS（那是 Go 端与门户主题共用的键集），dark 为 null 表示深色沿用 tokens.css。
 // 圆角另见 ADMIN_RADIUS。
@@ -176,11 +184,31 @@ export interface AdminOverride {
 const o = (name: string, light: string, dark: string | null = null): AdminOverride => ({ name, light, dark })
 
 export const ADMIN_OVERRIDES: readonly AdminOverride[] = [
+  o('--bg', '#f5f4f0', '#111113'),
   o('--surface', '#f5f4f0', '#111113'),
   o('--surface-2', '#efede8', '#18181b'),
   o('--surface-3', '#e8e6e0', '#202023'),
-  o('--border', '#e3e1da'),
-  o('--border-strong', '#d5d2ca'),
+  o('--border', '#e3e1da', '#2b2b2f'),
+  o('--border-strong', '#d5d2ca', '#37373c'),
+  o('--border-hover', '#c9c6bd', '#4a4a50'),
+  o('--text', '#1c1c1f', '#ecebe7'),
+  o('--text-2', '#62615c', '#9a988f'),
+  o('--text-3', '#6e6c66', '#8a8880'),
+  o('--brand', '#b9442b', '#e46e52'),
+  o('--brand-hover', '#a33a23', '#ec8267'),
+  o('--brand-ink', '#8c3019', '#f2a58f'),
+  o('--brand-soft', '#f6e4de', '#3a231c'),
+  o('--brand-tint', '#fbf3ef', '#201816'),
+  o('--on-brand', '#fff', '#170d0a'),
+  o('--warn', '#9a5c00'),
+  o('--warn-soft', '#fbf0dc'),
+  o('--danger', '#b3263a'),
+  o('--danger-soft', '#f8e1e3'),
+  o('--on-ink', '#fff', '#111113'),
+  o('--hdr', 'rgba(245,244,240,.9)', 'rgba(17,17,19,.88)'),
+  o('--scrim', 'rgba(20,20,24,.4)'),
+  o('--shadow', '0 16px 36px -14px rgba(28,28,31,.25)', '0 16px 40px -12px rgba(0,0,0,.6)'),
+  o('--shadow-segment', '0 1px 2px rgba(20,20,24,.08)', '0 1px 2px rgba(20,20,24,.08)'),
 ]
 
 /** 后台所有圆角归零，不分深浅（只写在 html[data-app='admin'] 那一块） */

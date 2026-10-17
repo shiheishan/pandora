@@ -131,4 +131,13 @@ describe('stylesheets stay self-contained', () => {
     for (const url of urls) expect(existsSync(new URL(url, stylesDir)), url).toBe(true)
     expect(existsSync(new URL('fonts/OFL.txt', stylesDir))).toBe(true)
   })
+
+  // 门户展示字体：Courier Prime 4 个文件 + Noto Serif SC 900 的 101 片（档位名是任意中文，只能按 unicode-range 分片）
+  it('every display @font-face source is a bundled file', () => {
+    const urls = [...read('display-fonts.css').matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]!)
+    expect(urls.length).toBe(105)
+    for (const url of urls) expect(existsSync(new URL(url, stylesDir)), url).toBe(true)
+    expect(existsSync(new URL('fonts/OFL-courier-prime.txt', stylesDir))).toBe(true)
+    expect(existsSync(new URL('fonts/noto-serif-sc/OFL.txt', stylesDir))).toBe(true)
+  })
 })

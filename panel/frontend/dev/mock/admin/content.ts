@@ -427,9 +427,9 @@ interface MockTheme {
   tokens: { light: Record<string, string>; dark: Record<string, string> }
   branding: Record<string, string>
 }
-// 种子：内置「默认 · 纸白」生效，另有一套自定义「夜海」演示切换（标语不同）
+// 种子：内置「默认 · 森林绿」生效，另有一套自定义「夜海」演示切换（标语不同）
 const themes: MockTheme[] = [
-  { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: {} },
+  { id: randomUUID(), code: 'paper', name: '默认 · 森林绿', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: {} },
   {
     id: randomUUID(),
     code: 'night-sea',

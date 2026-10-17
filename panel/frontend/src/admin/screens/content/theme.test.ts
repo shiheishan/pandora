@@ -7,7 +7,7 @@ const U = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}
 const theme = (patch: Partial<Theme> = {}): Theme => ({
   id: U(1),
   code: 'paper',
-  name: '默认 · 纸白',
+  name: '默认 · 森林绿',
   is_builtin: true,
   is_active: true,
   tokens: { light: { '--bg': '#f5f4f0', '--text': '#1c1c1f', '--brand': '#b9442b' }, dark: { '--brand': '#e46e52' } },
@@ -51,9 +51,9 @@ describe('theme form', () => {
     // 编辑：code、name 取原值，颜色取浅色组
     const edit = themeToForm({ kind: 'edit', theme: theme() })
     expect(edit.code).toBe('paper')
-    expect(edit.name).toBe('默认 · 纸白')
+    expect(edit.name).toBe('默认 · 森林绿')
     expect(edit.tagline).toBe('一路畅通')
-    expect(edit.colors).toEqual({ bg: '#f5f4f0', line: '#e7e5df', muted: '#62615c', ink: '#1c1c1f', accent: '#b9442b' })
+    expect(edit.colors).toEqual({ bg: '#f5f4f0', line: '#e4e8e5', muted: '#6a706b', ink: '#1c1c1f', accent: '#b9442b' })
 
     // 复制：code = 来源 code + -copy（截到 39 字符），name = 来源名 + 副本（截到 60 字）
     const long = theme({ code: 'a'.repeat(40), name: '长'.repeat(70) })
@@ -115,13 +115,13 @@ describe('theme form', () => {
     expect(built.body.code).toBe('night-sea')
     expect(built.body.name).toBe('夜海')
     expect(built.body.create).toBe(true)
-    expect(Object.keys(built.body.tokens.light)).toHaveLength(43)
-    expect(Object.keys(built.body.tokens.dark)).toHaveLength(43)
+    expect(Object.keys(built.body.tokens.light)).toHaveLength(48)
+    expect(Object.keys(built.body.tokens.dark)).toHaveLength(48)
     expect(built.body.tokens.light['--brand']).toBe('#2b6cb9')
     expect(built.body.tokens.light['--bg']).toBe('#f5f4f0')
     // dark 组整组照来源补满
     expect(built.body.tokens.dark['--brand']).toBe('#e46e52')
-    expect(built.body.tokens.dark['--bg']).toBe('#111113')
+    expect(built.body.tokens.dark['--bg']).toBe('#0e1210')
     expect(built.body.branding).toEqual({ tagline: '一路畅通' })
 
     // 编辑：code 用原值，create=false
@@ -160,7 +160,7 @@ describe('theme form', () => {
 
 describe('theme rows', () => {
   it('returns five light swatches in THEME_COLORS order with fallbacks', () => {
-    expect(themeSwatches(theme())).toEqual(['#f5f4f0', '#e7e5df', '#62615c', '#1c1c1f', '#b9442b'])
+    expect(themeSwatches(theme())).toEqual(['#f5f4f0', '#e4e8e5', '#6a706b', '#1c1c1f', '#b9442b'])
     // 缺的令牌回退设计规范默认浅色，与编辑表单一致
     expect(themeSwatches({ tokens: { light: {}, dark: {} } }).some((v) => v.startsWith('var('))).toBe(false)
   })
