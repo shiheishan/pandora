@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../../core/api'
 import { preferenceSchema, quickLoginSchema, sessionSchema, telegramSchema } from './api'
-import { deviceName, formatCountdown, lastSeenLabel, passwordErrors, secondsLeft, shortUserId, sortSessions, telegramDeepLink, validateNewPassword } from './model'
+import { BIND_CODE_TTL_MS, bindDeadline, deviceKind, deviceName, formatCountdown, lastSeenLabel, loginAtLabel, passwordErrors, secondsLeft, shortUserId, sortSessions, telegramDeepLink, validateNewPassword } from './model'
 
 const UA = {
   chromeMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
@@ -94,5 +94,29 @@ describe('账号安全', () => {
     expect(formatCountdown(65)).toBe('1:05')
     expect(shortUserId('3b1f6c2e-5d7a-4c11-9e2b-7a0d4f8c6e21')).toBe('3b1f6c2e')
     expect(telegramDeepLink('pandora_notify_bot', 'ABCD2345')).toBe('https://t.me/pandora_notify_bot?start=ABCD2345')
+  })
+
+  it('设备图标：手机类系统用手机，其余用电脑', () => {
+    expect(deviceKind(UA.safariPhone)).toBe('phone')
+    expect(deviceKind(UA.chromeAndroid)).toBe('phone')
+    expect(deviceKind(UA.chromeIpad)).toBe('phone')
+    expect(deviceKind(UA.chromeMac)).toBe('desk')
+    expect(deviceKind(UA.edgeWin)).toBe('desk')
+    expect(deviceKind('')).toBe('desk')
+  })
+
+  it('登录时间写成 MM-DD HH:mm', () => {
+    expect(loginAtLabel('2026-10-16T09:12:00')).toBe('10-16 09:12')
+    expect(loginAtLabel('不是时间')).toBe('不是时间')
+  })
+
+  it('绑定码截止：按收到时刻起算，剩余时长夹在 10 分钟内，时钟偏差时按 10 分钟（C3）', () => {
+    const at = Date.parse('2026-10-16T10:00:00Z')
+    expect(bindDeadline('2026-10-16T10:09:30Z', at)).toBe(at + 570_000)
+    // 本机慢了：服务器的截止比本地晚 25 分钟
+    expect(bindDeadline('2026-10-16T10:25:00Z', at)).toBe(at + BIND_CODE_TTL_MS)
+    // 本机快了：截止已在本地「过去」
+    expect(bindDeadline('2026-10-16T09:50:00Z', at)).toBe(at + BIND_CODE_TTL_MS)
+    expect(bindDeadline('坏值', at)).toBe(at + BIND_CODE_TTL_MS)
   })
 })
