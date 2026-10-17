@@ -127,7 +127,7 @@ function MarkConfirmModal({ cluster: c, onClose }: { cluster: Cluster; onClose: 
 }
 
 /** 成员状态字的颜色：停用 / 封禁灰、待验证橙、其余次要灰 */
-function statusClass(status: string): string {
+function statusClass(status: string): string | undefined {
   if (status === 'suspended' || status === 'banned') return css.stMuted
   if (status === 'pending') return css.stWarn
   return css.stDim

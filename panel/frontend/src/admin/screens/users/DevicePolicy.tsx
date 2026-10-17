@@ -158,7 +158,7 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
   )
 }
 
-function pipClass(p: 'on' | 'over' | 'off', exceeded: boolean): string {
+function pipClass(p: 'on' | 'over' | 'off', exceeded: boolean): string | undefined {
   if (p === 'off') return signupCss.dpDot
   if (p === 'on') return `${signupCss.dpDot} ${signupCss.dpDotOn}`
   return exceeded ? `${signupCss.dpDot} ${signupCss.dpDotOverDanger}` : `${signupCss.dpDot} ${signupCss.dpDotOver}`
