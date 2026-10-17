@@ -195,11 +195,25 @@ export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail;
 // 换发订阅链接：POST v1/subscriptions/{id}/rotate（reauth，无幂等）
 // 保留规则 2：后台看不到订阅地址；响应只有 user_email / old_revoked（schema 用 strict 守住）
 // ---------------------------------------------------------------------------
-export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void }) {
+export function RotateDialog({
+  user,
+  subscriptionId = null,
+  open,
+  onClose,
+  onDone,
+}: {
+  user: UserDetail
+  /** 给了就只换发这一份（订阅表行「操作」菜单进来），不显示订阅下拉；不传保持原行为 */
+  subscriptionId?: string | null
+  open: boolean
+  onClose: () => void
+  onDone: () => void
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
-  const choices = rotatableSubscriptions(user.subscriptions)
+  const fixed = subscriptionId ? user.subscriptions.find((s) => s.id === subscriptionId) ?? null : null
+  const choices = fixed ? [fixed] : rotatableSubscriptions(user.subscriptions)
   const [picked, setPicked] = useState<string>('')
   const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})

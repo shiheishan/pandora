@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { nodeTrafficSchema, userTrafficSchema } from './api'
-import { NEXT_SORT, RANK_SORT_LABEL, rankView } from './rank'
+import { RANK_SHOWN, rankView } from './rank'
 
 const GiB = 1024n ** 3n
 
@@ -64,110 +64,73 @@ describe('rankView - 节点排行', () => {
     },
   }
 
-  const nodeData = nodeTrafficSchema.parse(nodeRaw)
-  const now = new Date('2026-10-16T12:00:00.000000Z')
+  it('仍能被 nodeTrafficSchema 解析', () => {
+    const parsed = nodeTrafficSchema.safeParse(nodeRaw)
+    expect(parsed.success).toBe(true)
+  })
 
-  it('名称、initials 回退逻辑与 userId', () => {
-    const view = rankView(nodeData, 'total', now)
+  const nodeData = nodeTrafficSchema.parse(nodeRaw)
+
+  it('名字回退逻辑（display_name 为 null 时回退到 name）与 path 格式', () => {
+    const view = rankView(nodeData)
+    expect(view.kind).toBe('nodes')
     expect(view.rows).toHaveLength(4)
 
-    // display_name 有值时用 display_name，initials 用 name 前两字符大写
+    // display_name 有值
     expect(view.rows[0]!.name).toBe('香港 01')
-    expect(view.rows[0]!.initials).toBe('HK')
-    expect(view.rows[0]!.userId).toBeUndefined()
+    expect(view.rows[0]!.path).toBe('/nodes/nodes/node-1')
 
-    // display_name 为 null 时回退到 name
+    // display_name 为 null
     const sg = view.rows.find((r) => r.key === 'node-3')!
     expect(sg.name).toBe('sg-sin-01')
-    expect(sg.initials).toBe('SG')
-    expect(sg.userId).toBeUndefined()
+    expect(sg.path).toBe('/nodes/nodes/node-3')
   })
 
-  it('占比 share、与均值的差 delta、above 与 tooltip', () => {
-    const view = rankView(nodeData, 'total', now)
+  it('share 与 barPct 计算（第一名 100，其余按比例，很小时为 4）', () => {
+    const view = rankView(nodeData)
     // 分母 = 2500 GiB
-    // 合计 = 2000 GiB，4 行，均值 = 500 GiB
-    // node-1: 1000 GiB. pct = 1000 * 1000 / 2500 = 400 -> 40.0%
-    expect(view.rows[0]!.share).toBe('占 40.0%')
-    // 差 = 1000 - 500 = +500 GiB
-    expect(view.rows[0]!.above).toBe(true)
-    expect(view.rows[0]!.delta).toBe('+500 GB')
-    expect(view.rows[0]!.tip.title).toBe('香港 01')
-    expect(view.rows[0]!.tip.main).toBe('1000 GB · 占 40.0%')
-    expect(view.rows[0]!.tip.sub).toContain('高于均值 500 GB')
-    expect(view.rows[0]!.tip.sub).toContain('下行 90% · 上行 10%')
-    expect(view.rows[0]!.tip.sub).toContain('最近上报 2 分钟前')
-    // 节点 tip.sub 不应该含「订阅」
-    expect(view.rows[0]!.tip.sub).not.toContain('订阅')
+    // node-1: 1000 GiB -> 1000 / 2500 = 40.0%
+    expect(view.rows[0]!.share).toBe('40.0%')
+    expect(view.rows[0]!.barPct).toBe(100)
 
-    // node-3: 200 GiB. pct = 200 * 1000 / 2500 = 80 -> 8.0%
-    // 差 = 200 - 500 = -300 GiB, 数学减号 U+2212 '−'
-    expect(sgRow(view).share).toBe('占 8.0%')
-    expect(sgRow(view).above).toBe(false)
-    expect(sgRow(view).delta).toBe('−300 GB')
-    expect(sgRow(view).tip.sub).toContain('低于均值 300 GB')
+    // node-2: 600 GiB -> 600 / 2500 = 24.0%
+    // barPct = 600 / 1000 * 100 = 60.0%
+    expect(view.rows[1]!.share).toBe('24.0%')
+    expect(view.rows[1]!.barPct).toBe(60)
+
+    // node-3: 200 GiB -> 200 / 2500 = 8.0%
+    // barPct = 200 / 1000 * 100 = 20.0%
+    expect(view.rows[2]!.share).toBe('8.0%')
+    expect(view.rows[2]!.barPct).toBe(20)
   })
 
-  function sgRow(v: ReturnType<typeof rankView>) {
-    return v.rows.find((r) => r.key === 'node-3')!
-  }
-
-  it('widthPct 与 avgPct（第一名约 89.29%）', () => {
-    const view = rankView(nodeData, 'total', now)
-    // maxTotal = 1000 GiB
-    // axis = 1000 * 1.12 = 1120 GiB
-    // 第一名 widthPct = 1000 / 1120 * 100 = 89.2857... -> 89.29
-    expect(view.rows[0]!.widthPct).toBe(89.29)
-    // avg = 500 GiB. avgPct = 500 / 1120 * 100 = 44.6428... -> 44.64
-    expect(view.avgPct).toBe(44.64)
+  it('按 total_bytes 降序排列，相等时保持接口原始顺序', () => {
+    const view = rankView(nodeData)
+    // node-3 与 node-4 的 total_bytes 相同 (200 GiB)，接口中 node-3 在前
+    expect(view.rows.map((r) => r.key)).toEqual(['node-1', 'node-2', 'node-3', 'node-4'])
   })
 
-  it('三种排序的顺序与稳定性', () => {
-    // 1. 按流量 total 降序
-    const viewTotal = rankView(nodeData, 'total', now)
-    expect(viewTotal.rows.map((r) => r.key)).toEqual(['node-1', 'node-2', 'node-3', 'node-4'])
+  it('节点页脚（带 nodesOnline 与不带 nodesOnline）和 more', () => {
+    const withoutOnline = rankView(nodeData)
+    expect(withoutOnline.footer).toBe('合计 2.44 TB')
+    expect(withoutOnline.more).toEqual({
+      label: '全部节点',
+      target: { module: 'nodes', tab: 'nodes' },
+    })
 
-    // 2. 按上行占比 up 降序（up 相同按 total 降序）
-    // node-1: 100/1000 = 10%
-    // node-2: 300/600 = 50%
-    // node-3: 100/200 = 50%
-    // node-4: 120/200 = 60%
-    // 期望顺序: node-4(60%), node-2(50%, 600G), node-3(50%, 200G), node-1(10%)
-    const viewUp = rankView(nodeData, 'up', now)
-    expect(viewUp.rows.map((r) => r.key)).toEqual(['node-4', 'node-2', 'node-3', 'node-1'])
-
-    // 3. 按名称 name 中文拼音/locale 升序
-    // '东京 01', '洛杉矶 01', 'sg-sin-01', '香港 01'
-    const viewName = rankView(nodeData, 'name', now)
-    const expectedNameOrder = [...viewName.rows]
-      .map((r) => r.name)
-      .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-    expect(viewName.rows.map((r) => r.name)).toEqual(expectedNameOrder)
-
-    // axis 与 avgPct 在不同排序下保持不变
-    expect(viewUp.avgPct).toBe(viewTotal.avgPct)
-    expect(viewName.avgPct).toBe(viewTotal.avgPct)
+    const withOnline = rankView(nodeData, { online: 41, total: 44 })
+    expect(withOnline.footer).toBe('合计 2.44 TB · 41/44 节点在线')
   })
 
-  it('total 行四个字段与 more', () => {
-    const view = rankView(nodeData, 'total', now)
-    // 列表合计 2000 GiB，分母 2500 GiB
-    // pct = 2000 * 1000 / 2500 = 800 -> 80.0%
-    expect(view.total.label).toBe('前 4 个节点')
-    expect(view.total.sub).toBe('均值 500 GB · 占全部 80.0%')
-    expect(view.total.value).toBe('1.95 TB') // 2000 GiB，与「共 2.44 TB」同一换算
-    expect(view.total.of).toBe('共 2.44 TB') // 2500 * GiB
-    expect(view.more).toEqual({ label: '查看全部节点', module: 'nodes', tab: 'nodes' })
-  })
-
-  it('notes 包含数据说明、未归属与无效条目，不含为 0 的无效上报', () => {
-    const view = rankView(nodeData, 'total', now)
-    expect(view.notes).toEqual([
-      '朱红竖线为当前列表的均值',
-      '未归属 200 GB：节点已上报、但找不到对应用户的流量',
-      '无效条目 3：上报数据不完整，未计入排行',
-      '数据来自节点原始上报，不是计费账本，与用户扣量可能有出入',
-    ])
+  it('接口给 10 名时只显示前 RANK_SHOWN 名（后端 limit 只收 5 / 10 / 20）', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      ...nodeRaw.items[0]!,
+      node_id: `node-x${i}`,
+      total_bytes: String(BigInt(100 - i) * GiB),
+    }))
+    const view = rankView(nodeTrafficSchema.parse({ ...nodeRaw, items: many }))
+    expect(RANK_SHOWN).toBe(8)
+    expect(view.rows.map((r) => r.key)).toEqual(many.slice(0, 8).map((m) => m.node_id))
   })
 })
 
@@ -190,7 +153,7 @@ describe('rankView - 用户排行', () => {
       },
       {
         user_id: 'usr-2',
-        email_masked: '***',
+        email_masked: 'b***@example.test',
         subscription_count: 1,
         upload_bytes: String(20n * GiB),
         download_bytes: String(80n * GiB),
@@ -199,11 +162,20 @@ describe('rankView - 用户排行', () => {
       },
       {
         user_id: 'usr-3',
+        email_masked: 'c***@example.test',
+        subscription_count: 1,
+        upload_bytes: '100',
+        download_bytes: '100',
+        total_bytes: '200', // 微量流量，测 barPct 最小为 4
+        last_report_at: '2026-10-16T11:20:00.000000Z',
+      },
+      {
+        user_id: 'usr-4',
         email_masked: 'z***@example.test',
         subscription_count: 0,
         upload_bytes: '0',
         download_bytes: '0',
-        total_bytes: '0',
+        total_bytes: '0', // 0 流量，barPct 应为 0
         last_report_at: '2026-10-16T10:00:00.000000Z',
       },
     ],
@@ -222,85 +194,51 @@ describe('rankView - 用户排行', () => {
     },
   }
 
+  it('仍能被 userTrafficSchema 解析', () => {
+    const parsed = userTrafficSchema.safeParse(userRaw)
+    expect(parsed.success).toBe(true)
+  })
+
   const userData = userTrafficSchema.parse(userRaw)
-  const now = new Date('2026-10-16T12:00:00.000000Z')
 
-  it('用户字段、initials 与 userId 以及 tip.sub', () => {
-    const view = rankView(userData, 'total', now)
-    expect(view.rows).toHaveLength(3)
+  it('用户字段、path、barPct 最小值与 0 流量', () => {
+    const view = rankView(userData)
+    expect(view.kind).toBe('users')
+    expect(view.rows).toHaveLength(4)
 
-    // 用户 1: initials 为首字符大写 'A', userId 保留
+    // 用户 1
     expect(view.rows[0]!.name).toBe('a***@example.test')
-    expect(view.rows[0]!.initials).toBe('A')
-    expect(view.rows[0]!.userId).toBe('usr-1')
-    expect(view.rows[0]!.tip.sub).toContain('2 个订阅')
-    expect(view.rows[0]!.tip.sub).toContain('最近上报 刚刚')
+    expect(view.rows[0]!.path).toBe('/users/list/usr-1')
+    expect(view.rows[0]!.barPct).toBe(100)
 
-    // 用户 2: email_masked 为 '***'，initials 为 '*'
-    expect(view.rows[1]!.name).toBe('***')
-    expect(view.rows[1]!.initials).toBe('*')
-    expect(view.rows[1]!.userId).toBe('usr-2')
-    expect(view.rows[1]!.tip.sub).toContain('1 个订阅')
+    // 用户 2: 100 GiB / 200 GiB = 50%
+    expect(view.rows[1]!.name).toBe('b***@example.test')
+    expect(view.rows[1]!.path).toBe('/users/list/usr-2')
+    expect(view.rows[1]!.barPct).toBe(50)
 
-    // 用户 3: 0 流量
-    expect(view.rows[2]!.value).toBe('0 B')
-    expect(view.rows[2]!.share).toBe('占 0.0%')
-    expect(view.rows[2]!.widthPct).toBe(0)
-    expect(view.rows[2]!.upPct).toBe(0)
-    expect(view.rows[2]!.tip.sub).toContain('0 个订阅')
+    // 用户 3: 200 字节 vs 200 GiB，远小于 4%，但有流量因此最小为 4
+    expect(view.rows[2]!.barPct).toBe(4)
 
-    // total & more
-    expect(view.total.label).toBe('前 3 位用户')
-    expect(view.total.sub).toBe('均值 100 GB · 占全部 100.0%') // 分母是 attributed_bytes: 300 GiB
-    expect(view.total.of).toBe('共 300 GB')
-    expect(view.more).toEqual({ label: '查看全部用户', module: 'users', tab: 'list' })
+    // 用户 4: 0 字节，barPct 为 0
+    expect(view.rows[3]!.barPct).toBe(0)
+    expect(view.rows[3]!.share).toBe('0.0%')
   })
 
-  it('notes 在 unattributed_bytes === 0 时不包含未归属，但包含无效上报', () => {
-    const view = rankView(userData, 'total', now)
-    expect(view.notes).toEqual([
-      '朱红竖线为当前列表的均值',
-      '无效上报 2：整份上报格式不对，未计入',
-      '数据来自节点原始上报，不是计费账本，与用户扣量可能有出入',
-    ])
-  })
-})
-
-describe('rankView - 差值为 0 的展示（±0 B）', () => {
-  it('total_bytes 等于均值时 delta 为 +0 B', () => {
-    const singleRaw = {
-      range: '24h',
-      snapshot_at: '2026-10-16T12:00:00.000000Z',
-      from: '2026-10-15T12:00:00.000000Z',
-      to: '2026-10-16T12:00:00.000000Z',
-      basis: 'strict_raw_report_entries',
-      items: [
-        {
-          node_id: 'n1',
-          name: 'hk-1',
-          display_name: null,
-          upload_bytes: '500',
-          download_bytes: '500',
-          total_bytes: '1000',
-          last_report_at: '2026-10-16T11:58:00.000000Z',
-        },
-      ],
-      totals: {
-        reported_bytes: '1000',
-        attributed_bytes: '1000',
-        unattributed_bytes: '0',
-      },
-      ranking: { returned_bytes: '1000', other_node_bytes: '0' },
-      quality: { invalid_report_count: 0, invalid_entry_count: 0 },
-    }
-    const view = rankView(nodeTrafficSchema.parse(singleRaw), 'total')
-    expect(view.rows[0]!.delta).toBe('+0 B')
-    expect(view.rows[0]!.above).toBe(true)
+  it('用户页脚（合计 + 前 N 名占比）与 more', () => {
+    const view = rankView(userData)
+    // 列表合计 200 GiB + 100 GiB + 200 B + 0 = 300 GiB + 200 B
+    // 分母 300 GiB
+    // 占比 100.0%
+    expect(view.footer).toBe('合计 300 GB · 前 4 名占 100.0%')
+    expect(view.more).toEqual({
+      label: '全部用户',
+      target: { module: 'users', tab: 'list' },
+    })
   })
 })
 
 describe('rankView - 空状态与 allUnattributed', () => {
-  it('节点 items 为空时 empty 为 true，判断 node 仍然正确', () => {
+  it('节点 items 为空时 empty 为 true', () => {
     const emptyRaw = {
       range: '24h',
       snapshot_at: '2026-10-16T12:00:00.000000Z',
@@ -312,13 +250,15 @@ describe('rankView - 空状态与 allUnattributed', () => {
       ranking: { returned_bytes: '0', other_node_bytes: '0' },
       quality: { invalid_report_count: 0, invalid_entry_count: 0 },
     }
-    const view = rankView(nodeTrafficSchema.parse(emptyRaw), 'total')
+    const view = rankView(nodeTrafficSchema.parse(emptyRaw))
+    expect(view.kind).toBe('nodes')
     expect(view.empty).toBe(true)
     expect(view.allUnattributed).toBe(false)
-    expect(view.avgPct).toBe(0)
-    expect(view.total.label).toBe('前 0 个节点')
-    expect(view.total.sub).toBe('均值 0 B · 占全部 0.0%')
-    expect(view.more.module).toBe('nodes')
+    expect(view.footer).toBe('合计 0 B')
+    expect(view.more).toEqual({
+      label: '全部节点',
+      target: { module: 'nodes', tab: 'nodes' },
+    })
   })
 
   it('用户 items 为空且全部未归属时 allUnattributed 为 true', () => {
@@ -333,22 +273,14 @@ describe('rankView - 空状态与 allUnattributed', () => {
       ranking: { returned_bytes: '0', other_user_bytes: '0' },
       quality: { invalid_report_count: 0, invalid_entry_count: 0 },
     }
-    const view = rankView(userTrafficSchema.parse(allUnattRaw), 'total')
+    const view = rankView(userTrafficSchema.parse(allUnattRaw))
+    expect(view.kind).toBe('users')
     expect(view.empty).toBe(true)
     expect(view.allUnattributed).toBe(true)
-    expect(view.more.module).toBe('users')
-    expect(view.total.label).toBe('前 0 位用户')
-  })
-})
-
-describe('排序常量与轮转', () => {
-  it('RANK_SORT_LABEL 与 NEXT_SORT 轮转正常', () => {
-    expect(RANK_SORT_LABEL.total).toBe('按流量')
-    expect(RANK_SORT_LABEL.up).toBe('按上行占比')
-    expect(RANK_SORT_LABEL.name).toBe('按名称')
-
-    expect(NEXT_SORT.total).toBe('up')
-    expect(NEXT_SORT.up).toBe('name')
-    expect(NEXT_SORT.name).toBe('total')
+    expect(view.footer).toBe('合计 0 B')
+    expect(view.more).toEqual({
+      label: '全部用户',
+      target: { module: 'users', tab: 'list' },
+    })
   })
 })

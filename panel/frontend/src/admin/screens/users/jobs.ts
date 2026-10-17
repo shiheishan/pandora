@@ -9,6 +9,12 @@ export const JOB_STATUS_VIEW: Record<GenerationJob['status'], { label: string; t
   failed: { label: '已停止', tone: 'danger' },
 }
 
+/** 生成记录「结果」列：成功但有没生成的（邮箱已存在等）标警示，写明几个；其余照状态 */
+export function jobResultView(job: Pick<GenerationJob, 'status' | 'failed'>): { label: string; tone: 'neutral' | 'info' | 'ok' | 'warn' | 'danger' } {
+  if (job.status === 'succeeded' && job.failed > 0) return { label: `完成 · ${job.failed} 个未生成`, tone: 'warn' }
+  return JOB_STATUS_VIEW[job.status]
+}
+
 /** 进度百分比（0–100，取整）：已生成的占总数 */
 export function jobPercent(job: Pick<GenerationJob, 'total' | 'completed'>): number {
   if (job.total <= 0) return 0
