@@ -56,7 +56,7 @@ require (
 	github.com/juju/ratelimit v1.0.2
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/metacubex/utls v1.8.4
+	github.com/metacubex/utls v1.8.8
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/quic-go/qpack v0.6.0
