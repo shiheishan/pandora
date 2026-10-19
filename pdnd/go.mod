@@ -58,7 +58,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/metacubex/utls v1.8.4
 	github.com/miekg/dns v1.1.72 // indirect
-	github.com/pires/go-proxyproto v0.11.0
+	github.com/pires/go-proxyproto v0.15.0
 	github.com/quic-go/qpack v0.6.0
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
 	github.com/vishvananda/netns v0.0.5 // indirect
