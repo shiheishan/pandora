@@ -114,7 +114,7 @@ jobs:
           [ "${#files[@]}" -eq 7 ] || { echo "::error::附件数不对：${files[*]}"; exit 1; }
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pandora-panel-${{ steps.version.outputs.version }}
           path: ${{ runner.temp }}/assets/
