@@ -21,7 +21,7 @@ const taskItemSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('orders_pending_stale'), count, threshold_seconds: count }),
   z.object({ kind: z.literal('notifications_backlog'), queued: count, failed_total: count, backlog_state: z.enum(['clear', 'backlogged']) }),
-  // 数据巡检：每项检查最近一次的违例数（code 是后端的检查代号，中文名见 dash/model 的 INTEGRITY_LABELS）
+  // 数据巡检：每项检查最近一次的违例数（code 是后端的检查代号，中文名见 dash/model 的 INTEGRITY_CHECKS）
   z.object({
     kind: z.literal('integrity'),
     checks: z.array(z.object({ code: z.string().min(1), count, checked_at: z.string() })),

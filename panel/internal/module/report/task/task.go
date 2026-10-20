@@ -70,7 +70,7 @@ func (m *Module) Periodic() []jobs.Periodic {
 			},
 		},
 		{
-			// 错开 commission:settle（每小时第 7 分）与每 10 分钟的任务；不重试，下一轮就是重试。账本漂移要按科目聚合全部分录，给足 5 分钟
+			// 错开 commission:settle（每小时第 7 分）与每 10 分钟的任务；不重试，下一轮就是重试。整轮限 5 分钟；单条检查语句另受应用账号 15 秒的 statement_timeout 限制，超时的那项本轮跳过、保留上次结果（后台按 checked_at 落后标红）
 			Cronspec: "19,49 * * * *",
 			Type:     TypeIntegrity,
 			Opts: []asynq.Option{

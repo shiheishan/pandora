@@ -25,6 +25,7 @@ CREATE TABLE integrity_checks (
   failing_since timestamptz,
   alerted_count bigint NOT NULL DEFAULT 0 CHECK (alerted_count >= 0),
   CONSTRAINT integrity_checks_failing_shape CHECK ((count = 0) = (failing_since IS NULL)),
+  CONSTRAINT integrity_checks_failing_order CHECK (failing_since IS NULL OR failing_since <= checked_at),
   CONSTRAINT integrity_checks_clean_shape CHECK (count > 0 OR (alerted_count = 0 AND sample = '[]'::jsonb)),
   -- 样例最多 5 个、不多于违例数；CASE 保证先判是数组再取长度（非数组由 sample 列的 CHECK 拦下，不在这里报函数错）
   CONSTRAINT integrity_checks_sample_size CHECK (

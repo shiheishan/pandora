@@ -1041,7 +1041,7 @@ pg -c "SELECT code, count, sample, checked_at, failing_since, alerted_count FROM
 sudo grep -h '数据巡检' /var/log/pandora/worker.log | tail -n 20
 ```
 
-- `checked_at` 停在一小时以前，说明巡检没在跑：先按第 1 章查 worker 与定时任务调度器。
+- `checked_at` 停在一小时以前，说明巡检没在跑，或这一项每轮都失败：先按第 1 章查 worker 与定时任务调度器。后台「要处理」的「数据巡检」格子在某项超过 2 小时没更新时也会标红、写「巡检没在跑」。
 - 日志里有「数据巡检：检查失败」，多半是查询超时（应用账号每条语句限 15 秒）：按第 7 章查锁等待与慢语句。
 
 下面每节的 `<…>` 换成 `sample` 里的 id。
@@ -1073,7 +1073,7 @@ SQL
 **处理。** 分录才是账，余额缓存只是它的副本。没有后台操作能改缓存。
 
 - 先弄清是谁把缓存改坏了：看审计日志，问有没有人手跑过 SQL。
-- 确认分录是对的、只是缓存坏了，就**【写】**按分录校准缓存。行锁挡住同时记账。用户类科目算出来是负数时，`ledger_accounts_user_nonnegative` 会拒绝，说明分录本身有问题，这时升级处理。
+- 确认分录是对的、只是缓存坏了，就**【写】**按分录校准缓存。校准不留审计，先把科目 id、`cached`、`from_entries` 和原因记进运维记录。用户类科目（`user_balance`、`user_commission_available` 等）`from_entries` 比 `cached` 小时，往下校准等于扣用户能用的钱，万一是分录缺了就扣错了：这种情况不自己校准，升级处理。行锁挡住同时记账。用户类科目算出来是负数时，`ledger_accounts_user_nonnegative` 会拒绝，说明分录本身有问题，这时升级处理。
 
 ```sql
 BEGIN;
@@ -1117,7 +1117,7 @@ SQL
 
 如果同一个科目也在 `ledger_drift` 的样例里，先按上一节处理漂移。冻结行是 `held`、订单却已经不是待支付的，和 `order_reservation_mismatch` 是同一个根因。
 
-**处理。** 冻结行的扣款和释放交易号有外键，指向只追加的账本交易，手补就等于手记账，所以本节不给改库 SQL，也没有后台操作能单独改冻结。带上两条查询的结果和订单号升级处理。用户因此有钱用不了的，可以先在后台用户详情里「调整余额」临时补上，原因写明「数据巡检 ledger_hold_mismatch」。修复时要把这笔一起算进去。
+**处理。** 冻结行的扣款和释放交易号有外键，指向只追加的账本交易，手补就等于手记账，所以本节不给改库 SQL，也没有后台操作能单独改冻结。带上两条查询的结果和订单号升级处理。用户因此有钱用不了的，可以先在后台用户详情里「调整余额」临时补上，原因写明「数据巡检 ledger_hold_mismatch」。升级时写明补了多少，修复时要把这笔一起算进去（先冲回，或修复时不再退还），否则用户会拿到两份。
 
 **修好之后。** `hold_account = held_rows`，下一轮巡检回到 0。
 
@@ -1144,9 +1144,9 @@ SQL
 - 充值单：在用户详情里「调整余额」，补上 `amount`。
 - 新购、续费、换套餐：订阅已经存在的，在用户详情里「加时长」；没有订阅的，用「订单与收款 › 订单」的「人工开单」开给他。
 
-原因都写明「数据巡检 payment_unsettled 收款 <收款 id>」。不要对这张订单「标记已支付」：那会再记一笔收款，钱就重复了。补完之后，带上三条查询的结果升级处理，查结算为什么没落下来。
+原因都写明「数据巡检 payment_unsettled 收款 <收款 id>」。不要对这张订单「标记已支付」：那会再记一笔收款，钱就重复了。补完之后，带上三条查询的结果升级处理，查结算为什么没落下来。升级时写明补了什么（余额金额、天数或开的单）和审计原因：开发修复时不再给用户发放，或先冲回这笔补偿，否则用户会拿到两份。
 
-**修好之后。** 这一项只回看收款时间在 7 天以内的，补偿不会让计数回落，要等这笔收款满 7 天滑出窗口才回到 0。数不变不会重复告警，只有新增的才会再告警。
+**修好之后。** 这一项只回看收款时间在 7 天以内的，补偿不会让计数回落，要等这笔收款满 7 天滑出窗口才回到 0。数不变不会重复告警，只有新增的才会再告警。红着的这段时间里，一条滑出窗口、同时新增一条，计数不变，也不会告警：每次看 `sample` 里有没有新的 id。
 
 ### order_paid_unfulfilled 已付订单没落地
 
@@ -1163,7 +1163,7 @@ SELECT kind, occurred_at FROM ledger_transactions
 SQL
 ```
 
-**处理。** 订单状态不手改，没有「重新履约」的操作。先按订单种类用后台补上用户：充值「调整余额」；有订阅的「加时长」；新购没开出订阅的「人工开单」。原因写明「数据巡检 order_paid_unfulfilled <订单号>」。然后带上两条查询的结果升级处理。
+**处理。** 订单状态不手改，没有「重新履约」的操作。先按订单种类用后台补上用户：充值「调整余额」；有订阅的「加时长」；新购没开出订阅的「人工开单」。原因写明「数据巡检 order_paid_unfulfilled <订单号>」。然后带上两条查询的结果升级处理。升级时写明补了什么（余额金额、天数或开的单）和审计原因：开发修复时不再给用户发放，或先冲回这笔补偿，否则用户会拿到两份。
 
 **修好之后。** 订单由开发修到 `fulfilled` 后，下一轮巡检回到 0。修之前一直显示同一个数，不会重复告警。
 
@@ -1191,7 +1191,7 @@ SQL
 **处理。**
 
 - 订单是待支付、预留不是 `held`：在「订单与收款 › 订单」里「取消订单」，原因写明「数据巡检 order_reservation_mismatch」。取消报错的，升级处理。
-- 预留还是 `held`、订单已关闭：释放预留要同时记余额释放的账本交易，不手改。用户急着用钱的，先在用户详情里「调整余额」临时补上冻结的那部分，然后带上三条查询的结果升级处理。
+- 预留还是 `held`、订单已关闭：释放预留要同时记余额释放的账本交易，不手改。用户急着用钱的，先在用户详情里「调整余额」临时补上冻结的那部分，原因写明「数据巡检 order_reservation_mismatch <订单号>」，然后带上三条查询的结果升级处理。开发修复时释放冻结会把这笔钱退回余额：升级时写明补了多少，修复时先冲回这笔调整，否则用户会拿到两份。
 
 **修好之后。** 订单与预留状态一致后，下一轮巡检回到 0。
 
@@ -1250,6 +1250,11 @@ SELECT c.id, c.code_mask, c.status, c.used_by, c.used_at, r.user_id AS redeemed_
  WHERE c.id = '<码 id>';
 -- 余额卡有没有真的入账
 SELECT kind, occurred_at FROM ledger_transactions WHERE source_type = 'gift_card_code' AND source_id = '<码 id>';
+-- 有没有走过兑换（审计与兑换同事务写；加时长、加流量、重置流量、套餐卡都不记账本，只能看这条和下一条）
+SELECT occurred_at, actor_id FROM audit_events
+ WHERE action = 'gift_card.redeemed' AND resource_type = 'gift_card_code' AND resource_id = '<码 id>';
+-- 有没有落到订阅上（开通、续期、换套餐会带上码 id）
+SELECT subscription_id, event_type, occurred_at FROM subscription_events WHERE payload->>'gift_card_code_id' = '<码 id>';
 SQL
 ```
 
@@ -1272,7 +1277,7 @@ UPDATE gift_card_codes c
 COMMIT;
 ```
 
-- 码标了 `used`、没有兑换流水，而且上面第二条查不到入账交易：用户没拿到东西，**【写】**把码放回未使用，让用户重新兑换。
+- 码标了 `used`、没有兑换流水，而且上面第二、三、四条**都**查不到：用户没拿到东西，**【写】**把码放回未使用，让用户重新兑换。只要有一条查得到，奖励可能已经发了（加时长、加流量、重置流量和套餐卡不记账本），放回去会让用户再拿一份：码保持 `used`，升级处理。
 
 ```sql
 BEGIN;
@@ -1282,12 +1287,14 @@ UPDATE gift_card_codes
    SET status = 'unused', used_by = NULL, used_at = NULL, updated_at = now()
  WHERE id = '<码 id>' AND status = 'used'
    AND NOT EXISTS (SELECT 1 FROM gift_card_redemptions WHERE code_id = '<码 id>')
-   AND NOT EXISTS (SELECT 1 FROM ledger_transactions WHERE source_type = 'gift_card_code' AND source_id = '<码 id>');
+   AND NOT EXISTS (SELECT 1 FROM ledger_transactions WHERE source_type = 'gift_card_code' AND source_id = '<码 id>')
+   AND NOT EXISTS (SELECT 1 FROM audit_events
+                    WHERE action = 'gift_card.redeemed' AND resource_type = 'gift_card_code' AND resource_id = '<码 id>')
+   AND NOT EXISTS (SELECT 1 FROM subscription_events WHERE payload->>'gift_card_code_id' = '<码 id>');
 -- 应回 UPDATE 1；不是 1 就 ROLLBACK
 COMMIT;
 ```
 
-- 没有兑换流水，却查得到入账交易：余额已经发了。码保持 `used`，升级处理。
 
 **修好之后。** 下一轮巡检回到 0。
 
@@ -1334,4 +1341,5 @@ sudo grep -h 'subscription:expire' /var/log/pandora/worker.log | tail -n 20
 - `integrity_checks` 的那一行；
 - 各节「确认」SQL 的输出；
 - `worker.log` 里这段时间的「数据巡检」日志；
-- 出现前后有没有人手改过库。
+- 出现前后有没有人手改过库；
+- 已经做的临时补偿：调了多少余额、加了几天、开了哪张单，各自的审计原因。

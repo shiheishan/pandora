@@ -148,7 +148,7 @@ describe('todoBoard', () => {
     expect(board.cards[3]).toMatchObject({
       key: 'integrity',
       title: '数据巡检',
-      count: 3,
+      count: 2,
       meta: '账本漂移 2 · 已付订单没落地 1',
       hot: true,
       target: { module: 'billing', tab: null },
@@ -169,12 +169,48 @@ describe('todoBoard', () => {
     ])
     const card = board.cards.find((c) => c.key === 'integrity')
     expect(card).toMatchObject({
-      count: 7,
+      count: 3,
       meta: '佣金挂在没付的订单上 2 · 订阅到期没停 1 等 3 项',
       target: { module: 'marketing', tab: 'commission' },
     })
     expect(integrityLabel('future_check')).toBe('future_check')
     expect(integrityLabel('payment_unsettled')).toBe('收款了订单却没付')
+  })
+
+  it('integrity：某项超过 2 小时没更新也出红卡（巡检没在跑），时间按接口的 as_of 算', () => {
+    const fresh = '2026-10-20T08:00:00Z'
+    const old = '2026-10-20T05:59:00Z'
+    const item: TaskItem = {
+      kind: 'integrity',
+      checks: [
+        { code: 'ledger_drift', count: 0, checked_at: old },
+        { code: 'payment_unsettled', count: 0, checked_at: fresh },
+      ],
+    }
+    const board = todoBoard([item], fresh)
+    expect(board.cards.find((c) => c.key === 'integrity')).toMatchObject({
+      count: 1,
+      meta: '巡检没在跑：1 项超过 2 小时没更新',
+      hot: true,
+      target: { module: 'billing', tab: null },
+    })
+    expect(board.summary).toBe('1 项 · 1 项紧急')
+    // 不到 2 小时、没给 as_of：都不算
+    expect(todoBoard([item], '2026-10-20T07:58:00Z').cards).toHaveLength(3)
+    expect(todoBoard([item]).cards).toHaveLength(3)
+
+    // 既有违例又有没更新的：分开写，数字是出问题的项数
+    const both: TaskItem = {
+      kind: 'integrity',
+      checks: [
+        { code: 'ledger_drift', count: 2, checked_at: old },
+        { code: 'payment_unsettled', count: 1, checked_at: fresh },
+      ],
+    }
+    expect(todoBoard([both], fresh).cards.find((c) => c.key === 'integrity')).toMatchObject({
+      count: 2,
+      meta: '账本漂移 2 · 收款了订单却没付 1 · 巡检没在跑：1 项超过 2 小时没更新',
+    })
   })
 
   it('nodes_offline 与 notifications_backlog 不出卡', () => {

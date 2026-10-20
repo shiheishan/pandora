@@ -23,7 +23,7 @@ type adminNotice struct {
 	Code     string // TemplateAdmin*
 	Vars     map[string]string
 	Key      string     // 去重键
-	AboutID  uuid.UUID  // 事件涉及的用户（notification_events.user_id）；uuid.Nil 表示不关某个用户（数据巡检告警）
+	AboutID  uuid.UUID  // 事件涉及的用户（notification_events.user_id）；uuid.Nil 表示不关某个用户，只许数据巡检告警这样传（writeAdminNotice 拦其余模板）
 	TicketID *uuid.UUID // 工单提醒带上，派发成功后记映射
 }
 
@@ -78,9 +78,13 @@ func (s *Service) writeAdminNotice(ctx context.Context, chatID int64, n adminNot
 		return false, errs.Wrap(errs.Internal, fmt.Errorf("notify: 未登记的通知模板 %q", n.Code))
 	}
 
+	// 只有巡检告警不关某个用户；别的管理员提醒漏传用户 id 当 bug 报出来，不悄悄写成空
 	var about *uuid.UUID
-	if n.AboutID != uuid.Nil {
+	switch {
+	case n.AboutID != uuid.Nil:
 		about = &n.AboutID
+	case n.Code != TemplateAdminIntegrityAlert:
+		return false, errs.Wrap(errs.Internal, fmt.Errorf("notify: 管理员提醒 %q 缺用户 id", n.Code))
 	}
 	inserted, err := s.store.InsertEvent(ctx, &model.Event{
 		DedupeKey:    n.Key,

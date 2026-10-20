@@ -74,6 +74,7 @@ func TestIntegrityChecksConstraintsPG(t *testing.T) {
 		{"样例比违例多", `INSERT INTO integrity_checks (code, count, checked_at, failing_since, sample) VALUES ('test_e', 1, now(), now(), '["x","y"]')`},
 		{"样例超 5 个", `INSERT INTO integrity_checks (code, count, checked_at, failing_since, sample) VALUES ('test_f', 9, now(), now(), '["1","2","3","4","5","6"]')`},
 		{"样例不是数组", `INSERT INTO integrity_checks (code, count, checked_at, failing_since, sample) VALUES ('test_g', 1, now(), now(), '{}')`},
+		{"起点晚于检查时间", `INSERT INTO integrity_checks (code, count, checked_at, failing_since) VALUES ('test_h', 1, now(), now() + interval '1 second')`},
 	}
 	for _, b := range bad {
 		if err := e.exec(ctx, "SAVEPOINT bad"); err != nil {

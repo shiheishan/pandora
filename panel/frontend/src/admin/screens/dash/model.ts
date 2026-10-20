@@ -145,6 +145,19 @@ function failingChecks(item: Extract<TaskItem, { kind: 'integrity' }> | undefine
   return (item?.checks ?? []).filter((c) => c.count > 0).sort((a, b) => order(a.code) - order(b.code))
 }
 
+/** 巡检每 30 分钟一轮；某项超过这么久没更新，说明巡检没在跑或这一项每轮都失败（失败的项保留上一次的结果） */
+export const INTEGRITY_STALE_MS = 2 * 60 * 60 * 1000
+
+/** 超过 INTEGRITY_STALE_MS 没更新的巡检项；asOf 是接口返回的服务器时间，不用本机时钟 */
+function outdatedChecks(item: Extract<TaskItem, { kind: 'integrity' }> | undefined, asOf: string | undefined): IntegrityCheckRow[] {
+  const now = asOf ? Date.parse(asOf) : NaN
+  if (Number.isNaN(now)) return []
+  return (item?.checks ?? []).filter((c) => {
+    const at = Date.parse(c.checked_at)
+    return !Number.isNaN(at) && now - at > INTEGRITY_STALE_MS
+  })
+}
+
 /** 最多列两项「中文名 违例数」，多的写「等 N 项」 */
 function integrityMeta(failing: readonly IntegrityCheckRow[]): string {
   const shown = failing.slice(0, 2).map((c) => `${integrityLabel(c.code)} ${formatCount(c.count)}`)
@@ -159,11 +172,13 @@ function todoSummary(cards: readonly TodoCard[]): string {
   return `${pending} 项` + (urgent > 0 ? ` · ${urgent} 项紧急` : '')
 }
 
-export function todoBoard(items: readonly TaskItem[] | undefined): TodoBoard {
+export function todoBoard(items: readonly TaskItem[] | undefined, asOf?: string): TodoBoard {
   const tickets = findItem(items, 'tickets_open')
   const withdrawals = findItem(items, 'withdrawals_pending')
   const stale = findItem(items, 'orders_pending_stale')
-  const failing = failingChecks(findItem(items, 'integrity'))
+  const integrity = findItem(items, 'integrity')
+  const failing = failingChecks(integrity)
+  const outdated = outdatedChecks(integrity, asOf)
 
   const cards: TodoCard[] = [
     {
@@ -195,16 +210,22 @@ export function todoBoard(items: readonly TaskItem[] | undefined): TodoBoard {
     },
   ]
 
-  // 巡检有违例才出第四格，标红；数字是各项违例数之和，去处是第一项有违例的检查对应的页
-  const firstFailing = failing[0]
-  if (firstFailing) {
+  // 巡检有违例或有项太久没更新才出第四格，标红；数字是出问题的检查项数（各项违例的单位不同，不相加），
+  // 去处是第一项有违例的检查对应的页
+  const problems = new Set([...failing, ...outdated].map((c) => c.code))
+  if (problems.size > 0) {
+    const firstFailing = failing[0]
+    const meta = [
+      failing.length > 0 ? integrityMeta(failing) : '',
+      outdated.length > 0 ? `巡检没在跑：${outdated.length} 项超过 2 小时没更新` : '',
+    ]
     cards.push({
       key: 'integrity',
       title: '数据巡检',
-      count: failing.reduce((n, c) => n + c.count, 0),
-      meta: integrityMeta(failing),
+      count: problems.size,
+      meta: meta.filter(Boolean).join(' · '),
       action: '去核对',
-      target: INTEGRITY_CHECKS.find((c) => c.code === firstFailing.code)?.target ?? { module: 'billing', tab: null },
+      target: (firstFailing && INTEGRITY_CHECKS.find((c) => c.code === firstFailing.code)?.target) ?? { module: 'billing', tab: null },
       hot: true,
     })
   }
