@@ -72,7 +72,7 @@ export function greeting(now: Date, me: Pick<AdminMe, 'display_name' | 'email'> 
 // 「要处理」
 // ===========================================================================
 
-export type TodoKey = 'tickets_open' | 'withdrawals_pending' | 'orders_pending_stale' | 'ledger_drift'
+export type TodoKey = 'tickets_open' | 'withdrawals_pending' | 'orders_pending_stale' | 'integrity'
 
 export interface TodoCard {
   key: TodoKey
@@ -112,10 +112,50 @@ function staleOrderMeta(item: Extract<TaskItem, { kind: 'orders_pending_stale' }
   return `超过 ${Math.round(item.threshold_seconds / 60)} 分钟没到账，可能是回调丢失`
 }
 
+// ---------------------------------------------------------------------------
+// 数据巡检：后端每 30 分钟跑一轮（report:integrity），每项给最近一次的违例数。
+// 代号与后端 report/service/integrity.go 的常量一一对应；中文名与告警里的检查名一致，处理办法见运维手册「数据巡检告警」。
+// 每项的去处是最接近的后台页（按 INTEGRITY_CHECKS 顺序取第一项有违例的）。
+// ---------------------------------------------------------------------------
+const INTEGRITY_CHECKS: ReadonlyArray<{ code: string; label: string; target: Target }> = [
+  { code: 'ledger_drift', label: '账本漂移', target: { module: 'billing', tab: null } },
+  { code: 'ledger_hold_mismatch', label: '余额冻结对不上', target: { module: 'billing', tab: 'orders' } },
+  { code: 'payment_unsettled', label: '收款了订单却没付', target: { module: 'billing', tab: 'arrears' } },
+  { code: 'order_paid_unfulfilled', label: '已付订单没落地', target: { module: 'billing', tab: 'orders' } },
+  { code: 'order_reservation_mismatch', label: '订单预留没释放', target: { module: 'billing', tab: 'orders' } },
+  { code: 'commission_unpaid_order', label: '佣金挂在没付的订单上', target: { module: 'marketing', tab: 'commission' } },
+  { code: 'giftcard_redemption_mismatch', label: '礼品卡兑换对不上', target: { module: 'marketing', tab: 'gifts' } },
+  { code: 'subscription_expire_overdue', label: '订阅到期没停', target: { module: 'users', tab: 'list' } },
+  { code: 'subscription_close_overdue', label: '过期订阅没关续费窗口', target: { module: 'users', tab: 'list' } },
+]
+
+/** 巡检代号的中文名；前端还不认识的新检查原样显示代号 */
+export function integrityLabel(code: string): string {
+  return INTEGRITY_CHECKS.find((c) => c.code === code)?.label ?? code
+}
+
+type IntegrityCheckRow = Extract<TaskItem, { kind: 'integrity' }>['checks'][number]
+
+/** 有违例的巡检项（按 INTEGRITY_CHECKS 顺序，前端不认识的排最后） */
+function failingChecks(item: Extract<TaskItem, { kind: 'integrity' }> | undefined): IntegrityCheckRow[] {
+  const order = (code: string) => {
+    const i = INTEGRITY_CHECKS.findIndex((c) => c.code === code)
+    return i === -1 ? INTEGRITY_CHECKS.length : i
+  }
+  return (item?.checks ?? []).filter((c) => c.count > 0).sort((a, b) => order(a.code) - order(b.code))
+}
+
+/** 最多列两项「中文名 违例数」，多的写「等 N 项」 */
+function integrityMeta(failing: readonly IntegrityCheckRow[]): string {
+  const shown = failing.slice(0, 2).map((c) => `${integrityLabel(c.code)} ${formatCount(c.count)}`)
+  const rest = failing.length - shown.length
+  return shown.join(' · ') + (rest > 0 ? ` 等 ${failing.length} 项` : '')
+}
+
 function todoSummary(cards: readonly TodoCard[]): string {
   const pending = cards.filter((c) => c.count > 0).length
   if (pending === 0) return '没有待处理的事'
-  const urgent = cards.filter((c) => c.count > 0 && (c.key === 'tickets_open' || c.key === 'ledger_drift')).length
+  const urgent = cards.filter((c) => c.count > 0 && (c.key === 'tickets_open' || c.key === 'integrity')).length
   return `${pending} 项` + (urgent > 0 ? ` · ${urgent} 项紧急` : '')
 }
 
@@ -123,7 +163,7 @@ export function todoBoard(items: readonly TaskItem[] | undefined): TodoBoard {
   const tickets = findItem(items, 'tickets_open')
   const withdrawals = findItem(items, 'withdrawals_pending')
   const stale = findItem(items, 'orders_pending_stale')
-  const drift = findItem(items, 'ledger_drift')
+  const failing = failingChecks(findItem(items, 'integrity'))
 
   const cards: TodoCard[] = [
     {
@@ -155,15 +195,16 @@ export function todoBoard(items: readonly TaskItem[] | undefined): TodoBoard {
     },
   ]
 
-  if (drift && drift.count > 0) {
+  // 巡检有违例才出第四格，标红；数字是各项违例数之和，去处是第一项有违例的检查对应的页
+  if (failing.length > 0) {
     cards.push({
-      key: 'ledger_drift',
-      title: '账本漂移',
-      count: drift.count,
-      meta: '余额与账本流水对不上的账户',
+      key: 'integrity',
+      title: '数据巡检',
+      count: failing.reduce((n, c) => n + c.count, 0),
+      meta: integrityMeta(failing),
       action: '去核对',
-      target: { module: 'billing', tab: null },
-      hot: false,
+      target: INTEGRITY_CHECKS.find((c) => c.code === failing[0].code)?.target ?? { module: 'billing', tab: null },
+      hot: true,
     })
   }
 

@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatPercent,
   greeting,
+  integrityLabel,
   kpiTiles,
   percentChange,
   todoBoard,
@@ -116,17 +117,64 @@ describe('todoBoard', () => {
     })
   })
 
-  it('ledger_drift：0 不出第四格，2 出且紧急数 +1', () => {
+  it('integrity：全为 0 不出第四格；有违例出红卡、紧急数 +1、列中文名', () => {
     const base: TaskItem[] = [
       { kind: 'tickets_open', count: 1, high_priority: 0, oldest_wait_seconds: 60 },
       { kind: 'withdrawals_pending', count: 0, amount: 0 },
       { kind: 'orders_pending_stale', count: 0, threshold_seconds: 1800 },
-      { kind: 'ledger_drift', count: 0 },
     ]
+    const at = '2026-10-20T08:00:00Z'
+    const clean: TaskItem = {
+      kind: 'integrity',
+      checks: [
+        { code: 'ledger_drift', count: 0, checked_at: at },
+        { code: 'order_paid_unfulfilled', count: 0, checked_at: at },
+      ],
+    }
+    expect(todoBoard([...base, clean]).cards).toHaveLength(3)
     expect(todoBoard(base).cards).toHaveLength(3)
-    const withDrift = todoBoard([...base.slice(0, 3), { kind: 'ledger_drift', count: 2 }])
-    expect(withDrift.cards).toHaveLength(4)
-    expect(withDrift.summary).toBe('2 项 · 2 项紧急')
+
+    const failing: TaskItem = {
+      kind: 'integrity',
+      checks: [
+        { code: 'order_paid_unfulfilled', count: 1, checked_at: at },
+        { code: 'ledger_drift', count: 2, checked_at: at },
+        { code: 'giftcard_redemption_mismatch', count: 0, checked_at: at },
+      ],
+    }
+    const board = todoBoard([...base, failing])
+    expect(board.cards).toHaveLength(4)
+    expect(board.summary).toBe('2 项 · 2 项紧急')
+    expect(board.cards[3]).toMatchObject({
+      key: 'integrity',
+      title: '数据巡检',
+      count: 3,
+      meta: '账本漂移 2 · 已付订单没落地 1',
+      hot: true,
+      target: { module: 'billing', tab: null },
+    })
+  })
+
+  it('integrity：超过两项写「等 N 项」，去处跟第一项走，不认识的代号原样显示、排最后', () => {
+    const at = '2026-10-20T08:00:00Z'
+    const board = todoBoard([
+      {
+        kind: 'integrity',
+        checks: [
+          { code: 'future_check', count: 4, checked_at: at },
+          { code: 'subscription_expire_overdue', count: 1, checked_at: at },
+          { code: 'commission_unpaid_order', count: 2, checked_at: at },
+        ],
+      },
+    ])
+    const card = board.cards.find((c) => c.key === 'integrity')
+    expect(card).toMatchObject({
+      count: 7,
+      meta: '佣金挂在没付的订单上 2 · 订阅到期没停 1 等 3 项',
+      target: { module: 'marketing', tab: 'commission' },
+    })
+    expect(integrityLabel('future_check')).toBe('future_check')
+    expect(integrityLabel('payment_unsettled')).toBe('收款了订单却没付')
   })
 
   it('nodes_offline 与 notifications_backlog 不出卡', () => {

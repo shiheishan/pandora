@@ -98,6 +98,19 @@ const BACKLOG = {
   max_ready_lag_seconds: 1_260,
 }
 
+// 后端 report:integrity 的检查代号（顺序同后端）
+const INTEGRITY_CODES = [
+  'ledger_drift',
+  'ledger_hold_mismatch',
+  'payment_unsettled',
+  'order_paid_unfulfilled',
+  'order_reservation_mismatch',
+  'commission_unpaid_order',
+  'giftcard_redemption_mismatch',
+  'subscription_expire_overdue',
+  'subscription_close_overdue',
+]
+
 function isInt(raw: string | null): boolean {
   return raw !== null && /^-?\d+$/.test(raw)
 }
@@ -105,6 +118,7 @@ function isInt(raw: string | null): boolean {
 export const dash: MockModule = {
   routes: {
     'GET /v1/dashboard/tasks': (ctx) => {
+      const checkedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString()
       const items = [
         { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 + 540 },
         { kind: 'withdrawals_pending', count: 3, amount: 128_000 },
@@ -112,7 +126,8 @@ export const dash: MockModule = {
         // 与订单假后端同一份数据：待支付筛选里能看到这几张
         { kind: 'orders_pending_stale', count: stalePendingCount(1800 * 1000), threshold_seconds: 1800 },
         { kind: 'notifications_backlog', queued: BACKLOG.counts.ready + BACKLOG.counts.scheduled, failed_total: BACKLOG.counts.failed_total, backlog_state: BACKLOG.backlog_state },
-        { kind: 'ledger_drift', count: 0 },
+        // 数据巡检：九项都是 0（有违例时总览待办才出第四格「数据巡检」）
+        { kind: 'integrity', checks: INTEGRITY_CODES.map((code) => ({ code, count: 0, checked_at: checkedAt })) },
       ]
       ctx.send(200, { as_of: new Date().toISOString(), items })
     },
