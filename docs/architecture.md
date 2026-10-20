@@ -155,7 +155,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | plugin | plugin_hooks、plugin_hook_deliveries | 插件钩子 |
 | audit | audit_events、ip_cluster_reviews | 审计写入与查询、风控聚类复核 |
 | idempotency | idempotency_keys | Claim、Complete、Replay |
-| report | activity_daily、revenue_report_adjustments | 看板与营收报表；其余数据一律调属主 service 的聚合读接口 |
+| report | activity_daily、revenue_report_adjustments、integrity_checks | 看板、营收报表与数据巡检结果；其余数据一律调属主 service 的聚合读接口（巡检的检查也是属主 service 的只读方法） |
 
 原来的 adminops 不再作为一个模块：用户管理归 identity 和 auth，目录归 catalog，渠道归 payment，看板归 report。
 
@@ -456,6 +456,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `support:auto_close` | `2-59/10 * * * *`（后台开了自动关闭才做事） | 30s | default |
 | `notify:publish_announcements` | `@every 1m` | 20s | default |
 | `report:activity_daily` | `*/10 * * * *` | 2m | low |
+| `report:integrity` | `19,49 * * * *`（数据巡检：逐项跑属主的只读检查、写 integrity_checks，变坏时往管理员群组告警，见 RUNBOOK 第 15 章） | 5m | low |
 | `devices:strict` | `@every 1m`（strict 设备数限制：周期重判在线设备超限的订阅，从名单里摘掉或放回） | 30s | low |
 | `identity:generate_users` | 建 job 的事务提交后入队，TaskID = `gen_users:<job_id>` | 10m | default |
 | `retention:<模块>` | 每天一次，UTC 03:40–03:59 各占一分钟（分钟表见 `.claude/rules/panel-app.md`「每日任务分钟表」），分批删到删完或到批数上限 | 5–10m | low |

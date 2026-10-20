@@ -45,3 +45,4 @@ paths:
   - 外部 HTTP 客户端统一用 `safehttp.Client(allowPrivate)`（包级两个共用客户端，适配器重建时复用连接）：不走环境代理、不跟随跳转、在拨号层执行 `safehttp.CheckDialAddr`，按解析后的真实 IP 拦截内网、环回与元数据地址（防 SSRF 与 DNS 重绑定），响应用 `safehttp.ReadBody` 限 256 KiB；单请求超时 `safehttp.Timeout` 6 秒（易支付与巡检查单也受它约束）；生产环境严禁开启 `AllowPrivateHost`。
   - 主动查单（`Query`）禁止在外部事务内或持有订单锁时调用，避免与回调入账加锁顺序交叉死锁。后台查单必须落审计记录。
 - 给 order 的读接口（`service/history.go`）：`OrderHistory` 是一张单的支付尝试与收款（意图带用户选的 `Method`，收款的 `Method` 渠道没回时取意图的）；`OrderSummaries` 一批订单一条 SQL（`repo.OrderSummaries`），给 HasIntent、渠道（有收款取最近一笔收款的，否则最近一次意图的）与 `Method`（只取最近一笔收款的方式，线下收款是 `offline`，没有收款为 nil）。后台订单列表的「渠道」列靠它，不许改成逐单查。
+- 数据巡检（report:integrity，见 `module-report-audit.md`「数据巡检」）：`service/integrity.go` 的 `SettledPaymentsSince` 给 `paid_at` 不早于窗口起点、没进挂账（`late_payment_cases.payment_id` 反连接）的收款与订单，report 再经 order 的 `UnsettledAmong` 核状态，算「收款了订单却没付」。前提是收款行与 Settler 结算同事务、订单不收就同事务开挂账案；改这条路径时同步该检查与运维手册第 15 章。

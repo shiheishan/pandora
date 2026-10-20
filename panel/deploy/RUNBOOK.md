@@ -97,6 +97,8 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 
 另外两个告警源也指到第 4 章：续期单元 `pandora-tls-renew.service` 记为 failed，以及 Telegram 上的 `潘多拉面板 HTTPS 证书（…）：…`。
 
+面板自己的数据巡检（worker 的 `report:integrity`，每 30 分钟）不走 `healthcheck.sh`：告警发到后台配置的 Telegram 管理员群组，文案以 `数据巡检发现异常` 开头，后台仪表盘「要处理」出红色的「数据巡检」格，见 [15. 数据巡检告警](#15-数据巡检告警)。
+
 **巡检怎么跑。**
 
 - `healthcheck.sh` 与 `pandora-health.service` / `pandora-health.timer` 随安装器装好，首装与升级都 `enable --now`。看它在不在跑：`systemctl list-timers pandora-health.timer`。
@@ -1011,3 +1013,325 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
 
 - `deploy.env` 已正确配置、证书文件存在且 `nginx -t` 报错无法定位。
 - 订阅链接持续返回 502（连不上 `pandora-serve`）或 503（面板依赖不可用）。带上 `pandora.conf`、`journalctl -u pandora-serve -n 50` 和 `curl -v` 输出提给开发。
+
+---
+
+## 15. 数据巡检告警
+
+`pandora-worker` 每 30 分钟（每小时第 19、49 分）跑一轮定时任务 `report:integrity`，逐项检查库里约束拦不住的跨表一致性。每项检查的最新结果写进表 `integrity_checks`，后台「仪表盘 › 要处理」读这张表：有违例时出第四格「数据巡检」，标红。告警发到 Telegram 管理员群组，文案是「数据巡检发现异常 / 检查：<中文名>（<代号>）/ 违例：N 条」，规则如下：
+
+- 某项从 0 变成非 0 时发一条；违例数比这一段上次告警时多了，再发一条；数不变或变少不发。
+- 回到 0 不发。之后再出现算新的一段，从头算起。
+- 没开 Telegram 或没配管理员群组时不发。巡检结果照写，配好后下一轮照发。
+- 告警只带检查名和违例数，样例 id 在 `integrity_checks.sample` 里，最多 5 个，新的在前。
+
+这些检查出现违例，都说明有 bug，或有人绕过面板手改过库，而不是用户操作造成的。处理的先后：
+
+1. 先用下文的只读 SQL 确认，并记下样例。
+2. 用户受影响的（付了钱没拿到东西、钱被冻着），先用后台的现成操作把用户补上。
+3. 要改库的，只照本章给的 SQL 做：整段放进一个事务，先查后改，每条 `UPDATE` 都带上刚查到的旧值当条件，回的行数不对就 `ROLLBACK`。改之前照「约定」先备份。改库的 SQL 块（以 `BEGIN;` 开头的）不要整段灌给 psql：先用不带参数的 `pg` 进交互会话，再逐条粘贴，看清每条的输出再往下。
+4. 账本交易、分录、兑换流水、预留流水这类只追加的表，不删、不改。本章给不出 SQL 的，带上确认结果升级处理。
+
+### 怎么确认
+
+```bash
+# 每项最近一次的结果：count 违例数、sample 样例 id、failing_since 这一段从什么时候开始
+pg -c "SELECT code, count, sample, checked_at, failing_since, alerted_count FROM integrity_checks ORDER BY code;"
+# 巡检本身有没有在跑、哪项失败（失败的那项保留上一次的结果，其余照跑）
+sudo grep -h '数据巡检' /var/log/pandora/worker.log | tail -n 20
+```
+
+- `checked_at` 停在一小时以前，说明巡检没在跑：先按第 1 章查 worker 与定时任务调度器。
+- 日志里有「数据巡检：检查失败」，多半是查询超时（应用账号每条语句限 15 秒）：按第 7 章查锁等待与慢语句。
+
+下面每节的 `<…>` 换成 `sample` 里的 id。
+
+### ledger_drift 账本漂移
+
+**是什么。** 科目的余额缓存 `ledger_accounts.balance` 和这个科目全部分录的合计对不上。借方为正的科目是 `channel_cash`、`platform_fee_expense`、`platform_promo_expense`、`suspense`，余额 = 借 − 贷；其余科目余额 = 贷 − 借。样例是科目 id。后台概览接口（`GET v1/overview`）的 `ledger_drift_accounts` 是同一口径，但是现算的。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT a.id, a.account_type, a.owner_user_id, a.owner_ref, a.balance AS cached,
+       CASE WHEN a.account_type IN ('channel_cash', 'platform_fee_expense', 'platform_promo_expense', 'suspense')
+            THEN coalesce(sum(e.amount) FILTER (WHERE e.direction = 'debit'), 0) - coalesce(sum(e.amount) FILTER (WHERE e.direction = 'credit'), 0)
+            ELSE coalesce(sum(e.amount) FILTER (WHERE e.direction = 'credit'), 0) - coalesce(sum(e.amount) FILTER (WHERE e.direction = 'debit'), 0)
+       END AS from_entries
+  FROM ledger_accounts a LEFT JOIN ledger_entries e ON e.account_id = a.id
+ WHERE a.id = '<科目 id>'
+ GROUP BY a.id;
+-- 这个科目最近的交易，找是哪一笔之后对不上的
+SELECT t.occurred_at, t.kind, t.source_type, t.source_id, t.actor_kind, e.direction, e.amount
+  FROM ledger_entries e JOIN ledger_transactions t ON t.id = e.transaction_id
+ WHERE e.account_id = '<科目 id>'
+ ORDER BY t.occurred_at DESC LIMIT 20;
+SQL
+```
+
+**处理。** 分录才是账，余额缓存只是它的副本。没有后台操作能改缓存。
+
+- 先弄清是谁把缓存改坏了：看审计日志，问有没有人手跑过 SQL。
+- 确认分录是对的、只是缓存坏了，就**【写】**按分录校准缓存。行锁挡住同时记账。用户类科目算出来是负数时，`ledger_accounts_user_nonnegative` 会拒绝，说明分录本身有问题，这时升级处理。
+
+```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SELECT id, account_type, balance FROM ledger_accounts WHERE id = '<科目 id>' FOR UPDATE;
+-- 再跑一遍上面「确认」的第一条，核对 cached 与 from_entries；下面的 <cached> 填刚看到的 cached
+UPDATE ledger_accounts a
+   SET balance = CASE WHEN a.account_type IN ('channel_cash', 'platform_fee_expense', 'platform_promo_expense', 'suspense')
+                      THEN s.d - s.c ELSE s.c - s.d END,
+       updated_at = now()
+  FROM (SELECT coalesce(sum(amount) FILTER (WHERE direction = 'debit'), 0) AS d,
+               coalesce(sum(amount) FILTER (WHERE direction = 'credit'), 0) AS c
+          FROM ledger_entries WHERE account_id = '<科目 id>') s
+ WHERE a.id = '<科目 id>' AND a.balance = <cached>;
+-- 应回 UPDATE 1；不是 1 就 ROLLBACK
+COMMIT;
+```
+
+- 反过来，缓存是对的、分录缺了或多了：分录只追加，不能改也不能删。升级处理，带上面两条查询的结果。
+
+**修好之后。** 再跑「确认」的第一条，`cached = from_entries`。下一轮巡检（30 分钟内）`ledger_drift` 回到 0。
+
+### ledger_hold_mismatch 余额冻结对不上
+
+**是什么。** 用户的冻结科目（`user_balance_hold`）余额，不等于他名下状态为 `held` 的冻结行（`balance_holds`）的金额合计。下单用余额抵扣时冻结，付款时扣款，取消或超时时释放，每一步都在同一笔交易里同时改冻结行和冻结科目。样例是用户 id。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT a.balance AS hold_account,
+       (SELECT coalesce(sum(amount), 0) FROM balance_holds WHERE user_id = a.owner_user_id AND status = 'held') AS held_rows
+  FROM ledger_accounts a
+ WHERE a.account_type = 'user_balance_hold' AND a.owner_user_id = '<用户 id>';
+SELECT o.order_no, o.status AS order_status, h.amount, h.status AS hold_status, h.held_at, h.captured_at, h.released_at
+  FROM balance_holds h JOIN orders o ON o.id = h.order_id
+ WHERE h.user_id = '<用户 id>'
+ ORDER BY h.held_at DESC LIMIT 20;
+SQL
+```
+
+如果同一个科目也在 `ledger_drift` 的样例里，先按上一节处理漂移。冻结行是 `held`、订单却已经不是待支付的，和 `order_reservation_mismatch` 是同一个根因。
+
+**处理。** 冻结行的扣款和释放交易号有外键，指向只追加的账本交易，手补就等于手记账，所以本节不给改库 SQL，也没有后台操作能单独改冻结。带上两条查询的结果和订单号升级处理。用户因此有钱用不了的，可以先在后台用户详情里「调整余额」临时补上，原因写明「数据巡检 ledger_hold_mismatch」。修复时要把这笔一起算进去。
+
+**修好之后。** `hold_account = held_rows`，下一轮巡检回到 0。
+
+### payment_unsettled 收款了订单却没付
+
+**是什么。** 近 7 天入账的收款（`payments`）既没进挂账（`late_payment_cases`），订单也不是 `paid` / `fulfilled`。正常情况下，收款入账和结算订单在同一个事务里：订单不能收时，会在同一事务里开挂账案，去「订单与收款 › 待处理到账」处理。样例是收款 id。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT p.id, p.paid_at, p.amount, p.provider_payment_id, o.order_no, o.kind, o.status, o.user_id
+  FROM payments p JOIN orders o ON o.id = p.order_id
+ WHERE p.id = '<收款 id>';
+SELECT count(*) AS late_cases FROM late_payment_cases WHERE payment_id = '<收款 id>';
+SELECT t.kind, t.occurred_at FROM ledger_transactions t
+ WHERE t.source_type = 'order' AND t.source_id = (SELECT order_id FROM payments WHERE id = '<收款 id>')
+ ORDER BY t.occurred_at;
+SQL
+```
+
+**处理。** 用户付了钱，没拿到东西。订单和收款表有守卫，不手改，先用后台把用户补上：
+
+- 充值单：在用户详情里「调整余额」，补上 `amount`。
+- 新购、续费、换套餐：订阅已经存在的，在用户详情里「加时长」；没有订阅的，用「订单与收款 › 订单」的「人工开单」开给他。
+
+原因都写明「数据巡检 payment_unsettled 收款 <收款 id>」。不要对这张订单「标记已支付」：那会再记一笔收款，钱就重复了。补完之后，带上三条查询的结果升级处理，查结算为什么没落下来。
+
+**修好之后。** 这一项只回看收款时间在 7 天以内的，补偿不会让计数回落，要等这笔收款满 7 天滑出窗口才回到 0。数不变不会重复告警，只有新增的才会再告警。
+
+### order_paid_unfulfilled 已付订单没落地
+
+**是什么。** 订单停在 `paid`。结算时先标 `paid`，在同一事务里接着履约（开通、续期、叠加、换套餐、重置流量、充值入余额），然后转成 `fulfilled`。提交以后还停在 `paid`，说明履约那一步被绕过了，或者只写了一半。样例是订单 id。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT o.order_no, o.kind, o.status, o.user_id, o.subscription_id, o.total_amount, o.paid_at, o.fulfilled_at
+  FROM orders o WHERE o.id = '<订单 id>';
+SELECT kind, occurred_at FROM ledger_transactions
+ WHERE source_type = 'order' AND source_id = '<订单 id>' ORDER BY occurred_at;
+SQL
+```
+
+**处理。** 订单状态不手改，没有「重新履约」的操作。先按订单种类用后台补上用户：充值「调整余额」；有订阅的「加时长」；新购没开出订阅的「人工开单」。原因写明「数据巡检 order_paid_unfulfilled <订单号>」。然后带上两条查询的结果升级处理。
+
+**修好之后。** 订单由开发修到 `fulfilled` 后，下一轮巡检回到 0。修之前一直显示同一个数，不会重复告警。
+
+### order_reservation_mismatch 订单预留没释放
+
+**是什么。** 订单预留（`order_reservations`，管券的占用与余额冻结）和订单状态脱节了，有两种情况：
+
+- 预留还是 `held`，订单已经不是待支付：券一直占着，冻结的余额一直冻着。
+- 待支付订单的预留不是 `held`。
+
+建单、结算、取消、超时都在同一事务里同时改订单和预留。样例是订单 id。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT o.order_no, o.status AS order_status, o.user_id, r.state AS reservation_state, r.expires_at, r.captured_at, r.released_at
+  FROM orders o LEFT JOIN order_reservations r ON r.order_id = o.id
+ WHERE o.id = '<订单 id>';
+SELECT status, amount FROM balance_holds WHERE order_id = '<订单 id>';
+SELECT status FROM coupon_redemptions WHERE order_id = '<订单 id>';
+SQL
+```
+
+**处理。**
+
+- 订单是待支付、预留不是 `held`：在「订单与收款 › 订单」里「取消订单」，原因写明「数据巡检 order_reservation_mismatch」。取消报错的，升级处理。
+- 预留还是 `held`、订单已关闭：释放预留要同时记余额释放的账本交易，不手改。用户急着用钱的，先在用户详情里「调整余额」临时补上冻结的那部分，然后带上三条查询的结果升级处理。
+
+**修好之后。** 订单与预留状态一致后，下一轮巡检回到 0。
+
+### commission_unpaid_order 佣金挂在没付的订单上
+
+**是什么。** 近 7 天产生、没作废的佣金条目，订单却不是 `paid` / `fulfilled`。佣金只在订单结算事务里计提，订单付了就不会再变回没付，所以这笔佣金不该存在。样例是佣金条目 id。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT c.id, c.status, c.review_required, c.commission_amount, c.created_at, c.order_no, o.status AS order_status
+  FROM commission_entries c JOIN orders o ON o.id = c.order_id
+ WHERE c.id = '<条目 id>';
+SQL
+```
+
+**处理。** 先作废这笔佣金，把它从推荐人的待结佣金冲回去：
+
+- 条目是 `pending` 且已经待复核（`review_required = t`）：直接到「营销 › 佣金与提现 › 待复核」里点「作废」，原因写明「数据巡检：订单没付」。
+- 条目是 `pending` 但还没待复核：先**【写】**把它转成待复核，再到同一页去作废。
+
+```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SELECT id, status, review_required FROM commission_entries WHERE id = '<条目 id>' FOR UPDATE;
+UPDATE commission_entries
+   SET review_required = true, review_reason = '数据巡检：订单没付', updated_at = now()
+ WHERE id = '<条目 id>' AND status = 'pending' AND NOT review_required;
+-- 应回 UPDATE 1；不是 1 就 ROLLBACK
+COMMIT;
+```
+
+- 条目已经是 `available`（解冻进了可提现）：作废不了，升级处理。
+
+无论哪种，都带上确认结果升级处理，查订单为什么没付却计了佣金。
+
+**修好之后。** 作废后这条不再算违例，下一轮巡检回落。
+
+### giftcard_redemption_mismatch 礼品卡兑换对不上
+
+**是什么。** 码和兑换流水对不上，有两种情况：
+
+- 码标了 `used`，却没有兑换流水（`gift_card_redemptions`）。
+- 有兑换流水，码却不是 `used`，或者码上的 `used_by` 不是兑换人。
+
+兑换时，改码、发放、写流水在同一事务里。兑换流水只追加，以它为准。样例是码 id。
+
+**确认。**
+
+```bash
+pg <<'SQL'
+SELECT c.id, c.code_mask, c.status, c.used_by, c.used_at, r.user_id AS redeemed_by, r.redeemed_at,
+       r.balance_amount, r.traffic_bytes, r.expire_days, r.plan_id, r.subscription_id
+  FROM gift_card_codes c LEFT JOIN gift_card_redemptions r ON r.code_id = c.id
+ WHERE c.id = '<码 id>';
+-- 余额卡有没有真的入账
+SELECT kind, occurred_at FROM ledger_transactions WHERE source_type = 'gift_card_code' AND source_id = '<码 id>';
+SQL
+```
+
+**处理。**
+
+- 有兑换流水，码上的状态或兑换人不对：**【写】**按流水把码改回来。
+
+```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SELECT c.id, c.status, c.used_by, r.user_id, r.redeemed_at
+  FROM gift_card_codes c JOIN gift_card_redemptions r ON r.code_id = c.id
+ WHERE c.id = '<码 id>' FOR UPDATE OF c;
+UPDATE gift_card_codes c
+   SET status = 'used', used_by = r.user_id, used_at = r.redeemed_at, updated_at = now()
+  FROM gift_card_redemptions r
+ WHERE c.id = '<码 id>' AND r.code_id = c.id
+   AND (c.status <> 'used' OR c.used_by IS DISTINCT FROM r.user_id);
+-- 应回 UPDATE 1；不是 1 就 ROLLBACK
+COMMIT;
+```
+
+- 码标了 `used`、没有兑换流水，而且上面第二条查不到入账交易：用户没拿到东西，**【写】**把码放回未使用，让用户重新兑换。
+
+```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SELECT id, status, used_by, used_at FROM gift_card_codes WHERE id = '<码 id>' FOR UPDATE;
+UPDATE gift_card_codes
+   SET status = 'unused', used_by = NULL, used_at = NULL, updated_at = now()
+ WHERE id = '<码 id>' AND status = 'used'
+   AND NOT EXISTS (SELECT 1 FROM gift_card_redemptions WHERE code_id = '<码 id>')
+   AND NOT EXISTS (SELECT 1 FROM ledger_transactions WHERE source_type = 'gift_card_code' AND source_id = '<码 id>');
+-- 应回 UPDATE 1；不是 1 就 ROLLBACK
+COMMIT;
+```
+
+- 没有兑换流水，却查得到入账交易：余额已经发了。码保持 `used`，升级处理。
+
+**修好之后。** 下一轮巡检回到 0。
+
+### subscription_expire_overdue 订阅到期没停
+
+**是什么。** 订阅的到期时间已经过去 10 分钟以上，状态还是 `active`。到期扫描 `subscription:expire` 每分钟跑一轮，落后这么多，说明任务卡了：worker 没在跑、批次一直失败，或者有行被长期锁着。停发不靠它，节点名单和订阅拉取都按到期时间现算，但订阅状态、到期事件和到期通知都停在半截。样例是订阅 id。
+
+**确认。**
+
+```bash
+pg -c "SELECT id, user_id, status, current_period_end, now() - current_period_end AS overdue FROM subscriptions WHERE id = '<订阅 id>';"
+sudo grep -h 'subscription:expire' /var/log/pandora/worker.log | tail -n 20
+# 有没有长时间持锁的会话
+pg -c "SELECT pid, state, now() - xact_start AS xact_age, left(query, 80) FROM pg_stat_activity WHERE xact_start < now() - interval '5 minutes' ORDER BY xact_start;"
+```
+
+**处理。** 不改库。按第 1 章让 worker 和定时任务调度器恢复。日志里扫描一直报错的，按报错查；有长事务挡着的，按第 7 章处理。扫描恢复后，积压会自己追上。
+
+**修好之后。** 订阅转为 `expired`，下一轮巡检回到 0。
+
+### subscription_close_overdue 过期订阅没关续费窗口
+
+**是什么。** 订阅已经过期，并且过了 30 天续费窗口再加 10 分钟，`renewal_closed_at` 还是空的。这一步也由到期扫描做：关续费窗口、吊销旧的订阅链接。样例是订阅 id。
+
+**确认。**
+
+```bash
+pg -c "SELECT id, user_id, status, current_period_end, renewal_closed_at FROM subscriptions WHERE id = '<订阅 id>';"
+sudo grep -h 'subscription:expire' /var/log/pandora/worker.log | tail -n 20
+```
+
+**处理。** 同上一节，不改库，让到期扫描恢复。
+
+**修好之后。** `renewal_closed_at` 有值，下一轮巡检回到 0。
+
+### 什么时候升级处理
+
+- 本章写了「升级处理」的情况。
+- 同一项刚修好，过几轮又出现。
+- 某项检查连续报「检查失败」，第 7 章也查不出锁或慢语句。
+
+升级时带上：
+
+- `integrity_checks` 的那一行；
+- 各节「确认」SQL 的输出；
+- `worker.log` 里这段时间的「数据巡检」日志；
+- 出现前后有没有人手改过库。
