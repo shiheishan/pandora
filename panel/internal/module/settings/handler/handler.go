@@ -26,6 +26,8 @@ type Settings interface {
 	SetSupportRules(ctx context.Context, v service.SupportRules) error
 	PurchaseLimits(ctx context.Context) (service.PurchaseLimits, error)
 	SetPurchaseLimits(ctx context.Context, v service.PurchaseLimits) error
+	Home(ctx context.Context) (service.Home, error)
+	SetHome(ctx context.Context, u service.HomeUpdate) error
 }
 
 var _ Settings = (*service.Service)(nil)
@@ -59,4 +61,6 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/settings/support", k.RequireAuth, k.RecentReauth, h.setSupportRules)
 	v1.GET("/settings/purchase", k.RequireAuth, h.getPurchaseLimits)
 	v1.POST("/settings/purchase", k.RequireAuth, k.RecentReauth, h.setPurchaseLimits)
+	v1.GET("/settings/home", k.RequireAuth, h.getHome)
+	v1.POST("/settings/home", k.RequireAuth, k.RecentReauth, h.setHome)
 }
