@@ -18,7 +18,7 @@ const message = (err: unknown, fallback: string) => (isApiError(err) ? err.messa
 
 /** POST v1/auth/mail-link/login：邮件里的 token 换访问令牌。 */
 export async function consumeMailLogin(api: ApiClient, tokens: TokenStore, token: string): Promise<void> {
-  const out = await api.post('v1/auth/mail-link/login', loginSchema, { auth: false, body: { token } })
+  const out = await api.post('v1/auth/mail-link/login', loginSchema, { auth: false, withCookies: true, body: { token } })
   tokens.set(out.access_token)
 }
 

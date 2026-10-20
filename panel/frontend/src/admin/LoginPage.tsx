@@ -53,6 +53,7 @@ export function LoginPage() {
     try {
       const out = await api.post('v1/auth/login', loginSchema, {
         auth: false,
+        withCookies: true,
         body: { email: email.trim(), password },
       })
       tokens.set(out.access_token)

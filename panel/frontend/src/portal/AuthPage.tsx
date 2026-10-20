@@ -31,7 +31,7 @@ const message = (err: unknown, fallback: string) => (isApiError(err) ? err.messa
 
 /** 邮箱密码登录并写令牌；注册完成后也走它（complete 不签发令牌）。 */
 async function loginWithPassword(api: ApiClient, tokens: TokenStore, email: string, password: string): Promise<void> {
-  const out = await api.post('v1/auth/login', tokenSchema, { auth: false, body: { email, password } })
+  const out = await api.post('v1/auth/login', tokenSchema, { auth: false, withCookies: true, body: { email, password } })
   tokens.set(out.access_token)
 }
 
@@ -610,6 +610,6 @@ function QuickLoginForm({ initialError, onBack }: { initialError: string | null;
 
 /** POST v1/auth/quick-login：令牌一次性、60 秒有效；响应不含 token_type。 */
 export async function consumeQuickLogin(api: ApiClient, tokens: TokenStore, token: string): Promise<void> {
-  const out = await api.post('v1/auth/quick-login', tokenSchema, { auth: false, body: { token } })
+  const out = await api.post('v1/auth/quick-login', tokenSchema, { auth: false, withCookies: true, body: { token } })
   tokens.set(out.access_token)
 }

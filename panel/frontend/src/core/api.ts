@@ -216,7 +216,7 @@ interface RequestOptions {
    * 这里的 401 交给表单内联显示，不触发全局登出。
    */
   passwordCheck?: boolean
-  /** 为 true 时本次 fetch 带 same-origin cookie（refresh / logout）；默认 omit。 */
+  /** 为 true 时本次 fetch 带 same-origin cookie；默认 omit。凡是会 Set-Cookie 或凭 cookie 的接口（登录、快捷登录、邮件链接登录、refresh、logout）都要传：omit 模式下浏览器连响应里的 Set-Cookie 也丢掉。 */
   withCookies?: boolean
   signal?: AbortSignal
 }
