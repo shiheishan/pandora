@@ -1,0 +1,34 @@
+// knip：找没人用的文件、导出、类型与依赖（npm run lint 里跑，CI 的 panel-frontend 同一步）。
+// 入口按「一个工程两个入口 + 开发期 mode + 测试」手工列全；误报写进忽略项并注明理由（目前没有）。
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  "entry": [
+    // vite --mode admin / portal / showcase：root 是 src/<mode>，index.html 只引同目录的 main.tsx
+    "src/admin/main.tsx",
+    "src/portal/main.tsx",
+    "src/showcase/main.tsx",
+    // vite.config.ts 用 readFileSync 读它、原样输出成经典脚本，不经 import
+    "src/core/theme-boot.js",
+    // 构建配置本身：serve 时挂 dev/mock-api.ts 假后端（dev/ 由它连带进来）
+    "vite.config.ts",
+    // vitest：与 vite.config.ts 里 mode 为 test 时的 test.include 一致
+    "src/**/*.test.{ts,tsx}",
+    "tests/**/*.test.ts",
+    // 冒烟：自己的 vitest 配置只收 *.smoke.ts；seed.ts 由 panel-smoke.yml 用 node 跑，hook-receiver.ts 由 seed.ts spawn
+    "tests/smoke/vitest.config.ts",
+    "tests/smoke/*.smoke.ts",
+    "tests/smoke/seed.ts",
+    "tests/smoke/hook-receiver.ts",
+    // 浏览器测试的 *.spec.ts 与 globalSetup 由下面的 playwright 插件从配置里读；table.ts 由 panel-smoke.yml 用 node 跑
+    "tests/browser/table.ts"
+  ],
+  // dev/prototype 只有样稿 HTML 与 Markdown，不在这几个匹配里，不用另外忽略
+  "project": ["src/**/*.{ts,tsx,js}", "dev/**/*.ts", "tests/**/*.ts", "*.{ts,js}"],
+  // 同一文件里在用的导出不报：只报整个工程里都没人用的
+  "ignoreExportsUsedInFile": true,
+  // vite.config.ts 按 mode 返回配置，缺省 mode 直接抛错（防 showcase 一类开发期 mode 进产物），
+  // knip 的 vite / vitest 插件加载它必然失败；入口已在上面按 mode 列全，这两个插件关掉
+  "vite": false,
+  "vitest": false,
+  "playwright": { "config": ["tests/browser/playwright.config.ts"] }
+}

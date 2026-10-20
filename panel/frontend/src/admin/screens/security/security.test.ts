@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  accessDetail,
   accessOutcomeLabel,
   accessQuery,
   accessTone,
+  accessUser,
   actorLabel,
   auditQuery,
   authLabel,
@@ -16,8 +16,6 @@ import {
   EMPTY_AUDIT_FILTER,
   exportQuery,
   hasAuditFilter,
-  ipLabel,
-  isAccessError,
   isMarkedNormal,
   objectLabel,
   reviewState,
@@ -108,10 +106,6 @@ describe('access log', () => {
   })
 
   it('treats ok and success as fine and names subscription fetch results', () => {
-    expect(isAccessError({ outcome: 'ok' })).toBe(false)
-    expect(isAccessError({ outcome: 'success' })).toBe(false)
-    expect(isAccessError({})).toBe(false)
-    expect(isAccessError({ outcome: 'not_found' })).toBe(true)
     expect(accessTone({ outcome: 'ok' })).toBe('ok')
     expect(accessTone({ outcome: 'success' })).toBe('ok')
     expect(accessTone({ outcome: 'rate_limited' })).toBe('warn')
@@ -122,14 +116,12 @@ describe('access log', () => {
     expect(accessOutcomeLabel({ outcome: 'rate_limited' })).toBe('限流')
     expect(accessOutcomeLabel({ outcome: 'weird' })).toBe('weird')
     expect(accessOutcomeLabel({})).toBe('—')
-    expect(ipLabel({ ip: '10.0.0.1', geo: '内网地址' })).toBe('10.0.0.1 · 内网地址')
-    expect(ipLabel({})).toBe('—')
   })
 
-  it('puts the account in the row: email, short id or anonymous, then the action', () => {
-    expect(accessDetail({ user_email: 'a@example.test', action: 'auth.login' })).toBe('a@example.test · auth.login')
-    expect(accessDetail({ user_id: '0123456789abcdef' })).toBe('用户 01234567')
-    expect(accessDetail({ action: 'auth.login' })).toBe('匿名 · auth.login')
+  it('puts the account in the row: email, short id or anonymous', () => {
+    expect(accessUser({ user_email: 'a@example.test' })).toBe('a@example.test')
+    expect(accessUser({ user_id: '0123456789abcdef' })).toBe('用户 01234567')
+    expect(accessUser({})).toBe('匿名')
   })
 
   it('accepts omitempty rows and rejects unknown categories', () => {

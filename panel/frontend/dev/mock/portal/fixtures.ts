@@ -6,7 +6,7 @@ import { profileName } from './purchase.ts'
 import { isProto, onScenarioChange, scenario, SCENARIOS, switchScenario, type Scenario } from './scenario.ts'
 import { pastOrders, seedLedger, seedRedemptions } from './seeds.ts'
 
-export { GIB, scenario, SCENARIOS, type Scenario }
+export { GIB, scenario, SCENARIOS }
 const DAY_MS = 86_400_000
 /** 假后端的「站点时区」（修订 R50 默认值），按日用量按它切日 */
 export const MOCK_TIMEZONE = 'Asia/Shanghai'

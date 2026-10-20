@@ -677,5 +677,5 @@ const routes: Record<string, MockRoute> = {
   },
 }
 
-export const plans_: MockModule = { routes }
+const plans_: MockModule = { routes }
 export { plans_ as plans }

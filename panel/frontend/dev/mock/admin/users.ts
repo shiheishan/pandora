@@ -433,7 +433,7 @@ export function activeSubscriptions(planId: string): number {
 /** 同一份用户数组：billing.ts 开单开订阅、挂账转入余额时直接改这里 */
 export const userStore: User[] = users
 
-export const users_: MockModule = {
+const users_: MockModule = {
   routes: {
     // ---- 读 -----------------------------------------------------------------
     'GET /v1/users': (ctx) => {

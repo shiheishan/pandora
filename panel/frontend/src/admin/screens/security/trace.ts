@@ -81,7 +81,6 @@ export const traceIPsResponse = z.object({
   overview: traceOverviewSchema,
   ips: z.array(traceIPSchema),
 })
-export type TraceIPs = z.output<typeof traceIPsResponse>
 
 // ---------------------------------------------------------------------------
 // 订阅更新排行

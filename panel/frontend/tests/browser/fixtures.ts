@@ -208,16 +208,6 @@ export async function buyNew(page: Page, world: World, plan: { id: string; name:
   await backToSubs(page)
 }
 
-/**
- * 开关（ui/Switch）：透明的 checkbox 被轨道盖住，人点的是外面那层 label，这里也点 label。
- * 点完核对状态真的变了
- */
-export async function setSwitch(page: Page, name: string, on: boolean): Promise<void> {
-  const sw = page.getByRole('switch', { name })
-  if ((await sw.isChecked()) !== on) await sw.locator('xpath=ancestor::label[1]').click()
-  await expect(sw).toBeChecked({ checked: on })
-}
-
 /** 页面上第一段匹配的文字（压成一行） */
 export async function seen(page: Page, pattern: RegExp | string): Promise<string> {
   const l = page.getByText(pattern).first()

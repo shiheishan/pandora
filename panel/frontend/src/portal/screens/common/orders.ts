@@ -6,7 +6,7 @@ import { ordersPageSchema, orderRowSchema, PENDING_ORDERS_KEY, type OrderRow } f
 import { endsIntent } from './intent'
 
 // 订单行与列表页的 schema、待支付查询键归外框 portal/queries.ts（侧栏待支付数与这里同一个键，只留一份定义），这里转出给页面用
-export { ORDER_STATUSES, orderRowSchema, ordersPageSchema, PENDING_ORDERS_KEY, type OrderRow } from '../../queries'
+export { ORDER_STATUSES, orderRowSchema, ordersPageSchema, type OrderRow } from '../../queries'
 
 /** 价格周期 → 「月付 / 季付 / 年付」；billing_interval 取值见 00003 的 CHECK。 */
 const NAMED_PERIODS: Readonly<Record<string, string>> = {

@@ -36,7 +36,6 @@ export const backlogSchema = z.object({
   last_sent_at: z.string().nullable(),
   assessment: z.object({ threshold_seconds: count, reason: z.enum(['no_due_backlog', 'within_threshold', 'lag_exceeded']) }),
 })
-export type Backlog = z.output<typeof backlogSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/overview（report/service Overview）

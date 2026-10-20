@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { COLOR_TOKENS } from '../../../styles/design-tokens'
 import { themesResponse, type Theme } from './schemas'
-import { THEME_COLORS, activateNotice, brandDerived, buildThemeRequest, colorTokenName, themeSwatches, themeTagline, themeToForm, validateThemeForm } from './theme'
+import { THEME_COLORS, activateNotice, brandDerived, buildThemeRequest, themeSwatches, themeTagline, themeToForm, validateThemeForm } from './theme'
 
 const U = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`
 const theme = (patch: Partial<Theme> = {}): Theme => ({
@@ -44,7 +44,6 @@ describe('theme form', () => {
       ['ink', '--text'],
       ['accent', '--brand'],
     ])
-    expect(colorTokenName('accent')).toBe('--brand')
   })
 
   it('edits keep code and name, copies derive them from the source, blank create is empty', () => {

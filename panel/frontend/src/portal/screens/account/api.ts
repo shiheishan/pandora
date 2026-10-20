@@ -72,7 +72,6 @@ export const telegramSchema = z.object({
   enabled: z.boolean(),
   discuss_link: z.string().nullable(),
 })
-export type Telegram = z.output<typeof telegramSchema>
 
 export function useTelegram() {
   const api = useApi()

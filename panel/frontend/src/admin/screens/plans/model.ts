@@ -240,10 +240,6 @@ export function draftVersion(p: PlanDetail): VersionRow | undefined {
   return p.versions.find((v) => v.status === 'draft')
 }
 
-export function currentVersion(p: PlanDetail): VersionRow | undefined {
-  return p.versions.find((v) => v.status === 'published' && v.version === p.version)
-}
-
 export type OverviewNote = { text: string; action?: { label: string; tab: DetailTab } }
 
 /** 概览顶部的提示，按严重程度排序 */
