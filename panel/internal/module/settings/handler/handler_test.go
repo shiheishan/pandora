@@ -30,7 +30,10 @@ type fakeSettings struct {
 	setSiteErr      error
 
 	supportRules service.SupportRules
+	fallback     string
 }
+
+func (f *fakeSettings) SiteURLFallback() string { return f.fallback }
 
 func (f *fakeSettings) Site(ctx context.Context) (service.Site, error) {
 	return f.site, nil
@@ -55,6 +58,9 @@ func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error 
 	}
 	if u.AllowIndexing != nil {
 		v.AllowIndexing = *u.AllowIndexing
+	}
+	if u.URL != nil {
+		v.URL = *u.URL
 	}
 	f.setSiteVal = v
 	f.site = v
@@ -280,6 +286,26 @@ func TestSetSite(t *testing.T) {
 	}
 	if sr.SEOKeywords != "加速, 节点" || !sr.AllowIndexing || sr.Name != "夜海加速" {
 		t.Fatalf("seo response %+v", sr)
+	}
+
+	// 主域名：原样交给 service，回显存的值与安装时的地址
+	fake.fallback = "https://panel.example.test"
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"url":"https://new.example.test"}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("url post status %d body %s", rec.Code, rec.Body.String())
+	}
+	if fake.setSiteVal.URL != "https://new.example.test" || fake.setSiteVal.Name != "夜海加速" {
+		t.Fatalf("setSite url %+v", fake.setSiteVal)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil || sr.URL != "https://new.example.test" || sr.URLFallback != "https://panel.example.test" {
+		t.Fatalf("url response %s", rec.Body.String())
+	}
+
+	// 连通核对不过：service 的字段错误原样回 422
+	fake.setSiteErr = errs.Invalid(map[string]string{"url": "这个地址打不开本面板"})
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"url":"https://typo.example.test"}`, hdrs)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "这个地址打不开本面板") {
+		t.Fatalf("url 422 status %d body %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -18,6 +18,15 @@ type fakeMailSettings struct {
 	configured bool
 	signupErr  error
 	configErr  error
+	// siteURL 是 SiteURL 的返回值；空时用 https://panel.example.test/
+	siteURL string
+}
+
+func (f *fakeMailSettings) SiteURL(context.Context) string {
+	if f.siteURL == "" {
+		return "https://panel.example.test/"
+	}
+	return f.siteURL
 }
 
 func (f *fakeMailSettings) SignupWithoutSecret(ctx context.Context) (settingssvc.Signup, error) {
@@ -58,7 +67,7 @@ func (f *fakeMailCaptcha) VerifyCaptcha(_ context.Context, token, action string)
 
 func wireMailLink(h *testHarness, settings *fakeMailSettings, mailer *fakeMailLinkMailer) *fakeMailCaptcha {
 	c := &fakeMailCaptcha{}
-	h.S.UseMailLink(settings, mailer, c, ratelimit.New(h.RDB), "https://panel.example.test")
+	h.S.UseMailLink(settings, mailer, c, ratelimit.New(h.RDB))
 	return c
 }
 

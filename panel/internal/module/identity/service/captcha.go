@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,17 +37,32 @@ type captchaVerifier struct {
 	client       *http.Client
 	recaptchaURL string
 	turnstileURL string
-	// expectedHost 是面板对外地址（public_base_url）的主机名，小写：令牌必须是在这个站点上解出来的
-	expectedHost string
+	// siteURLs 取本站认的全部根地址（settings 的 SiteURLAliases：当前主域名、改之前的那个、配置的 public_base_url）：
+	// 令牌必须是在其中某个站点上解出来的。改主域名后旧域名上打开的页面拿到的令牌主机名是旧域名，也是本站
+	siteURLs func(ctx context.Context) []string
 }
 
-func newCaptchaVerifier(publicBaseURL string) *captchaVerifier {
+func newCaptchaVerifier(siteURLs func(ctx context.Context) []string) *captchaVerifier {
 	return &captchaVerifier{
 		client:       &http.Client{Timeout: captchaTimeout},
 		recaptchaURL: recaptchaVerifyURL,
 		turnstileURL: turnstileVerifyURL,
-		expectedHost: captchaHost(publicBaseURL),
+		siteURLs:     siteURLs,
 	}
+}
+
+// expectedHosts 是令牌可以来自的主机名（小写、去掉末尾的点、去重）；取不到时为空。
+func (v *captchaVerifier) expectedHosts(ctx context.Context) []string {
+	if v.siteURLs == nil {
+		return nil
+	}
+	var out []string
+	for _, u := range v.siteURLs(ctx) {
+		if h := captchaHost(u); h != "" && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // captchaHost 取地址的主机名（小写、去掉末尾的点）；解析不了返回空串。
@@ -59,14 +75,15 @@ func captchaHost(raw string) string {
 }
 
 // verify 按设置校验人机验证令牌；没开直接通过。action 是调用点的动作（captchaAction*），v3 要求令牌里的 action 与它一致。
-// 服务商回的 hostname 必须是面板对外地址的主机名（Google 与 Cloudflare 的文档都要求服务端比对）；
+// 服务商回的 hostname 必须是本站某个根地址的主机名（Google 与 Cloudflare 的文档都要求服务端比对）；
 // 对外地址没配好（取不到主机名）时一律按服务不可用处理，不放行。
 func (v *captchaVerifier) verify(ctx context.Context, cfg settingssvc.Signup, token, action string) error {
 	if cfg.CaptchaProvider == "" {
 		return nil
 	}
-	if v.expectedHost == "" {
-		plog.From(ctx).Warn("人机验证：public_base_url 取不到主机名，无法核对令牌来源")
+	hosts := v.expectedHosts(ctx)
+	if len(hosts) == 0 {
+		plog.From(ctx).Warn("人机验证：站点地址取不到主机名，无法核对令牌来源")
 		return errCaptchaUnavailable()
 	}
 	token = strings.TrimSpace(token)
@@ -130,8 +147,8 @@ func (v *captchaVerifier) verify(ctx context.Context, cfg settingssvc.Signup, to
 	if !parsed.Success {
 		return errCaptchaFailed()
 	}
-	if strings.TrimSuffix(strings.ToLower(parsed.Hostname), ".") != v.expectedHost {
-		// 只记服务商回的主机名（不是密钥或令牌），方便排查 public_base_url 配错
+	if !slices.Contains(hosts, strings.TrimSuffix(strings.ToLower(parsed.Hostname), ".")) {
+		// 只记服务商回的主机名（不是密钥或令牌），方便排查站点地址配错
 		plog.From(ctx).Warn("人机验证令牌来源不符", zap.String("provider", cfg.CaptchaProvider), zap.String("hostname", parsed.Hostname))
 		return errCaptchaFailed()
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -49,6 +50,15 @@ func botCommands(ex settingssvc.TelegramExtras) []botCommand {
 	}
 	cmds = append(cmds, botCommand{Command: "unbind", Description: "解除绑定"})
 	return cmds
+}
+
+// telegramWebhookURL 是 Telegram webhook 地址：当前生效的主域名 + /v1/webhooks/telegram；ok 为 false 表示主域名不是 https（Telegram 只收 https）。
+func (s *Service) telegramWebhookURL(ctx context.Context) (url string, ok bool) {
+	base := s.settings.SiteURL(ctx)
+	if !strings.HasPrefix(base, "https://") {
+		return "", false
+	}
+	return strings.TrimRight(base, "/") + "/v1/webhooks/telegram", true
 }
 
 // SaveTelegramSettings 保存后台 Telegram 设置。启用且有 Token、面板对外地址是 https 时，先向 Telegram 注册 webhook（每次换一个新 secret），成功后再落库。
@@ -100,13 +110,13 @@ func (s *Service) SaveTelegramSettings(ctx context.Context, in TelegramSettingsI
 	}
 
 	registeredWebhook := false
-	if in.Enabled && effectiveToken != "" && strings.HasPrefix(s.publicBaseURL, "https://") {
+	hookURL, httpsOK := s.telegramWebhookURL(ctx)
+	if in.Enabled && effectiveToken != "" && httpsOK {
 		secret, err := newWebhookSecret()
 		if err != nil {
 			return errs.Wrap(errs.Internal, err)
 		}
-		url := strings.TrimRight(s.publicBaseURL, "/") + "/v1/webhooks/telegram"
-		if err := s.tg.SetWebhook(ctx, effectiveToken, url, secret, botAllowedUpdates(ex), true); err != nil {
+		if err := s.tg.SetWebhook(ctx, effectiveToken, hookURL, secret, botAllowedUpdates(ex), true); err != nil {
 			var te *TelegramError
 			if errors.As(err, &te) {
 				return errs.Newf(errs.ValidationFailed, "设置 Telegram webhook 失败："+te.Detail)
@@ -204,11 +214,11 @@ func (s *Service) SaveTelegramExtras(ctx context.Context, in TelegramExtrasInput
 	if err != nil {
 		return err
 	}
-	webhookRegistered := cfg.Enabled && cfg.BotToken != "" && strings.HasPrefix(s.publicBaseURL, "https://") && cfg.WebhookSecret != ""
+	hookURL, httpsOK := s.telegramWebhookURL(ctx)
+	webhookRegistered := cfg.Enabled && cfg.BotToken != "" && httpsOK && cfg.WebhookSecret != ""
 
 	if joinReviewChanged && webhookRegistered {
-		url := strings.TrimRight(s.publicBaseURL, "/") + "/v1/webhooks/telegram"
-		if err := s.tg.SetWebhook(ctx, cfg.BotToken, url, cfg.WebhookSecret, botAllowedUpdates(merged), false); err != nil {
+		if err := s.tg.SetWebhook(ctx, cfg.BotToken, hookURL, cfg.WebhookSecret, botAllowedUpdates(merged), false); err != nil {
 			var te *TelegramError
 			if errors.As(err, &te) {
 				return errs.Newf(errs.ValidationFailed, "设置 Telegram webhook 失败："+te.Detail)
@@ -224,6 +234,44 @@ func (s *Service) SaveTelegramExtras(ctx context.Context, in TelegramExtrasInput
 		s.syncBotCommands(ctx, cfg.BotToken, merged)
 	}
 	return nil
+}
+
+var _ settingssvc.SiteURLChangeListener = (*Service)(nil)
+
+// telegramRehookTimeout 是主域名改动后重新注册 webhook 的总时长（setWebhook 与命令菜单两次调用）。
+const telegramRehookTimeout = 15 * time.Second
+
+// SiteURLChanged 实现 settings 的 SiteURLChangeListener：后台改了主域名并提交后，webhook 已注册（启用、有 token、有 secret）时
+// 用现有 secret 向 Telegram 重新注册到新地址（drop_pending_updates=false，不丢排队的更新），再同步命令菜单。
+// 在提交后同步调用；失败只记日志、不回滚设置，可以在后台 Telegram 设置里再保存一次重注册。
+func (s *Service) SiteURLChanged(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), telegramRehookTimeout)
+	defer cancel()
+	log := plog.From(ctx)
+	cfg, err := s.settings.Telegram(ctx)
+	if err != nil {
+		log.Warn("notify: 主域名改了，读 Telegram 设置失败，webhook 没有重新注册", zap.Error(err))
+		return
+	}
+	if !cfg.Enabled || cfg.BotToken == "" || cfg.WebhookSecret == "" {
+		return
+	}
+	hookURL, ok := s.telegramWebhookURL(ctx)
+	if !ok {
+		log.Warn("notify: 主域名不是 https，Telegram webhook 没有重新注册，用户无法完成绑定")
+		return
+	}
+	ex, err := s.settings.TelegramExtras(ctx)
+	if err != nil {
+		log.Warn("notify: 主域名改了，读 Telegram 扩展设置失败，webhook 没有重新注册", zap.Error(err))
+		return
+	}
+	if err := s.tg.SetWebhook(ctx, cfg.BotToken, hookURL, cfg.WebhookSecret, botAllowedUpdates(ex), false); err != nil {
+		log.Warn("notify: 主域名改了，Telegram webhook 重新注册失败", zap.Error(plog.StripURL(err)))
+		return
+	}
+	log.Info("notify: 主域名改了，Telegram webhook 已重新注册到新地址")
+	s.syncBotCommands(ctx, cfg.BotToken, ex)
 }
 
 // TestTelegram 给 chatID 发一条测试消息；chatID 为 0 时发到管理员群组。先留痕再发。

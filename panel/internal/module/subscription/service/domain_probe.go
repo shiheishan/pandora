@@ -253,18 +253,18 @@ func (s *Service) ReportProbeResults(ctx context.Context, ticket string, results
 	return nil
 }
 
-// PortalOrigin 是门户的源（public_base_url 的 scheme://host[:port]，与浏览器发的 Origin 头、location.origin 同形：
+// PortalOrigin 是门户的源（当前生效主域名的 scheme://host[:port]，与浏览器发的 Origin 头、location.origin 同形：
 // 小写、去掉 https 的 :443 与 http 的 :80），给 /v1/sub-probe 的 CORS 判断与探测页的自检用；
 // 分发没装配、地址解析不了或不是 http(s) 时为空串（不回 ACAO，探测页不探也不报）。
-func (s *Service) PortalOrigin() string {
+func (s *Service) PortalOrigin(ctx context.Context) string {
 	d, err := s.needDelivery()
 	if err != nil {
 		return ""
 	}
-	return portalOrigin(d.PublicBaseURL)
+	return portalOrigin(d.Settings.SiteURL(ctx))
 }
 
-// portalOrigin 把 public_base_url 规整成浏览器的源形状；不合的回空串。
+// portalOrigin 把站点地址规整成浏览器的源形状；不合的回空串。
 func portalOrigin(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" || u.User != nil {

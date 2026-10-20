@@ -151,7 +151,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		res.Body, res.ContentType = render.RenderExpired(format, notice)
 		res.UpdateIntervalHours = expiredUpdateIntervalHours
 		res.Expired = true
-		res.WebPageURL = renewalPageURL(d.PublicBaseURL, subID)
+		res.WebPageURL = renewalPageURL(d.siteBase(ctx), subID)
 		if err := s.allowFetch(ctx, d, cfg.FetchLimitPerHour, entry, FetchExpired); err != nil {
 			return PullResult{}, err
 		}
@@ -176,7 +176,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	body, contentType, count := render.RenderRequest(liveRequest(liveInput{
 		Format: format, Nodes: nodes, Row: row, UA: ua, Options: d.Render, Extras: ex,
 		Types: req.Types, Filter: req.Filter, Loc: siteLocation(site.Timezone),
-		SubscribeURL: subscribeURLFor(ex, owner.UserGroupID, d.PublicBaseURL, req.Prefix, token),
+		SubscribeURL: subscribeURLFor(ex, owner.UserGroupID, d.siteBase(ctx), req.Prefix, token),
 		Now:          now,
 	}))
 	res.Body, res.ContentType = body, contentType

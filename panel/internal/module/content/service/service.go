@@ -41,9 +41,11 @@ type Subscriptions interface {
 	LivePlanIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 }
 
-// Site 是 content 要的站点设置（占位变量 {{siteName}}）；*settingssvc.Service 直接满足。
+// Site 是 content 要的站点设置（占位变量 {{siteName}}、{{siteUrl}}）；*settingssvc.Service 直接满足。
 type Site interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
+	// SiteURL 是当前生效的主域名（以 / 结尾，后台可改；读快照，改了立即生效）
+	SiteURL(ctx context.Context) string
 }
 
 // SubscribeLinks 是占位变量 {{subscribeUrl}} 要的订阅链接（属 subscription），由 app 适配器实现。
@@ -68,9 +70,7 @@ type Service struct {
 	users Users
 	site  Site
 	links SubscribeLinks
-	// publicBaseURL 是面板对外根地址，只在启动装配时写入。
-	publicBaseURL string
-	now           func() time.Time
+	now   func() time.Time
 }
 
 // New 构造 content service：plans 传 catalog service，subs 传 subscription service，users 传 identity service。
@@ -84,10 +84,7 @@ func (s *Service) UseSite(x Site) { s.site = x }
 // UseSubscribeLinks 注入订阅链接端口；只在启动装配时调用，不并发安全。
 func (s *Service) UseSubscribeLinks(x SubscribeLinks) { s.links = x }
 
-// UsePublicBaseURL 设置面板对外根地址；只在启动装配时调用，不并发安全。
-func (s *Service) UsePublicBaseURL(u string) { s.publicBaseURL = u }
-
-// MissingPorts 返回尚未注入的必需端口名；publicBaseURL 是配置值，不算端口。
+// MissingPorts 返回尚未注入的必需端口名。
 func (s *Service) MissingPorts() []string {
 	var missing []string
 	if s.site == nil {

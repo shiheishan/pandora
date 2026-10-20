@@ -13,6 +13,8 @@ import (
 type Settings interface {
 	Site(ctx context.Context) (service.Site, error)
 	SetSite(ctx context.Context, u service.SiteUpdate) error
+	// SiteURLFallback 是配置的 public_base_url：主域名一栏留空时用它
+	SiteURLFallback() string
 	RegistrationPolicy(ctx context.Context) (service.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
 	Switches(ctx context.Context) ([]service.Switch, error)

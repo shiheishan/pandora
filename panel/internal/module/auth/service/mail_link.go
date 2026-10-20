@@ -20,6 +20,8 @@ type MailLinkSettings interface {
 	// SignupWithoutSecret 只用 MailLinkLogin 字段，不必解封人机验证 secret（真校验令牌由 MailLinkCaptcha 自己读）
 	SignupWithoutSecret(ctx context.Context) (settingssvc.Signup, error)
 	MailConfigured(ctx context.Context) (bool, error)
+	// SiteURL 是当前生效的主域名（以 / 结尾，后台可改）：登录链接拼在它上面
+	SiteURL(ctx context.Context) string
 }
 
 // MailLinkCaptcha 由 identity 实现（*identitysvc.Service 的 VerifyCaptcha）：与注册、找回同一套人机验证校验与文案；没开人机验证时直接通过。
@@ -44,13 +46,13 @@ var (
 	errMailLinkInvalid     = errs.Newf(errs.Unauthorized, "登录链接无效或已过期，请重新获取")
 )
 
-// UseMailLink 只在启动装配时调用。publicBaseURL 是面板对外地址（config.PublicBaseURL），链接拼成 <publicBaseURL 去掉末尾 />/#/mail-login/<令牌>。
-func (s *Service) UseMailLink(settings MailLinkSettings, mailer MailLinkMailer, captcha MailLinkCaptcha, limiter *ratelimit.Limiter, publicBaseURL string) {
+// UseMailLink 只在启动装配时调用。链接拼成 <当前主域名 去掉末尾 />/#/mail-login/<令牌>（settings.SiteURL）。
+// 令牌只存哈希、不绑域名，改主域名前发出的链接是旧域名上的 hash 路由，旧域名还在服务时照常能用。
+func (s *Service) UseMailLink(settings MailLinkSettings, mailer MailLinkMailer, captcha MailLinkCaptcha, limiter *ratelimit.Limiter) {
 	s.mailSettings = settings
 	s.mailCaptcha = captcha
 	s.mailer = mailer
 	s.mailLimiter = limiter
-	s.publicBaseURL = publicBaseURL
 }
 
 // StartMailLogin 发送免密登录邮件链接。开了人机验证时与找回密码第 1 步同口径：先过人机验证（在按邮箱限频之前），
@@ -125,7 +127,7 @@ func (s *Service) StartMailLogin(ctx context.Context, email, captchaToken string
 		return errs.Wrap(errs.Internal, err)
 	}
 
-	link := strings.TrimRight(s.publicBaseURL, "/") + "/#/mail-login/" + token
+	link := strings.TrimRight(s.mailSettings.SiteURL(ctx), "/") + "/#/mail-login/" + token
 	if err := s.sessions.issueMailLink(ctx, u.ID, hashSecret(token), epoch, mailLinkTTL); err != nil {
 		return errs.Wrap(errs.Unavailable, err)
 	}

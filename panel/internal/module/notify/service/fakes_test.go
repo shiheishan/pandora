@@ -29,6 +29,8 @@ type fakeSettings struct {
 	reg      settingssvc.Registration
 	site     settingssvc.Site
 	emailOff bool
+	// siteURL 是 SiteURL 的返回值（与真 settings 同形：以 / 结尾；空 = 没配）
+	siteURL string
 
 	setMail    *settingssvc.MailUpdate
 	setMailErr error
@@ -65,6 +67,8 @@ func (f *fakeSettings) SetRegistration(_ context.Context, v settingssvc.Registra
 }
 
 func (f *fakeSettings) Site(context.Context) (settingssvc.Site, error) { return f.site, nil }
+
+func (f *fakeSettings) SiteURL(context.Context) string { return f.siteURL }
 
 func (f *fakeSettings) SwitchEnabled(_ context.Context, code string) (bool, error) {
 	if code == settingssvc.SwitchNotifyEmail {

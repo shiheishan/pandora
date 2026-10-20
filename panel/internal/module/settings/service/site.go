@@ -18,7 +18,11 @@ var siteKeys = []string{
 	keySiteSEOKeywords,
 	keySiteSEODescription,
 	keySiteAllowIndexing,
+	keySiteURL,
 }
+
+// siteLockKeys 是改站点设置时要锁的行：本组各键，外加改主域名时一起写的 site.url_previous；按 key 顺序加锁。
+var siteLockKeys = append(append([]string{}, siteKeys...), keySiteURLPrevious)
 
 // decodeSite 按缺省值解出站点设置。
 func decodeSite(vals map[string]json.RawMessage) (Site, error) {
@@ -42,12 +46,18 @@ func decodeSite(vals map[string]json.RawMessage) (Site, error) {
 	if err != nil {
 		return Site{}, err
 	}
+	// 主域名照存的原样给（写入时已规整）；链接用的生效值另经 SiteURL 读，那里会把手工改坏的值按空
+	siteURL, err := decodeOr(vals, keySiteURL, "")
+	if err != nil {
+		return Site{}, err
+	}
 	return Site{
 		Name:           name,
 		Timezone:       tz,
 		SEOKeywords:    kw,
 		SEODescription: desc,
 		AllowIndexing:  allow,
+		URL:            siteURL,
 	}, nil
 }
 
@@ -67,12 +77,24 @@ type SiteUpdate struct {
 	SEOKeywords    *string
 	SEODescription *string
 	AllowIndexing  *bool
+	// URL 是主域名：空串 = 恢复用配置的 public_base_url。见 site_url.go
+	URL *string
 }
 
 // SetSite 在锁住本组各行的事务里合并、校验并写入站点设置，并发改不同字段不会互相覆盖。
+// 改主域名时，校验与连通核对在事务外先做（不在事务里联网）；改动另写一条 site.url_changed 审计（新旧值，域名不是秘密），
+// 同时把改之前的生效值记进 site.url_previous；提交后失效主域名快照并通知监听方。
 func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
+	var newURL *string
+	if u.URL != nil {
+		norm, err := s.prepareSiteURL(ctx, *u.URL)
+		if err != nil {
+			return err
+		}
+		newURL = &norm
+	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
-		vals, err := s.store.LockValues(ctx, siteKeys)
+		vals, err := s.store.LockValues(ctx, siteLockKeys)
 		if err != nil {
 			return err
 		}
@@ -115,18 +137,42 @@ func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
 			keySiteAllowIndexing:  v.AllowIndexing,
 		}
 		changes, b, a := diff(before, after)
-		if len(changes) == 0 {
+		urlChanged := newURL != nil && *newURL != old.URL
+		if len(changes) == 0 && !urlChanged {
 			return nil
+		}
+		// 先落库再登记提交后的动作：没有事务时 AfterCommit 立即执行，监听方要读到新值
+		otherChanged := len(changes) > 0
+		prevEffective := strings.TrimRight(s.effectiveSiteURL(old.URL), "/")
+		if urlChanged {
+			changes = append(changes,
+				change{key: keySiteURL, value: *newURL},
+				change{key: keySiteURLPrevious, value: prevEffective},
+			)
 		}
 		if err := s.writeChanges(ctx, changes); err != nil {
 			return err
 		}
-		if err := s.writeAudit(ctx, auditSiteChanged, auditResourceSettings, map[string]any{
-			"group":  "site",
-			"before": b,
-			"after":  a,
-		}); err != nil {
-			return err
+		if otherChanged {
+			if err := s.writeAudit(ctx, auditSiteChanged, auditResourceSettings, map[string]any{
+				"group":  "site",
+				"before": b,
+				"after":  a,
+			}); err != nil {
+				return err
+			}
+		}
+		if urlChanged {
+			if err := s.writeAudit(ctx, auditSiteURLChanged, auditResourceSettings, map[string]any{
+				"group":            "site",
+				"before":           old.URL,
+				"after":            *newURL,
+				"effective_before": prevEffective,
+				"effective_after":  strings.TrimRight(s.effectiveSiteURL(*newURL), "/"),
+			}); err != nil {
+				return err
+			}
+			s.siteURLChanged(ctx)
 		}
 		s.siteChanged(ctx)
 		return nil

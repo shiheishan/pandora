@@ -146,7 +146,7 @@ func (h *Handler) getPaymentSettings(c *gin.Context) {
 	httpx.OK(c, paymentSettingsResponse{
 		NotifyBaseURL: st.NotifyBaseURL,
 		EffectiveBase: st.EffectiveBase,
-		PublicBaseURL: st.PublicBaseURL,
+		SiteURL:       st.SiteURL,
 	})
 }
 
@@ -169,6 +169,6 @@ func (h *Handler) putPaymentSettings(c *gin.Context) {
 	httpx.OK(c, paymentSettingsResponse{
 		NotifyBaseURL: st.NotifyBaseURL,
 		EffectiveBase: st.EffectiveBase,
-		PublicBaseURL: st.PublicBaseURL,
+		SiteURL:       st.SiteURL,
 	})
 }

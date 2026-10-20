@@ -74,7 +74,7 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	e := newPG(t)
 	tg := &fakeTG{}
 	e.svc.tg = tg
-	e.svc.UsePublicBaseURL("https://panel.example.com")
+	e.st.siteURL = "https://panel.example.com/"
 
 	if err := tgbSave(e, TelegramSettingsInput{
 		Enabled: true, BotUsername: "mybot", BotToken: "new-token",
@@ -115,7 +115,7 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	tgJR := &fakeTG{}
 	eJR.svc.tg = tgJR
 	eJR.st.tgx = settingssvc.TelegramExtras{JoinReview: true}
-	eJR.svc.UsePublicBaseURL("https://panel.example.com")
+	eJR.st.siteURL = "https://panel.example.com/"
 	if err := tgbSave(eJR, TelegramSettingsInput{
 		Enabled: true, BotUsername: "mybot", BotToken: "new-token",
 	}); err != nil {
@@ -134,7 +134,7 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	tgSub := &fakeTG{}
 	eSub.svc.tg = tgSub
 	eSub.st.tgx = settingssvc.TelegramExtras{SubCommand: true}
-	eSub.svc.UsePublicBaseURL("https://panel.example.com")
+	eSub.st.siteURL = "https://panel.example.com/"
 	if err := tgbSave(eSub, TelegramSettingsInput{
 		Enabled: true, BotUsername: "mybot", BotToken: "new-token",
 	}); err != nil {
@@ -155,7 +155,7 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	e2 := newPG(t)
 	tg2 := &fakeTG{webhookErr: &TelegramError{Status: 400, Detail: "bad hook"}}
 	e2.svc.tg = tg2
-	e2.svc.UsePublicBaseURL("https://panel.example.com")
+	e2.st.siteURL = "https://panel.example.com/"
 	err := tgbSave(e2, TelegramSettingsInput{Enabled: true, BotUsername: "mybot", BotToken: "t"})
 	if !errors.As(err, new(*errs.Error)) || !isCode(err, errs.ValidationFailed) {
 		t.Fatalf("err %v", err)
@@ -168,7 +168,7 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	e3 := newPG(t)
 	tg3 := &fakeTG{}
 	e3.svc.tg = tg3
-	e3.svc.UsePublicBaseURL("http://panel.example.com")
+	e3.st.siteURL = "http://panel.example.com/"
 	if err := tgbSave(e3, TelegramSettingsInput{Enabled: true, BotUsername: "mybot", BotToken: "t"}); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestSaveTelegramSettingsWebhook(t *testing.T) {
 	tg5 := &fakeTG{}
 	e5.svc.tg = tg5
 	e5.st.tg = settingssvc.Telegram{Enabled: true, BotUsername: "mybot", BotToken: "keep", HasToken: true}
-	e5.svc.UsePublicBaseURL("https://panel.example.com")
+	e5.st.siteURL = "https://panel.example.com/"
 	if err := tgbSave(e5, TelegramSettingsInput{Enabled: true, BotUsername: "mybot", BotToken: ""}); err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestSaveTelegramExtrasJoinReviewKeepsPending(t *testing.T) {
 	tg := &fakeTG{}
 	e.svc.tg = tg
 	tgbReady(e)
-	e.svc.UsePublicBaseURL("https://panel.example.com")
+	e.st.siteURL = "https://panel.example.com/"
 
 	on := true
 	group := int64(-100123)

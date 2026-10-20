@@ -259,7 +259,7 @@ type applyLatePaymentResponse struct {
 type paymentSettingsResponse struct {
 	NotifyBaseURL string `json:"notify_base_url"` // 存下的回调地址前缀；空 = 用站点地址
 	EffectiveBase string `json:"effective_base"`  // 实际生效的前缀
-	PublicBaseURL string `json:"public_base_url"` // 站点地址
+	SiteURL       string `json:"public_base_url"` // 当前生效的站点地址（后台主域名，留空时是安装时的地址）；字段名沿用，前端不改
 }
 
 // paymentSettingsRequest 是 PUT /v1/payment-settings 请求体。

@@ -53,6 +53,8 @@ type Settings interface {
 	SetTelegram(ctx context.Context, v settingssvc.TelegramUpdate) error
 	TelegramExtras(ctx context.Context) (settingssvc.TelegramExtras, error)
 	SetTelegramExtras(ctx context.Context, v settingssvc.TelegramExtras) error
+	// SiteURL 是当前生效的主域名（以 / 结尾，后台可改）：Telegram webhook 地址由它拼出
+	SiteURL(ctx context.Context) string
 }
 
 var _ Settings = (*settingssvc.Service)(nil)
@@ -125,12 +127,11 @@ type Service struct {
 	now      func() time.Time
 
 	// 跨模块端口由装配注入（ports.go 的 Use* 方法）；tg 是 Telegram Bot API 客户端
-	dir           Directory
-	plans         Plans
-	subs          Subscriptions
-	orders        Orders
-	tg            telegramAPI
-	publicBaseURL string
+	dir    Directory
+	plans  Plans
+	subs   Subscriptions
+	orders Orders
+	tg     telegramAPI
 
 	// xb-tg 的端口（ports_xb.go 的 Use* 方法）
 	summaries SubscriptionSummaries

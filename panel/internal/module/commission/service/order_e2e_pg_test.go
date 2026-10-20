@@ -125,8 +125,9 @@ func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc)
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(oePromoCatalog{c: catalogSvc})
+	// 站点地址（主域名缺省值）经 settings 读
+	settings.UseSiteURLConfig("https://panel.example.test", true)
 	paymentSvc := paymentsvc.New(paymentrepo.New(d), txm, ledgerSvc, identitySvc, settings, auditSvc, sealer, paymentsvc.Config{
-		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
 	})
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, identitySvc, sealer)

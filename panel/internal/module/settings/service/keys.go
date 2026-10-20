@@ -7,6 +7,8 @@ const (
 	keySiteSEOKeywords    = "site.seo_keywords"    // string，最多 200 字，不含换行
 	keySiteSEODescription = "site.seo_description" // string，最多 160 字，不含换行；空则入口页用主题标语
 	keySiteAllowIndexing  = "site.allow_indexing"  // bool，缺省 DefaultSiteAllowIndexing
+	keySiteURL            = "site.url"             // string，主域名 scheme://host[:port]，空 = 用配置的 public_base_url（site_url.go）
+	keySiteURLPrevious    = "site.url_previous"    // string，上一次改主域名之前的生效值，改 site.url 时一起写
 
 	keyRegistrationMode  = "auth.registration_mode"  // string：closed / invite_only / open
 	keyEmailVerification = "auth.email_verification" // bool
@@ -64,6 +66,7 @@ type Site struct {
 	SEOKeywords    string // 门户入口页 meta keywords
 	SEODescription string // 门户入口页 meta description；空时入口页用主题标语
 	AllowIndexing  bool   // 是否允许搜索引擎收录门户首页
+	URL            string // 后台存的主域名（scheme://host[:port]，不带末尾 /）；空 = 用配置的 public_base_url。生效值读 SiteURL
 }
 
 // Registration 是存下来的注册设置。实际生效的策略还要看 auth.registration 开关，见 RegistrationPolicy。
@@ -136,6 +139,7 @@ type Switch struct {
 // 审计动作。
 const (
 	auditSiteChanged         = "site.settings_changed"
+	auditSiteURLChanged      = "site.url_changed"
 	auditRegistrationChanged = "registration.settings_changed"
 	auditMailChanged         = "mail.settings_changed"
 	auditSwitchToggle        = "feature_switch.toggle"

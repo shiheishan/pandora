@@ -147,6 +147,10 @@ func buildServices(r *runtime) (*services, error) {
 		return nil, fmt.Errorf("audit: %w", err)
 	}
 	settingsSvc := settingssvc.New(settingsrepo.New(r.db), txm, sealer, r.redis, auditSvc)
+	// 站点对外根地址（主域名）：后台可改，空就用配置的 public_base_url；邮件链接、支付回调与回跳、订阅链接兜底、
+	// canonical、Telegram webhook、{{siteUrl}}、人机验证来源核对全仓只经 settings 的 SiteURL / SiteURLAliases 读。
+	// nginx、证书、节点连面板的地址（UsePdndDist、node_channel.go）只看配置，不跟着变
+	settingsSvc.UseSiteURLConfig(cfg.PublicBaseURL, cfg.Env == config.EnvDevelopment)
 	idemSvc := idemsvc.New(idemrepo.New(r.db), txm)
 	identitySvc := identitysvc.New(identityrepo.New(r.db), txm, settingsSvc, auditSvc, keys, r.redis, limiter, cfg)
 	authSvc := authsvc.New(authrepo.New(r.db), txm, r.redis, keys, publicIssuer, adminIssuer, identitySvc, auditSvc,
@@ -169,7 +173,6 @@ func buildServices(r *runtime) (*services, error) {
 	promoSvc := promosvc.New(promorepo.New(r.db), txm, auditSvc)
 	paymentSvc := paymentsvc.New(paymentrepo.New(r.db), txm, ledgerSvc, identitySvc, settingsSvc, auditSvc, sealer,
 		paymentsvc.Config{
-			PublicBaseURL: cfg.PublicBaseURL,
 			// 渠道地址允许内网只在开发环境（防 SSRF）
 			AllowPrivateHosts: cfg.Env == config.EnvDevelopment,
 		})
@@ -213,11 +216,10 @@ func buildServices(r *runtime) (*services, error) {
 	// 订阅分发（拉取、链接列表、换链接）：前缀与拉取上限在 settings、主人状态在 identity、限流在 Redis；
 	// 可下发线路的来源（UseNodeSource）由 node 模块装配，没装配时生效订阅的拉取回 503
 	subSvc.UseDelivery(subsvc.Delivery{
-		Settings:      settingsSvc,
-		Owners:        identitySvc,
-		Hasher:        keys,
-		Limiter:       limiter,
-		PublicBaseURL: cfg.PublicBaseURL,
+		Settings: settingsSvc,
+		Owners:   identitySvc,
+		Hasher:   keys,
+		Limiter:  limiter,
 		// 订阅附加设置（信息节点、协议前缀）也在 settings；订阅域名分组是 subscription 自己的表
 		Extras: settingsSvc,
 		Render: render.Options{Singbox: render.SingboxTemplate{
@@ -290,12 +292,11 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc.UseReplyNotifier(supportReplyNotifier{n: notifySvc})
 	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
 
-	// 通知：扫描与公告定向要读用户、套餐、订阅，支付成功通知读最近履约的订单；Telegram webhook 地址由对外地址拼出
+	// 通知：扫描与公告定向要读用户、套餐、订阅，支付成功通知读最近履约的订单；Telegram webhook 地址由主域名拼出
 	notifySvc.UseDirectory(identitySvc)
 	notifySvc.UsePlans(catalogSvc)
 	notifySvc.UseSubscriptions(subSvc)
 	notifySvc.UseOrders(orderSvc)
-	notifySvc.UsePublicBaseURL(cfg.PublicBaseURL)
 	// xb-tg：bot 的 /traffic、/sub 与入群审核经 subscription 取订阅摘要与订阅链接；管理员群组的工单提醒附提单人余额（ledger）；
 	// 在管理员群组里回复工单提醒：auth 核对发消息的人仍是可登录的管理员，再以其身份经 support 回复（后台只读时拒绝）
 	notifySvc.UseSubscriptionSummaries(subSvc)
@@ -306,10 +307,9 @@ func buildServices(r *runtime) (*services, error) {
 	// 工单规则（须等客服回复、自动关闭）在 settings；建单与用户回复时经 notify 往管理员群组排提醒
 	supportSvc.UseSettings(settingsSvc)
 	supportSvc.UseAdminNotifier(supportAdminNotifier{n: notifySvc})
-	// 知识库占位变量：站点名与地址经 settings 与对外地址，订阅链接经 subscription
+	// 知识库占位变量：站点名与主域名经 settings，订阅链接经 subscription
 	contentSvc.UseSite(settingsSvc)
 	contentSvc.UseSubscribeLinks(contentSubscribeLinks{s: subSvc})
-	contentSvc.UsePublicBaseURL(cfg.PublicBaseURL)
 
 	// 插件钩子：六个发事件的模块在业务事务里经 plugin 写待投递记录，提交后入队 plugin:dispatch；
 	// 钩子地址允许 http 与内网只在开发环境（防 SSRF）
@@ -331,7 +331,7 @@ func buildServices(r *runtime) (*services, error) {
 
 	// 注册与登录（xb-reg）：注册试用、注销停订阅由 subscription 实现，注销取消待付单由 order 实现，
 	// 注销作废佣金与在途提现由 commission 实现，注销解绑 Telegram 由 notify 实现；
-	// 邮件链接免密登录读 settings 的开关与发信配置、经 notify 发信、按邮箱限频，链接拼在对外地址上
+	// 邮件链接免密登录读 settings 的开关、发信配置与主域名，经 notify 发信、按邮箱限频
 	identitySvc.UseTrialGranter(subSvc)
 	identitySvc.UseAccountCloser(subSvc)
 	identitySvc.UseOrderCanceller(orderSvc)
@@ -339,18 +339,18 @@ func buildServices(r *runtime) (*services, error) {
 	ledgerSvc.UseAccountStates(identitySvc)
 	identitySvc.UseTelegramUnbinder(notifySvc)
 	// 邮件链接登录第 1 步的人机验证由 identity 校验（与注册、找回同一套）
-	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter, cfg.PublicBaseURL)
+	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter)
 
 	// 后台改了站点设置（站点名等）、订阅附加设置，提交后同步清本进程的入口页快照与订阅拉取快照（serve 单实例，后台的写都在 serve 里）
 	settingsSvc.UseSiteChangeListener(appearanceSvc)
 	settingsSvc.UseSubscriptionExtrasListener(subSvc)
+	// 后台改了主域名，提交后 notify 用新地址重新注册 Telegram webhook（失败只记日志）
+	settingsSvc.UseSiteURLChangeListener(notifySvc)
 	// 门户首页片段：站点名等取 appearance 快照，首页设置取 settings、套餐取 catalog；后台保存首页设置后同步清它的缓存
 	homeSnap := newPortalHome(settingsSvc, catalogSvc, appearanceSvc)
 	settingsSvc.UseHomeChangeListener(homeSnap)
 	// 门户建单查购买限制（每人未支付订单数、每人订阅数），每次现查 settings
 	orderSvc.UsePurchaseLimits(settingsSvc)
-	// 站点对外根地址（入口页 canonical、og:url）：全仓只经 settings 的 SiteURL 读
-	settingsSvc.UsePublicBaseURL(cfg.PublicBaseURL)
 
 	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
 	if err := checkPorts([]portCheck{

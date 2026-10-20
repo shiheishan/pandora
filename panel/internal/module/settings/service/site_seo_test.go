@@ -102,7 +102,7 @@ func TestSiteURL(t *testing.T) {
 		{"not a url", ""},
 	}
 	for _, tc := range cases {
-		s.UsePublicBaseURL(tc.in)
+		s.UseSiteURLConfig(tc.in, false)
 		got := s.SiteURL(ctx)
 		if got != tc.want {
 			t.Fatalf("SiteURL(%q) = %q want %q", tc.in, got, tc.want)
