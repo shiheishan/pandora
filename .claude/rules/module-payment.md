@@ -17,7 +17,7 @@ paths:
   - 发起支付时意图金额 = 订单应付 + surcharge，`surcharge_amount` 记在意图和收款上；最低付款额按应付判断。入账时 `SettleInput.Amount = 实收 − surcharge`（等于订单应付，订单那边的核对不变），`SettleInput.Surcharge` 交给账本单独贷记 `platform_revenue / payment_surcharge`，不计入佣金基数、不改订单总额。
   - 迟到进挂账时只有 `实收 − surcharge` 进 `late_payment_suspense` 和挂账案金额（以后转余额只转这部分），surcharge 照记手续费收入。
   - 门户 `GET /v1/payment-methods?amount=<分>` 每种方式带这张单的 `fee` 与 `total`；用余额付不收手续费。
-- 回调地址（#43）：`notifyBase` 优先用 settings 的 `payment.notify_base_url`（后台 `GET/PUT /v1/payment-settings`，生产只收 https，`AllowPrivateHosts` 时也收 http），存的值不可用就回退站点地址；回调地址 = 前缀 + `/v1/webhooks/payments/<渠道代码>`。验签候选 `notifyURLCandidates` = [当前前缀拼的, 站点地址拼的]，改前缀前建的发票仍能验过。
+- 回调地址（#43）：`notifyBase` 优先用 settings 的 `payment.notify_base_url`（后台 `GET/PUT /v1/payment-settings`，生产只收 https，`AllowPrivateHosts` 时也收 http），存的值不可用就回退站点地址（settings 的 `SiteURL`，后台可改的主域名）；回调地址 = 前缀 + `/v1/webhooks/payments/<渠道代码>`。验签候选 `notifyURLCandidates` = [当前前缀拼的, 再按 `SiteURLAliases` 逐个拼：当前主域名、改之前的那个、配置的]，去重；改前缀或改主域名前建的发票仍能验过。回调地址只进 CoinPayments 的签名（易支付按商户密钥签参数、BTCPay 按 Webhook 密钥签请求体，都不含地址），所以候选只在 CoinPayments 的 `adapterFor` 里算。回跳地址：门户传来的地址在任一别名下就用，否则当前站点的 `/#orders`。后台 `GET /v1/payment-settings` 的 `public_base_url` 回显当前生效的站点地址。
 - 发起支付两段式（`intent.go`），渠道调用不在数据库事务里：
   - `BeginIntent` 在调用方事务里（order.Pay 持订单行锁）：校验、锁在途意图；同渠道同方式同金额、未过期且已建好收银台的直接复用；另一张**占位意图**（`requires_action` 且 `redirect_url = ''`）建单还不到 `intentCreatingWindow`（30 秒）时回 409 `payment_in_progress`（「支付正在发起，请稍候」，订单仍可付，前端退避重发）；其余在途意图作废，插一条新的占位意图。不调渠道。
   - 「建单中」一律按库时钟判断：`payment_intents` 的 `created_at` / `updated_at` 由库默认值 `now()` 写（`InsertIntent` 不传；PG 的 `now()` 是 BeginIntent 那笔事务开始的时刻，比插入早毫秒级），窗口在 SQL 里比（`repo.IntentCreatedWithin`），不拿应用机时钟和库里的时间比。`TestBeginIntentWindowUsesDBClock` 断言 `created_at = now()` 并把应用时钟拨慢 5 分钟来钉这两点。
