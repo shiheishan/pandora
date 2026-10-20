@@ -1,8 +1,13 @@
 package service
 
 import (
+	"context"
+	"encoding/hex"
+	"net/netip"
+	"strings"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/google/uuid"
 )
 
@@ -80,4 +85,141 @@ type TraceUserIP struct {
 	IP     string
 	Count  int
 	Shared bool
+}
+
+const (
+	traceIPLimitMax   = 5000
+	traceUserLimitMax = 500
+	traceExtraIPMax   = 500
+	traceUserIDMax    = 500
+)
+
+// TraceIPs 按来源 IP 聚合时间窗内的审计（溯源总览的概览与 IP 排行）。
+func (s *Service) TraceIPs(ctx context.Context, q TraceIPQuery) (TraceIPSet, error) {
+	since := q.Since
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	limit := q.Limit
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > traceIPLimitMax {
+		limit = traceIPLimitMax
+	}
+	extraHex := traceExtraIPHexes(s.keys, q.ExtraIPs)
+	rows, err := s.repo.TraceIPs(ctx, since, limit, extraHex)
+	if err != nil {
+		return TraceIPSet{}, err
+	}
+	out := TraceIPSet{Rows: []TraceIP{}}
+	if len(rows) == 0 {
+		return out, nil
+	}
+	out.DistinctIPs = rows[0].DistinctIPs
+	out.Events = rows[0].TotalEvents
+	out.Logins = rows[0].TotalLogins
+	out.LoginFailures = rows[0].TotalFailures
+	for _, row := range rows {
+		out.Rows = append(out.Rows, TraceIP{
+			IP:         s.openIP(row.IPEnc),
+			Events:     row.Events,
+			Logins:     row.Logins,
+			UAKinds:    row.UAKinds,
+			Accounts:   row.Accounts,
+			AccountIDs: splitAccountIDs(row.AccountIDs),
+			Last:       row.LastAt,
+		})
+	}
+	return out, nil
+}
+
+// TraceUsers 按用户聚合时间窗内的审计（溯源总览的账号综合排行）。
+func (s *Service) TraceUsers(ctx context.Context, q TraceUserQuery) ([]TraceUser, error) {
+	since := q.Since
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	limit := q.Limit
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > traceUserLimitMax {
+		limit = traceUserLimitMax
+	}
+	ids := dedupeUserIDs(q.UserIDs)
+	rows, err := s.repo.TraceUsers(ctx, since, q.Sort, limit, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return []TraceUser{}, nil
+	}
+	out := make([]TraceUser, 0)
+	var cur *TraceUser
+	for _, row := range rows {
+		if cur == nil || cur.UserID != row.UserID {
+			out = append(out, TraceUser{
+				UserID:      row.UserID,
+				Events:      row.Events,
+				Logins:      row.Logins,
+				LoginIPs:    row.LoginIPs,
+				DistinctIPs: row.IPs,
+				UAKinds:     row.UAKinds,
+				SharedIPs:   row.SharedIPs,
+				Last:        row.LastAt,
+				IPs:         []TraceUserIP{},
+			})
+			cur = &out[len(out)-1]
+		}
+		cur.IPs = append(cur.IPs, TraceUserIP{
+			IP:     s.openIP(row.IPEnc),
+			Count:  row.IPCount,
+			Shared: row.IPShared,
+		})
+	}
+	return out, nil
+}
+
+func traceExtraIPHexes(keys *crypto.Keys, extra []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(extra))
+	for _, raw := range extra {
+		ip := strings.TrimSpace(raw)
+		if ip == "" {
+			continue
+		}
+		if a, err := netip.ParseAddr(ip); err == nil {
+			ip = a.String()
+		}
+		h := hex.EncodeToString(keys.HMAC(crypto.InfoHMACIP, []byte(ip)))
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+		if len(out) >= traceExtraIPMax {
+			break
+		}
+	}
+	return out
+}
+
+func dedupeUserIDs(ids []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{})
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+		if len(out) >= traceUserIDMax {
+			break
+		}
+	}
+	return out
 }
