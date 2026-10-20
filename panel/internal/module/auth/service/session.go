@@ -93,6 +93,8 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			return Tokens{}, errSessionInvalid
 		}
 
+		// 下一枚由上一枚派生（nextSecret），轮换写进去的就是它；宽限内拿上一枚来，重算出的正是当前那一枚
+		next := s.nextSecret(sid, secret)
 		var mode string
 		if sameHash(h, st.RTCur) {
 			mode = refreshModeRotate
@@ -101,11 +103,7 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 				// 上一枚 refresh 在宽限外又被用：判为重放，吊销整条会话
 				return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
 			}
-			// 宽限内：轮换的响应可能没送到浏览器（关页、F5、断网），照样补发一枚新的，免得它过了宽限被判重放
 			mode = refreshModeGrace
-		} else if st.RTPrev2 != "" && sameHash(h, st.RTPrev2) {
-			// 宽限内补发时被换下的那一枚又出现：上一枚落在了两个持有人手里，同样判重放
-			return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
 		} else {
 			// 对不上任何一枚：只回 401，不吊销（sid 不保密，随机值不能踢掉别人的会话）
 			return Tokens{}, errSessionInvalid
@@ -125,11 +123,7 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			}
 		}
 
-		newSecretPlain, err := newSecret()
-		if err != nil {
-			return Tokens{}, errs.Wrap(errs.Internal, err)
-		}
-		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, h, hashSecret(newSecretPlain))
+		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, h, hashSecret(next))
 		if err != nil {
 			return Tokens{}, errs.Wrap(errs.Unavailable, err)
 		}
@@ -148,7 +142,11 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			ExpiresIn:      exp,
 			UserID:         st.UserID,
 			RefreshExpires: ss.AbsExp,
-			Refresh:        formatRefresh(sid, newSecretPlain),
+		}
+		// 宽限内不改任何状态，只把当前那一枚再发一遍：轮换的响应没送到浏览器（关页、F5、断网、前端超时放弃）时，
+		// 它拿回的就是服务端记着的 rt_cur，不会过了宽限被判重放；晚到的旧请求也不会把别人手里那枚换掉。
+		if mode == refreshModeRotate || sameHash(hashSecret(next), st.RTCur) {
+			tok.Refresh = formatRefresh(sid, next)
 		}
 		return tok, nil
 	}
@@ -213,7 +211,7 @@ func (s *Service) Logout(ctx context.Context, audience, rawRefresh string) error
 	if !found || st.Audience != audience {
 		return nil
 	}
-	match := sameHash(h, st.RTCur) || (st.RTPrev != "" && sameHash(h, st.RTPrev)) || (st.RTPrev2 != "" && sameHash(h, st.RTPrev2))
+	match := sameHash(h, st.RTCur) || (st.RTPrev != "" && sameHash(h, st.RTPrev))
 	if !match {
 		return nil
 	}

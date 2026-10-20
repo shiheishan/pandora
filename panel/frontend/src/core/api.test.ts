@@ -604,6 +604,31 @@ describe('refreshSession', () => {
     const err = await rejection(client.refreshSession())
     expect(err.code).toBe('network_error')
     expect(tokens.get()).toBe('tok-1')
+    // 单飞已释放：再调一次会重新发请求
+    await rejection(client.refreshSession())
+    expect(stalled).toHaveBeenCalledTimes(2)
+  })
+
+  it('a refresh stalled after the lock is granted is aborted and released', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    tokens.set('tok-1')
+    let seen: AbortSignal | undefined
+    const stalled = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          seen = init?.signal ?? undefined
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    // 锁立即授予
+    const locks = { request: vi.fn((_name: string, _opts: LockOptions, fn: () => Promise<unknown>) => fn()) }
+    vi.stubGlobal('navigator', { locks })
+    const client = createApiClient({ tokens, fetch: stalled, baseUrl: () => ADMIN_BASE, refreshLockName: 'test-refresh-lock', refreshTimeoutMs: 20 })
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(seen?.aborted).toBe(true)
+    expect(tokens.get()).toBe('tok-1')
+    vi.unstubAllGlobals()
   })
 
   it('waiting too long for another tab holding the refresh lock times out as network_error', async () => {

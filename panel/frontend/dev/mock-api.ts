@@ -32,13 +32,12 @@ const TTL_SECONDS = 2592000
 
 const RT_COOKIE: Record<MockApp, string> = { portal: 'pandora_rt', admin: 'pandora_admin_rt' }
 
-/** 一条登录会话的 refresh 链：照 Go 记当前一枚、上一枚、宽限内补发时被换下的一枚与轮换时间 */
+/** 一条登录会话的 refresh 链：照 Go 记当前一枚、上一枚与轮换时间 */
 interface RefreshFamily {
   userId: string
   app: MockApp
   cur: string
   prev: string | null
-  prev2: string | null
   rotatedAt: number
 }
 
@@ -177,11 +176,10 @@ export function mockApi(app: MockApp): Plugin {
   const refreshFamilies = new Set<RefreshFamily>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
 
-  const findFamily = (value: string): { family: RefreshFamily; which: 'cur' | 'prev' | 'prev2' } | null => {
+  const findFamily = (value: string): { family: RefreshFamily; which: 'cur' | 'prev' } | null => {
     for (const family of refreshFamilies) {
       if (family.cur === value) return { family, which: 'cur' }
       if (family.prev === value) return { family, which: 'prev' }
-      if (family.prev2 === value) return { family, which: 'prev2' }
     }
     return null
   }
@@ -192,7 +190,7 @@ export function mockApi(app: MockApp): Plugin {
   }
   const bindRefresh = (res: ServerResponse, userId: string) => {
     const value = randomUUID()
-    const family: RefreshFamily = { userId, app, cur: value, prev: null, prev2: null, rotatedAt: Date.now() }
+    const family: RefreshFamily = { userId, app, cur: value, prev: null, rotatedAt: Date.now() }
     refreshFamilies.add(family)
     setRefreshCookie(res, app, value)
     return value
@@ -261,16 +259,13 @@ export function mockApi(app: MockApp): Plugin {
       const okBody = (access: string) => ({ access_token: access, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN })
       if (which === 'cur') {
         family.prev = family.cur
-        family.prev2 = null
         family.cur = randomUUID()
         family.rotatedAt = Date.now()
         setRefreshCookie(res, app, family.cur)
         return send(res, 200, okBody(issue(refreshedUser.userId, req)))
       }
-      // 上一枚在宽限内：照 Go 补发一枚新的（被换下的记进 prev2），宽限不延长
-      if (which === 'prev' && Date.now() - family.rotatedAt <= REFRESH_GRACE_MS) {
-        family.prev2 = family.cur
-        family.cur = randomUUID()
+      // 上一枚在宽限内：照 Go 不改状态，把当前那一枚原样再发一遍（Go 用 HMAC 从上一枚重算出它，这里直接取）
+      if (Date.now() - family.rotatedAt <= REFRESH_GRACE_MS) {
         setRefreshCookie(res, app, family.cur)
         return send(res, 200, okBody(issue(refreshedUser.userId, req)))
       }

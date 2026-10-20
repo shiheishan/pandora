@@ -93,8 +93,10 @@ C=$(code -X POST "$PUB/v1/auth/refresh" -b "pandora_rt=$FAKE")
 [ "$C" = 401 ] && ok "随便拼的 refresh 回 401" || bad "伪造的 refresh 没被拒" "HTTP $C"
 C=$(code "$PUB/v1/me" -H "Authorization: Bearer $NEW")
 [ "$C" = 200 ] && ok "伪造的 refresh 没有吊销会话（sid 不保密，不能拿来踢人）" || bad "伪造值把会话吊销了" "HTTP $C"
-C=$(code -X POST "$PUB/v1/auth/refresh" -b "pandora_rt=$RT1")
-[ "$C" = 200 ] && ok "30 秒宽限内用上一枚：只发 access" || bad "宽限内的并发刷新被拒" "HTTP $C"
+R=$(curl -s -c "$TMP/grace" -b "pandora_rt=$RT1" -X POST "$PUB/v1/auth/refresh")
+RTG=$(rt_of "$TMP/grace" pandora_rt)
+[ -n "$(echo "$R" | jqr "['access_token']")" ] && [ "$RTG" = "$RT2" ] \
+  && ok "30 秒宽限内用上一枚：发 access，并把当前那一枚原样再发一遍" || bad "宽限内的刷新没拿回当前 cookie" "$R"
 echo "  等 31 秒越过宽限…"
 sleep 31
 C=$(code -X POST "$PUB/v1/auth/refresh" -b "pandora_rt=$RT1")

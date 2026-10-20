@@ -39,6 +39,13 @@ func newSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// nextSecret 是轮换出的下一枚 refresh 随机串：HMAC(主密钥派生, sid ‖ 0 ‖ 上一枚)，32 字节 base64url。
+// 由上一枚确定性地算出，所以 30 秒宽限内拿上一枚来能重算出同一枚当前值原样补发，Redis 里不用存明文；
+// 没有主密钥算不出来，登录时的第一枚仍是 newSecret 的随机值。
+func (s *Service) nextSecret(sid, secret string) string {
+	return base64.RawURLEncoding.EncodeToString(s.keys.HMAC(crypto.InfoHMACRefreshNext, []byte(sid+"\x00"+secret)))
+}
+
 // hashSecret 返回随机串的 SHA-256（hex）；Redis 里只存它。
 func hashSecret(secret string) string {
 	h := sha256.Sum256([]byte(secret))

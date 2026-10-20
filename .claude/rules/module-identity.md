@@ -23,7 +23,7 @@ paths:
 - 改密：15 分钟错 5 次后一律 429；成功后门户保留当前会话、吊销其余，后台连当前会话一起吊销（`ChangePassword`）。
 
 ## 会话（Redis）
-- refresh cookie 是 `<sid>.<随机串>`，Redis 只存哈希。轮换用 Lua 原子 CAS；`refreshGrace` 内拿上一代 refresh 来照样发 access 并补发新 cookie（被换下的进 `rt_prev2`，宽限不延长），免得轮换响应丢了（关页、F5、断网）的浏览器过了宽限被判重放；超出宽限再用上一代、或用 `rt_prev2` 都是重放，整条会话吊销并写 `session.refresh_reuse` 审计（`refreshReused`）。守卫：`session_test.go` 的 `TestRefreshLostResponseRecovers`、`TestRefreshReplacedInGraceIsReuse`。
+- refresh cookie 是 `<sid>.<随机串>`，Redis 只存哈希。轮换用 Lua 原子 CAS；轮换出的下一枚由上一枚派生（`nextSecret`：`HMAC(InfoHMACRefreshNext, sid ‖ 0 ‖ 上一枚)`），`refreshGrace` 内拿上一代 refresh 来不改状态，发 access 并把当前那一枚原样再发一遍（轮换响应丢了、前端超时放弃的旧请求晚到，都不会把别人手里那枚换掉）；超出宽限再用上一代就是重放，整条会话吊销并写 `session.refresh_reuse` 审计（`refreshReused`）。不要改成「宽限内发一枚新的随机值」：那样偷到上一枚的人能把合法用户那枚挤出记录，重放检测失效。守卫：`session_test.go` 的 `TestRefreshLostResponseRecovers`、`TestRefreshGraceThenRotateStillDetectsReuse`、`TestRefreshLateGraceDoesNotDisturbCurrent`。
 - 每个用户有凭据纪元（`uepoch:`）：登录在验口令之前读纪元，建会话时纪元变了（期间改密、被停用）就不建。吊销用户会话一律经 `SessionRevoker.RevokeUser`：事务里先删 Redis 会话，Redis 失败回 `errs.Unavailable` 让业务事务回滚，提交后再扫一遍并推进纪元。
 - 后台会话有绝对寿命与空闲超时（`AdminSessionTTL`、`AdminIdleTimeout`），门户只有绝对寿命。`last_seen` 按 `lastSeenEvery` 节流写。
 - Lua 脚本会拼出不在 KEYS 里的键，只适用于单实例 Redis（部署就是单实例）；要上集群先改脚本。

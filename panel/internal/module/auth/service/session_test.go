@@ -44,14 +44,14 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("宽限期内用旧 refresh: %v", err)
 	}
-	if tok3.Refresh == "" || tok3.Refresh == refresh2 {
-		t.Fatal("宽限期也应补发一枚新 refresh")
+	if tok3.Refresh != refresh2 {
+		t.Fatal("宽限期应把当前那一枚原样再发一遍")
 	}
 	if tok3.AccessToken == "" {
 		t.Fatal("宽限期应发 access")
 	}
 
-	// 补发不延长宽限：从第一次轮换算起过了 30 秒，旧的那枚照旧判重放
+	// 宽限不因再发延长：从第一次轮换算起过了 30 秒，旧的那枚照旧判重放
 	h.Clock.Advance(31 * time.Second)
 	_, err = h.S.Refresh(ctx, authn.AudiencePublic, refresh1)
 	if !errors.Is(err, errSessionInvalid) {
@@ -93,11 +93,11 @@ func TestRefreshLostResponseRecovers(t *testing.T) {
 	h.Clock.Advance(10 * time.Second)
 	again, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
 	if err != nil || again.Refresh == "" {
-		t.Fatalf("宽限内用上一枚应补发新 refresh: %+v %v", again, err)
+		t.Fatalf("宽限内用上一枚应拿回当前那一枚 refresh: %+v %v", again, err)
 	}
 	h.Clock.Advance(5 * time.Minute)
 	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, again.Refresh); err != nil {
-		t.Fatalf("补发的那枚过了宽限也应照常可用: %v", err)
+		t.Fatalf("拿回的那枚过了宽限也应照常可用: %v", err)
 	}
 	for _, r := range h.Audit.events {
 		if r.ev.Action == "session.refresh_reuse" {
@@ -106,25 +106,34 @@ func TestRefreshLostResponseRecovers(t *testing.T) {
 	}
 }
 
-// 宽限内补发后，被换下的那一枚（第一次轮换发出的）又出现：上一枚落在了两个持有人手里，判重放、吊销整条会话。
-func TestRefreshReplacedInGraceIsReuse(t *testing.T) {
+// 偷到上一枚的人在宽限内拿到的是当前那一枚（与合法用户同一枚），再轮换一次：
+// 合法用户手里那枚过了宽限再用，照旧判重放、吊销整条会话（攻击者那枚一起失效），不会被悄悄挤掉。
+func TestRefreshGraceThenRotateStillDetectsReuse(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
-	h.Users.addUser("twice@example.com", "pass", UserStatusActive)
-	tok, err := h.S.Login(ctx, authn.AudiencePublic, "twice@example.com", "pass")
+	h.Users.addUser("steal@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "steal@example.com", "pass")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	second, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	legit, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
 	if err != nil {
-		t.Fatalf("首次 refresh: %v", err)
+		t.Fatalf("合法用户轮换: %v", err)
 	}
-	third, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	// 攻击者在宽限内用上一枚，两次
+	for i := 0; i < 2; i++ {
+		got, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+		if err != nil || got.Refresh != legit.Refresh {
+			t.Fatalf("宽限内第 %d 次应拿到同一枚当前值: %v", i+1, err)
+		}
+	}
+	stolen, err := h.S.Refresh(ctx, authn.AudiencePublic, legit.Refresh)
 	if err != nil {
-		t.Fatalf("宽限内用上一枚: %v", err)
+		t.Fatalf("攻击者用当前那一枚轮换: %v", err)
 	}
-	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, second.Refresh); !errors.Is(err, errSessionInvalid) {
-		t.Fatalf("被换下的那一枚再出现应判重放: %v", err)
+	h.Clock.Advance(31 * time.Second)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, legit.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("合法用户那枚过了宽限再用应判重放: %v", err)
 	}
 	reuse := 0
 	for _, r := range h.Audit.events {
@@ -135,8 +144,31 @@ func TestRefreshReplacedInGraceIsReuse(t *testing.T) {
 	if reuse != 1 {
 		t.Fatalf("refresh_reuse 审计=%d want 1", reuse)
 	}
-	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, third.Refresh); !errors.Is(err, errSessionInvalid) {
-		t.Fatalf("会话已吊销，补发的那枚也应失败: %v", err)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, stolen.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("会话已吊销，攻击者那枚也应失效: %v", err)
+	}
+}
+
+// 前端放弃的旧请求晚到：宽限内只把当前那一枚再发一遍、不改状态，浏览器手里那枚照常能用
+func TestRefreshLateGraceDoesNotDisturbCurrent(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("late@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "late@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	kept, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil {
+		t.Fatalf("重试的那次: %v", err)
+	}
+	h.Clock.Advance(20 * time.Second)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh); err != nil {
+		t.Fatalf("晚到的旧请求: %v", err)
+	}
+	h.Clock.Advance(10 * time.Minute)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, kept.Refresh); err != nil {
+		t.Fatalf("浏览器保留的那枚应照常可用: %v", err)
 	}
 }
 

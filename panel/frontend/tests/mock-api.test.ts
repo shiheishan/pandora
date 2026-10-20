@@ -187,7 +187,7 @@ describe('mock api · refresh cookie', () => {
     expect(res.headers.get('set-cookie')).toMatch(/pandora_rt=[^;]+;.*HttpOnly.*SameSite=Strict.*Path=\/v1\/auth/)
   })
 
-  it('refresh rotates the cookie; the previous one inside the 30 s grace gets a fresh cookie too', async () => {
+  it('refresh rotates the cookie; the previous one inside the 30 s grace gets the current cookie again', async () => {
     const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
     const first = rtFrom(login)
     const ok = await refresh(first)
@@ -196,20 +196,20 @@ describe('mock api · refresh cookie', () => {
     const second = rtFrom(ok)
     expect(second).not.toBe('')
     expect(second).not.toBe(first)
-    // 轮换的响应丢了：浏览器还拿着 first，宽限内再来就补发一枚，之后照常能用
+    // 轮换的响应丢了：浏览器还拿着 first，宽限内再来就拿回当前那一枚，之后照常能用
     const grace = await refresh(first)
     expect(grace.status).toBe(200)
-    const third = rtFrom(grace)
-    expect(third).not.toBe('')
-    expect([first, second]).not.toContain(third)
-    expect((await refresh(third)).status).toBe(200)
+    expect(rtFrom(grace)).toBe(second)
+    expect((await refresh(second)).status).toBe(200)
   })
 
-  it('the cookie replaced by a grace reissue is a replay and kills the session', async () => {
+  it('a stolen previous cookie used in the grace and rotated on still trips the replay check', async () => {
     const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
     const first = rtFrom(login)
     const second = rtFrom(await refresh(first))
-    const third = rtFrom(await refresh(first))
+    expect(rtFrom(await refresh(first))).toBe(second)
+    const third = rtFrom(await refresh(second))
+    expect((await fetch(`${base}/__mock/expire-refresh-grace`, { method: 'POST' })).status).toBe(204)
     expect((await refresh(second)).status).toBe(401)
     expect((await refresh(third)).status).toBe(401)
   })

@@ -337,34 +337,15 @@ func TestRotateAndGrace(t *testing.T) {
 	}
 
 	status, _, err = st.rotate(ctx, rec.ID, uid, "public", now.Add(10*time.Second), 0,
-		refreshModeGrace, hashSecret("s1"), hashSecret("s4"))
+		refreshModeGrace, hashSecret("s1"), "")
 	if err != nil || status != rotateOK {
 		t.Fatalf("grace 10s 内应 rotateOK，status=%d err=%v", status, err)
 	}
-	rs, _, err = st.readRefresh(ctx, rec.ID)
-	if err != nil {
-		t.Fatalf("readRefresh: %v", err)
-	}
-	// 宽限补发：换上新值，被换下的进 rt_prev2；rt_prev 与轮换时间不动（宽限不延长）
-	if rs.RTCur != hashSecret("s4") || rs.RTPrev2 != hashSecret("s2") || rs.RTPrev != hashSecret("s1") || !rs.RTRotatedAt.Equal(now) {
-		t.Fatalf("grace 补发后的字段: %+v", rs)
-	}
 
 	status, _, err = st.rotate(ctx, rec.ID, uid, "public", now.Add(31*time.Second), 0,
-		refreshModeGrace, hashSecret("s1"), hashSecret("s5"))
+		refreshModeGrace, hashSecret("s1"), "")
 	if err != nil || status != rotateConflict {
 		t.Fatalf("grace 31s 后应 rotateConflict，status=%d err=%v", status, err)
-	}
-
-	// 正常轮换清掉 rt_prev2
-	status, _, err = st.rotate(ctx, rec.ID, uid, "public", now.Add(40*time.Second), 0,
-		refreshModeRotate, hashSecret("s4"), hashSecret("s6"))
-	if err != nil || status != rotateOK {
-		t.Fatalf("rotate s4: status=%d err=%v", status, err)
-	}
-	rs, _, _ = st.readRefresh(ctx, rec.ID)
-	if rs.RTPrev2 != "" || rs.RTPrev != hashSecret("s4") || rs.RTCur != hashSecret("s6") {
-		t.Fatalf("轮换后的字段: %+v", rs)
 	}
 }
 
