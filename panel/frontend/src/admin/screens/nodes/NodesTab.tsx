@@ -134,7 +134,7 @@ export function NodesTab() {
       void invalidate()
       const verb = to === 'active' ? '启用' : '停用'
       toast(
-        updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}）` : ''}` : `选中的节点当前状态都不能${verb}`,
+        updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}${to === 'active' ? '或没绑服务器' : ''}）` : ''}` : `选中的节点当前状态都不能${verb}`,
         updated ? 'ok' : 'danger',
       )
     },
@@ -415,7 +415,7 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
         </div>
       </button>
       <span className={`${css.muted} ${s.colHideMobile}`}>{protocolLabel(n.node_type)}</span>
-      <span className={`${css.muted} ${css.ellipsis} ${s.colHideMobile}`}>{n.server_name ?? '—'}</span>
+      <span className={`${css.muted} ${css.ellipsis} ${s.colHideMobile}`}>{n.server_name ?? '未绑定'}</span>
       <span className={`${css.mono} ${css.right} ${s.colHideMobile}`} title={`在线 IP ${n.online_ips}`}>
         {n.online_users ? formatCount(n.online_users) : '—'}
       </span>

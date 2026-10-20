@@ -148,7 +148,8 @@ func TestInventoryRoutesRegistered(t *testing.T) {
 	for _, want := range []string{
 		"GET /v1/nodes", "POST /v1/nodes", "PUT /v1/nodes/order", "POST /v1/nodes/config/publish",
 		"POST /v1/nodes/reality-keypair", "PATCH /v1/nodes/:id", "DELETE /v1/nodes/:id",
-		"POST /v1/nodes/:id/copy", "POST /v1/nodes/:id/move", "POST /v1/nodes/:id/activate",
+		"POST /v1/nodes/:id/copy", "POST /v1/nodes/:id/bind", "POST /v1/nodes/:id/unbind",
+		"POST /v1/nodes/:id/activate",
 		"POST /v1/nodes/:id/retire", "GET /v1/node-protocol-schemas",
 		"GET /v1/servers", "POST /v1/servers", "GET /v1/servers/:id", "PATCH /v1/servers/:id",
 		"POST /v1/servers/:id/status", "DELETE /v1/servers/:id", "GET /v1/servers/:id/nodes",
@@ -156,6 +157,10 @@ func TestInventoryRoutesRegistered(t *testing.T) {
 		if !have[want] {
 			t.Fatalf("缺路由 %s（已注册 %v）", want, have)
 		}
+	}
+	// 换服务器已改为 bind / unbind，旧的 move 接口不应再注册。
+	if have["POST /v1/nodes/:id/move"] {
+		t.Fatal("POST /v1/nodes/:id/move 不应再注册")
 	}
 }
 
@@ -180,6 +185,8 @@ func TestInventoryPathIDNotFound(t *testing.T) {
 		{http.MethodPatch, "/v1/nodes/nope", `{"row_version":1}`},
 		{http.MethodPost, "/v1/nodes/nope/copy", `{"row_version":1}`},
 		{http.MethodPost, "/v1/nodes/nope/activate", `{"row_version":1}`},
+		{http.MethodPost, "/v1/nodes/nope/bind", `{"row_version":1}`},
+		{http.MethodPost, "/v1/nodes/nope/unbind", `{"row_version":1}`},
 		{http.MethodGet, "/v1/servers/nope", ""},
 		{http.MethodGet, "/v1/servers/nope/nodes", ""},
 		{http.MethodPost, "/v1/servers/nope/status", `{"status":"ready","row_version":1}`},
@@ -214,6 +221,11 @@ func TestInventoryFrontendBodiesBind(t *testing.T) {
 		"server_host":"203.0.113.10","server_port":8388,"protocol_config":{},"traffic_rate":1,
 		"pool_id":"`+id+`","display_name":"x","country_code":"HK"}`)
 	inventoryExpectErr(t, w, errs.ValidationFailed, "name")
+	// 建节点不绑服务器：不给 server_id、给空串都能绑定，服务器可选，绑定通过后走到 service 的校验（名字为空）
+	for _, body := range []string{`{"name":""}`, `{"name":"","server_id":""}`} {
+		w := doInventory(e, http.MethodPost, "/v1/nodes", body)
+		inventoryExpectErr(t, w, errs.ValidationFailed, "name")
+	}
 	// 改节点：版本号为 0，在 service 预检处回 422 row_version
 	w = doInventory(e, http.MethodPatch, "/v1/nodes/"+id, `{"row_version":0,"name":"a","display_name":"",
 		"pool_id":null,"node_type":"vless","server_host":"h.example","server_port":443,
@@ -237,7 +249,8 @@ func TestInventoryFrontendBodiesBind(t *testing.T) {
 		{http.MethodPost, "/v1/nodes/" + id + "/retire", `{"row_version":0}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/activate", `{"row_version":0}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/copy", `{"row_version":0,"name":"c","copy_routing":true,"server_port":9000}`},
-		{http.MethodPost, "/v1/nodes/" + id + "/move", `{"server_id":"` + id + `","row_version":0}`},
+		{http.MethodPost, "/v1/nodes/" + id + "/bind", `{"server_id":"` + id + `","server_port":8443,"row_version":0}`},
+		{http.MethodPost, "/v1/nodes/" + id + "/unbind", `{"row_version":0}`},
 	} {
 		w := doInventory(e, c.method, c.path, c.body)
 		inventoryExpectErr(t, w, errs.ValidationFailed, "row_version")
@@ -253,7 +266,7 @@ func TestNodeRequestFieldValidation(t *testing.T) {
 	cases := []struct {
 		name, method, path, body, field string
 	}{
-		{"建节点缺服务器", http.MethodPost, "/v1/nodes", `{"name":"a"}`, "server_id"},
+		{"建节点不绑服务器也能走到协议校验", http.MethodPost, "/v1/nodes", `{"name":"a"}`, "node_type"},
 		{"建节点服务器 id 坏", http.MethodPost, "/v1/nodes", `{"name":"a","server_id":"x"}`, "server_id"},
 		{"建节点池 id 坏", http.MethodPost, "/v1/nodes", `{"name":"a","server_id":"` + id + `","pool_id":"x"}`, "pool_id"},
 		{"改节点池 id 坏", http.MethodPatch, "/v1/nodes/" + id, `{"row_version":1,"pool_id":"x"}`, "pool_id"},
@@ -261,7 +274,9 @@ func TestNodeRequestFieldValidation(t *testing.T) {
 		{"改节点协议给数组", http.MethodPatch, "/v1/nodes/" + id, `{"row_version":1,"protocol_config":[]}`, "protocol_config"},
 		{"复制目标服务器 id 坏", http.MethodPost, "/v1/nodes/" + id + "/copy", `{"row_version":1,"target_server_id":"x"}`, "target_server_id"},
 		{"复制端口越界", http.MethodPost, "/v1/nodes/" + id + "/copy", `{"row_version":1,"server_port":70000}`, "server_port"},
-		{"迁移缺服务器", http.MethodPost, "/v1/nodes/" + id + "/move", `{"row_version":1}`, "server_id"},
+		{"绑定缺服务器", http.MethodPost, "/v1/nodes/" + id + "/bind", `{"row_version":1}`, "server_id"},
+		{"绑定服务器 id 坏", http.MethodPost, "/v1/nodes/" + id + "/bind", `{"row_version":1,"server_id":"x"}`, "server_id"},
+		{"绑定端口越界", http.MethodPost, "/v1/nodes/" + id + "/bind", `{"row_version":1,"server_id":"` + id + `","server_port":70000}`, "server_port"},
 		{"排序 id 坏", http.MethodPut, "/v1/nodes/order", `{"items":[{"id":"x","row_version":1,"sort_order":10}]}`, "items"},
 		{"排序版本缺", http.MethodPut, "/v1/nodes/order", `{"items":[{"id":"` + id + `","sort_order":10}]}`, "items"},
 		{"列表 id 坏", http.MethodGet, "/v1/nodes?id=x", "", "id"},

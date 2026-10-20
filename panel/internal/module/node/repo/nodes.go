@@ -156,10 +156,15 @@ func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64,
 	return res.RowsAffected == 1, nil
 }
 
-// MoveNodeServer 把节点挂到另一台服务器。
-func (r *Repo) MoveNodeServer(ctx context.Context, id uuid.UUID, expected int64, serverID uuid.UUID) (bool, error) {
-	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET server_id = ?, row_version = row_version + 1, updated_at = now()
-		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`, serverID, id, expected)
+// SetNodeServer 改节点所在服务器（serverID 为 nil 即解绑）与端口、L4：port 与 l4 同空同有（nodes_listen_shape）。
+// 上一台服务器报的运行状态与配置回执随之清空，免得新服务器上报之前把旧的当成新的。
+func (r *Repo) SetNodeServer(ctx context.Context, id uuid.UUID, expected int64, serverID *uuid.UUID, port *int, l4 *string) (bool, error) {
+	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET server_id = ?, server_port = ?, listen_l4 = ?,
+		runtime_status = NULL, runtime_reason = NULL, runtime_reason_node_id = NULL, runtime_state_at = NULL,
+		applied_config_sha256 = NULL, applied_config_at = NULL,
+		apply_failed_sha256 = NULL, apply_failed_reason = NULL, apply_failed_detail = NULL, apply_failed_at = NULL,
+		row_version = row_version + 1, updated_at = now()
+		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`, serverID, port, l4, id, expected)
 	if res.Error != nil {
 		return false, inventoryErr(res.Error)
 	}

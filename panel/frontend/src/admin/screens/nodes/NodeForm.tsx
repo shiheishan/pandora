@@ -26,6 +26,7 @@ import {
   realityEnabled,
   toFormValues,
   toProtocolConfig,
+  UNBOUND_HINT,
   validateBasic,
   visibleFields,
   withProtocolDefaults,
@@ -291,7 +292,8 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
     if (i === 0) return protocolLabel(basic.nodeType)
     if (i === 1) {
       if (!basic.name.trim() && !basic.host.trim()) return '未填写'
-      const addr = basic.host.trim() ? `${basic.host.trim()}:${basic.port}` : ''
+      const host = basic.host.trim()
+      const addr = host ? (basic.port.trim() ? `${host}:${basic.port.trim()}` : host) : ''
       return basic.name.trim() ? `${basic.name.trim()}${addr ? ` · ${addr}` : ''}` : '未填写'
     }
     return visible.length ? `${visible.length} 项${reqCount ? `，${reqCount} 项必填` : ''}` : '—'
@@ -511,7 +513,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
               </div>
               <Input
                 label="地址"
-                hint="域名或 IP"
+                hint="域名或 IP；上线前要填"
                 placeholder="hk3.example.com"
                 mono
                 value={basic.host}
@@ -521,6 +523,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
               />
               <Input
                 label="端口"
+                hint={basic.serverId ? undefined : '暂不绑定时可以先空着，绑定服务器时要填'}
                 mono
                 inputMode="numeric"
                 value={basic.port}
@@ -531,8 +534,8 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
               <div className={css.span2}>
                 <Select
                   label="所在服务器"
-                  hint="服务器还没接入的，创建后到「服务器」页签发安装令牌"
-                  placeholder={servers.isPending ? '加载中…' : '选择服务器'}
+                  hint={basic.serverId ? '服务器还没接入的，创建后到「服务器」页签发安装令牌' : UNBOUND_HINT}
+                  emptyOption="暂不绑定"
                   value={basic.serverId}
                   error={errors.server_id ?? errors.capacity_nodes}
                   disabled={disabled}
@@ -672,7 +675,7 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
 
   const submit = (event?: FormEvent, confirmed = false) => {
     event?.preventDefault()
-    const basicErrors = validateBasic(basic, false)
+    const basicErrors = validateBasic(basic, false, node.serving_status === 'active')
     const { config, errors: protoErrors } = toProtocolConfig(fields, current, schema?.property_types, { keepSecrets, cleared: liveCleared })
     if (!schema && basic.nodeType) basicErrors.node_type = '这是旧协议，请重新选择协议'
     const all = { ...basicErrors, ...protoErrors }
@@ -707,7 +710,7 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
           <Input label="地址" mono value={basic.host} onChange={(e) => set('host', e.target.value)} error={errors.server_host} disabled={disabled} />
           <Input label="端口" mono inputMode="numeric" value={basic.port} onChange={(e) => set('port', e.target.value)} error={errors.server_port} disabled={disabled} />
           <Input label="流量倍率" mono inputMode="decimal" value={basic.rate} onChange={(e) => set('rate', e.target.value)} error={errors.traffic_rate} disabled={disabled} />
-          <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="服务器不能在这里换" disabled readOnly fieldClassName={css.span2} />
+          <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="在「身份与操作」里绑定 / 改绑" disabled readOnly fieldClassName={css.span2} />
           <Select
             label="协议"
             placeholder="选择协议"

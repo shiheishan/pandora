@@ -122,7 +122,7 @@ func TestQueryNodesDetail(t *testing.T) {
 	e, _, ctx := newInvListEnv(t)
 	srv := e.server(t, ctx, "list-c")
 	n, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("hy2"), ServerID: srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
+		Name: e.name("hy2"), ServerID: &srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
 		ServerPort: 22021, ProtocolConfig: []byte(invHy2SecretField),
 	})
 	if err != nil {

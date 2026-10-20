@@ -22,6 +22,9 @@ const nodeNoPoolWarning = "未划入节点池，不服务任何用户"
 // serverNotEnrolledMsg 是上线时服务器还没有有效接入身份的提示。
 const serverNotEnrolledMsg = "服务器还没接入（先在服务器页生成安装命令完成接入）"
 
+// nodeUnboundActivateMsg 是没绑服务器的节点上线 / 启用时的提示。
+const nodeUnboundActivateMsg = "节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线"
+
 // BatchNodeStatus 批量改服务状态：先全部核对、再写；整批有一条不合法就整批失败。转 active 时要求所在服务器有有效接入身份。
 func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error {
 	ids := make([]uuid.UUID, len(in.Items))
@@ -63,6 +66,10 @@ func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error
 			}
 			if to != NodeActive {
 				continue
+			}
+			if n.ServerID == nil {
+				return &errs.Error{Code: errs.Conflict, Message: nodeUnboundActivateMsg,
+					Fields: map[string]string{"server_id": nodeUnboundActivateMsg, "id": n.ID.String()}}
 			}
 			ready := false
 			if nodeProtocolReady(n) && n.ServerID != nil {
@@ -132,7 +139,7 @@ func (s *Service) nodeLockForWrite(ctx context.Context, id uuid.UUID, rowVersion
 	return n, nil
 }
 
-// ActivateNode 上线一个草稿或停用的节点；所在服务器未就绪时一并转 ready。已在役则什么都不改（幂等）。要求所在服务器有有效接入身份。
+// ActivateNode 上线一个草稿或停用的节点；所在服务器未就绪时一并转 ready。已在役则什么都不改（幂等）。要求所在服务器有有效接入身份。没绑服务器的回 409 server_id。
 func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int64) (AdminNode, error) {
 	if rowVersion <= 0 {
 		return AdminNode{}, inventoryInvalid("row_version", nodeRowVersionHint)
@@ -156,10 +163,11 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 			return inventoryConflict("节点已退役，不能上线")
 		case !CanNodeTransition(n.ServingStatus, NodeActive):
 			return inventoryConflict("节点处于 " + n.ServingStatus + "，不能上线")
-		case !nodeProtocolReady(n):
-			return inventoryConflict("节点的协议配置还没就绪（协议类型、地址、端口），先保存协议再上线")
 		case n.ServerID == nil:
-			return inventoryConflict("节点没有绑定服务器，不能上线")
+			return &errs.Error{Code: errs.Conflict, Message: nodeUnboundActivateMsg,
+				Fields: map[string]string{"server_id": nodeUnboundActivateMsg}}
+		case !nodeProtocolReady(n):
+			return inventoryConflict("节点的协议配置还没就绪（协议类型、对外地址、端口），补齐后再上线")
 		}
 		// 锁序：节点行 → 服务器行
 		srv, found, err := s.lockServerRow(ctx, *n.ServerID)

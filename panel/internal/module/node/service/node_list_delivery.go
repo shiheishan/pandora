@@ -10,6 +10,7 @@ import (
 const nodeDeliveryFreshWindow = 10 * time.Minute
 
 const (
+	nodeNoteUnbound         = "未绑定服务器，不下发：先在节点详情「身份与操作」里绑定服务器，再上线"
 	nodeNoteNotActive       = "节点不在服务中（草稿、已停用或已退役）"
 	nodeNoteNoPool          = "未划入节点池，不服务任何用户"
 	nodeNotePoolInactive    = "所在节点池未启用，不下发"
@@ -24,6 +25,8 @@ const (
 
 // nodeDeliveryFacts 是判定「是否下发」时用的输入事实。
 type nodeDeliveryFacts struct {
+	// Bound：节点绑定了服务器（server_id 非空）
+	Bound      bool
 	Serving    string
 	Pooled     bool
 	PoolActive bool
@@ -39,9 +42,12 @@ type nodeDeliveryFacts struct {
 }
 
 // nodeDeliveryVerdict 按顺序判定节点会不会出现在用户订阅里及说明文案。
-// 判定顺序：服务状态 -> 划池 -> 池启用 -> 池绑套餐 -> 见过心跳 -> 流量超限 -> 可下发条件 -> 心跳新鲜度 -> 运行降级。
+// 判定顺序：绑定服务器（已退役的除外，删服务器时退役的节点也没有服务器，但已不能再绑） -> 服务状态 -> 划池 -> 池启用 -> 池绑套餐 -> 见过心跳 -> 流量超限 -> 可下发条件 -> 心跳新鲜度 -> 运行降级。
 // Deliverable 来自 repo.DeliverableNodeCond（订阅、套餐页、后台三处同一口径）；「池没绑套餐」在池未启用之后判。
 func nodeDeliveryVerdict(f nodeDeliveryFacts) (bool, string) {
+	if !f.Bound && f.Serving != NodeRetired {
+		return false, nodeNoteUnbound
+	}
 	if f.Serving != "active" {
 		return false, nodeNoteNotActive
 	}

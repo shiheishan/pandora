@@ -85,8 +85,16 @@ type nodeCopyRequest struct {
 	ServerPort     *int   `json:"server_port"`
 }
 
-type nodeMoveRequest struct {
+// nodeBindRequest 是绑定 / 改绑服务器的请求体：server_port 不给就沿用节点已有端口。
+type nodeBindRequest struct {
 	ServerID   string `json:"server_id"`
+	ServerPort *int   `json:"server_port"`
+	RowVersion int64  `json:"row_version"`
+	Reason     string `json:"reason"`
+}
+
+// nodeUnbindRequest 是解绑服务器的请求体。
+type nodeUnbindRequest struct {
 	RowVersion int64  `json:"row_version"`
 	Reason     string `json:"reason"`
 }
