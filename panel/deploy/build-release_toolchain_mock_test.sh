@@ -6,7 +6,7 @@
 #   3. curl 只调一次，缓存命中后不再下载；
 #   4–6. 摘要/只给 URL/工具链三种失败；
 #   7. 脚本静态禁词；
-#   8. pdnd 发布清单（摘要与二进制一致、serial 编进 pdnd）与可选签名。
+#   8. pdnd 发布清单（摘要与二进制一致、serial 编进 pdnd）、只构建节点端、带外签名的复现核对。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,18 +67,6 @@ case "$1" in
     out=""; prev=""
     for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
     printf 'gobuild:%s\n' "${FAKE_GO_BUILD_TC:-$(effective)}" >"$out" ;;
-  run)
-    if [[ "$*" == *./release/signmanifest* ]]; then
-      out=""; key=""; infile=""; prev=""
-      for a in "$@"; do
-        [ "$prev" = -out ] && out="$a"
-        [ "$prev" = -key ] && key="$a"
-        [ "$prev" = -in ] && infile="$a"
-        case "$a" in -out|-key|-in) prev="$a" ;; *) prev="" ;; esac
-      done
-      printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$out"
-      [ -n "${FAKE_SIGN_LOG:-}" ] && printf 'signmanifest key=%s in=%s out=%s\n' "$key" "$infile" "$out" >>"$FAKE_SIGN_LOG"
-    fi ;;
 esac
 exit 0
 GO
@@ -115,10 +103,9 @@ run_build() {
     : >"$T/curl.log"
   fi
   : >"$T/go.log"
-  : >"$T/sign.log"
   : >"$T/goargs.log"
   env PATH="$T/stub:$PATH" FAKE_GO_LOG="$T/go.log" FAKE_CURL_LOG="$T/curl.log" \
-    FAKE_SIGN_LOG="$T/sign.log" FAKE_GO_ARGS_LOG="$T/goargs.log" \
+    FAKE_GO_ARGS_LOG="$T/goargs.log" \
     PANDORA_VERSION=toolchain-test PANDORA_BUILD_SERIAL=1792540800 GOTOOLCHAIN=local "$@" \
     bash "$T/tree/panel/deploy/build-release.sh" "$T/out" >"$T/stdout" 2>"$T/stderr"
 }
@@ -189,12 +176,13 @@ grep -qx "PANEL_GO_TOOLCHAIN=$panel_tc" "$info" && grep -qx "PDND_GO_TOOLCHAIN=$
 
 for arch in amd64 arm64; do
   [ ! -f "$T/out/pandora-panel_toolchain-test_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" ] \
-    || fail "unexpected .sig without signing key ($arch)"
+    || fail "unexpected .sig without PDND_SIGNATURE_DIR ($arch)"
 done
-[ ! -s "$T/sign.log" ] || fail 'sign.log must be empty without signing key'
-# goargs.log 每行是「目录|全部参数」：pdnd 的四次 build（两棵树 × 两架构）都要带 buildSerial。
+cmp -s "$T/out/pandora-panel_toolchain-test_linux_amd64/pdnd-dist/pdnd-manifest.json" \
+  "$T/out/pandora-panel_toolchain-test_linux_arm64/pdnd-dist/pdnd-manifest.json" || fail 'the two packages carry different pdnd manifests'
+# goargs.log 每行是「目录|全部参数」：节点端只构建一份（两架构各一次），都要带 buildSerial。
 pdnd_builds="$(grep -E '/tree/pdnd\|build ' "$T/goargs.log" || true)"
-[ "$(grep -c . <<<"$pdnd_builds")" = 4 ] || fail "expected four pdnd builds in goargs.log, got: $pdnd_builds"
+[ "$(grep -c . <<<"$pdnd_builds")" = 2 ] || fail "expected two pdnd builds in goargs.log, got: $pdnd_builds"
 grep -vq -- '-X main.buildSerial=1792540800' <<<"$pdnd_builds" && fail 'pdnd build missing buildSerial ldflag'
 
 # --- 3. curl 只一次；再构建命中缓存 ---
@@ -232,25 +220,38 @@ if run_build "${GEOIP_ENV[@]}"; then fail 'go directive without patch was accept
 grep -q 'full x.y.z' "$T/stderr" || fail "directive message missing: $(cat "$T/stderr")"
 printf 'module example.test/panel\ngo %s\n' "$PANEL_TC_VERSION" >"$T/tree/panel/go.mod"
 
-# --- 8. pdnd 发布清单与签名（带私钥与失败路径）---
-printf 'stub-key\n' >"$T/test.key"
-chmod 600 "$T/test.key"
-run_build "${GEOIP_ENV[@]}" PDND_SIGNING_KEY_FILE="$T/test.key" || fail 'build with signing key failed'
+# --- 8. 只构建节点端；带外签名经 PDND_SIGNATURE_DIR 放进包里 ---
+run_build PANDORA_PDND_ONLY=1 || { cat "$T/stderr" >&2; fail 'pdnd-only build failed'; }
+[ -f "$T/out/pdnd-dist/pdnd-manifest.json" ] || fail 'pdnd-only build wrote no manifest'
+[ ! -e "$T/out/pandora-panel_toolchain-test_linux_amd64" ] || fail 'pdnd-only build must not build the panel package'
+[ ! -s "$T/curl.log" ] || fail 'pdnd-only build must not download geoip'
+grep -q '^build|.*/tree/panel|' "$T/go.log" && fail 'pdnd-only build must not build pandora'
+signed="$T/signed"
+rm -rf "$signed"
+mkdir -p "$signed"
+cp "$T/out/pdnd-dist/pdnd-manifest.json" "$signed/"
+printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$signed/pdnd-manifest.json.sig"
+
+run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed" || { cat "$T/stderr" >&2; fail 'build with PDND_SIGNATURE_DIR failed'; }
 for arch in amd64 arm64; do
   root="$T/out/pandora-panel_toolchain-test_linux_${arch}"
-  [ -f "$root/pdnd-dist/pdnd-manifest.json.sig" ] || fail "missing .sig ($arch)"
+  cmp -s "$root/pdnd-dist/pdnd-manifest.json.sig" "$signed/pdnd-manifest.json.sig" || fail "missing or wrong .sig ($arch)"
   grep -q 'pdnd-dist/pdnd-manifest.json.sig' "$root/SHA256SUMS" || fail "SHA256SUMS missing .sig ($arch)"
 done
-sign_lines="$(wc -l <"$T/sign.log" | tr -d ' ')"
-[ "$sign_lines" = 2 ] || fail "expected two signmanifest calls, got $sign_lines"
-grep -q "key=$T/test.key" "$T/sign.log" || fail 'sign log missing key path'
-grep -q 'in=.*/pdnd-dist/pdnd-manifest.json' "$T/sign.log" || fail 'sign log missing manifest path'
 
-if run_build "${GEOIP_ENV[@]}" PDND_SIGNING_KEY_FILE="$T/missing.key"; then
-  fail 'missing signing key file was accepted'
+# 签过名的清单与重新构建出的不同（节点端没复现）：拒绝
+sed 's/"serial": 1792540800/"serial": 1792540801/' "$T/out/pdnd-dist/pdnd-manifest.json" >"$signed/pdnd-manifest.json"
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed"; then
+  fail 'a signed manifest that differs from the rebuilt one was accepted'
 fi
+grep -q '没能复现' "$T/stderr" || fail "reproducibility message missing: $(cat "$T/stderr")"
 
-if run_build "${GEOIP_ENV[@]}" PDND_SIGNING_KEY_FILE="$T/test.key" PANDORA_BUILD_SERIAL=0; then
+rm -f "$signed/pdnd-manifest.json.sig"
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed"; then
+  fail 'PDND_SIGNATURE_DIR without .sig was accepted'
+fi
+printf '{}\n' >"$signed/pdnd-manifest.json.sig"
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed" PANDORA_BUILD_SERIAL=0; then
   fail 'signing with serial 0 was accepted'
 fi
 grep -q serial "$T/stderr" || fail "serial 0 message missing: $(cat "$T/stderr")"
@@ -270,6 +271,6 @@ if grep -nE '(^|[^[:alnum:]_.])go1\.[0-9]+\.[0-9]+' "$DEPLOY/build-release.sh" |
 fi
 
 grep -Fq 'require_binary_toolchain "$PANEL_TOOLCHAIN" "$target/bin/pandora"' "$DEPLOY/build-release.sh" || fail 'panel binary is not checked after build'
-grep -Fq 'require_binary_toolchain "$PDND_TOOLCHAIN" "$target/pdnd-dist/$pdnd_name"' "$DEPLOY/build-release.sh" || fail 'pdnd binaries are not checked'
+grep -Fq 'require_binary_toolchain "$PDND_TOOLCHAIN" "$PDND_STAGE/$pdnd_name"' "$DEPLOY/build-release.sh" || fail 'pdnd binaries are not checked'
 
 printf 'build-release toolchain mock: PASS\n'

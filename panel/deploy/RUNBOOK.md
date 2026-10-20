@@ -1460,7 +1460,7 @@ go run ./release/signmanifest -gen /tmp/pdnd-signing   # 写出 /tmp/pdnd-signin
 3. **【写】** 把 `.pub` 放进 `pdnd/upgrade/keys/`（文件名如 `release-<key_id>.pub`），提交合入：从这一版起编出的 pdnd 才认这把钥。
 4. 删掉本机的 `.key`：`rm -P /tmp/pdnd-signing.key`（Linux 用 `shred -u`）。
 
-`release.yml` 推标签发版时进 `release-signing`，把 secret 写进 0600 临时文件交给 `build-release.sh` 签名，用完即删；没有这个 secret 发版直接失败。本地 `build-release.sh` 不设 `PDND_SIGNING_KEY_FILE` 时只出清单、不出签名，这样的包不能用于在线升级。
+`release.yml` 推标签发版时，只有 `pdnd` 这个 job 进 `release-signing`：它只装 Go、不装 npm 依赖，只构建节点端与清单，把 secret 写进 0600 临时文件签名、用完即删，再用仓库里的公钥核一遍（私钥与 `pdnd/upgrade/keys` 对不上就在这里失败）；没有这个 secret 发版直接失败。构建全量包的 job 拿不到私钥：它重新构建节点端，清单必须与签过名的那份逐字节相同才把 `.sig` 放进包里。本地跑 `build-release.sh` 只出清单、不出签名，这样的包不能用于在线升级。
 
 ### 17.2 轮换签名密钥
 

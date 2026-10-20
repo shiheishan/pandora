@@ -220,3 +220,44 @@ func TestRunFlagValidation(t *testing.T) {
 		t.Fatalf("合法参数应成功: %v", err)
 	}
 }
+
+func TestVerifyAgainstKeyring(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "m.json")
+	if err := os.WriteFile(manifestPath, []byte(validManifestJSON()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	keyPath := filepath.Join(dir, "k.key")
+	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(priv)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sigPath := filepath.Join(dir, "m.sig")
+	if err := run([]string{"-key", keyPath, "-in", manifestPath, "-out", sigPath}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("签名失败: %v", err)
+	}
+
+	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(pub), &bytes.Buffer{}); err != nil {
+		t.Fatalf("对得上的公钥应通过: %v", err)
+	}
+	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(otherPub), &bytes.Buffer{}); err == nil {
+		t.Fatal("别的公钥不应通过")
+	}
+	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(), &bytes.Buffer{}); err == nil {
+		t.Fatal("空公钥环不应通过")
+	}
+	if err := os.WriteFile(manifestPath, []byte(validManifestJSON()+" "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(pub), &bytes.Buffer{}); err == nil {
+		t.Fatal("清单改过一个字节不应通过")
+	}
+
+	if err := run([]string{"-verify", sigPath, "-in", manifestPath, "-key", keyPath}, &bytes.Buffer{}); err == nil {
+		t.Fatal("-verify 与 -key 混用应报错")
+	}
+	if err := run([]string{"-verify", sigPath}, &bytes.Buffer{}); err == nil {
+		t.Fatal("-verify 缺 -in 应报错")
+	}
+}

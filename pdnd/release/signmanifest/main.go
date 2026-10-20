@@ -1,4 +1,4 @@
-// Command signmanifest 为 pdnd 发布清单做 ed25519 签名，或生成新的签名密钥对。
+// Command signmanifest 为 pdnd 发布清单做 ed25519 签名、用本仓库内置的公钥核对签名，或生成新的签名密钥对。
 //
 // 私钥只从 -key 指定的文件读取，不接受命令行明文密钥；generate 写出的私钥只应放进维护者的密码管理器与
 // GitHub environment secret（release-signing / PDND_SIGNING_KEY），不要长期留在构建机上。
@@ -17,6 +17,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/aegispanel/nodeagent/upgrade"
 )
 
 const maxManifestBytes = 64 << 10 // 与 upgrade.MaxManifestBytes 一致
@@ -45,11 +47,12 @@ func run(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("signmanifest", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	var keyPath, inPath, outPath, genPrefix string
+	var keyPath, inPath, outPath, genPrefix, verifySig string
 	fs.StringVar(&keyPath, "key", "", "ed25519 私钥文件（一行 base64）")
 	fs.StringVar(&inPath, "in", "", "待签名的 pdnd-manifest.json")
 	fs.StringVar(&outPath, "out", "", "输出的 pdnd-manifest.json.sig")
 	fs.StringVar(&genPrefix, "gen", "", "生成密钥对，文件前缀（写出 <前缀>.key 与 <前缀>.pub）")
+	fs.StringVar(&verifySig, "verify", "", "用 pdnd/upgrade/keys 里的公钥核对这份 .sig 与 -in 的清单（不需要私钥）")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -62,12 +65,23 @@ func run(args []string, stdout io.Writer) error {
 	keySet := strings.TrimSpace(keyPath) != ""
 	inSet := strings.TrimSpace(inPath) != ""
 	outSet := strings.TrimSpace(outPath) != ""
+	verifySet := strings.TrimSpace(verifySig) != ""
 
 	if genSet {
-		if keySet || inSet || outSet {
-			return errors.New("-gen 不能与 -key、-in、-out 同时使用")
+		if keySet || inSet || outSet || verifySet {
+			return errors.New("-gen 不能与 -key、-in、-out、-verify 同时使用")
 		}
 		return generate(strings.TrimSpace(genPrefix), stdout)
+	}
+	if verifySet {
+		if keySet || outSet || !inSet {
+			return errors.New("-verify 只与 -in 一起使用")
+		}
+		ring, err := upgrade.BuiltinKeyring()
+		if err != nil {
+			return err
+		}
+		return verify(inPath, verifySig, ring, stdout)
 	}
 
 	if !keySet || !inSet || !outSet {
@@ -181,6 +195,27 @@ func sign(keyPath, inPath, outPath string) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("写入签名文件失败: %w", err)
 	}
+	return nil
+}
+
+// verify 按节点端同一套规则核对：签名对得上 ring 里的某把公钥，清单本身合规。
+// 发版时签完立刻跑一遍，私钥与仓库里的公钥对不上会在这里失败，而不是发出去之后所有节点都拒绝升级。
+func verify(inPath, sigPath string, ring *upgrade.Keyring, stdout io.Writer) error {
+	raw, err := os.ReadFile(inPath)
+	if err != nil {
+		return fmt.Errorf("读取清单失败: %w", err)
+	}
+	sig, err := os.ReadFile(sigPath)
+	if err != nil {
+		return fmt.Errorf("读取签名文件失败: %w", err)
+	}
+	if err := ring.Verify(raw, sig); err != nil {
+		return fmt.Errorf("签名核对不过（签名私钥与 pdnd/upgrade/keys 里的公钥对不上？）: %w", err)
+	}
+	if _, err := upgrade.ParseManifest(raw); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "签名有效（内置公钥 %d 把）\n", ring.Len())
 	return nil
 }
 
