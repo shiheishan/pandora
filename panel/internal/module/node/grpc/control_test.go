@@ -33,13 +33,14 @@ var testSessionOpt = service.SessionOptions{
 
 // fakeBackend 实现 service.SessionBackend，供本包 gRPC 测试用。
 type fakeBackend struct {
-	mu           sync.Mutex
-	rosters      map[uuid.UUID][]service.NodeRoster
-	configs      map[uuid.UUID][]service.NodeConfigDoc
-	trafficErr   error
-	ingested     []service.TrafficReport
-	has          []bool
-	renewSerials []*big.Int
+	mu             sync.Mutex
+	rosters        map[uuid.UUID][]service.NodeRoster
+	configs        map[uuid.UUID][]service.NodeConfigDoc
+	trafficErr     error
+	ingested       []service.TrafficReport
+	has            []bool
+	renewSerials   []*big.Int
+	upgradeReports []service.UpgradeReport
 }
 
 func newFakeBackend() *fakeBackend {
@@ -125,6 +126,13 @@ func (f *fakeBackend) RecordHeartbeat(context.Context, uuid.UUID, []service.Node
 }
 
 func (f *fakeBackend) RecordConfigAck(context.Context, uuid.UUID, service.ConfigAck, time.Time) error {
+	return nil
+}
+
+func (f *fakeBackend) RecordUpgradeReport(_ context.Context, _ uuid.UUID, r service.UpgradeReport, _ time.Time) error {
+	f.mu.Lock()
+	f.upgradeReports = append(f.upgradeReports, r)
+	f.mu.Unlock()
 	return nil
 }
 

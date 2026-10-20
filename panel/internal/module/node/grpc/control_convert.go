@@ -47,6 +47,12 @@ func helloFromProto(h *nodev1.Hello) service.Hello {
 			out.AppliedUsers[id] = a.GetVersion()
 		}
 	}
+	out.BuildSerial = h.GetBuildSerial()
+	if lu := h.GetLastUpgrade(); lu != nil {
+		if r, ok := upgradeReportFromProto(lu); ok {
+			out.LastUpgrade = &r
+		}
+	}
 	return out
 }
 
@@ -151,6 +157,28 @@ func configAckFromProto(a *nodev1.ConfigAck) (service.ConfigAck, bool) {
 	return service.ConfigAck{
 		NodeID: id, SHA256: strings.ToLower(a.GetContentSha256()), Phase: phase,
 		ReasonCode: a.GetReasonCode(), Detail: a.GetDetail(),
+	}, true
+}
+
+// upgradeReportFromProto 转升级回报；job_id 不是 UUID 或阶段未知时 ok 为 false。
+func upgradeReportFromProto(r *nodev1.UpgradeReport) (service.UpgradeReport, bool) {
+	id, ok := parseID(r.GetJobId())
+	if !ok {
+		return service.UpgradeReport{}, false
+	}
+	var phase service.UpgradePhase
+	switch r.GetPhase() {
+	case nodev1.UpgradePhase_UPGRADE_PHASE_STAGED:
+		phase = service.UpgradePhaseStaged
+	case nodev1.UpgradePhase_UPGRADE_PHASE_FAILED:
+		phase = service.UpgradePhaseFailed
+	case nodev1.UpgradePhase_UPGRADE_PHASE_ROLLED_BACK:
+		phase = service.UpgradePhaseRolledBack
+	default:
+		return service.UpgradeReport{}, false
+	}
+	return service.UpgradeReport{
+		JobID: id, Phase: phase, ReasonCode: r.GetReasonCode(), Detail: r.GetDetail(),
 	}, true
 }
 
@@ -261,6 +289,11 @@ func outboundToProto(o service.Outbound) []*nodev1.SessionResponse {
 	case service.OutTombstone:
 		return []*nodev1.SessionResponse{command(&nodev1.Command{Kind: &nodev1.Command_Tombstone{Tombstone: &nodev1.Tombstone{
 			Reason: o.Reason,
+		}}})}
+	case service.OutUpgrade:
+		return []*nodev1.SessionResponse{command(&nodev1.Command{Kind: &nodev1.Command_Upgrade{Upgrade: &nodev1.Upgrade{
+			JobId: o.Upgrade.JobID.String(), Manifest: o.Upgrade.Manifest, Signature: o.Upgrade.Signature,
+			BinaryUrl: o.Upgrade.BinaryURL, ConfirmWithinSec: o.Upgrade.ConfirmWithinSec,
 		}}})}
 	}
 	return nil

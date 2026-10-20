@@ -213,6 +213,13 @@ func recvLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, s
 			sess.HandleUsersAck(a)
 		case *nodev1.SessionRequest_Renew:
 			sess.HandleRenew(ctx, serial, body.Renew.GetCsrDer())
+		case *nodev1.SessionRequest_UpgradeReport:
+			r, ok := upgradeReportFromProto(body.UpgradeReport)
+			if !ok {
+				log.Warn("升级回报不合法，忽略", zap.Uint64("seq", req.GetSeq()))
+				continue
+			}
+			sess.HandleUpgradeReport(ctx, r)
 		case *nodev1.SessionRequest_Hello:
 			log.Warn("流中途又收到 Hello，忽略", zap.Uint64("seq", req.GetSeq()))
 		default:
