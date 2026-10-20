@@ -51,6 +51,7 @@ type sessionRecord struct {
 	IPHash      string
 	RTCur       string // refresh 随机串的 SHA-256（hex）
 	RTPrev      string
+	RTPrev2     string // 宽限内补发时被换下的那一枚：之后再出现就判重放
 	RTRotatedAt time.Time
 	Epoch       string
 }
@@ -69,6 +70,7 @@ type refreshState struct {
 	Audience    string
 	RTCur       string
 	RTPrev      string
+	RTPrev2     string
 	RTRotatedAt time.Time
 }
 
@@ -133,6 +135,7 @@ func (st *sessionStore) create(ctx context.Context, rec sessionRecord, now time.
 		"ip_hash", rec.IPHash,
 		"rt_cur", rec.RTCur,
 		"rt_prev", "",
+		"rt_prev2", "",
 		"rt_rotated_at", 0,
 		"epoch", rec.Epoch,
 	}
@@ -193,11 +196,11 @@ func (st *sessionStore) check(ctx context.Context, sid string, uid uuid.UUID, au
 
 // readRefresh 读 refresh 判定需要的字段；会话不存在 found 为 false。
 func (st *sessionStore) readRefresh(ctx context.Context, sid string) (refreshState, bool, error) {
-	vals, err := st.rdb.HMGet(ctx, sessKey(sid), "uid", "aud", "rt_cur", "rt_prev", "rt_rotated_at").Result()
+	vals, err := st.rdb.HMGet(ctx, sessKey(sid), "uid", "aud", "rt_cur", "rt_prev", "rt_rotated_at", "rt_prev2").Result()
 	if err != nil {
 		return refreshState{}, false, err
 	}
-	if len(vals) != 5 || vals[0] == nil {
+	if len(vals) != 6 || vals[0] == nil {
 		return refreshState{}, false, nil
 	}
 	uid, err := uuid.Parse(toString(vals[0]))
@@ -209,13 +212,15 @@ func (st *sessionStore) readRefresh(ctx context.Context, sid string) (refreshSta
 		Audience:    toString(vals[1]),
 		RTCur:       toString(vals[2]),
 		RTPrev:      toString(vals[3]),
+		RTPrev2:     toString(vals[5]),
 		RTRotatedAt: fromUnix(parseInt64(toString(vals[4]))),
 	}, true, nil
 }
 
 // refresh 的原子一步：先做与 check 相同的有效性校验，再按模式核对期望值（CAS）。
-// rotate：rt_cur 仍等于期望值才轮换（rt_prev ← rt_cur、rt_cur ← 新值）；
-// grace：rt_prev 仍等于期望值且轮换不超过宽限才放行。返回 {状态, amr, abs_exp, reauth_at}。
+// rotate：rt_cur 仍等于期望值才轮换（rt_prev ← rt_cur、rt_cur ← 新值，rt_prev2 清空）；
+// grace：rt_prev 仍等于期望值且轮换不超过宽限才放行，同样补发新值（rt_prev2 ← rt_cur、rt_cur ← 新值），
+// rt_prev 与 rt_rotated_at 不动，宽限不因补发而延长。返回 {状态, amr, abs_exp, reauth_at}。
 var rotateScript = redis.NewScript(`
 local h = redis.call('HMGET', KEYS[1], 'uid', 'aud', 'abs_exp', 'last_seen', 'epoch', 'rt_cur', 'rt_prev', 'amr', 'reauth_at', 'rt_rotated_at')
 if not h[1] or h[1] ~= ARGV[1] or h[2] ~= ARGV[2] then return {0} end
@@ -231,15 +236,15 @@ if (tonumber(h[3]) or 0) <= now or (idle > 0 and now - ls >= idle) or ep ~= h[5]
 end
 if ARGV[6] == 'rotate' then
   if h[6] ~= ARGV[7] then return {2} end
-  redis.call('HSET', KEYS[1], 'rt_prev', h[6], 'rt_cur', ARGV[8], 'rt_rotated_at', ARGV[3], 'last_seen', ARGV[3])
+  redis.call('HSET', KEYS[1], 'rt_prev', h[6], 'rt_prev2', '', 'rt_cur', ARGV[8], 'rt_rotated_at', ARGV[3], 'last_seen', ARGV[3])
 else
   if h[7] ~= ARGV[7] or now - (tonumber(h[10]) or 0) > tonumber(ARGV[9]) then return {2} end
-  redis.call('HSET', KEYS[1], 'last_seen', ARGV[3])
+  redis.call('HSET', KEYS[1], 'rt_prev2', h[6], 'rt_cur', ARGV[8], 'last_seen', ARGV[3])
 end
 return {1, h[8] or '', h[3], h[9] or '0'}
 `)
 
-// rotate 执行 refresh 的原子一步；newHash 只在 rotate 模式用。
+// rotate 执行 refresh 的原子一步；两种模式都换上 newHash。
 func (st *sessionStore) rotate(ctx context.Context, sid string, uid uuid.UUID, aud string, now time.Time,
 	idle time.Duration, mode, expect, newHash string) (int, sessionState, error) {
 	keys := []string{sessKey(sid), userSessKey(uid), epochKey(uid)}

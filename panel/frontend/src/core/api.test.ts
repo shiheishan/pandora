@@ -500,7 +500,7 @@ describe('access token refresh on 401', () => {
       json(200, { ok: true }),
     ])
     const locks = {
-      request: vi.fn(async (_name: string, fn: () => Promise<unknown>) => {
+      request: vi.fn(async (_name: string, _opts: LockOptions, fn: () => Promise<unknown>) => {
         tokens.set('tok-other')
         return fn()
       }),
@@ -588,6 +588,42 @@ describe('refreshSession', () => {
     const err = await rejection(client.refreshSession())
     expect(err.code).toBe('network_error')
     expect(err.status).toBe(0)
+  })
+
+  it('a stalled refresh times out as network_error and keeps the token', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    tokens.set('tok-1')
+    // 请求一直不回，只在被中止时失败
+    const stalled = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    const client = createApiClient({ tokens, fetch: stalled, baseUrl: () => ADMIN_BASE, refreshTimeoutMs: 20 })
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(tokens.get()).toBe('tok-1')
+  })
+
+  it('waiting too long for another tab holding the refresh lock times out as network_error', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    const fetchSpy = vi.fn()
+    // 锁一直被别的标签页占着：只在 signal 中止时拒绝
+    const locks = {
+      request: vi.fn(
+        (_name: string, opts: LockOptions) =>
+          new Promise((_resolve, reject) => {
+            opts.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          }),
+      ),
+    }
+    vi.stubGlobal('navigator', { locks })
+    const client = createApiClient({ tokens, fetch: fetchSpy, baseUrl: () => ADMIN_BASE, refreshLockName: 'test-refresh-lock', refreshTimeoutMs: 20 })
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 })
 

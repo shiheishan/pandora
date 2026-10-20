@@ -236,16 +236,16 @@ func cleanAttrs(tag string, attrs []html.Attribute, dropped map[string]bool) []h
 		out = append(out, html.Attribute{Key: key, Val: a.Val})
 	}
 
-	// 外链一律补 rel：没有 noopener 的 target=_blank 会把 window.opener
-	// 交给对方页面，对方可以把我们这一页导航到钓鱼站。
+	// 带 target 的链接一律补 rel：没有 noopener 时新窗口（_blank 或任意具名窗口）拿得到 window.opener，
+	// 对方可以把我们这一页导航到钓鱼站。
 	if tag == "a" {
-		hasTargetBlank := false
+		hasTarget := false
 		for _, a := range out {
-			if a.Key == "target" && strings.EqualFold(a.Val, "_blank") {
-				hasTargetBlank = true
+			if a.Key == "target" {
+				hasTarget = true
 			}
 		}
-		if hasTargetBlank {
+		if hasTarget {
 			filtered := out[:0]
 			for _, a := range out {
 				if a.Key != "rel" {
@@ -289,8 +289,7 @@ func safeHref(raw string) (string, bool) {
 	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"),
 		strings.HasPrefix(lower, "mailto:"):
 		return v, true
-	case strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//"):
-		// 站内相对路径可以。排除 //host 那种协议相对地址，它其实是外链，只是看起来像路径。
+	case isSitePath(v):
 		return v, true
 	case strings.HasPrefix(v, "#"):
 		return v, true
@@ -315,10 +314,16 @@ func safeSrc(raw string) (string, bool) {
 		strings.HasPrefix(lower, "data:image/gif;base64,"),
 		strings.HasPrefix(lower, "data:image/webp;base64,"):
 		return v, true
-	case strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//"):
+	case isSitePath(v):
 		return v, true
 	}
 	return "", false
+}
+
+// isSitePath 判断是不是站内绝对路径。排除 //host 那种协议相对地址（其实是外链，只是看起来像路径），
+// 也排除 /\host：浏览器把反斜杠当斜杠，它同样会被解析成 //host。
+func isSitePath(v string) bool {
+	return strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//") && !strings.Contains(v, `\`)
 }
 
 // isLoginLink 判断 href 是否指向快捷登录或邮件登录路由片段。

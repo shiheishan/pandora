@@ -94,26 +94,18 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 		}
 
 		var mode string
-		var expect string
-		var newHash string
-		var newSecretPlain string
 		if sameHash(h, st.RTCur) {
 			mode = refreshModeRotate
-			expect = h
-			sec, err := newSecret()
-			if err != nil {
-				return Tokens{}, errs.Wrap(errs.Internal, err)
-			}
-			newSecretPlain = sec
-			newHash = hashSecret(sec)
 		} else if st.RTPrev != "" && sameHash(h, st.RTPrev) {
-			if now.Sub(st.RTRotatedAt) <= refreshGrace {
-				mode = refreshModeGrace
-				expect = h
-			} else {
+			if now.Sub(st.RTRotatedAt) > refreshGrace {
 				// 上一枚 refresh 在宽限外又被用：判为重放，吊销整条会话
 				return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
 			}
+			// 宽限内：轮换的响应可能没送到浏览器（关页、F5、断网），照样补发一枚新的，免得它过了宽限被判重放
+			mode = refreshModeGrace
+		} else if st.RTPrev2 != "" && sameHash(h, st.RTPrev2) {
+			// 宽限内补发时被换下的那一枚又出现：上一枚落在了两个持有人手里，同样判重放
+			return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
 		} else {
 			// 对不上任何一枚：只回 401，不吊销（sid 不保密，随机值不能踢掉别人的会话）
 			return Tokens{}, errSessionInvalid
@@ -133,7 +125,11 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			}
 		}
 
-		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, expect, newHash)
+		newSecretPlain, err := newSecret()
+		if err != nil {
+			return Tokens{}, errs.Wrap(errs.Internal, err)
+		}
+		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, h, hashSecret(newSecretPlain))
 		if err != nil {
 			return Tokens{}, errs.Wrap(errs.Unavailable, err)
 		}
@@ -152,9 +148,7 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			ExpiresIn:      exp,
 			UserID:         st.UserID,
 			RefreshExpires: ss.AbsExp,
-		}
-		if mode == refreshModeRotate {
-			tok.Refresh = formatRefresh(sid, newSecretPlain)
+			Refresh:        formatRefresh(sid, newSecretPlain),
 		}
 		return tok, nil
 	}
@@ -219,7 +213,7 @@ func (s *Service) Logout(ctx context.Context, audience, rawRefresh string) error
 	if !found || st.Audience != audience {
 		return nil
 	}
-	match := sameHash(h, st.RTCur) || (st.RTPrev != "" && sameHash(h, st.RTPrev))
+	match := sameHash(h, st.RTCur) || (st.RTPrev != "" && sameHash(h, st.RTPrev)) || (st.RTPrev2 != "" && sameHash(h, st.RTPrev2))
 	if !match {
 		return nil
 	}

@@ -44,13 +44,14 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("宽限期内用旧 refresh: %v", err)
 	}
-	if tok3.Refresh != "" {
-		t.Fatal("宽限期 refresh 不应再轮换 cookie")
+	if tok3.Refresh == "" || tok3.Refresh == refresh2 {
+		t.Fatal("宽限期也应补发一枚新 refresh")
 	}
 	if tok3.AccessToken == "" {
 		t.Fatal("宽限期应发 access")
 	}
 
+	// 补发不延长宽限：从第一次轮换算起过了 30 秒，旧的那枚照旧判重放
 	h.Clock.Advance(31 * time.Second)
 	_, err = h.S.Refresh(ctx, authn.AudiencePublic, refresh1)
 	if !errors.Is(err, errSessionInvalid) {
@@ -74,6 +75,68 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	_, err = h.S.Refresh(ctx, authn.AudiencePublic, refresh2)
 	if !errors.Is(err, errSessionInvalid) {
 		t.Fatalf("会话已吊销后 refresh2 也应失败: %v", err)
+	}
+}
+
+// 轮换的响应没送到浏览器（关页、F5、断网）：浏览器仍拿着上一枚，宽限内再来一次就拿回有效的 cookie，过了宽限照常能用。
+func TestRefreshLostResponseRecovers(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("lost@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "lost@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh); err != nil {
+		t.Fatalf("首次 refresh（响应丢了）: %v", err)
+	}
+	h.Clock.Advance(10 * time.Second)
+	again, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil || again.Refresh == "" {
+		t.Fatalf("宽限内用上一枚应补发新 refresh: %+v %v", again, err)
+	}
+	h.Clock.Advance(5 * time.Minute)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, again.Refresh); err != nil {
+		t.Fatalf("补发的那枚过了宽限也应照常可用: %v", err)
+	}
+	for _, r := range h.Audit.events {
+		if r.ev.Action == "session.refresh_reuse" {
+			t.Fatal("响应丢失不应记成重放")
+		}
+	}
+}
+
+// 宽限内补发后，被换下的那一枚（第一次轮换发出的）又出现：上一枚落在了两个持有人手里，判重放、吊销整条会话。
+func TestRefreshReplacedInGraceIsReuse(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("twice@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "twice@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	second, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil {
+		t.Fatalf("首次 refresh: %v", err)
+	}
+	third, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil {
+		t.Fatalf("宽限内用上一枚: %v", err)
+	}
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, second.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("被换下的那一枚再出现应判重放: %v", err)
+	}
+	reuse := 0
+	for _, r := range h.Audit.events {
+		if r.ev.Action == "session.refresh_reuse" {
+			reuse++
+		}
+	}
+	if reuse != 1 {
+		t.Fatalf("refresh_reuse 审计=%d want 1", reuse)
+	}
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, third.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("会话已吊销，补发的那枚也应失败: %v", err)
 	}
 }
 

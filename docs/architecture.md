@@ -304,8 +304,8 @@ identity, auth ─► settings, audit
 | 形态 | `<sid>.<32 字节随机 base64url>`；Redis 只存后半段的 SHA-256，比较用常量时间 |
 | 存放 | HttpOnly、Secure、SameSite=Strict 的 cookie，Path=`/v1/auth`；public 叫 `pandora_rt`，admin 叫 `pandora_admin_rt`（admin 经 nginx 的 `proxy_cookie_path` 改成带后台前缀的路径） |
 | 轮换 | `POST /v1/auth/refresh` 每次生成新值：`rt_prev ← rt_cur`、`rt_cur ← 新值`，Lua 原子完成 |
-| 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新）：只发新的 access，不轮换，也不 Set-Cookie |
-| 重放 | 超出宽限还拿 rt_prev：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。值既不是 rt_cur 也不是 rt_prev：只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人；重放的信号是用过的旧值再出现 |
+| 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新，或轮换的响应没送到浏览器：关页、F5、断网）：发新的 access，并补发一枚新 cookie（rt_cur ← 新值，被换下的那枚记进 rt_prev2）；rt_prev 与轮换时间不动，宽限不因补发延长 |
+| 重放 | 超出宽限还拿 rt_prev，或拿 rt_prev2（宽限内补发时被换下的那枚，说明上一枚落在了两个持有人手里）：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。值既不是 rt_cur 也不是 rt_prev：只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人；重放的信号是用过的旧值再出现 |
 | CSRF | cookie 只在 refresh 和 logout 两个接口上读；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查。下发 cookie 的登录、快捷登录也挂同一个来源检查（防登录 CSRF：跨站 text/plain 表单能拼出合法 JSON，把受害者浏览器登进攻击者账号） |
 | 刷新不续 rat | 新 access 沿用会话里的 amr；重认证时间只由 reauth 接口改写 |
 

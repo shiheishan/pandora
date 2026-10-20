@@ -27,7 +27,9 @@ paths:
   - 门户地址带快捷 / 邮件登录令牌时 `createAppRuntime('portal', { restoreSession: false })`：不开机恢复旧会话，免得旧会话的 refresh 与这次登录赛跑、最后令牌与 cookie 不是同一个人
   - 守卫：`shell/session.test.ts`；浏览器用例 `tests/browser/portal-session.spec.ts`（S1：登录后刷新仍是登录态）
 - 401 的处理只在 `api.ts` 一处：先单飞调 `v1/auth/refresh`（`navigator.locks` 跨标签页互斥；拿到锁先看本页令牌是否已被本页别的请求换掉——令牌只在内存，看不到别的标签页的），成功就重放原请求一次；refresh 被拒（429 以外的 4xx）才掉线，refresh 的 429/5xx/断网（`network_error`）原样抛出、不清令牌
-  - 两个标签页先后拿同一枚 cookie 去 refresh，由服务端 30 秒宽限兜住（上一代 cookie 30 秒内还能换 access、不轮换；超过 30 秒再用判为重放、吊销整条会话），假后端同口径
+  - 两个标签页先后拿同一枚 cookie 去 refresh、或轮换的响应没送到，由服务端 30 秒宽限兜住（上一代 cookie 30 秒内还能换 access 并补发新 cookie；超过 30 秒再用、或用宽限内被换下的那枚，判为重放、吊销整条会话），假后端同口径
+  - 一次 refresh（含排队等 `navigator.locks`）限时 15 秒（`refreshTimeoutMs`），超时按 `network_error` 抛：开机进「暂时连不上 + 重试」，不会因别的标签页卡住而一直空白
+  - 跨标签页广播（BroadcastChannel）与登录标志只是提示：同源脚本能伪造广播、占锁，所以收到 signed-in 也要自己 refresh 拿令牌，不能据此认定已登录
   - 口令校验接口（`passwordCheck`）也先刷新再重放：重放仍 401 才是口令错，交给表单，不登出
   - 会 Set-Cookie 或凭 cookie 的接口带 `withCookies`（same-origin）：登录（后台、门户）、快捷登录、邮件链接登录、refresh、logout；其余请求 `credentials: 'omit'`。omit 模式下浏览器连响应里的 Set-Cookie 也丢掉，登录不带 cookie 等于 15 分钟后必掉线（10-20 修，守卫 `portal/login-cookies.test.ts`）；logout 同时 `auth: false`，只凭 cookie 吊销，access 过期也能登出
   - 守卫：`api.test.ts` 的 "access token refresh on 401"
