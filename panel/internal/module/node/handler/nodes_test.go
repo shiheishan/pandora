@@ -132,6 +132,7 @@ var (
 		"cpu_cores", "memory_mb", "disk_gb", "capacity_nodes", "notes", "node_count",
 		"active_node_count", "serving_node_count", "never_seen_node_count", "created_at", "updated_at",
 		"cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at",
+		"binary_sha256", "upgrade", "last_upgrade",
 	}
 	inventoryServerNodeKeys = []string{
 		"id", "name", "serving_status", "node_type", "display_name", "server_host", "server_port",
