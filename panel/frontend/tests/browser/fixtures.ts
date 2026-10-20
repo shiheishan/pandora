@@ -31,10 +31,10 @@ async function newContext(browser: Browser, baseURL: string): Promise<BrowserCon
   })
 }
 
-/** 门户：在登录页填邮箱与口令，落到「我的套餐」 */
+/** 门户：打开登录页（`/` 在首页开着时是首页），填邮箱与口令，落到「我的套餐」 */
 export async function openPortal(browser: Browser, u: User): Promise<Page> {
   const page = await (await newContext(browser, PUB)).newPage()
-  await page.goto('/')
+  await page.goto('/#/login')
   await page.getByLabel('邮箱').fill(u.email)
   await page.getByLabel('密码', { exact: true }).fill(u.password)
   await submit(page, page.getByRole('button', { name: '登录', exact: true }))

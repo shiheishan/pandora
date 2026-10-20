@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../core/api'
-import { navigate } from '../core/router'
+import { navigate, useHashLocation } from '../core/router'
 import { RuntimeProvider, useRuntime, useSignedIn, type AppRuntime } from '../shell/runtime'
 import { useAppearanceTheme } from './appearance'
 import { AuthPage, consumeQuickLogin } from './AuthPage'
-import { mailLoginTokenFromHash, quickLoginTokenFromHash } from './entry-links'
+import { authTabFromPath, isHomePath, LOGIN_PATH, mailLoginTokenFromHash, quickLoginTokenFromHash } from './entry-links'
+import { hasServerHome, setHomeHidden } from './home'
 import { consumeMailLogin } from './MailLinkLogin'
 import { Shell } from './Shell'
 
@@ -34,11 +35,30 @@ function Root({ invite }: { invite: string | null }) {
     api.post('v1/invite/visit', z.object({ ok: z.literal(true) }), { auth: false, body: { code: invite } }).catch(() => {})
   }, [invite, api])
 
+  const { path } = useHashLocation()
+  const [serverHome] = useState(() => hasServerHome())
+  const hashTab = authTabFromPath(path)
+  // 未登录、地址没有页面、不是邀请或链接登录、服务端给了首页片段：#root 不渲染，露出首页
+  const showHome = serverHome && !signedIn && !invite && quick.phase === 'idle' && mail.phase === 'idle' && isHomePath(path)
+
+  useLayoutEffect(() => {
+    setHomeHidden(!showHome)
+  }, [showHome])
+
+  // 退出登录（含令牌失效被清掉）后落到登录页，而不是留在退出前的页面地址上
+  const wasSignedIn = useRef(signedIn)
+  useEffect(() => {
+    if (wasSignedIn.current && !signedIn) navigate(LOGIN_PATH, { replace: true })
+    wasSignedIn.current = signedIn
+  }, [signedIn])
+
   if (quick.phase === 'pending' || mail.phase === 'pending') return null
   if (signedIn) return <Shell />
   if (mail.phase === 'failed') return <AuthPage initialTab="mail" notice={mail.message} />
   if (quick.phase === 'failed') return <AuthPage initialTab="quick" notice={quick.message} />
-  return <AuthPage initialTab={invite ? 'reg' : 'login'} invite={invite} />
+  if (showHome) return null
+  // key 随地址里的页签变：#/login 与 #/register 之间切换时重新挂载、换到对应页签
+  return <AuthPage key={hashTab ?? 'login'} initialTab={invite ? 'reg' : (hashTab ?? 'login')} invite={invite} />
 }
 
 // 快捷登录链接 <门户根>/#/quick-login/<token>：加载即消费，成功失败都先把令牌从地址栏抹掉
