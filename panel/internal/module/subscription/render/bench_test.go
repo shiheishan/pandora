@@ -34,6 +34,6 @@ func BenchmarkRenderClashMeta200(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Render(FormatClash, nodes, "0b5d5d4e-7a1e-4c49-9d0e-3c3f0a6c2b11", "mihomo/1.19.0", Options{})
+		renderPlain(FormatClash, nodes, "0b5d5d4e-7a1e-4c49-9d0e-3c3f0a6c2b11", "mihomo/1.19.0", Options{})
 	}
 }

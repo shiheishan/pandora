@@ -25,6 +25,11 @@ import (
 
 var testServerID = uuid.MustParse("0190a000-0000-7000-8000-000000000001")
 
+// newControlServer 用替身鉴权装出 ControlService（生产装配走 NewControlServer，鉴权就是 svc 本身）。
+func newControlServer(svc *service.Service, auth sessionAuthorizer) *controlServer {
+	return &controlServer{svc: svc, auth: auth}
+}
+
 var testSessionOpt = service.SessionOptions{
 	TerminateGrace: time.Second,
 	ShutdownBase:   500 * time.Millisecond,

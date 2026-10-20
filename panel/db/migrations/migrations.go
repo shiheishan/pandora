@@ -47,16 +47,6 @@ func DownOne(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-// DownAll 回退到 0，只给 CI 往返与测试用。
-func DownAll(ctx context.Context, db *sql.DB) error {
-	p, err := provider(db)
-	if err != nil {
-		return err
-	}
-	_, err = p.DownTo(ctx, 0)
-	return err
-}
-
 // Status 返回每个迁移是否已执行。
 func Status(ctx context.Context, db *sql.DB) ([]Version, error) {
 	p, err := provider(db)

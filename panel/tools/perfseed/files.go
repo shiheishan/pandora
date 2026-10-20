@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -261,43 +260,6 @@ func parseInstallCommand(cmd string) (panel, caSHA256 string, err error) {
 // formatNodesimEnv 写 nodesim.env 内容。
 func formatNodesimEnv(panel, caSHA256 string) []byte {
 	return []byte(fmt.Sprintf("PANEL=%s\nCA_SHA256=%s\n", panel, caSHA256))
-}
-
-// parseNodesimEnv 解析 nodesim.env。
-func parseNodesimEnv(data []byte) (panel, caSHA256 string, err error) {
-	var gotPanel, gotCA bool
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	for sc.Scan() {
-		line := strings.TrimRight(sc.Text(), "\r")
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		idx := strings.Index(trimmed, "=")
-		if idx < 0 {
-			continue
-		}
-		k := trimmed[:idx]
-		v := trimmed[idx+1:]
-		switch k {
-		case "PANEL":
-			panel = v
-			gotPanel = true
-		case "CA_SHA256":
-			caSHA256 = v
-			gotCA = true
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return "", "", err
-	}
-	if !gotPanel {
-		return "", "", fmt.Errorf("nodesim.env 缺少 PANEL")
-	}
-	if !gotCA {
-		return "", "", fmt.Errorf("nodesim.env 缺少 CA_SHA256")
-	}
-	return panel, caSHA256, nil
 }
 
 // formatAdminEnv 写 admin.env 内容。

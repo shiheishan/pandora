@@ -1,7 +1,7 @@
 // Package errs 是对外错误的唯一定义：封闭的错误码表、HTTP 状态和中性文案。
 //
 // 对外只给码和中文文案，内部原因只进日志。前端 core/api.ts 的 SERVER_ERROR_CODES
-// 与 Codes() 由 TestServerErrorCodesMatchFrontend 对齐，新增码两处同改。
+// 与 specs 的键由 TestServerErrorCodesMatchFrontend 对齐，新增码两处同改。
 package errs
 
 import (
@@ -61,15 +61,6 @@ var specs = map[Code]spec{
 	MethodNotAllowed:  {http.StatusMethodNotAllowed, "请求方法不被允许"},
 	PayloadTooLarge:   {http.StatusRequestEntityTooLarge, "请求内容过大"},
 	Timeout:           {http.StatusGatewayTimeout, "请求超时，请稍后再试"},
-}
-
-// Codes 返回全部对外错误码，供对齐测试使用。
-func Codes() []Code {
-	out := make([]Code, 0, len(specs))
-	for c := range specs {
-		out = append(out, c)
-	}
-	return out
 }
 
 // Error 同时承载对外信息与只进日志的内部原因。

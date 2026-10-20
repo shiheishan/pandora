@@ -53,13 +53,3 @@ type RouteGroup struct {
 
 // TableName 固定表名。
 func (RouteGroup) TableName() string { return "route_groups" }
-
-// RouteGroupMember 是 route_group_members 表的一行。
-type RouteGroupMember struct {
-	GroupID   uuid.UUID `gorm:"column:group_id;type:uuid;primaryKey"`
-	NodeID    uuid.UUID `gorm:"column:node_id;type:uuid;primaryKey"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
-}
-
-// TableName 固定表名。
-func (RouteGroupMember) TableName() string { return "route_group_members" }
