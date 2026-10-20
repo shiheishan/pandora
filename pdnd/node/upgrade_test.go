@@ -194,6 +194,10 @@ func TestUpgradeBusyWhileStaging(t *testing.T) {
 	if len(reps) != 1 || reps[0].GetJobId() != "job-second" || reps[0].GetReasonCode() != upgrade.ReasonBusy {
 		t.Fatalf("第二条应 busy，回报 = %v", reps)
 	}
+	// Stage 在 goroutine 里跑：等它真正进去再数
+	for deadline := time.Now().Add(2 * time.Second); fake.stageCalls() == 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	if fake.stageCalls() != 1 {
 		t.Fatalf("Stage 只应调用一次，实际 %d", fake.stageCalls())
 	}

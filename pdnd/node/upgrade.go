@@ -111,14 +111,18 @@ func (s *Server) sendUpgradeReport(r *nodev1.UpgradeReport) {
 	if r == nil {
 		return
 	}
-	clamped := *r
-	clamped.ReasonCode = truncUTF8Bytes(clamped.ReasonCode, 64)
-	clamped.Detail = truncUTF8Bytes(clamped.Detail, 1024)
-	if s.link != nil && s.link.SendUpgradeReport(&clamped) {
+	// proto 消息不能按值复制（内含锁）：新建一条
+	clamped := &nodev1.UpgradeReport{
+		JobId:      r.GetJobId(),
+		Phase:      r.GetPhase(),
+		ReasonCode: truncUTF8Bytes(r.GetReasonCode(), 64),
+		Detail:     truncUTF8Bytes(r.GetDetail(), 1024),
+	}
+	if s.link != nil && s.link.SendUpgradeReport(clamped) {
 		s.pendingUpgrade = nil
 		return
 	}
-	s.pendingUpgrade = &clamped
+	s.pendingUpgrade = clamped
 }
 
 func (s *Server) flushPendingUpgrade() {
