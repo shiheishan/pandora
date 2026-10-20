@@ -16,7 +16,12 @@ const webhookPathPrefix = "/v1/webhooks/payments/"
 type PaymentSettings struct {
 	NotifyBaseURL string // 存下的回调地址前缀；空 = 用站点地址
 	EffectiveBase string // 实际用来拼回调地址的前缀
-	PublicBaseURL string // 站点地址（缺省前缀）
+	SiteURL       string // 当前生效的站点地址（缺省前缀，后台主域名改了跟着变；不带末尾 /）
+}
+
+// siteBase 是当前生效的站点地址，不带末尾 /；没配时为空。
+func (s *Service) siteBase(ctx context.Context) string {
+	return strings.TrimRight(s.settings.SiteURL(ctx), "/")
 }
 
 // usableNotifyBase 报告存下的前缀此刻能不能用：非空、NormalizeNotifyBaseURL 通过、https（cfg.AllowPrivateHosts 时也允许 http）。
@@ -31,7 +36,7 @@ func (s *Service) usableNotifyBase(v string) bool {
 	return true
 }
 
-// notifyBase 返回拼回调地址用的前缀：存下的前缀能用就用它，否则 PublicBaseURL（存的值不能用时 plog Warn 一条，不打印值）。
+// notifyBase 返回拼回调地址用的前缀：存下的前缀能用就用它，否则当前生效的站点地址（存的值不能用时 plog Warn 一条，不打印值）。
 func (s *Service) notifyBase(ctx context.Context) (string, error) {
 	cb, err := s.settings.PaymentCallback(ctx)
 	if err != nil {
@@ -44,7 +49,7 @@ func (s *Service) notifyBase(ctx context.Context) (string, error) {
 		}
 		plog.From(ctx).Warn("支付回调前缀设置无效，回退至站点地址", zap.String("key", "payment.notify_base_url"))
 	}
-	return s.cfg.PublicBaseURL, nil
+	return s.siteBase(ctx), nil
 }
 
 // notifyURL 拼渠道回调地址：base + webhookPathPrefix + code。
@@ -52,19 +57,27 @@ func notifyURL(base, code string) string {
 	return strings.TrimRight(base, "/") + webhookPathPrefix + code
 }
 
-// notifyURLCandidates 是验签时可接受的回调地址：当前前缀拼的在前，站点地址拼的在后（改过前缀后，改之前建的发票仍按旧地址签名）；去重。
+// notifyURLCandidates 是验签时可接受的回调地址（只有 CoinPayments 的签名里带回调地址）：当前前缀拼的在前，
+// 再是本站认的各个站点地址拼的（当前主域名、改主域名之前的那个、配置的）：改过前缀或主域名后，改之前建的发票仍按旧地址签名；去重。
 func (s *Service) notifyURLCandidates(ctx context.Context, code string) ([]string, error) {
 	curBase, err := s.notifyBase(ctx)
 	if err != nil {
 		return nil, err
 	}
-	curURL := notifyURL(curBase, code)
-	out := []string{curURL}
-	if s.cfg.PublicBaseURL != "" {
-		siteURL := notifyURL(s.cfg.PublicBaseURL, code)
-		if siteURL != curURL {
-			out = append(out, siteURL)
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(base string) {
+		if base == "" {
+			return
 		}
+		if u := notifyURL(base, code); !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	add(curBase)
+	for _, alias := range s.settings.SiteURLAliases(ctx) {
+		add(alias)
 	}
 	return out, nil
 }
@@ -82,7 +95,7 @@ func (s *Service) PaymentSettings(ctx context.Context) (PaymentSettings, error) 
 	return PaymentSettings{
 		NotifyBaseURL: cb.NotifyBaseURL,
 		EffectiveBase: effective,
-		PublicBaseURL: s.cfg.PublicBaseURL,
+		SiteURL:       s.siteBase(ctx),
 	}, nil
 }
 

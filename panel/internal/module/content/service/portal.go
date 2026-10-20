@@ -30,13 +30,14 @@ func (s *Service) GetVisible(ctx context.Context, userID uuid.UUID, slug string,
 		return Page{}, err
 	}
 	// 端口没装时（只有单测会这样，生产由装配自检 MissingPorts 拦住）对应变量替换成空串
-	vars := RenderVars{SiteURL: strings.TrimRight(s.publicBaseURL, "/")}
+	var vars RenderVars
 	if s.site != nil {
 		site, err := s.site.Site(ctx)
 		if err != nil {
 			return Page{}, err
 		}
 		vars.SiteName = site.Name
+		vars.SiteURL = strings.TrimRight(s.site.SiteURL(ctx), "/")
 	}
 	if s.links != nil && NeedsSubscribeURL(page.Body) {
 		vars.SubscribeURL, err = s.links.CurrentLink(ctx)

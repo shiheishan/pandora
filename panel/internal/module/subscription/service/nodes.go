@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -32,6 +33,8 @@ func (s *Service) UseNodeSource(n NodeSource) { s.nodes = n }
 // DeliverySettings 是订阅分发要的设置读取面；*settingssvc.Service 直接满足。
 type DeliverySettings interface {
 	SubscriptionDelivery(ctx context.Context) (settingssvc.SubscriptionDelivery, error)
+	// SiteURL 是当前生效的主域名（以 / 结尾，后台可改）：续费页、订阅链接兜底、探测的门户源用它
+	SiteURL(ctx context.Context) string
 }
 
 // Owners 是拉取时看订阅主人账号状态的读取面；*identitysvc.Service 直接满足。
@@ -55,8 +58,6 @@ type Delivery struct {
 	Owners   Owners
 	Hasher   Hasher
 	Limiter  FetchLimiter
-	// PublicBaseURL 是门户与订阅链接的公开地址（配置 public_base_url），不带结尾斜杠也可以
-	PublicBaseURL string
 	// Render 是渲染的可配项（配置 subscription.singbox），启动时定一次
 	Render render.Options
 	// Extras 是订阅附加设置（信息节点、协议前缀）的读取面；nil 时全部按缺省（关）
@@ -67,6 +68,11 @@ type Delivery struct {
 func (s *Service) UseDelivery(d Delivery) {
 	dd := d
 	s.delivery = &dd
+}
+
+// siteBase 是当前生效的主域名（不带末尾 /）：门户与订阅链接兜底的公开地址。
+func (d *Delivery) siteBase(ctx context.Context) string {
+	return strings.TrimRight(d.Settings.SiteURL(ctx), "/")
 }
 
 // needDelivery 取已装配的分发依赖；没装配回 ErrDeliveryUnavailable。

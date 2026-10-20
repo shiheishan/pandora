@@ -172,7 +172,7 @@ func TestPaymentSettingsRoutes(t *testing.T) {
 		cur: service.PaymentSettings{
 			NotifyBaseURL: "",
 			EffectiveBase: "https://site.example.test",
-			PublicBaseURL: "https://site.example.test",
+			SiteURL:       "https://site.example.test",
 		},
 	}
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
@@ -192,7 +192,7 @@ func TestPaymentSettingsRoutes(t *testing.T) {
 		fakeSvc: &fakeSvc{},
 		cur: service.PaymentSettings{
 			EffectiveBase: "https://site.example.test",
-			PublicBaseURL: "https://site.example.test",
+			SiteURL:       "https://site.example.test",
 		},
 	}
 	w2 := doJSON(newAdminEngine(sf2, p, &hooks), http.MethodPut, "/v1/payment-settings",

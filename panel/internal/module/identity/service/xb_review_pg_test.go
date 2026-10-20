@@ -118,7 +118,7 @@ func useFakeCaptchaV3(t *testing.T, e *env, actx context.Context) {
 		})
 	}))
 	t.Cleanup(srv.Close)
-	e.svc.captcha = &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+	e.svc.captcha = &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, siteURLs: testSiteURLs}
 }
 
 // 注册、找回第 1 步的人机验证接线：各自带自己的 action（v3 令牌挪到别的入口不能用），空令牌不放行。

@@ -34,6 +34,8 @@ type settingsReader interface {
 	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
 	Signup(ctx context.Context) (settingssvc.Signup, error)
+	// SiteURLAliases 是本站认的全部根地址：人机验证核对令牌来源的主机名用它
+	SiteURLAliases(ctx context.Context) []string
 }
 
 // txRunner 是 *tx.Manager 的事务入口。
@@ -107,7 +109,7 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		hasher:   newPasswordHasher(cfg.Auth.PasswordHash),
 		devMode:  !cfg.IsProduction(),
 		now:      time.Now,
-		captcha:  newCaptchaVerifier(cfg.PublicBaseURL),
+		captcha:  newCaptchaVerifier(settings.SiteURLAliases),
 	}
 }
 

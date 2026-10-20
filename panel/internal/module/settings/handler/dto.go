@@ -32,13 +32,15 @@ func (h *Handler) siteConfig(c *gin.Context) {
 }
 
 // siteResponse 是后台站点设置：站点名是全站唯一的站点名来源（门户标题、入口页 <title>、邮件、订阅配置名都取它）。
-// SEO 三项给门户入口页用。
+// SEO 三项给门户入口页用。URL 是后台存的主域名（空 = 用安装时的地址 URLFallback），只影响链接，nginx 与证书不跟着变。
 type siteResponse struct {
 	Name           string `json:"name"`
 	Timezone       string `json:"timezone"`
 	SEOKeywords    string `json:"seo_keywords"`
 	SEODescription string `json:"seo_description"`
 	AllowIndexing  bool   `json:"allow_indexing"`
+	URL            string `json:"url"`
+	URLFallback    string `json:"url_fallback"`
 }
 
 // setSiteRequest 是站点设置的部分更新：缺的字段保持原值。
@@ -48,15 +50,19 @@ type setSiteRequest struct {
 	SEOKeywords    *string `json:"seo_keywords"`
 	SEODescription *string `json:"seo_description"`
 	AllowIndexing  *bool   `json:"allow_indexing"`
+	// URL 是主域名：空串 = 恢复用安装时的地址；改成新值时服务端先核对它通到本面板，不通回 422 fields.url
+	URL *string `json:"url"`
 }
 
-func siteToResponse(s service.Site) siteResponse {
+func (h *Handler) siteToResponse(s service.Site) siteResponse {
 	return siteResponse{
 		Name:           s.Name,
 		Timezone:       s.Timezone,
 		SEOKeywords:    s.SEOKeywords,
 		SEODescription: s.SEODescription,
 		AllowIndexing:  s.AllowIndexing,
+		URL:            s.URL,
+		URLFallback:    h.svc.SiteURLFallback(),
 	}
 }
 
@@ -67,7 +73,7 @@ func (h *Handler) getSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteToResponse(site))
+	httpx.OK(c, h.siteToResponse(site))
 }
 
 func (h *Handler) setSite(c *gin.Context) {
@@ -83,6 +89,7 @@ func (h *Handler) setSite(c *gin.Context) {
 		SEOKeywords:    req.SEOKeywords,
 		SEODescription: req.SEODescription,
 		AllowIndexing:  req.AllowIndexing,
+		URL:            req.URL,
 	}); err != nil {
 		httpx.Fail(c, err)
 		return
@@ -93,7 +100,7 @@ func (h *Handler) setSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteToResponse(site))
+	httpx.OK(c, h.siteToResponse(site))
 }
 
 type switchItem struct {

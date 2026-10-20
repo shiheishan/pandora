@@ -8,7 +8,7 @@ paths:
 - 易支付（EPay）约束：
   - 易支付方式只收支付宝与微信支付（`EpayMethods = alipay, wxpay`），后台配置与下单严格过滤。
   - 协议规范：金额为元单位十进制字符串（`money.FormatProvider`）；MD5 签名参数名 ASCII 升序拼接，末尾直接拼商户密钥（不做 URL 编码）；异步通知为 GET 请求，处理成功必须回纯文本 `success`；无渠道事件 ID，以 `trade_no:TRADE_STATUS` 合成幂等键。
-- 加密货币渠道（#57，适配器在 `provider/btcpay`、`provider/coinpayments`，外部 HTTP 一律走 `provider/safehttp`）：
+- 加密货币渠道（#57，适配器在 `provider/btcpay`、`provider/coinpayments`，外部 HTTP 一律走 `internal/pkg/safehttp`）：
   - BTCPay Server（Greenfield）：凭据 = Store ID（商户号位）+ API Key（密钥位）+ Webhook 密钥，都封存。按人民币（`provider.FiatCurrency` = CNY，全系统只此一处写币种代码）建发票、跳 `checkoutLink`；人民币发票要商店的汇率源支持 CNY，属商店配置；Webhook 在 BTCPay 商店里配（后台渠道卡显示回调地址），`BTCPay-Sig: sha256=hex(HMAC-SHA256)` 常数时间比对，验签通过后按发票号回查，金额币种状态一律以回查为准。只有 `Settled` 且附加状态不是手动标记（`Marked`）或部分付款（`PaidPartial`，商店开了付款容差时出现）才算成功；`Expired` / `Invalid` 算失败；部分付款不算成功，留证据给后台线下处理。事件 ID = `发票号:状态[:MARKED|:PARTIAL]`。
   - CoinPayments（新版 v2 REST，`https://a-api.coinpayments.net`）：凭据 = Client ID + Client Secret。请求与回调同一种签名：`base64(HMAC-SHA256(secret, BOM + 方法 + 完整 URL + ClientID + 时间戳 + 请求体))`，回调还核对 `X-CoinPayments-Client` 与时间窗（±5 分钟），URL 用建发票时登记的回调地址（`NotifyURLs` 候选）。只有 `completed` 算成功；`cancelled` / `timedOut` / `deleted` 算失败；任一笔付款实收低于应收按待定（部分付款不算成功）。法币 ID 按 `provider.FiatCurrency` 从公开接口查，包级缓存 24 小时；查不到 CNY 时建单直接报错，不做换算。
   - 两个适配器都：渠道回传的法币币种须等于 `provider.FiatCurrency`、金额与意图一致，不符拒绝；不跟随跳转；Raw 与日志里不出现 API Key、密钥。
@@ -17,7 +17,7 @@ paths:
   - 发起支付时意图金额 = 订单应付 + surcharge，`surcharge_amount` 记在意图和收款上；最低付款额按应付判断。入账时 `SettleInput.Amount = 实收 − surcharge`（等于订单应付，订单那边的核对不变），`SettleInput.Surcharge` 交给账本单独贷记 `platform_revenue / payment_surcharge`，不计入佣金基数、不改订单总额。
   - 迟到进挂账时只有 `实收 − surcharge` 进 `late_payment_suspense` 和挂账案金额（以后转余额只转这部分），surcharge 照记手续费收入。
   - 门户 `GET /v1/payment-methods?amount=<分>` 每种方式带这张单的 `fee` 与 `total`；用余额付不收手续费。
-- 回调地址（#43）：`notifyBase` 优先用 settings 的 `payment.notify_base_url`（后台 `GET/PUT /v1/payment-settings`，生产只收 https，`AllowPrivateHosts` 时也收 http），存的值不可用就回退站点地址；回调地址 = 前缀 + `/v1/webhooks/payments/<渠道代码>`。验签候选 `notifyURLCandidates` = [当前前缀拼的, 站点地址拼的]，改前缀前建的发票仍能验过。
+- 回调地址（#43）：`notifyBase` 优先用 settings 的 `payment.notify_base_url`（后台 `GET/PUT /v1/payment-settings`，生产只收 https，`AllowPrivateHosts` 时也收 http），存的值不可用就回退站点地址（settings 的 `SiteURL`，后台可改的主域名）；回调地址 = 前缀 + `/v1/webhooks/payments/<渠道代码>`。验签候选 `notifyURLCandidates` = [当前前缀拼的, 再按 `SiteURLAliases` 逐个拼：当前主域名、改之前的那个、配置的]，去重；改前缀或改主域名前建的发票仍能验过。回调地址只进 CoinPayments 的签名（易支付按商户密钥签参数、BTCPay 按 Webhook 密钥签请求体，都不含地址），所以候选只在 CoinPayments 的 `adapterFor` 里算。回跳地址：门户传来的地址在任一别名下就用，否则当前站点的 `/#orders`。后台 `GET /v1/payment-settings` 的 `public_base_url` 回显当前生效的站点地址。
 - 发起支付两段式（`intent.go`），渠道调用不在数据库事务里：
   - `BeginIntent` 在调用方事务里（order.Pay 持订单行锁）：校验、锁在途意图；同渠道同方式同金额、未过期且已建好收银台的直接复用；另一张**占位意图**（`requires_action` 且 `redirect_url = ''`）建单还不到 `intentCreatingWindow`（30 秒）时回 409 `payment_in_progress`（「支付正在发起，请稍候」，订单仍可付，前端退避重发）；其余在途意图作废，插一条新的占位意图。不调渠道。
   - 「建单中」一律按库时钟判断：`payment_intents` 的 `created_at` / `updated_at` 由库默认值 `now()` 写（`InsertIntent` 不传；PG 的 `now()` 是 BeginIntent 那笔事务开始的时刻，比插入早毫秒级），窗口在 SQL 里比（`repo.IntentCreatedWithin`），不拿应用机时钟和库里的时间比。`TestBeginIntentWindowUsesDBClock` 断言 `created_at = now()` 并把应用时钟拨慢 5 分钟来钉这两点。

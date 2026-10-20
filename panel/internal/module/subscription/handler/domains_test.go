@@ -73,7 +73,7 @@ func (f *fakeDomainSvc) ReportProbeResults(_ context.Context, ticket string, res
 	return f.reportErr
 }
 
-func (f *fakeDomainSvc) PortalOrigin() string { return f.origin }
+func (f *fakeDomainSvc) PortalOrigin(context.Context) string { return f.origin }
 
 // domainEngine 建引擎；auth 为 nil 时不带认证（未登录），reauth 为 nil 时放行。
 func domainEngine(svc Service, auth, reauth gin.HandlerFunc) *gin.Engine {

@@ -210,8 +210,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	// settings 也要一份：payment 的回调地址读它；ledger service 不再依赖 settings。
 	settings := settingssvc.New(settingsrepo.New(d), tx.NewManager(d), sealer, rdb, auditSvc)
 	ledgerSvc := ledgersvc.New(ledgerrepo.New(d), tx.NewManager(d), auditSvc)
+	// 站点地址（主域名缺省值）经 settings 读
+	settings.UseSiteURLConfig("https://panel.example.test", true)
 	svc := New(paymentrepo.New(d), tx.NewManager(d), ledgerSvc, nil, settings, auditSvc, sealer, Config{
-		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
 	})
 	svc.identity = stubDirectory{}

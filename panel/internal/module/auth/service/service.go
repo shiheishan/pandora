@@ -88,11 +88,10 @@ type Service struct {
 	cfg      Config
 	now      func() time.Time
 
-	mailSettings  MailLinkSettings
-	mailCaptcha   MailLinkCaptcha
-	mailer        MailLinkMailer
-	mailLimiter   *ratelimit.Limiter
-	publicBaseURL string
+	mailSettings MailLinkSettings
+	mailCaptcha  MailLinkCaptcha
+	mailer       MailLinkMailer
+	mailLimiter  *ratelimit.Limiter
 }
 
 // New 构造 auth service。public、admin 是两个域各自的签发器（不同密钥）；users 是 identity service。

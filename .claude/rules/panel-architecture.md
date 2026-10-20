@@ -35,4 +35,4 @@ paths:
 - 约束类的进库：NOT NULL、CHECK、UNIQUE、外键、追加写触发器 `deny_mutation` / `deny_delete`、账本配平 `assert_ledger_balanced`。业务状态机与编排在 Go。
 - 运行时只以 `pandora_app` 连库（`panel/deploy/configure-app-role.sql` 收窄），不要为了绕开触发器换特权连接。没有 RLS、没有多租户。
 - 前后端接口以代码为准：改接口形状时同步改 handler 的 DTO 与前端对应的 zod schema，没有单独的契约文档。
-- 进程内快照的失效同样走注入：settings 的 `UseSiteChangeListener`（appearance 清入口页快照）、`UseSubscriptionExtrasListener`（subscription 清拉取快照）、`UseHomeChangeListener`（app 层 `portal_home.go` 清门户首页快照；只在 home 组提交后调，站点名走 appearance 的快照、不重复失效），写路径在 `tx.AfterCommit` 里同步调用；serve 单实例、后台写都在 serve 里，不加 Redis 频道。新加「依赖设置的进程内快照」时照这条接，不让它只靠 TTL。
+- 进程内快照的失效同样走注入：settings 的 `UseSiteChangeListener`（appearance 清入口页快照）、`UseSubscriptionExtrasListener`（subscription 清拉取快照）、`UseHomeChangeListener`（app 层 `portal_home.go` 清门户首页快照；只在 home 组提交后调，站点名走 appearance 的快照、不重复失效）、`UseSiteURLChangeListener`（主域名改了以后 notify 重新注册 Telegram webhook；settings 自己的主域名快照在同一个提交后钩子里先失效），写路径在 `tx.AfterCommit` 里同步调用；serve 单实例、后台写都在 serve 里，不加 Redis 频道。新加「依赖设置的进程内快照」时照这条接，不让它只靠 TTL。

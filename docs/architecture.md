@@ -83,7 +83,7 @@ panel/
         render/                  （仅 subscription）订阅格式渲染：纯函数，不依赖任何模块、不碰数据库；node 模块用它的 Node 类型交线路
         protocol/                （仅 node）协议 schema、校验、抹敏感值、端口 L4、内核字段翻译：纯函数，规则同 render
         grpc/                    （仅 node）节点通道的 gRPC 服务（接入与会话），地位同 handler：只调本模块 service
-        provider/                （仅 payment）渠道适配（易支付、BTCPay Server、CoinPayments；safehttp 是共用的外部 HTTP 客户端）
+        provider/                （仅 payment）渠道适配（易支付、BTCPay Server、CoinPayments；外部 HTTP 走 `internal/pkg/safehttp`）
   db/migrations/                 新基线（goose，embed 进二进制）
   tools/depguardgen/             从 internal/module/ 生成 .golangci.yml 的 depguard 规则
 proto/                           节点协议源文件（buf）

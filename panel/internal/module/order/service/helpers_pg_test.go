@@ -211,8 +211,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	promoSvc.UseUsers(users)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, users, sealer)
+	// 站点地址（主域名缺省值）经 settings 读
+	settings.UseSiteURLConfig("https://panel.example.test", true)
 	paymentSvc := paymentsvc.New(paymentrepo.New(d), txm, ledgerSvc, nil, settings, auditSvc, sealer, paymentsvc.Config{
-		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
 	})
 	idemSvc := idemsvc.New(idemrepo.New(d), txm)

@@ -31,7 +31,7 @@ type DomainService interface {
 	IssueProbeTicket(ctx context.Context) (string, error)
 	ProbeFrameDomains(ctx context.Context, ticket string) ([]string, error)
 	ReportProbeResults(ctx context.Context, ticket string, results []service.ProbeResult) error
-	PortalOrigin() string
+	PortalOrigin(ctx context.Context) string
 }
 
 type domainItem struct {
@@ -202,7 +202,7 @@ func (h *Handler) probeFrame(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	writeProbeFrame(c, h.svc.PortalOrigin(), domains)
+	writeProbeFrame(c, h.svc.PortalOrigin(c.Request.Context()), domains)
 }
 
 // probeReport 是探测页上报结果 POST /v1/sub-probe/report。
@@ -235,7 +235,7 @@ func (h *Handler) probeReport(c *gin.Context) {
 // 挂在限流之前，429 也带上，探测页才能把「被限流」和「连不上」分开。
 func (h *Handler) probeCORS(c *gin.Context) {
 	c.Header("Vary", "Origin")
-	if o := h.svc.PortalOrigin(); o != "" && c.GetHeader("Origin") == o {
+	if o := h.svc.PortalOrigin(c.Request.Context()); o != "" && c.GetHeader("Origin") == o {
 		c.Header("Access-Control-Allow-Origin", o)
 	}
 	c.Next()
