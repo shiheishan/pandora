@@ -2,8 +2,9 @@ import { useMutation } from '@tanstack/react-query'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { useToast } from '../../../ui'
+import { upgradeResultToast } from './infra'
 import { useFailure, useIntentKey, useInvalidateNodes } from './queries'
-import { bootstrapTokenResponse, serverDeleted, serverSchema, type Server, type ServerStatus } from './schemas'
+import { bootstrapTokenResponse, serverDeleted, serverSchema, serverUpgradeResponse, type Server, type ServerStatus } from './schemas'
 
 export interface InstallSecret {
   serverId: string
@@ -65,6 +66,34 @@ export function useDeleteServer(onDeleted?: (s: Pick<Server, 'id' | 'name'>) => 
     },
     onError: (error) => {
       fail(error)
+      if (isApiError(error, 'conflict')) void invalidate()
+    },
+  })
+}
+
+/** 批量在线升级：要 reauth（api 层自动弹框）与幂等键；结果逐台，没发起的原因在 toast 里列出；409 是发布包不能在线升级，文案原样显示 */
+export function useUpgradeServers(onDone?: () => void) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const intent = useIntentKey()
+  const invalidate = useInvalidateNodes()
+  return useMutation({
+    mutationFn: (list: readonly Pick<Server, 'id' | 'name'>[]) => {
+      const ids = list.map((s) => s.id)
+      return api
+        .post('v1/servers/upgrade', serverUpgradeResponse, { body: { server_ids: ids }, idempotencyKey: intent.keyFor([...ids].sort()) })
+        .then((r) => ({ r, names: new Map(list.map((s) => [s.id, s.name])) }))
+    },
+    onSuccess: ({ r, names }) => {
+      intent.reset()
+      const t = upgradeResultToast(r, names)
+      toast(t.text, t.tone === 'danger' ? 'danger' : undefined)
+      void invalidate()
+      onDone?.()
+    },
+    onError: (error) => {
+      fail(error, { intent })
       if (isApiError(error, 'conflict')) void invalidate()
     },
   })
