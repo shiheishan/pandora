@@ -58,11 +58,12 @@ type ackLink struct {
 	reports []*nodev1.TrafficReport
 }
 
-func (l *ackLink) Events() <-chan panel.Event           { return l.events }
-func (l *ackLink) SendHeartbeat(*nodev1.Heartbeat) bool { return true }
-func (l *ackLink) SendOnline(*nodev1.OnlineIPs) bool    { return true }
-func (l *ackLink) SendConfigAck(*nodev1.ConfigAck) bool { return true }
-func (l *ackLink) SendUsersAck(*nodev1.UsersAck) bool   { return true }
+func (l *ackLink) Events() <-chan panel.Event                   { return l.events }
+func (l *ackLink) SendHeartbeat(*nodev1.Heartbeat) bool         { return true }
+func (l *ackLink) SendOnline(*nodev1.OnlineIPs) bool            { return true }
+func (l *ackLink) SendConfigAck(*nodev1.ConfigAck) bool         { return true }
+func (l *ackLink) SendUsersAck(*nodev1.UsersAck) bool           { return true }
+func (l *ackLink) SendUpgradeReport(*nodev1.UpgradeReport) bool { return true }
 func (l *ackLink) SendTraffic(r *nodev1.TrafficReport) bool {
 	l.kernel.record("push")
 	l.mu.Lock()

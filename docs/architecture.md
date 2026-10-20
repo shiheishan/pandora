@@ -20,7 +20,7 @@
 | 7 | 鉴权：15 分钟 JWT（HS256 钉死，按域分密钥，带 kid）；会话存 Redis；refresh 放 HttpOnly cookie，带轮换和重放检测；Redis 不可用时回 503 | 栈表要求；吊销保持「下一个请求就生效」 |
 | 8 | 后台权限只分有和没有：在管理员名单里且账号 active 就能做全部后台操作；没有角色、权限码、临时提权，后台路由只要求已登录 | 用户 2026-10-12 定（Q8）；非管理员登不进后台，取消管理员时当场吊销其后台会话，不需要每请求查库 |
 | 9 | 节点通道：一台服务器一个身份、一条 `Session` 双向流，节点通过消息里的 node_id 区分；`Enroll` 用一次性令牌换客户端证书 | 用户先前定过「无逐节点安装命令、服务器卡片显示会话状态」；一台机器 60 个节点不用 60 份身份 |
-| 10 | 删掉 UniProxy、Ed25519 签名通道、配置签名、节点 SSE、nonce；离线发布密钥（签二进制）的位置保留，不在本阶段实现 | mTLS 直达面板进程后，签名和 nonce 防的东西已由 TLS 承担 |
+| 10 | 删掉 UniProxy、Ed25519 签名通道、配置签名、节点 SSE、nonce；离线发布密钥（签二进制）的位置保留，不在本阶段实现（10-20 已做成节点在线升级，见 11.6） | mTLS 直达面板进程后，签名和 nonce 防的东西已由 TLS 承担 |
 | 11 | 定时和异步工作全部进 asynq，Scheduler 只在 worker 里跑一份；库里的 `SKIP LOCKED`、租约和状态条件原样保留，作为第二道保险 | 库仍是事实来源；任务丢了有对账任务补 |
 | 12 | 删掉审计哈希链，审计表保持追加写：触发器加上收回运行角色的 UPDATE/DELETE 权限 | 哈希链没有生产读取方，又是全局串行点和大部分 40001 的来源 |
 | 13 | 实时事件由 service 在事务**提交后**发到 Redis，删掉 `notify_change` 触发器和库到 Valkey 的桥 | 「回归普通」；事件源收拢到各表的属主 service |
@@ -395,7 +395,7 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 | 吊销 | 身份置为 revoked 后，立即关闭该身份的在途流；每次建流都查库确认身份有效，因此吊销立刻生效，不需要 CRL 或 OCSP |
 | 过期 | 离线超过 30 天、证书已经过期的：节点继续用磁盘缓存服务现有用户（与现在相同），但连不上面板，要在后台生成新令牌重新接入 |
 | 安装证据 | Hello 里带 agent_version 和 binary_sha256，面板记录下来，与当前发布版本不一致时在后台提示。这是节点自报的数据，原来的「两阶段 commit 拒绝」也只是自报，从来不是安全控制，所以改成提示 |
-| 离线发布密钥 | 位置保留：以后升级二进制时，用离线密钥签发布清单。不在本阶段实现 |
+| 离线发布密钥 | ed25519，签发布清单 `pdnd-manifest.json`；公钥 `go:embed` 进 pdnd（`pdnd/upgrade/keys/*.pub`），私钥只在维护者的密码管理器与 GitHub environment `release-signing` 的 secret 里，不在面板、不在仓库。节点在线升级见 11.6 |
 
 ### 11.2 proto
 
@@ -403,8 +403,8 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 
 - `EnrollmentService.Enroll(EnrollRequest) → EnrollResponse`：服务端 TLS，令牌 + CSR（DER）+ request_id + 主机信息，回 server_id、客户端证书链、CA。
 - `ControlService.Session(stream SessionRequest) → stream SessionResponse`：mTLS 双向流。
-  - 节点发：Hello（版本、二进制摘要、能力、主机信息、各节点已应用的配置摘要与名单版本）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest。
-  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 500 人分块，一块编码后不到 32 KB）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
+  - 节点发：Hello（版本、二进制摘要、build_serial、能力、主机信息、各节点已应用的配置摘要与名单版本、上一次升级的结局）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest、UpgradeReport。
+  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 500 人分块，一块编码后不到 32 KB）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone / upgrade）。
 - 名单里的用户号 `uid` 是 `subscriptions.node_uid`（bigint），代理身份是 `proxy_uuid`。
 - 节点配置是 JSON 文档而不是逐协议的消息：协议种类多、字段各异，文档形状由面板 node 模块的配置组装与 pdnd `node/config_apply.go` 共同约定。
 
@@ -432,6 +432,24 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 ### 11.5 pdnd 端
 
 删除 `panel/client.go`（UniProxy）、`signed.go`、`stream.go`（SSE）、`config_key_transition.go`、`effective_release.go`、`bindingcontract`；重写 `enrollment.go` 为 Enroll（保留崩溃安全日志的思路）；新写会话客户端。`node.go` 主循环改为消费会话消息，保留单 goroutine 不变式；`report.go` 改为由 ack 驱动；`users.go` 保留 diff 和「先删后加」，入口改为 proto 消息；`config_apply.go` 保留应用、回滚和坏版本台账，去掉验签。config.json 去掉 token、signed_required，加上证书路径。
+
+### 11.6 节点在线升级
+
+信任根是 pdnd 二进制里内置的发版公钥：面板被攻破时最多能改配置、不能在节点上执行代码，升级之后也一样。面板给的清单、签名、下载地址都只当搬运工，面板不验签。
+
+| 项 | 做法 |
+|---|---|
+| 发布清单 | `pdnd-dist/pdnd-manifest.json`：`{schema:1, version, serial, artifacts:{"linux-<arch>":{file, sha256}}}`，原字节即签名对象。serial = 发版提交的提交时间，同值经 `-X main.buildSerial` 编进 pdnd；dev 构建为 0，不接受任何升级 |
+| 签名 | `pdnd-manifest.json.sig`：`{key_id, sig}`，ed25519 对清单原字节签名，`key_id = hex(sha256(公钥))[:16]`。`release.yml` 在 environment `release-signing` 里用 secret `PDND_SIGNING_KEY` 经 `go run ./release/signmanifest` 签；推标签发版时没有这个 secret 就失败。两个文件都进 SHA256SUMS |
+| 公钥 | `pdnd/upgrade/keys/*.pub`，每文件一行 base64，`go:embed`；可同时放两把做轮换。目录里没有公钥的构建一律 `signature_invalid` |
+| 只升不降 | 清单 serial 必须大于本机 build_serial；本地自动回退只用 `.prev`，不经面板指令 |
+| 能力协商 | pdnd 在发布构建、内置公钥非空、二进制在 `/usr/local/bin/pandora-native`、root 助手的 path 单元已装时才声明 `upgrade_v1`；面板只对协商出这项的会话下发 `Command.upgrade` |
+| 节点进程 | 验签 → 解析 → 本机架构 → serial → 下载（https，5 分钟、128 MiB）→ 核摘要，暂存到 `/var/lib/pandora-native/upgrade/`，最后写 `request`；回 STAGED 或 FAILED + 原因码 |
+| root 助手 | `pandora-native-upgrade.path` 触发 `pandora-native upgrade-apply`：把暂存件以 O_NOFOLLOW、只认普通文件、有上限的方式拷进 root 0700 工作区再用自己内置的公钥与 build_serial 验一遍；留 `.prev`、换上新版、重启，在确认时限（面板给 180 秒）内等新进程拿到 Welcome 后写的 `healthy`，等不到就装回 `.prev`（ROLLED_BACK + `confirm_timeout`）。被打断后按当前二进制摘要续做，不来回循环 |
+| 结局 | 失败与回退写结果文件，经 Hello 的 `last_upgrade` 或会话里的 UpgradeReport 报给面板。成功不靠回报：面板看新 Hello 的 binary_sha256 等于目标 |
+| 原因码 | `download_failed`、`sha256_mismatch`、`signature_invalid`、`manifest_invalid`、`serial_not_newer`、`busy`、`apply_failed`、`confirm_timeout`、`rollback_failed`，两端同一张表 |
+
+密钥生成、轮换与手动回退见 `panel/deploy/RUNBOOK.md`「节点在线升级与签名密钥」。
 
 ---
 

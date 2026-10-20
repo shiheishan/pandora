@@ -45,6 +45,8 @@ type config struct {
 	} `json:"panel"`
 	// Runtime 是可选的连接回收、停机排空与内存上限调优，见 runtime_tuning.go。
 	Runtime runtimeTuning `json:"runtime"`
+	// Upgrade 是在线升级的可选设置，见 upgrade_cmd.go。
+	Upgrade upgradeConfig `json:"upgrade"`
 }
 
 // buildVersion is injected by the release builder and intentionally defaults
@@ -190,6 +192,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "upgrade-apply" {
+		if err := upgradeApplyCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "upgrade-apply failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "validate-install" {
 		if err := validateInstallCommand(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "install validation failed:", err)
@@ -269,13 +278,17 @@ func run(cfg *config, log *slog.Logger) error {
 	defer kernel.Close()
 	log.Info("内核已启动", "kernel", kernel.Type(), "version", buildVersion, "server", id.ServerID())
 
-	srv := node.New(node.Options{ServerID: id.ServerID(), Kernel: kernel, Logger: log, CacheDir: cfg.stateDir()})
+	binSHA := binarySHA256()
+	env := currentUpgradeEnv()
+	upgrader := newUpgrader(cfg, env, binSHA, log)
+	srv := node.New(node.Options{ServerID: id.ServerID(), Kernel: kernel, Logger: log, CacheDir: cfg.stateDir(), Upgrader: upgrader})
 	// 先用落盘缓存把上次的节点装起来：面板不可达也照常服务，第一条 Hello 就带着这些版本。
 	srv.Start()
 
 	sess, err := panel.NewSession(panel.SessionOptions{
 		Address: cfg.Panel.Address, Identity: id, AgentVersion: buildVersion,
-		BinarySHA256: binarySHA256(), Applied: srv.Applied, Logger: log,
+		BinarySHA256: binSHA, BuildSerial: env.serial, LastUpgrade: srv.LastUpgrade,
+		Features: sessionFeatures(upgrader), Applied: srv.Applied, Logger: log,
 	})
 	if err != nil {
 		return err

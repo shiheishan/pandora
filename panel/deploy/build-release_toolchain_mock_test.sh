@@ -5,7 +5,8 @@
 #   2. 所有 go build 带 GOTOOLCHAIN=go<panel|pdnd 版本>，BUILD-INFO 写两版本；
 #   3. curl 只调一次，缓存命中后不再下载；
 #   4–6. 摘要/只给 URL/工具链三种失败；
-#   7. 脚本静态禁词。
+#   7. 脚本静态禁词；
+#   8. pdnd 发布清单（摘要与二进制一致、serial 编进 pdnd）、只构建节点端、带外签名的复现核对。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +57,7 @@ local_tc="${FAKE_GO_LOCAL:-go1.27.1}"
 effective() {
   if [ "${FAKE_GO_IGNORE_TOOLCHAIN:-}" != 1 ] && [[ "${GOTOOLCHAIN:-}" == go1* ]]; then echo "$GOTOOLCHAIN"; else echo "$local_tc"; fi
 }
+[ -n "${FAKE_GO_ARGS_LOG:-}" ] && printf '%s|%s\n' "$PWD" "$*" >>"$FAKE_GO_ARGS_LOG"
 printf '%s|%s|GOTOOLCHAIN=%s\n' "$1" "$PWD" "${GOTOOLCHAIN-<unset>}" >>"$FAKE_GO_LOG"
 case "$1" in
   env) [ "${2:-}" = GOVERSION ] && effective ;;
@@ -101,8 +103,10 @@ run_build() {
     : >"$T/curl.log"
   fi
   : >"$T/go.log"
+  : >"$T/goargs.log"
   env PATH="$T/stub:$PATH" FAKE_GO_LOG="$T/go.log" FAKE_CURL_LOG="$T/curl.log" \
-    PANDORA_VERSION=toolchain-test GOTOOLCHAIN=local "$@" \
+    FAKE_GO_ARGS_LOG="$T/goargs.log" \
+    PANDORA_VERSION=toolchain-test PANDORA_BUILD_SERIAL=1792540800 GOTOOLCHAIN=local "$@" \
     bash "$T/tree/panel/deploy/build-release.sh" "$T/out" >"$T/stdout" 2>"$T/stderr"
 }
 
@@ -138,6 +142,18 @@ assert_release_tree() {
   find "$root" -name goose -print -quit | grep -q . && fail "goose must not exist ($arch)"
   find "$root" -name 'aegis-*' -print -quit | grep -q . && fail "aegis-named file must not exist ($arch)"
   grep -q 'geoip/ip2region_v4.xdb' "$root/SHA256SUMS" || fail "SHA256SUMS missing geoip line ($arch)"
+  [ -f "$root/pdnd-dist/pdnd-manifest.json" ] || fail "missing pdnd-manifest.json ($arch)"
+  local amd64_sha arm64_sha
+  amd64_sha="$(sha256sum "$root/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
+  arm64_sha="$(sha256sum "$root/pdnd-dist/pandora-native-linux-arm64" | awk '{print $1}')"
+  grep -Fq "\"linux-amd64\": { \"file\": \"pandora-native-linux-amd64\", \"sha256\": \"$amd64_sha\" }" "$root/pdnd-dist/pdnd-manifest.json" \
+    || fail "manifest amd64 sha ($arch)"
+  grep -Fq "\"linux-arm64\": { \"file\": \"pandora-native-linux-arm64\", \"sha256\": \"$arm64_sha\" }" "$root/pdnd-dist/pdnd-manifest.json" \
+    || fail "manifest arm64 sha ($arch)"
+  grep -Fq '"serial": 1792540800,' "$root/pdnd-dist/pdnd-manifest.json" || fail "manifest serial ($arch)"
+  grep -Fq '"version": "toolchain-test",' "$root/pdnd-dist/pdnd-manifest.json" || fail "manifest version ($arch)"
+  grep -Fq '"schema": 1,' "$root/pdnd-dist/pdnd-manifest.json" || fail "manifest schema ($arch)"
+  grep -q 'pdnd-dist/pdnd-manifest.json' "$root/SHA256SUMS" || fail "SHA256SUMS missing manifest ($arch)"
 }
 
 # --- 1. 正常构建 ---
@@ -157,6 +173,17 @@ grep -E '^build\|' "$T/go.log" | grep -v '/tree/pdnd|' | grep -vq "GOTOOLCHAIN=$
 [ "$(grep -c '^build|.*/tree/panel|' "$T/go.log")" -eq 2 ] || fail 'expected two panel pandora builds (amd64+arm64)'
 info="$T/out/pandora-panel_toolchain-test_linux_amd64/deploy/BUILD-INFO"
 grep -qx "PANEL_GO_TOOLCHAIN=$panel_tc" "$info" && grep -qx "PDND_GO_TOOLCHAIN=$pdnd_tc" "$info" || fail "BUILD-INFO content: $(cat "$info")"
+
+for arch in amd64 arm64; do
+  [ ! -f "$T/out/pandora-panel_toolchain-test_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" ] \
+    || fail "unexpected .sig without PDND_SIGNATURE_DIR ($arch)"
+done
+cmp -s "$T/out/pandora-panel_toolchain-test_linux_amd64/pdnd-dist/pdnd-manifest.json" \
+  "$T/out/pandora-panel_toolchain-test_linux_arm64/pdnd-dist/pdnd-manifest.json" || fail 'the two packages carry different pdnd manifests'
+# goargs.log 每行是「目录|全部参数」：节点端只构建一份（两架构各一次），都要带 buildSerial。
+pdnd_builds="$(grep -E '/tree/pdnd\|build ' "$T/goargs.log" || true)"
+[ "$(grep -c . <<<"$pdnd_builds")" = 2 ] || fail "expected two pdnd builds in goargs.log, got: $pdnd_builds"
+grep -vq -- '-X main.buildSerial=1792540800' <<<"$pdnd_builds" && fail 'pdnd build missing buildSerial ldflag'
 
 # --- 3. curl 只一次；再构建命中缓存 ---
 curl_calls="$(wc -l <"$T/curl.log" | tr -d ' ')"
@@ -193,6 +220,55 @@ if run_build "${GEOIP_ENV[@]}"; then fail 'go directive without patch was accept
 grep -q 'full x.y.z' "$T/stderr" || fail "directive message missing: $(cat "$T/stderr")"
 printf 'module example.test/panel\ngo %s\n' "$PANEL_TC_VERSION" >"$T/tree/panel/go.mod"
 
+# --- 8. 只构建节点端；带外签名经 PDND_SIGNATURE_DIR 放进包里 ---
+run_build PANDORA_PDND_ONLY=1 || { cat "$T/stderr" >&2; fail 'pdnd-only build failed'; }
+[ -f "$T/out/pdnd-dist/pdnd-manifest.json" ] || fail 'pdnd-only build wrote no manifest'
+[ ! -e "$T/out/pandora-panel_toolchain-test_linux_amd64" ] || fail 'pdnd-only build must not build the panel package'
+[ ! -s "$T/curl.log" ] || fail 'pdnd-only build must not download geoip'
+grep -q '^build|.*/tree/panel|' "$T/go.log" && fail 'pdnd-only build must not build pandora'
+signed="$T/signed"
+rm -rf "$signed"
+mkdir -p "$signed"
+cp "$T/out/pdnd-dist/pdnd-manifest.json" "$signed/"
+printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$signed/pdnd-manifest.json.sig"
+
+run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed" || { cat "$T/stderr" >&2; fail 'build with PDND_SIGNATURE_DIR failed'; }
+for arch in amd64 arm64; do
+  root="$T/out/pandora-panel_toolchain-test_linux_${arch}"
+  cmp -s "$root/pdnd-dist/pdnd-manifest.json.sig" "$signed/pdnd-manifest.json.sig" || fail "missing or wrong .sig ($arch)"
+  grep -q 'pdnd-dist/pdnd-manifest.json.sig' "$root/SHA256SUMS" || fail "SHA256SUMS missing .sig ($arch)"
+done
+
+# 签过名的清单与重新构建出的不同（节点端没复现）：拒绝
+sed 's/"serial": 1792540800/"serial": 1792540801/' "$T/out/pdnd-dist/pdnd-manifest.json" >"$signed/pdnd-manifest.json"
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed"; then
+  fail 'a signed manifest that differs from the rebuilt one was accepted'
+fi
+grep -q '没能复现' "$T/stderr" || fail "reproducibility message missing: $(cat "$T/stderr")"
+
+rm -f "$signed/pdnd-manifest.json.sig"
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed"; then
+  fail 'PDND_SIGNATURE_DIR without .sig was accepted'
+fi
+printf '{}\n' >"$signed/pdnd-manifest.json.sig"
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed" PANDORA_BUILD_SERIAL=0; then
+  fail 'signing with serial 0 was accepted'
+fi
+grep -q serial "$T/stderr" || fail "serial 0 message missing: $(cat "$T/stderr")"
+
+# 签名就地放在 $OUT/pdnd-dist 里：构建会先清空它，必须一开始就拒绝，不能报成「没能复现」
+run_build PANDORA_PDND_ONLY=1 || { cat "$T/stderr" >&2; fail 'pdnd-only build failed'; }
+printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$T/out/pdnd-dist/pdnd-manifest.json.sig"
+if run_build --keep-out "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$T/out/pdnd-dist"; then
+  fail 'PDND_SIGNATURE_DIR inside $OUT/pdnd-dist was accepted'
+fi
+grep -q '不能在' "$T/stderr" || fail "in-place signature message missing: $(cat "$T/stderr")"
+[ -f "$T/out/pdnd-dist/pdnd-manifest.json.sig" ] || fail 'in-place signature was deleted'
+
+if run_build "${GEOIP_ENV[@]}" PANDORA_BUILD_SERIAL=abc; then
+  fail 'non-numeric BUILD_SERIAL was accepted'
+fi
+
 # --- 7. 静态禁词 ---
 for word in aegis goose PREBUILT migrations; do
   if grep -qi "$word" "$DEPLOY/build-release.sh"; then
@@ -204,6 +280,6 @@ if grep -nE '(^|[^[:alnum:]_.])go1\.[0-9]+\.[0-9]+' "$DEPLOY/build-release.sh" |
 fi
 
 grep -Fq 'require_binary_toolchain "$PANEL_TOOLCHAIN" "$target/bin/pandora"' "$DEPLOY/build-release.sh" || fail 'panel binary is not checked after build'
-grep -Fq 'require_binary_toolchain "$PDND_TOOLCHAIN" "$target/pdnd-dist/$pdnd_name"' "$DEPLOY/build-release.sh" || fail 'pdnd binaries are not checked'
+grep -Fq 'require_binary_toolchain "$PDND_TOOLCHAIN" "$PDND_STAGE/$pdnd_name"' "$DEPLOY/build-release.sh" || fail 'pdnd binaries are not checked'
 
 printf 'build-release toolchain mock: PASS\n'

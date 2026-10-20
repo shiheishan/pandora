@@ -1402,3 +1402,110 @@ sudo grep -h 'subscription:expire' /var/log/pandora/worker.log | tail -n 20
 - `worker.log` 里这段时间的「数据巡检」日志；
 - 出现前后有没有人手改过库；
 - 已经做的临时补偿：调了多少余额、加了几天、开了哪张单，各自的审计原因。
+
+## 17. 节点在线升级与签名密钥
+
+后台勾选服务器点「升级到 vX」后，面板把签过名的发布清单 `pdnd-manifest.json`、签名 `pdnd-manifest.json.sig` 和本机架构的下载地址发给节点。节点进程验签、下载、核摘要后放进暂存区，root 侧助手（`pandora-native-upgrade.path` 触发的 `pandora-native upgrade-apply`）用**已安装二进制自己内置的公钥**再验一遍，留 `.prev`、换上新版、重启 `pandora-native`，180 秒内新进程连不上面板就自动装回旧版。设计见 `docs/architecture.md` 11.6。
+
+信任根是编进 pdnd 的公钥（`pdnd/upgrade/keys/*.pub`），不是面板：面板被攻破也签不出节点肯装的包。所以**签名私钥只放两处**：维护者的密码管理器，与 GitHub 仓库 environment `release-signing` 的 secret `PDND_SIGNING_KEY`。不放面板机、节点机、仓库、CI 日志，也不长期留在维护者的电脑上。
+
+### 怎么确认
+
+面板机上（只读）：
+
+```bash
+# 最近的升级任务：status 是 sent / staged / succeeded / failed / rolled_back / timed_out
+pg -c "SELECT s.name, u.status, u.reason_code, u.detail, u.from_version, u.target_version, u.created_at, u.finished_at FROM server_upgrades u JOIN servers s ON s.id = u.server_id ORDER BY u.created_at DESC LIMIT 20;"
+# 发布包里有没有清单与签名（缺任何一个，后台就不给在线升级）
+ls -l /opt/pandora/pdnd-dist/pdnd-manifest.json /opt/pandora/pdnd-dist/pdnd-manifest.json.sig
+```
+
+节点机上（只读）：
+
+```bash
+systemctl status pandora-native-upgrade.path --no-pager      # 应是 active (waiting)
+journalctl -u pandora-native-upgrade -n 100 --no-pager        # 助手每一步的日志
+journalctl -u pandora-native -n 200 --no-pager | grep -E '升级|暂存'
+ls -l /var/lib/pandora-native/upgrade/ /var/lib/pandora-native-upgrade/ /usr/local/bin/pandora-native*
+sudo cat /var/lib/pandora-native/upgrade/result 2>/dev/null   # 失败或回退的结局，报给面板后会删掉
+```
+
+原因码（`reason_code`）：
+
+| 码 | 意思 | 先查什么 |
+|---|---|---|
+| `download_failed` | 下载失败：非 200、超时、超过 128 MiB、地址不是 https | 节点机能不能访问面板的 `/pdnd/` 下载地址；面板的 nginx 日志 |
+| `sha256_mismatch` | 下载到的二进制和清单里的摘要不符 | 面板机上 `pdnd-dist` 里的二进制是不是被换过，`sha256sum` 对照清单 |
+| `signature_invalid` | 签名验不过，或 key_id 不在节点内置的公钥里 | 下文「轮换」有没有做反；这一批节点的二进制是不是还不认新公钥 |
+| `manifest_invalid` | 清单坏了或没有这台机器的架构 | 发布包是不是完整 |
+| `serial_not_newer` | 目标版本不比节点上的新（含 dev 构建，build_serial 为 0） | 只升不降，属正常拒绝 |
+| `busy` | 上一次升级还没走完 | 等它结束，或看助手日志 |
+| `apply_failed` | 替换二进制、写确认标记或重启失败，已保持或装回旧版 | 助手日志里的具体原因（磁盘满、权限） |
+| `confirm_timeout` | 新版 180 秒内没连上面板，已装回旧版 | 新版起来后的 `journalctl -u pandora-native`：配置读不了、证书、网络 |
+| `rollback_failed` | 要装回旧版但 `.prev` 不可用或恢复失败 | **要人工处理**，见下文「手动回退」 |
+
+后台的 `timed_out`（面板 13 分钟内没等到结局）多半是节点在升级途中失联：上节点机看助手日志（`journalctl -u pandora-native-upgrade`）与 `result`。另有两种情况结局也到不了面板，以节点上的助手日志为准：会话中途报出的结局在断线时丢了（结局文件报出就删）；助手刚把暂存件拷走、还没记下这次升级时机器重启（现有安装没动）。
+
+### 17.1 生成签名密钥（首次）
+
+在维护者自己的电脑上、pdnd 目录里：
+
+```bash
+cd pdnd
+go run ./release/signmanifest -gen /tmp/pdnd-signing   # 写出 /tmp/pdnd-signing.key（0600）与 .pub，打印 key_id
+```
+
+1. **【写】** 把 `.key` 的内容存进密码管理器（注明 key_id 与生成日期）。
+2. **【写】** GitHub 仓库 › Settings › Environments 新建 `release-signing`：Deployment branches and tags 限定只允许 `v*` 标签；Required reviewers 勾上维护者本人（否则任何能推 `v*` 标签的人都能拿私钥签名）；加 secret `PDND_SIGNING_KEY`，值是 `.key` 文件的那一行。
+3. **【写】** 把 `.pub` 放进 `pdnd/upgrade/keys/`（文件名如 `release-<key_id>.pub`），提交合入：从这一版起编出的 pdnd 才认这把钥。
+4. 删掉本机的 `.key`：`rm -P /tmp/pdnd-signing.key`（Linux 用 `shred -u`）。
+
+`release.yml` 推标签发版时，只有 `pdnd` 这个 job 进 `release-signing`：它只装 Go、不装 npm 依赖，只构建节点端与清单，把 secret 写进 0600 临时文件签名、用完即删，再用仓库里的公钥核一遍（私钥与 `pdnd/upgrade/keys` 对不上就在这里失败）；没有这个 secret 发版直接失败。构建全量包的 job 拿不到私钥：它重新构建节点端，清单必须与签过名的那份逐字节相同才把 `.sig` 放进包里。本地跑 `build-release.sh` 只出清单、不出签名，这样的包不能用于在线升级。
+
+### 17.2 轮换签名密钥
+
+节点只认自己二进制里编进去的公钥，所以必须**先让节点认新钥，再换私钥**，顺序反了，所有节点都会回 `signature_invalid`：
+
+1. 按 17.1 生成新的一对，新 `.key` 存进密码管理器（先不动 GitHub 的 secret）。
+2. **【写】** 新 `.pub` 与旧 `.pub` 一起放在 `pdnd/upgrade/keys/`，用**旧私钥**签一次发版，把全部节点升到这一版。
+3. 确认全部节点都在这一版上（后台服务器卡片的版本；没升上的节点不认新钥）。
+4. **【写】** 把 GitHub secret `PDND_SIGNING_KEY` 换成新私钥。下一次发版就用新钥签。
+5. **【写】** 再下一次发版时把旧 `.pub` 从 `keys/` 删掉；旧私钥在密码管理器里标作废。
+
+私钥疑似泄露时一样按这个顺序，只是第 2 步发的那一版之后立刻做 4、5，并在这期间不在后台发起在线升级。
+
+### 17.3 手动回退
+
+助手报 `rollback_failed`，或升级成功后才发现新版有问题，在节点机上以 root：
+
+```bash
+systemctl stop pandora-native-upgrade.path pandora-native-upgrade.service   # 先停助手，免得它同时在动
+sha256sum /usr/local/bin/pandora-native /usr/local/bin/pandora-native.prev  # 记下两者，确认 .prev 是想要的旧版
+```
+
+1. **【写】** 装回 `.prev`（会断开这台节点上的用户连接）：
+
+   ```bash
+   install -m 0755 -o root -g root /usr/local/bin/pandora-native.prev /usr/local/bin/pandora-native.new
+   mv -f /usr/local/bin/pandora-native.new /usr/local/bin/pandora-native
+   systemctl reset-failed pandora-native; systemctl restart pandora-native
+   ```
+
+   没有 `.prev`（或它也坏了）：在后台给这台服务器重新签发令牌，在节点机上重跑接入命令，装的是面板当前发布包里的版本。接入命令会先停助手、清掉进行中的升级状态（`result` 留着），助手不会再把 `.prev` 装回来盖掉它。
+2. **【写】** 清掉半截的升级状态，再把助手打开：
+
+   ```bash
+   rm -f /var/lib/pandora-native-upgrade/*
+   rm -f /var/lib/pandora-native/upgrade/{request,next,next.tmp,manifest.json,manifest.json.sig,applying,healthy}
+   systemctl reset-failed pandora-native-upgrade.path pandora-native-upgrade.service   # 撞过触发上限的 path 单元不清掉就起不来
+   systemctl start pandora-native-upgrade.path
+   ```
+
+   `result` 留着：节点连上面板后会把结局报上去再删。
+3. 看 `journalctl -u pandora-native -n 50` 连上了面板，后台这台服务器的版本回到旧版。
+
+手动回退之后，同一个版本面板仍会认为「可升级」：先修好问题、出新版本再升，不要对同一版本反复点升级。
+
+### 17.4 节点不支持在线升级
+
+后台显示「不支持在线升级」，是节点没在 Hello 里声明 `upgrade_v1`。它要四项都满足：发布构建（不是本地编的 dev 版）、二进制里有公钥、装在 `/usr/local/bin/pandora-native`、装了 `/etc/systemd/system/pandora-native-upgrade.path`。`journalctl -u pandora-native | grep 不支持在线升级` 会打出缺的是哪一项。早于在线升级的安装少了助手单元：在后台给这台服务器重新签发令牌、在节点机上重跑接入命令，助手单元随之装上。

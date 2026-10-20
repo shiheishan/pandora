@@ -64,6 +64,10 @@ type SessionOptions struct {
 	// AgentVersion、BinarySHA256 随 Hello 自报，面板只用来在后台提示版本不一致。
 	AgentVersion string
 	BinarySHA256 string
+	// BuildSerial 随 Hello 自报，dev 构建为 0。
+	BuildSerial uint64
+	// LastUpgrade 每次 Hello 取一次上一次升级的结局；nil 或返回 nil 就不带；会话在自己的 goroutine 里调它，实现必须并发安全。
+	LastUpgrade func() *nodev1.UpgradeReport
 	// Features 是本端支持的可选能力，nil 即 [users_delta]。
 	Features []string
 	// Host 每次 Hello 取一次机器信息，nil 即 CollectHostInfo。
@@ -195,6 +199,11 @@ func (s *Session) SendUsersAck(m *nodev1.UsersAck) bool {
 	return s.send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_UsersAck{UsersAck: m}})
 }
 
+// SendUpgradeReport 发升级进度与结局。
+func (s *Session) SendUpgradeReport(m *nodev1.UpgradeReport) bool {
+	return s.send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_UpgradeReport{UpgradeReport: m}})
+}
+
 // send 把一条消息放进当前流的有界队列。队列满说明面板读不动或网络卡住：断掉这条流，
 // 重连后经 Hello 重新对齐，而不是无界堆积或阻塞编排层的主循环。
 func (s *Session) send(req *nodev1.SessionRequest) bool {
@@ -306,14 +315,19 @@ func (s *Session) dialOptions() []grpc.DialOption {
 
 func (s *Session) hello() *nodev1.Hello {
 	configs, users := s.o.Applied()
-	return &nodev1.Hello{
+	h := &nodev1.Hello{
 		AgentVersion:   s.o.AgentVersion,
 		BinarySha256:   s.o.BinarySHA256,
+		BuildSerial:    s.o.BuildSerial,
 		Features:       s.o.Features,
 		Host:           s.o.Host(),
 		AppliedConfigs: configs,
 		AppliedUsers:   users,
 	}
+	if s.o.LastUpgrade != nil {
+		h.LastUpgrade = s.o.LastUpgrade()
+	}
+	return h
 }
 
 // runStream 跑一条流：每次新建连接（续期之后的握手因此一定用新证书），带新的 x-request-id。
@@ -343,7 +357,8 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 		req.Seq = seq
 		return stream.Send(req)
 	}
-	if err := send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_Hello{Hello: s.hello()}}); err != nil {
+	h := s.hello()
+	if err := send(&nodev1.SessionRequest{Body: &nodev1.SessionRequest_Hello{Hello: h}}); err != nil {
 		err = helloSendError(err, stream)
 		if r, ok := s.reenrollResult(ctx, err); ok {
 			return r
@@ -384,7 +399,7 @@ func (s *Session) runStream(ctx context.Context) (res streamResult) {
 	defer s.setLive(nil)
 	s.log.Info("会话已建立", "request_id", requestID, "session_id", welcome.GetSessionId(),
 		"push_interval_sec", welcome.GetPushIntervalSec(), "heartbeat_interval_sec", welcome.GetHeartbeatIntervalSec())
-	if !s.emit(sctx, Event{Kind: EventWelcome, Welcome: welcome}) {
+	if !s.emit(sctx, Event{Kind: EventWelcome, Welcome: welcome, HelloUpgrade: h.GetLastUpgrade()}) {
 		res.err = context.Cause(sctx)
 		return res
 	}
@@ -519,6 +534,9 @@ func (s *Session) handle(ctx context.Context, m *nodev1.SessionResponse, users *
 		if tomb := body.Command.GetTombstone(); tomb != nil {
 			s.emit(ctx, Event{Kind: EventTombstone, Reason: tomb.GetReason()})
 			return &streamResult{err: ErrTombstoned, tombstone: true}
+		}
+		if u := body.Command.GetUpgrade(); u != nil {
+			s.emit(ctx, Event{Kind: EventUpgrade, Upgrade: u})
 		}
 	case *nodev1.SessionResponse_Welcome:
 		s.log.Warn("同一条流上收到第二个 Welcome，忽略")

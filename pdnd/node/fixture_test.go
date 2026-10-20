@@ -63,13 +63,14 @@ func sha(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:
 type fakeLink struct {
 	events chan panel.Event
 
-	mu         sync.Mutex
-	down       bool
-	heartbeats []*nodev1.Heartbeat
-	traffic    []*nodev1.TrafficReport
-	online     []*nodev1.OnlineIPs
-	configAcks []*nodev1.ConfigAck
-	usersAcks  []*nodev1.UsersAck
+	mu             sync.Mutex
+	down           bool
+	heartbeats     []*nodev1.Heartbeat
+	traffic        []*nodev1.TrafficReport
+	online         []*nodev1.OnlineIPs
+	configAcks     []*nodev1.ConfigAck
+	usersAcks      []*nodev1.UsersAck
+	upgradeReports []*nodev1.UpgradeReport
 }
 
 func newFakeLink() *fakeLink { return &fakeLink{events: make(chan panel.Event, 64)} }
@@ -101,8 +102,17 @@ func (l *fakeLink) SendConfigAck(m *nodev1.ConfigAck) bool {
 func (l *fakeLink) SendUsersAck(m *nodev1.UsersAck) bool {
 	return l.record(func() { l.usersAcks = append(l.usersAcks, m) })
 }
+func (l *fakeLink) SendUpgradeReport(m *nodev1.UpgradeReport) bool {
+	return l.record(func() { l.upgradeReports = append(l.upgradeReports, m) })
+}
 
 func (l *fakeLink) setDown(down bool) { l.mu.Lock(); l.down = down; l.mu.Unlock() }
+
+func (l *fakeLink) upgrades() []*nodev1.UpgradeReport {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]*nodev1.UpgradeReport(nil), l.upgradeReports...)
+}
 
 // acks 返回某节点收到的配置回执，格式 "<阶段>:<sha 前 8 位>[:原因]"，便于比对。
 func (l *fakeLink) acks(nodeID string) []string {

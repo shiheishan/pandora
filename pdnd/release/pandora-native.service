@@ -2,6 +2,11 @@
 Description=Pandora NativeCore node agent
 Wants=network-online.target
 After=network-online.target
+# 崩溃循环要看得出来：缺省 10 秒内 5 次的限制配上 RestartSec=5s 永远撞不到，进程坏了会无声地每 5 秒重启。
+# 300 秒内启动 10 次（约 1 分钟持续崩溃）就停下进入 failed，systemctl status 与面板离线都能看到；
+# 在线升级的助手重启前会先 reset-failed。
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple

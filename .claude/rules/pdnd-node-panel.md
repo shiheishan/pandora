@@ -4,6 +4,11 @@ paths:
   - "pdnd/panel/**"
   - "pdnd/release/acceptancepanel/**"
   - "pdnd/main.go"
+  - "pdnd/upgrade_cmd.go"
+  - "pdnd/upgrade/**"
+  - "pdnd/release/signmanifest/**"
+  - "pdnd/release/pandora-native*.service"
+  - "pdnd/release/pandora-native-upgrade.path"
   - "proto/pandora/node/**"
 ---
 
@@ -65,6 +70,28 @@ paths:
   缓冲上限 2^17 条，超限先丢最旧的 inflight 并计数。退出时先关内核让在途连接入账，再报最后一轮并等 ack。
 - 落盘缓存（`<cache_dir>/nodes/`）：`server.json` 记身份与节点顺序，每节点 `config.json`（原字节 base64 + 摘要）与 `users.json`，
   0600 / 0700。读回时核对摘要，换了身份的缓存整个丢弃。冷启动先装缓存再连面板，心跳报 `serving_cached_config` 直到 Welcome。
+
+## 在线升级（pdnd/upgrade、upgrade_cmd.go、node/upgrade.go）
+
+两块共用的规格（文件格式、原因码、路径、能力名）以 `docs/architecture.md` 11.6 为准；面板侧在 `panel/internal/module/node/`。
+
+- 信任根是二进制里 `go:embed` 的 `upgrade/keys/*.pub`：面板给的清单、签名、地址都只当搬运工。节点进程与 root 助手各验一遍（`upgrade.Check`：验签 → 解析 → 本机架构 → serial），
+  助手用的是**已安装的 root 属主二进制自己的**公钥与 buildSerial。`keys/` 里没有 `.pub` = 一切升级 `signature_invalid`。
+- `main.buildSerial` 由 `panel/deploy/build-release.sh` 以 `-X` 注入（提交时间）；缺省 `"0"` 是 dev 构建，不声明能力、助手也拒绝。
+  `upgrade_v1` 只在四项都满足时声明（`upgradeEnv.upgradeUnsupported`）：serial > 0、内置公钥非空、二进制就是 `/usr/local/bin/pandora-native`、装了 `/etc/systemd/system/pandora-native-upgrade.path`。
+- 节点进程（`upgrade.Agent`）只写 `/var/lib/pandora-native/upgrade/`：下载只走 https（`upgrade.allow_http` 只给验收），不跟随降到 http 的跳转，5 分钟、128 MiB；
+  日志与回报里的地址去掉查询串。`next.tmp` 核过摘要才 rename，`request` 最后写；任一步失败不留半截。`request` 或 `applying` 已在 = `busy`。
+- root 助手（`upgrade-apply`，`upgrade.Helper`）：不收参数，路径全用固定值，不信 request 里的任何路径。暂存目录一律经 `os.Root`；每个文件 Lstat 只认普通文件、大小上限、
+  `O_NOFOLLOW|O_NONBLOCK` 打开后 `SameFile` 核对、链接数必须为 1（防硬链接），先拷进 root 0700 工作区 `/var/lib/pandora-native-upgrade/` 再验，验过的那份才装。
+  工作区 `applying` 记 installing / installed / rolling_back，被打断后按当前二进制摘要续做；只补一次确认窗口（`Resumed`），回退不来回循环；记录最后删。
+  重启前必须写成暂存 `applying` 并删掉旧 `healthy`（`prepareMarker`）：写不了就不重启、直接装回 `.prev`，结局 `apply_failed`（否则新进程写不出 healthy、面板却在新 Hello 上记成功、随后必然回退）。删不掉暂存 `request` 时报错退出，免得 path 单元空转。
+  节点安装器重跑时先停助手、清掉工作区与暂存件（`pandora_reset_upgrade`，`result` 留着），免得续做把 `.prev` 装回来盖掉新装的版本。
+- 编排（`node/upgrade.go`）：只有本条流 Welcome 协商到 `upgrade_v1` 才接指令；暂存在 goroutine 里跑，结局经 `upgradeDone` 回主循环，主循环仍单 goroutine 无锁。
+  同时只许一次。Welcome 时写 `healthy`（`applying` 的目标摘要等于自己的 binary_sha256 才写）；Hello 带上的 `last_upgrade` 内容一致才删结果文件；内务节拍把结果报出去后删。
+  成功不写结果文件：面板看新 Hello 的 binary_sha256。`LastUpgrade()` 在会话 goroutine 里调，只读文件。
+- systemd：`pandora-native-upgrade.path` 监视 `request` 与工作区 `applying`（后者让助手被打断后开机续做）；助手单元 oneshot、`TimeoutStartSec=600`。
+  主单元 `StartLimitIntervalSec=300` / `StartLimitBurst=10`，助手重启前先 `reset-failed`。三个单元由安装器内联生成，`TestInstallScriptUpgradeUnitsMatchPackaged` 逐行对照 `pdnd/release/`。
+- 测试不需要 root 与 systemd：Agent / Helper 的根目录、二进制路径、`ServiceManager`、时钟、睡眠都可注入。
 
 ## 心跳与运行状态
 

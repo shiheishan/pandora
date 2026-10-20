@@ -1,0 +1,12 @@
+# 节点在线升级的触发器：节点进程（pandora）暂存好新二进制后写 request；助手被打断后工作区里留着 applying，
+# 开机或下次检查时同样触发，助手据此续做确认或回退。触发的服务见 pandora-native-upgrade.service。
+[Unit]
+Description=Pandora NativeCore upgrade trigger
+
+[Path]
+PathExists=/var/lib/pandora-native/upgrade/request
+PathExists=/var/lib/pandora-native-upgrade/applying
+Unit=pandora-native-upgrade.service
+
+[Install]
+WantedBy=multi-user.target

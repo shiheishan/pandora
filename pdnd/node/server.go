@@ -36,6 +36,7 @@ type Link interface {
 	SendOnline(*nodev1.OnlineIPs) bool
 	SendConfigAck(*nodev1.ConfigAck) bool
 	SendUsersAck(*nodev1.UsersAck) bool
+	SendUpgradeReport(*nodev1.UpgradeReport) bool
 }
 
 // Options 是 Server 的参数。
@@ -50,6 +51,8 @@ type Options struct {
 	Now func() time.Time
 	// HostMetrics 只给测试替换，nil 即 panel.CollectHostMetrics。
 	HostMetrics func() *nodev1.HostMetrics
+	// Upgrader 在线升级助手；nil 表示本机不支持在线升级，收到指令一律忽略。
+	Upgrader Upgrader
 }
 
 // Server 是一台服务器的编排。
@@ -68,6 +71,14 @@ type Server struct {
 	link Link
 	// connected 为真表示当前流已收到 Welcome、还没断。
 	connected bool
+
+	// 以下字段只在主循环 goroutine 里读写（LastUpgrade 除外，见 upgrade.go）。
+	upgrader          Upgrader
+	upgradeNegotiated bool // 当前流的 Welcome.features 含 upgrade_v1
+	upgradeBusy       bool // 有一次暂存在后台跑
+	upgradeDone       chan upgradeOutcome
+	pendingUpgrade    *nodev1.UpgradeReport // 没发出去的 STAGED/FAILED 回报
+	runCtx            context.Context       // Run 的 ctx，后台暂存用
 
 	// nodes 按节点 id 记；order 是面板 ServerConfig 里的顺序（冷启动时是缓存里的顺序），
 	// 装入站、心跳、上报都按它走，同机端口冲突时赢家因此固定。
@@ -111,6 +122,8 @@ func New(o Options) *Server {
 		nodes:             make(map[string]*Node),
 		pushInterval:      defaultPushInterval,
 		heartbeatInterval: defaultHeartbeatInterval,
+		upgrader:          o.Upgrader,
+		upgradeDone:       make(chan upgradeOutcome, 1),
 	}
 	if o.CacheDir != "" {
 		s.cache = newServerCache(o.CacheDir, o.ServerID)
@@ -154,6 +167,7 @@ func (s *Server) clock() time.Time { return s.now() }
 // 退出时不在这里做最后一次上报：要先关内核让在途连接把流量入账，由调用方随后调 Shutdown。
 func (s *Server) Run(ctx context.Context, link Link) {
 	s.link = link
+	s.runCtx = ctx
 	// 节拍用定时器而不是 ticker：每轮各自带 ±10% 抖动（panel.Jitter），同时装好的一批
 	// 节点几轮之后就不再踩同一秒打面板。
 	push := time.NewTimer(panel.Jitter(s.pushInterval))
@@ -170,6 +184,8 @@ func (s *Server) Run(ctx context.Context, link Link) {
 			return
 		case ev := <-link.Events():
 			s.handleEvent(ev)
+		case out := <-s.upgradeDone:
+			s.onUpgradeDone(out)
 		case <-push.C:
 			s.report()
 			push.Reset(panel.Jitter(s.pushInterval))
@@ -198,6 +214,9 @@ func (s *Server) handleEvent(ev panel.Event) {
 	switch ev.Kind {
 	case panel.EventWelcome:
 		s.onWelcome(ev.Welcome)
+		s.onWelcomeUpgrade(ev.Welcome, ev.HelloUpgrade)
+	case panel.EventUpgrade:
+		s.onUpgrade(ev.Upgrade)
 	case panel.EventConfig:
 		s.applyServerConfig(ev.Config)
 	case panel.EventUsersFull:
@@ -208,8 +227,10 @@ func (s *Server) handleEvent(ev panel.Event) {
 		s.onTrafficAck(ev.ReportID)
 	case panel.EventDisconnected:
 		s.connected = false
+		s.upgradeNegotiated = false
 	case panel.EventTombstone:
 		s.connected = false
+		s.upgradeNegotiated = false
 		s.stopAllForTombstone(ev.Reason)
 	}
 }
@@ -271,4 +292,5 @@ func (s *Server) housekeeping() {
 		s.retryFailedConfig(n, now)
 		s.reportHealth(n, now)
 	}
+	s.upgradeHousekeeping()
 }

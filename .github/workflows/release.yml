@@ -30,16 +30,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build release packages
+  preflight:
+    name: Resolve the version
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
       - name: Resolve and check the version
         id: version
         env:
@@ -65,6 +63,11 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: The tag must point at a commit on the default branch
         if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
@@ -77,6 +80,79 @@ jobs:
             identical|behind) echo "标签提交 $GITHUB_SHA 在 $DEFAULT_BRANCH 上" ;;
             *) echo "::error::标签 $GITHUB_REF_NAME 指向的提交不在 $DEFAULT_BRANCH 上（compare: $status）；先合进 $DEFAULT_BRANCH 再打标签"; exit 1 ;;
           esac
+
+  pdnd:
+    name: Build and sign the node binaries
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 签名私钥只在这个 job 里出现：它只有 Go（不装 npm 依赖，没有第三方安装脚本能读到私钥），
+    # 推标签发版时进需要审批的 environment release-signing 才拿得到 secret；演练不进环境、不签名。
+    environment: ${{ needs.preflight.outputs.publish == 'true' && 'release-signing' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pdnd/go.mod
+          cache: false
+      - name: Build the node binaries and the release manifest
+        env:
+          PANDORA_VERSION: ${{ needs.preflight.outputs.version }}
+          PANDORA_PDND_ONLY: '1'
+        run: bash panel/deploy/build-release.sh "$RUNNER_TEMP/pdnd-out"
+      - name: Sign the release manifest
+        if: needs.preflight.outputs.publish == 'true'
+        env:
+          PDND_SIGNING_KEY: ${{ secrets.PDND_SIGNING_KEY }}
+        working-directory: pdnd
+        run: |
+          # 发出去的包必须能在线升级：推标签发版时没有签名私钥就失败
+          if [ -z "${PDND_SIGNING_KEY:-}" ]; then
+            echo "::error::environment release-signing 里没有 secret PDND_SIGNING_KEY：发布包的节点端清单签不了名，节点无法在线升级"
+            exit 1
+          fi
+          keydir="$(mktemp -d "$RUNNER_TEMP/pdnd-key.XXXXXX")"
+          trap 'rm -rf -- "$keydir"' EXIT
+          umask 077
+          printf '%s\n' "$PDND_SIGNING_KEY" > "$keydir/key"
+          unset PDND_SIGNING_KEY
+          manifest="$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json"
+          GOFLAGS='' go run -mod=readonly ./release/signmanifest -key "$keydir/key" -in "$manifest" -out "$manifest.sig"
+          rm -rf -- "$keydir"
+          # 用仓库里内置的公钥核一遍：私钥与 pdnd/upgrade/keys 对不上时在这里失败，而不是发出去后所有节点都拒绝
+          GOFLAGS='' go run -mod=readonly ./release/signmanifest -verify "$manifest.sig" -in "$manifest"
+      - name: Collect the manifest
+        run: |
+          out="$RUNNER_TEMP/pdnd-signed"
+          mkdir -p "$out"
+          cp -- "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json" "$out/"
+          if [ -f "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json.sig" ]; then
+            cp -- "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json.sig" "$out/"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pdnd-manifest-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/pdnd-signed/
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    name: Build release packages
+    needs: [preflight, pdnd]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdnd-manifest-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/pdnd-signed
       # 发版构建不用缓存（setup-go 关掉 cache、setup-node 不开 npm 缓存）：发布物不吃可能被别的 run 写过的缓存
       - uses: actions/setup-go@v7
         with:
@@ -92,12 +168,26 @@ jobs:
           scope: '@hugeicons-pro'
       - name: Build both architectures
         env:
-          PANDORA_VERSION: ${{ steps.version.outputs.version }}
+          PANDORA_VERSION: ${{ needs.preflight.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
-        run: bash panel/deploy/build-release.sh "$RUNNER_TEMP/dist"
+          # 节点端在这里重新构建，清单必须与 pdnd job 签过名的那份逐字节相同（演练没有 .sig，只核复现）
+          PUBLISH: ${{ needs.preflight.outputs.publish }}
+        run: |
+          if [ -f "$RUNNER_TEMP/pdnd-signed/pdnd-manifest.json.sig" ]; then
+            export PDND_SIGNATURE_DIR="$RUNNER_TEMP/pdnd-signed"
+          elif [ "$PUBLISH" = true ]; then
+            echo "::error::pdnd job 没交回 pdnd-manifest.json.sig"
+            exit 1
+          fi
+          bash panel/deploy/build-release.sh "$RUNNER_TEMP/dist"
+          if [ -z "${PDND_SIGNATURE_DIR:-}" ]; then
+            cmp -- "$RUNNER_TEMP/pdnd-signed/pdnd-manifest.json" "$RUNNER_TEMP/dist/pdnd-dist/pdnd-manifest.json" \
+              || { echo "::error::pdnd 没能复现构建：两个 job 构建出的清单不同"; exit 1; }
+          fi
       - name: Collect the release assets and write SHA256SUMS
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          PUBLISH: ${{ needs.preflight.outputs.publish }}
         run: |
           dist="$RUNNER_TEMP/dist"
           out="$RUNNER_TEMP/assets"
@@ -105,6 +195,10 @@ jobs:
           for arch in amd64 arm64; do
             pkg="pandora-panel_${VERSION}_linux_${arch}.tar.gz"
             cp -- "$dist/$pkg" "$dist/$pkg.sha256" "$dist/$pkg.manifest.sha256" "$out/"
+            if [ "$PUBLISH" = true ]; then
+              tar -tzf "$dist/$pkg" | grep -qx "pandora-panel_${VERSION}_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" \
+                || { echo "::error::发布包缺少 pdnd-manifest.json.sig: $pkg"; exit 1; }
+            fi
           done
           cp -- panel/deploy/get.sh "$out/get.sh"
           cd "$out"
@@ -116,7 +210,7 @@ jobs:
           cat SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: pandora-panel-${{ steps.version.outputs.version }}
+          name: pandora-panel-${{ needs.preflight.outputs.version }}
           path: ${{ runner.temp }}/assets/
           if-no-files-found: error
           retention-days: 14
