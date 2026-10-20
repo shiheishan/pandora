@@ -27,6 +27,8 @@ type fakeBackend struct {
 	trafficErr error
 	// renewErr 是 RenewCertificate 的返回值
 	renewErr error
+	// upgradeErr 是 RecordUpgradeReport 的返回值
+	upgradeErr error
 	// configsHook 非 nil 时 ServerConfigs 一进来（加锁之前）先调它：在 Open 读配置的当口插入并发动作
 	configsHook func()
 
@@ -40,6 +42,7 @@ type fakeBackend struct {
 	heartbeats               [][]NodeRuntime
 	configAcks               []ConfigAck
 	renewSerials             []*big.Int
+	upgradeReports           []UpgradeReport
 }
 
 func newFakeBackend() *fakeBackend {
@@ -152,6 +155,13 @@ func (f *fakeBackend) RecordConfigAck(_ context.Context, _ uuid.UUID, a ConfigAc
 	defer f.mu.Unlock()
 	f.configAcks = append(f.configAcks, a)
 	return nil
+}
+
+func (f *fakeBackend) RecordUpgradeReport(_ context.Context, _ uuid.UUID, r UpgradeReport, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upgradeReports = append(f.upgradeReports, r)
+	return f.upgradeErr
 }
 
 // counts 返回 Rosters、ServerConfigs 各被调了几次。

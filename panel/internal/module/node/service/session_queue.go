@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,8 @@ type Session struct {
 	id       string
 	features []string
 	delta    bool
+	// upgrade 是建流时由 Hello 定下的升级事实（session_upgrade.go），会话期间不变，读不加锁
+	upgrade SessionUpgradeInfo
 
 	mu sync.Mutex
 	// 发送队列；plain 是其中普通消息的条数（配置与名单按节点合并，条数以节点数为界，不计入上限）
@@ -66,6 +69,11 @@ func newSession(m *Sessions, serverID uuid.UUID, id string, h Hello) *Session {
 		}
 	}
 	s.delta = slices.Contains(s.features, FeatureUsersDelta)
+	s.upgrade = SessionUpgradeInfo{
+		UpgradeV1:   slices.Contains(s.features, FeatureUpgradeV1),
+		BuildSerial: h.BuildSerial,
+		Arch:        strings.ToLower(strings.TrimSpace(h.Host.Arch)),
+	}
 	for id, sha := range h.AppliedConfigs {
 		s.cfgWant[id] = sha
 		s.cfgSent[id] = sha
@@ -119,11 +127,12 @@ func (s *Session) pushLocked(it *outItem) bool {
 	return true
 }
 
-// enqueue 排一条普通消息（Welcome、TrafficAck、Certificate）。
-func (s *Session) enqueue(msg Outbound) {
+// enqueue 排一条普通消息（Welcome、TrafficAck、Certificate、Command.upgrade）。
+// 返回 false 表示没收下（会话在结束中或队列满已断流）。
+func (s *Session) enqueue(msg Outbound) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pushLocked(&outItem{msg: msg, plain: true})
+	return s.pushLocked(&outItem{msg: msg, plain: true})
 }
 
 // putConfigLocked 排一份全量配置；队列里还有没发出的配置就原地换掉。

@@ -45,6 +45,14 @@ func (f *fakeTombstones) Tombstone(serverID uuid.UUID, reason string) {
 	f.calls = append(f.calls, serverID.String()+":"+reason)
 }
 
+// UpgradeInfo：fakeTombstones 只关心 Tombstone，升级查询给空实现。
+func (f *fakeTombstones) UpgradeInfo(uuid.UUID) (SessionUpgradeInfo, bool) {
+	return SessionUpgradeInfo{}, false
+}
+
+// SendUpgrade：fakeTombstones 只关心 Tombstone，下发升级给空实现。
+func (f *fakeTombstones) SendUpgrade(uuid.UUID, UpgradeCommand) bool { return false }
+
 func (f *fakeTombstones) list() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
