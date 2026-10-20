@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -17,7 +18,7 @@ import (
 // 不在名单上的标签和属性一律丢弃，而不是「把已知的坏东西过滤掉」——
 // 黑名单永远漏，绕过 XSS 黑名单是一项成熟到有教科书的手艺。
 //
-// 净化在写入时做一次，库里只存净化后的结果。
+// 写入时净化一次再落库；门户读出时再按同一套规则净化一次（库里被手工改过的行也出不去）。
 
 // allowedTags 是能保留的标签。
 //
@@ -38,9 +39,9 @@ var allowedTags = map[string]bool{
 
 // allowedAttrs 按标签列出可保留的属性。
 //
-// 全局只放 class 和 title：class 让内容能蹭上主题里已有的样式，
-// 不必每段都写内联样式。style 属性没放开 —— 它能做定位和覆盖，
-// 足以把一个透明层盖在「确认支付」按钮上。
+// 全局只放 class 和 title：class 只保留以 slot- 开头的类名（门户有 ph- 等全局样式类，
+// 任意类名能蹭全局样式做覆盖层；slot- 前缀留给以后专门给插槽写的样式）。title 作无障碍提示。
+// style 属性没放开 —— 它能做定位和覆盖，足以把一个透明层盖在「确认支付」按钮上。
 var globalAttrs = map[string]bool{"class": true, "title": true}
 
 var allowedAttrs = map[string]map[string]bool{
@@ -49,6 +50,26 @@ var allowedAttrs = map[string]map[string]bool{
 	"td":  {"colspan": true, "rowspan": true},
 	"th":  {"colspan": true, "rowspan": true, "scope": true},
 	"ol":  {"start": true},
+}
+
+// slotClassPrefix 是插槽里唯一放行的类名前缀；slotClassRe 是完整的类名规则（前缀后至少一个字符）。
+const slotClassPrefix = "slot-"
+
+var slotClassRe = regexp.MustCompile(`^` + slotClassPrefix + `[A-Za-z0-9_-]+$`)
+
+// cleanClass 只保留符合 slot- 命名规则的类名；其余丢掉，元素本身保留。
+func cleanClass(v string) (string, bool) {
+	parts := strings.Fields(v)
+	kept := make([]string, 0, len(parts))
+	dropped := false
+	for _, p := range parts {
+		if slotClassRe.MatchString(p) {
+			kept = append(kept, p)
+		} else {
+			dropped = true
+		}
+	}
+	return strings.Join(kept, " "), dropped
 }
 
 // SanitizeHTML 把一段管理员写的 HTML 洗成可以安全插进用户端的片段。
@@ -178,14 +199,40 @@ func cleanAttrs(tag string, attrs []html.Attribute, dropped map[string]bool) []h
 			continue
 		}
 
-		if key == "href" || key == "src" {
-			v, ok := safeURL(a.Val)
-			if !ok {
-				dropped["只允许 http/https/mailto 链接与 data:image 图片"] = true
+		if key == "class" {
+			v, hadDrop := cleanClass(a.Val)
+			if hadDrop {
+				dropped["类名只保留 slot- 开头的，其余已去掉"] = true
+			}
+			if v == "" {
 				continue
 			}
 			a.Val = v
 		}
+
+		if key == "href" {
+			v, ok := safeHref(a.Val)
+			if !ok {
+				norm := normalizeURLRaw(a.Val)
+				if norm != "" && isLoginLink(norm) {
+					dropped["不允许指向快捷登录或邮件登录的链接"] = true
+				} else {
+					dropped["链接只允许 http/https/mailto、站内路径与 # 锚点"] = true
+				}
+				continue
+			}
+			a.Val = v
+		}
+
+		if key == "src" {
+			v, ok := safeSrc(a.Val)
+			if !ok {
+				dropped["图片只允许站内路径（/ 开头）与 data:image 的 png/jpeg/gif/webp"] = true
+				continue
+			}
+			a.Val = v
+		}
+
 		out = append(out, html.Attribute{Key: key, Val: a.Val})
 	}
 
@@ -211,21 +258,29 @@ func cleanAttrs(tag string, attrs []html.Attribute, dropped map[string]bool) []h
 	return out
 }
 
-// safeURL 只放行几种协议。
-//
-// 重点是挡住 javascript: —— 它是 href 里最常见的注入载体。
-// 顺带挡 data:（图片除外）：data:text/html 能在同源下执行脚本。
-func safeURL(raw string) (string, bool) {
+// normalizeURLRaw 去掉首尾空白与控制字符后再判协议：\x00 和换行能把 "java\nscript:" 藏过朴素的前缀比较，
+// 而浏览器解析 URL 时会先把它们剔掉。
+func normalizeURLRaw(raw string) string {
 	v := strings.TrimSpace(raw)
-	// 去掉控制字符再判协议：\x00 和换行能把 "java\nscript:" 藏过朴素的前缀比较，
-	// 而浏览器解析 URL 时会先把它们剔掉。
 	v = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
 			return -1
 		}
 		return r
 	}, v)
+	return v
+}
+
+// safeHref 只放行链接用的几种形式；不放 data:（链接不需要）。
+//
+// 重点是挡住 javascript: —— 它是 href 里最常见的注入载体。
+// 带 # 且片段像快捷登录 / 邮件登录的整条丢掉，防诱导访客登进别人的账号。
+func safeHref(raw string) (string, bool) {
+	v := normalizeURLRaw(raw)
 	if v == "" {
+		return "", false
+	}
+	if isLoginLink(v) {
 		return "", false
 	}
 
@@ -234,21 +289,48 @@ func safeURL(raw string) (string, bool) {
 	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"),
 		strings.HasPrefix(lower, "mailto:"):
 		return v, true
-	case strings.HasPrefix(lower, "data:image/png;base64,"),
-		strings.HasPrefix(lower, "data:image/jpeg;base64,"),
-		strings.HasPrefix(lower, "data:image/gif;base64,"),
-		strings.HasPrefix(lower, "data:image/webp;base64,"):
-		// 不含 svg：SVG 里可以写 <script>，data:image/svg+xml 是个
-		// 伪装成图片的脚本执行入口。
-		return v, true
 	case strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//"):
-		// 站内相对路径可以。排除 //host 那种协议相对地址，
-		// 它其实是外链，只是看起来像路径。
+		// 站内相对路径可以。排除 //host 那种协议相对地址，它其实是外链，只是看起来像路径。
 		return v, true
 	case strings.HasPrefix(v, "#"):
 		return v, true
 	}
 	return "", false
+}
+
+// safeSrc 只放行站内路径与有限的 data:image；与门户 CSP img-src 'self' data: 对齐。
+//
+// 不含 svg：SVG 里可以写 <script>，data:image/svg+xml 是个伪装成图片的脚本执行入口。
+// 外链 http(s) 不放行：CSP 下本来也显示不出来，还会把访客 IP 泄露给第三方。
+func safeSrc(raw string) (string, bool) {
+	v := normalizeURLRaw(raw)
+	if v == "" {
+		return "", false
+	}
+
+	lower := strings.ToLower(v)
+	switch {
+	case strings.HasPrefix(lower, "data:image/png;base64,"),
+		strings.HasPrefix(lower, "data:image/jpeg;base64,"),
+		strings.HasPrefix(lower, "data:image/gif;base64,"),
+		strings.HasPrefix(lower, "data:image/webp;base64,"):
+		return v, true
+	case strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//"):
+		return v, true
+	}
+	return "", false
+}
+
+// isLoginLink 判断 href 是否指向快捷登录或邮件登录路由片段。
+//
+// 门户 hash 路由会给缺斜杠的地址补斜杠，故 # 后先去掉开头所有 / 再比前缀。
+func isLoginLink(v string) bool {
+	i := strings.IndexByte(v, '#')
+	if i < 0 {
+		return false
+	}
+	frag := strings.ToLower(strings.TrimLeft(v[i+1:], "/"))
+	return strings.HasPrefix(frag, "quick-login") || strings.HasPrefix(frag, "mail-login")
 }
 
 func hasAttr(attrs []html.Attribute, key string) bool {
