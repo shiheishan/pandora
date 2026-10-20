@@ -8,9 +8,16 @@ paths:
 
 ## 后台（src/admin）
 
-- 首屏分包（10-20）：`App.tsx` 不静态 import `Shell`，经 `ShellLoader.tsx` 懒加载（整页边界：块加载失败提示刷新，`shell/chunk-error.ts` 判定；`main.tsx` 有令牌时 `preloadShell()` 预取）
-  - 登录前就会加载的文件（`main.tsx`、`App.tsx`、`LoginPage.tsx`、`ReauthDialog.tsx`、`ShellLoader.tsx`、`shell/runtime.tsx`、`site-name.ts`）直接 import 具体组件文件（`../ui/Toast`、`../ui/Button`），不经 `../ui`、`./kit` 汇总出口，也不 import `screens/**` 与 `site.ts`（它带内容页 schema）；页面照旧从汇总出口 import
-  - 实测登录页首屏 JS 382KB（gzip 116KB）、CSS 28KB（gzip 7.2KB）；改了上述文件的 import 后重量一次（构建产物里从 index.html 递归跟静态 import 求和）
+- 首屏分包（10-20，后台与门户同口径）：两边 `App.tsx` 都不静态 import `Shell`，经各自的 `ShellLoader.tsx` 懒加载。它是 `shell/ShellLoader.tsx` 的 `createShellLoader(load, 文案)` 的薄封装：整页边界，分包取不到时提示刷新（`shell/chunk-error.ts` 判定）；`main.tsx` 有令牌时调 `preloadShell()` 预取。外框的「改写成规范地址」effect 改写前先核对 `window.location.hash`：这次渲染的地址已过时就不改，免得外框晚挂上时拿旧地址把刚跳的新地址盖掉（10-20 CI 的 C3 就是这样挂的）
+  - 登录前就会加载的文件直接 import 具体组件文件（`../ui/Toast`、`../ui/Button`、`./kit/Btn`），不经 `../ui`、`./kit` 汇总出口。页面照旧从汇总出口 import
+    - 后台：`main.tsx`、`App.tsx`、`LoginPage.tsx`、`ReauthDialog.tsx`、`ShellLoader.tsx`、`site-name.ts`。不 import `screens/**` 与 `site.ts`（它带内容页 schema）
+    - 门户：`main.tsx`、`App.tsx`、`AuthPage.tsx`、`MailLinkLogin.tsx`、`PasswordReset.tsx`、`SiteBrand.tsx`、`Captcha.tsx`、`queries.ts`、`appearance.ts`、`entry-links.ts`、`home.ts`
+    - 两边共用：`shell/runtime.tsx`、`shell/ShellLoader.tsx`
+  - 守卫：`panel/web/app_test.go` 的 `TestEmbeddedEntryFirstScreenBudget`。它对嵌入的真实产物，把 index.html 里 script、modulepreload、stylesheet 引用的文件大小加起来，与 `firstScreenBudget` 比
+    - 10-20 实测：后台 JS 384KB、CSS 28KB；门户 JS 423KB、CSS 124KB
+    - 两边 JS 的大头都是 react-dom、zod、query-core 底座
+    - 门户 CSS 里约 95KB 是展示字体的 @font-face
+    - 超预算先查是不是有模块被静态 import 进了登录路径，不要直接调高预算
 - reauth 只在后台入口接线：`main.tsx` 建 `ReauthController`，作为 `requestReauth` 传给 `createAppRuntime`
   - 常驻的 `ReauthDialog` 接住任何页面写请求的 403 `reauth_required`，验证通过后 `api.ts` 用原幂等键重放
   - 页面自己不弹「重新验证」，也不做「先弹框后执行」：契约 1.6 规定先请求、按需弹框
