@@ -90,7 +90,11 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
       side={
         <SideFacts label="节点信息">
           <SideFact label="服务器">
-            {row.server_id ? <a href={href(`/nodes/servers/${row.server_id}`)}>{row.server_name ?? '服务器'}</a> : '未绑定'}
+            {row.server_id ? (
+              <a href={href(`/nodes/servers/${row.server_id}`)}>{row.server_name ?? '服务器'}</a>
+            ) : (
+              <a href={href(`/nodes/nodes/${id}/ops`, listQuery)}>未绑定 · 去绑定</a>
+            )}
           </SideFact>
           <SideFact label="地区">{regionLabel(row.country_code)}</SideFact>
           <SideFact label="节点池">{row.pool_name ?? '未划入节点池'}</SideFact>

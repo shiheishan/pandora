@@ -1,15 +1,25 @@
 import { PauseCircleIcon, PlayCircleIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
+import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, useToast } from '../../../ui'
+import { Button, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
 import { Callout, DangerRow } from '../../kit'
 import css from './detail.module.css'
-import { activationHint, canActivate } from './logic'
-import { endsIntent, useFailure, useIntentKey, useInvalidateNodes } from './queries'
+import x from './infra.module.css'
+import {
+  activateBlock,
+  activationHint,
+  bindBlock,
+  bindBody,
+  canActivate,
+  UNBOUND_HINT,
+  validateBind,
+} from './logic'
+import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, okResponse, type NodeRow } from './schemas'
 
-type Pending = 'toggle' | 'retire' | 'revoke' | null
+type Pending = 'toggle' | 'retire' | 'revoke' | 'unbind' | null
 
 /** 详情页头部：上线 / 停用 */
 export function NodeHeaderAction({ node }: { node: NodeRow }) {
@@ -20,6 +30,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
   const activateIntent = useIntentKey()
   const toggleIntent = useIntentKey()
   const [confirmToggle, setConfirmToggle] = useState(false)
+  const blocked = activateBlock(node)
 
   const activate = useMutation({
     mutationFn: () => {
@@ -60,7 +71,15 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 
   if (canActivate(node)) {
     return (
-      <Button size="sm" variant="secondary" icon={PlayCircleIcon} busy={busy} onClick={() => activate.mutate()}>
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={PlayCircleIcon}
+        busy={busy}
+        disabled={blocked !== null}
+        title={blocked ?? undefined}
+        onClick={() => activate.mutate()}
+      >
         上线节点
       </Button>
     )
@@ -68,7 +87,15 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
 
   if (node.serving_status === 'disabled') {
     return (
-      <Button size="sm" variant="secondary" icon={PlayCircleIcon} busy={busy} onClick={() => toggle.mutate('active')}>
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={PlayCircleIcon}
+        busy={busy}
+        disabled={blocked !== null}
+        title={blocked ?? undefined}
+        onClick={() => toggle.mutate('active')}
+      >
         上线节点
       </Button>
     )
@@ -98,13 +125,157 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
   return null
 }
 
-/** 「身份与操作」页签：吊销、退役 */
+/** 「身份与操作」里的所在服务器：绑定 / 改绑弹窗与解绑入口（解绑确认框在 NodeOps）；能不能操作只看 bindBlock（后端 movable） */
+function NodeServerBinding({
+  node,
+  onUnbindRequest,
+  unbindBusy,
+}: {
+  node: NodeRow
+  onUnbindRequest: () => void
+  unbindBusy: boolean
+}) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const invalidate = useInvalidateNodes()
+  const servers = useServers()
+  const bindIntent = useIntentKey()
+  const [bindOpen, setBindOpen] = useState(false)
+  const [serverId, setServerId] = useState(() => node.server_id ?? '')
+  const [port, setPort] = useState(() => (node.server_port ? String(node.server_port) : ''))
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const bound = node.server_id != null
+  const block = bindBlock(node)
+  const desc = bound
+    ? `当前：${node.server_name ?? '服务器'}${node.server_port ? ` · 端口 ${node.server_port}` : ''}`
+    : UNBOUND_HINT
+  const descWithBlock = block ? `${desc} · ${block}` : desc
+
+  const openBind = () => {
+    setServerId(node.server_id ?? '')
+    setPort(node.server_port ? String(node.server_port) : '')
+    setErrors({})
+    setBindOpen(true)
+  }
+
+  const bind = useMutation({
+    mutationFn: (body: ReturnType<typeof bindBody>) =>
+      api.post(`v1/nodes/${node.id}/bind`, adminNodeSchema, { body, idempotencyKey: bindIntent.keyFor([node.id, body]) }),
+    onSuccess: (r) => {
+      bindIntent.reset()
+      if (r.warnings?.length) r.warnings.forEach((w) => toast(w))
+      else toast('已绑定服务器：上线后开始下发')
+      setBindOpen(false)
+      void invalidate()
+    },
+    onError: (error) => {
+      if (isApiError(error, 'conflict') && (error.fields.server_port || error.fields.capacity_nodes)) {
+        setErrors({ ...error.fields })
+        if (endsIntent(error)) bindIntent.reset()
+        return
+      }
+      fail(error, { fields: setErrors, intent: bindIntent })
+      void invalidate()
+    },
+  })
+
+  const submitBind = () => {
+    const found = validateBind(serverId, port)
+    setErrors(found)
+    if (Object.keys(found).length) return
+    bind.mutate(bindBody(node, serverId, port))
+  }
+
+  return (
+    <>
+      <div className={css.bindingRow}>
+        <div className={css.bindingBody}>
+          <b className={css.bindingTitle}>所在服务器</b>
+          <small className={css.bindingDescription}>{descWithBlock}</small>
+        </div>
+        <Button size="sm" variant="secondary" disabled={block !== null} title={block ?? undefined} onClick={openBind}>
+          {bound ? '改绑' : '绑定服务器'}
+        </Button>
+      </div>
+      {bound && (
+        <DangerRow
+          title="解绑服务器"
+          description="这台服务器不再运行这个节点，端口随之释放；协议配置、节点池与路由都保留，之后可以再绑定。"
+          actionLabel="解绑"
+          busy={unbindBusy}
+          disabled={block !== null}
+          onAction={onUnbindRequest}
+        />
+      )}
+      <Modal
+        open={bindOpen}
+        onClose={() => !bind.isPending && setBindOpen(false)}
+        size="md"
+        title={bound ? `改绑服务器 · ${node.name}` : `绑定服务器 · ${node.name}`}
+      >
+        <div className={css.stack}>
+          <Select
+            label="服务器"
+            placeholder="选择服务器"
+            value={serverId}
+            error={errors.server_id ?? errors.capacity_nodes}
+            disabled={bind.isPending}
+            onChange={(e) => {
+              setServerId(e.target.value)
+              setErrors((er) => {
+                const next = { ...er }
+                delete next.server_id
+                delete next.capacity_nodes
+                return next
+              })
+            }}
+            options={(servers.data ?? []).map((s) => ({
+              value: s.id,
+              label: `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`,
+              disabled: s.status === 'retired',
+            }))}
+          />
+          <Input
+            label="端口"
+            mono
+            inputMode="numeric"
+            value={port}
+            error={errors.server_port}
+            hint="同一台服务器上端口先到先得"
+            disabled={bind.isPending}
+            onChange={(e) => {
+              setPort(e.target.value)
+              setErrors((er) => {
+                const next = { ...er }
+                delete next.server_port
+                return next
+              })
+            }}
+          />
+          <div className={x.editModalActions}>
+            <Button size="dialog" variant="ghost" disabled={bind.isPending} onClick={() => setBindOpen(false)}>
+              取消
+            </Button>
+            <Button size="dialog" variant="primary" busy={bind.isPending} onClick={submitBind}>
+              绑定
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+/** 「身份与操作」页签：所在服务器、吊销、退役 */
 export function NodeOps({ node }: { node: NodeRow }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const retireIntent = useIntentKey()
+  const unbindIntent = useIntentKey()
   const [confirm, setConfirm] = useState<Pending>(null)
   const retired = node.serving_status === 'retired'
 
@@ -135,12 +306,29 @@ export function NodeOps({ node }: { node: NodeRow }) {
     },
   })
 
+  const unbind = useMutation({
+    mutationFn: () => {
+      const body = { row_version: node.row_version }
+      return api.post(`v1/nodes/${node.id}/unbind`, adminNodeSchema, { body, idempotencyKey: unbindIntent.keyFor([node.id, body]) })
+    },
+    onSuccess: () => {
+      unbindIntent.reset()
+      toast('已解绑：节点留作配置，端口已释放')
+      void invalidate()
+    },
+    onError: (e) => {
+      fail(e, { intent: unbindIntent })
+      void invalidate()
+    },
+  })
+
   return (
     <div className={css.stack}>
       {retired ? (
         <Callout>节点已退役：退役后不可恢复，只保留历史流量与审计记录。</Callout>
       ) : (
         <>
+          <NodeServerBinding node={node} onUnbindRequest={() => setConfirm('unbind')} unbindBusy={unbind.isPending} />
           <DangerRow
             title="吊销身份"
             description="节点端立刻停服，要在服务器上重新安装才能恢复。用于机器被入侵或转让。"
@@ -179,6 +367,18 @@ export function NodeOps({ node }: { node: NodeRow }) {
         onConfirm={() => {
           setConfirm(null)
           retire.mutate()
+        }}
+        onCancel={() => setConfirm(null)}
+      />
+      <ConfirmModal
+        open={confirm === 'unbind'}
+        tone="danger"
+        title={`解绑「${node.name}」的服务器？`}
+        body="解绑后这台服务器不再运行这个节点，端口随之释放；协议配置、节点池与路由都保留，之后可以再绑定到任意服务器。"
+        confirmLabel="解绑"
+        onConfirm={() => {
+          setConfirm(null)
+          unbind.mutate()
         }}
         onCancel={() => setConfirm(null)}
       />
