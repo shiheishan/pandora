@@ -191,6 +191,7 @@ func buildServices(r *runtime) (*services, error) {
 	}
 	identitySvc.UseGeo(geo)
 	nodeSvc.UseGeo(geo)
+	subSvc.UseGeo(geo)
 	giftcardSvc := giftcardsvc.New(giftcardrepo.New(r.db), txm, auditSvc, idemSvc, catalogSvc, subSvc, ledgerSvc, identitySvc, keys, sealer)
 	// 内容页：发版经 catalog 校验限定套餐、门户经 subscription 取生效套餐、后台经 identity 显示作者
 	contentSvc := contentsvc.New(contentrepo.New(r.db), txm, auditSvc, catalogSvc, subSvc, identitySvc)

@@ -1,6 +1,6 @@
 package service
 
-// 订阅域名探测的单元测试（不连库）：票据签发与验签、组指纹、ApplyProbe 的防操纵规则（成功与失败都要 3 个账号）。
+// 订阅域名探测的单元测试（不连库）：票据签发与验签、组指纹、ApplyProbe 的防操纵规则（成功与失败都要 3 个账号；按级别分开计）。
 // 连库的用例在 domain_probe_pg_test.go。
 
 import (
@@ -141,33 +141,33 @@ func TestApplyProbeSuccessNeedsThreeAccountsAndTicketOnce(t *testing.T) {
 
 	// 前两个账号报成功：不到 3 人，不加分（防单个账号把某域名顶高）
 	for _, acct := range []string{"u1", "u2"} {
-		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, []probeSignal{{BaseURL: a, OK: true}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, domainRegion{}, []probeSignal{{BaseURL: a, OK: true}}, now)
 		if err != nil || n != 0 {
 			t.Fatalf("%s 报成功 = (%d, %v)，要 (0, nil)", acct, n, err)
 		}
 	}
-	if rdb.HExists(ctx, domainScoreKey, a).Val() {
+	if rdb.HExists(ctx, domainScoreKeyFor(a), domainScoreFieldAll).Val() {
 		t.Fatal("a 不该有分数记录")
 	}
 	// 第三个不同账号：成功开始加分
-	n, err := d.ApplyProbe(ctx, "u3", "n-u3", []probeSignal{{BaseURL: a, OK: true}}, now)
+	n, err := d.ApplyProbe(ctx, "u3", "n-u3", domainRegion{}, []probeSignal{{BaseURL: a, OK: true}}, now)
 	if err != nil || n != 1 {
 		t.Fatalf("u3 报成功 = (%d, %v)，要 (1, nil)", n, err)
 	}
-	scores, ok := d.Read(ctx, []string{a}, now)
+	scores, ok := d.Read(ctx, []string{a}, domainRegion{}, now)
 	if !ok || !almost(scores[a], 1.1, 1e-3) {
 		t.Fatalf("a = %v（ok=%v），要 1.1", scores[a], ok)
 	}
 
 	// 同一 nonce 再报（换账号、换域名）：票据一次性，整次上报不生效，连上报人集合都不进
-	n, err = d.ApplyProbe(ctx, "u4", "n-u3", []probeSignal{{BaseURL: b, OK: true}}, now)
+	n, err = d.ApplyProbe(ctx, "u4", "n-u3", domainRegion{}, []probeSignal{{BaseURL: b, OK: true}}, now)
 	if err != nil || n != 0 {
 		t.Fatalf("同票据第二次 = (%d, %v)，要 (0, nil)", n, err)
 	}
-	if rdb.HExists(ctx, domainScoreKey, b).Val() {
+	if rdb.HExists(ctx, domainScoreKeyFor(b), domainScoreFieldAll).Val() {
 		t.Fatal("b 不该有分数记录")
 	}
-	if rdb.Exists(ctx, probeRedisName(probeOKKeyPrefix, b, probeHourBucket(now))).Val() != 0 {
+	if rdb.Exists(ctx, probeLevelName(probeOKKeyPrefix, b, domainScoreFieldAll, probeHourBucket(now))).Val() != 0 {
 		t.Fatal("被票据一次性挡下的上报不该进上报人集合")
 	}
 }
@@ -181,21 +181,21 @@ func TestApplyProbeDedupePerAccount(t *testing.T) {
 
 	// 先凑够两个别的账号，让 u3 的成功能生效
 	for _, acct := range []string{"u1", "u2"} {
-		if n, err := d.ApplyProbe(ctx, acct, "n-"+acct, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
+		if n, err := d.ApplyProbe(ctx, acct, "n-"+acct, domainRegion{}, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
 			t.Fatalf("%s = (%d, %v)，要 0", acct, n, err)
 		}
 	}
-	if n, err := d.ApplyProbe(ctx, "u3", "n3", []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n3", domainRegion{}, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
 		t.Fatalf("u3 第一次 = (%d, %v)，要 1", n, err)
 	}
 	// 同一账号同一域名 30 分钟内换票据再报：去重不生效
-	if n, err := d.ApplyProbe(ctx, "u3", "n4", []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n4", domainRegion{}, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 0 {
 		t.Fatalf("u3 第二次 = (%d, %v)，要 0", n, err)
 	}
 	// 过了去重窗口再报（仍在同一小时桶，集合里已有 3 人）：生效
 	mr.FastForward(31 * time.Minute)
 	now = now.Add(31 * time.Minute)
-	if n, err := d.ApplyProbe(ctx, "u3", "n5", []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
+	if n, err := d.ApplyProbe(ctx, "u3", "n5", domainRegion{}, []probeSignal{{BaseURL: a, OK: true}}, now); err != nil || n != 1 {
 		t.Fatalf("31 分钟后 = (%d, %v)，要 1", n, err)
 	}
 }
@@ -209,21 +209,21 @@ func TestApplyProbeFailureNeedsThreeAccounts(t *testing.T) {
 
 	// 前两个账号报失败：不到 3 人，不扣分
 	for _, acct := range []string{"u1", "u2"} {
-		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, []probeSignal{{BaseURL: a, OK: false}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "n-"+acct, domainRegion{}, []probeSignal{{BaseURL: a, OK: false}}, now)
 		if err != nil || n != 0 {
 			t.Fatalf("%s 报失败 = (%d, %v)，要 (0, nil)", acct, n, err)
 		}
 	}
-	if rdb.HExists(ctx, domainScoreKey, a).Val() {
+	if rdb.HExists(ctx, domainScoreKeyFor(a), domainScoreFieldAll).Val() {
 		t.Fatal("a 不该有分数记录")
 	}
 
 	// 第三个不同账号：失败开始扣分
-	n, err := d.ApplyProbe(ctx, "u3", "n-u3", []probeSignal{{BaseURL: a, OK: false}}, now)
+	n, err := d.ApplyProbe(ctx, "u3", "n-u3", domainRegion{}, []probeSignal{{BaseURL: a, OK: false}}, now)
 	if err != nil || n != 1 {
 		t.Fatalf("u3 报失败 = (%d, %v)，要 (1, nil)", n, err)
 	}
-	scores, ok := d.Read(ctx, []string{a}, now)
+	scores, ok := d.Read(ctx, []string{a}, domainRegion{}, now)
 	if !ok || !almost(scores[a], 0.7, 1e-3) {
 		t.Fatalf("a = %v（ok=%v），要 0.7", scores[a], ok)
 	}
@@ -240,12 +240,12 @@ func TestApplyProbeNetCap(t *testing.T) {
 	// 失败：u1..u5 依次报 b，净变动封顶 −0.5
 	wantN := []int{0, 0, 1, 1, 0}
 	for i, acct := range []string{"u1", "u2", "u3", "u4", "u5"} {
-		n, err := d.ApplyProbe(ctx, acct, "nf-"+acct, []probeSignal{{BaseURL: b, OK: false}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "nf-"+acct, domainRegion{}, []probeSignal{{BaseURL: b, OK: false}}, now)
 		if err != nil || n != wantN[i] {
 			t.Fatalf("%s 报 b 失败 = (%d, %v)，要 %d", acct, n, err, wantN[i])
 		}
 	}
-	scores, ok := d.Read(ctx, []string{b}, now)
+	scores, ok := d.Read(ctx, []string{b}, domainRegion{}, now)
 	if !ok || !almost(scores[b], 0.5, 1e-3) {
 		t.Fatalf("b = %v（ok=%v），要 0.5（封顶）", scores[b], ok)
 	}
@@ -253,12 +253,12 @@ func TestApplyProbeNetCap(t *testing.T) {
 	// 成功：u1..u8 依次报 c：前两个不到 3 人不计，u3..u7 各 +0.1，u8 被封顶挡下
 	wantS := []int{0, 0, 1, 1, 1, 1, 1, 0}
 	for i, acct := range []string{"u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8"} {
-		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, []probeSignal{{BaseURL: c, OK: true}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, domainRegion{}, []probeSignal{{BaseURL: c, OK: true}}, now)
 		if err != nil || n != wantS[i] {
 			t.Fatalf("%s 报 c 成功 = (%d, %v)，要 %d", acct, n, err, wantS[i])
 		}
 	}
-	scores, ok = d.Read(ctx, []string{c}, now)
+	scores, ok = d.Read(ctx, []string{c}, domainRegion{}, now)
 	if !ok || !almost(scores[c], 1.5, 1e-3) {
 		t.Fatalf("c = %v（ok=%v），要 1.5（封顶）", scores[c], ok)
 	}
@@ -268,7 +268,7 @@ func TestApplyProbeNetCap(t *testing.T) {
 	now = now.Add(time.Hour)
 	wantNew := []int{0, 0, 1}
 	for i, acct := range []string{"u9", "u10", "u11"} {
-		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, []probeSignal{{BaseURL: c, OK: true}}, now)
+		n, err := d.ApplyProbe(ctx, acct, "ns-"+acct, domainRegion{}, []probeSignal{{BaseURL: c, OK: true}}, now)
 		if err != nil || n != wantNew[i] {
 			t.Fatalf("新桶 %s 报 c = (%d, %v)，要 %d", acct, n, err, wantNew[i])
 		}
@@ -279,14 +279,125 @@ func TestApplyProbeNilSafe(t *testing.T) {
 	ctx := context.Background()
 	now := probeTestNow
 	sig := []probeSignal{{BaseURL: "https://a.example.test", OK: true}}
-	if n, err := (*domainScores)(nil).ApplyProbe(ctx, "u1", "n1", sig, now); n != 0 || err != nil {
+	if n, err := (*domainScores)(nil).ApplyProbe(ctx, "u1", "n1", domainRegion{}, sig, now); n != 0 || err != nil {
 		t.Fatalf("nil 接收者 = (%d, %v)，要 (0, nil)", n, err)
 	}
-	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", sig, now); n != 0 || err != nil {
+	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", domainRegion{}, sig, now); n != 0 || err != nil {
 		t.Fatalf("rdb nil = (%d, %v)，要 (0, nil)", n, err)
 	}
-	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", nil, now); n != 0 || err != nil {
+	if n, err := newDomainScores(nil).ApplyProbe(ctx, "u1", "n1", domainRegion{}, nil, now); n != 0 || err != nil {
 		t.Fatalf("signals 空 = (%d, %v)，要 (0, nil)", n, err)
+	}
+}
+
+func TestApplyProbeRegionIsolated(t *testing.T) {
+	_, rdb := testkit.Redis(t)
+	d := newDomainScores(rdb)
+	ctx := context.Background()
+	now := probeTestNow
+	fj := domainRegion{Province: "福建", ISP: ispTelecom}
+	gd := domainRegion{Province: "广东", ISP: ispTelecom}
+	a := "https://a.example.test"
+
+	for i, acct := range []string{"u1", "u2", "u3"} {
+		n, err := d.ApplyProbe(ctx, acct, "nr-"+acct, fj, []probeSignal{{BaseURL: a, OK: false}}, now)
+		want := 0
+		if i == 2 {
+			want = 1
+		}
+		if err != nil || n != want {
+			t.Fatalf("%s 福建报失败 = (%d, %v)，要 %d", acct, n, err, want)
+		}
+	}
+	scores, ok := d.Read(ctx, []string{a}, fj, now)
+	if !ok || !almost(scores[a], 0.7, 1e-3) {
+		t.Fatalf("福建读 a = %v（ok=%v），要 0.7", scores[a], ok)
+	}
+
+	for i, acct := range []string{"u4", "u5", "u6"} {
+		n, err := d.ApplyProbe(ctx, acct, "nr-"+acct, gd, []probeSignal{{BaseURL: a, OK: true}}, now)
+		want := 0
+		if i == 2 {
+			want = 1
+		}
+		if err != nil || n != want {
+			t.Fatalf("%s 广东报成功 = (%d, %v)，要 %d", acct, n, err, want)
+		}
+	}
+
+	scores, ok = d.Read(ctx, []string{a}, fj, now)
+	if !ok || !almost(scores[a], 0.7, 1e-3) {
+		t.Fatalf("福建读 a = %v（ok=%v），要 0.7", scores[a], ok)
+	}
+	scores, ok = d.Read(ctx, []string{a}, gd, now)
+	if !ok || !almost(scores[a], 1.1, 1e-3) {
+		t.Fatalf("广东读 a = %v（ok=%v），要 1.1", scores[a], ok)
+	}
+	zj := domainRegion{Province: "浙江", ISP: ispMobile}
+	scores, ok = d.Read(ctx, []string{a}, zj, now)
+	if !ok || !almost(scores[a], 0.8, 1e-3) {
+		t.Fatalf("浙江移动读 a = %v（ok=%v），要 0.8", scores[a], ok)
+	}
+	scores, ok = d.Read(ctx, []string{a}, domainRegion{}, now)
+	if !ok || !almost(scores[a], 0.8, 1e-3) {
+		t.Fatalf("全国读 a = %v（ok=%v），要 0.8", scores[a], ok)
+	}
+}
+
+func TestApplyProbeLevelThresholdsSeparate(t *testing.T) {
+	_, rdb := testkit.Redis(t)
+	d := newDomainScores(rdb)
+	ctx := context.Background()
+	now := probeTestNow
+	fj := domainRegion{Province: "福建", ISP: ispTelecom}
+	gd := domainRegion{Province: "广东", ISP: ispTelecom}
+	a := "https://a.example.test"
+
+	for _, acct := range []string{"u1", "u2"} {
+		if n, err := d.ApplyProbe(ctx, acct, "nl-"+acct, fj, []probeSignal{{BaseURL: a, OK: false}}, now); err != nil || n != 0 {
+			t.Fatalf("%s = (%d, %v)，要 0", acct, n, err)
+		}
+	}
+	n, err := d.ApplyProbe(ctx, "u3", "nl-u3", gd, []probeSignal{{BaseURL: a, OK: false}}, now)
+	if err != nil || n != 1 {
+		t.Fatalf("u3 = (%d, %v)，要 (1, nil)", n, err)
+	}
+	if !rdb.HExists(ctx, domainScoreKeyFor(a), domainScoreFieldAll).Val() {
+		t.Fatal("全国 field 应有分数")
+	}
+	for _, field := range []string{"福建", "福建|电信", "广东", "广东|电信"} {
+		if rdb.HExists(ctx, domainScoreKeyFor(a), field).Val() {
+			t.Fatalf("field %q 不该存在", field)
+		}
+	}
+	scores, ok := d.Read(ctx, []string{a}, fj, now)
+	if !ok || !almost(scores[a], 0.7, 1e-3) {
+		t.Fatalf("福建读 a = %v（ok=%v），要 0.7", scores[a], ok)
+	}
+}
+
+func TestApplyProbeRegionNetCapPerLevel(t *testing.T) {
+	_, rdb := testkit.Redis(t)
+	d := newDomainScores(rdb)
+	ctx := context.Background()
+	now := probeTestNow
+	fj := domainRegion{Province: "福建", ISP: ispTelecom}
+	b := "https://b.example.test"
+
+	wantN := []int{0, 0, 1, 1, 0, 0}
+	for i, acct := range []string{"u1", "u2", "u3", "u4", "u5", "u6"} {
+		n, err := d.ApplyProbe(ctx, acct, "nc-"+acct, fj, []probeSignal{{BaseURL: b, OK: false}}, now)
+		if err != nil || n != wantN[i] {
+			t.Fatalf("%s = (%d, %v)，要 %d", acct, n, err, wantN[i])
+		}
+	}
+	scores, ok := d.Read(ctx, []string{b}, fj, now)
+	if !ok || !almost(scores[b], 0.5, 1e-3) {
+		t.Fatalf("福建读 b = %v（ok=%v），要 0.5", scores[b], ok)
+	}
+	scores, ok = d.Read(ctx, []string{b}, domainRegion{}, now)
+	if !ok || !almost(scores[b], 0.5, 1e-3) {
+		t.Fatalf("全国读 b = %v（ok=%v），要 0.5", scores[b], ok)
 	}
 }
 

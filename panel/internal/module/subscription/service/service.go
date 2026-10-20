@@ -24,6 +24,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
@@ -109,6 +110,9 @@ type Service struct {
 	extras pullExtras
 	// scores 是订阅域名的分数（Redis，domain_scores.go）；装配时经 UseDomainScores 注入，nil 时一律按基础权重
 	scores *domainScores
+	// geo 是 IP 归属地查询（ip2region），订阅域名分数按访客的省份与运营商分桶用；装配时经 UseGeo 注入，
+	// nil 时一律只记、只读全国一级（domain_region.go）
+	geo geoLocator
 }
 
 // New 构造 subscription service。catalog 一般是 catalog service，users 是 identity service，sealer 是 crypto.Keys.Sealer()。
@@ -131,6 +135,14 @@ func (s *Service) UseRosterNotifier(n RosterNotifier) { s.roster = n }
 
 // UseOnlineDeviceCounter 只在启动装配时调用（不并发安全）。
 func (s *Service) UseOnlineDeviceCounter(c OnlineDeviceCounter) { s.online = c }
+
+// UseGeo 注入 IP 归属地解析器，订阅域名分数按访客地区分桶。只在启动装配时调用（不并发安全）。
+// r 为 nil（没放归属地数据文件）时不注入，分数只用全国一级；不存成带类型的 nil 接口。
+func (s *Service) UseGeo(r *geoip.Resolver) {
+	if r != nil {
+		s.geo = r
+	}
+}
 
 // clock 返回当前时刻（UTC、截到微秒，与库里的精度一致）。
 func (s *Service) clock() time.Time {
@@ -262,6 +274,7 @@ func (s *Service) deliveryReady() bool {
 }
 
 // MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：geo（没放 IP 归属地数据文件时就是 nil，订阅域名分数只用全国一级）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	for _, p := range []struct {

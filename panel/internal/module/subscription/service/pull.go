@@ -189,9 +189,10 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return PullResult{}, err
 	}
 	// 经令牌主人所在组的订阅域名到达的成功拉取，是这个域名「能连上」的信号；别组的域名（Host 可伪造）不加分。
-	// 进程内攒批写 Redis，不多一次往返；同一凭据对同一域名每小时只记一次
+	// 按拉取者 IP 的省份与运营商同时记三级；查归属地在凭据去重通过之后才做（同一凭据对同一域名每小时一次）。
+	// 进程内攒批写 Redis，不多一次往返
 	if base, ok := ex.domains.hostBaseURL(req.Host); ok && groupHas(ex.domains.groupFor(owner.UserGroupID), base) {
-		s.scores.NoteSuccess(ctx, base, credID.String(), now)
+		s.scores.NoteSuccess(ctx, base, credID.String(), func() domainRegion { return s.regionOf(reqmeta.From(ctx).IP) }, now)
 	}
 	return res, nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 )
 
 const (
@@ -216,6 +217,7 @@ func (s *Service) ProbeFrameDomains(ctx context.Context, ticket string) ([]strin
 
 // ReportProbeResults 验票后记探测结果：只认票据所绑组里的域名（先 NormalizeBaseURL，失败或不在组里的静默忽略，同一域名只取第一条），
 // 按 BaseURL 字典序交给 scores.ApplyProbe（票据一次性、账号×域名 30 分钟一次、成功与失败都要同一小时 3 个不同账号、每小时净变动 ±0.5）。
+// 按上报请求的 IP 归到上报者的地区，三级分开数人数、分开封顶。
 // Redis 写失败只打 Warn、不报错（分数只是调权重的参考）。
 func (s *Service) ReportProbeResults(ctx context.Context, ticket string, results []ProbeResult) error {
 	t, g, err := s.probeTicketGroup(ctx, ticket)
@@ -245,7 +247,7 @@ func (s *Service) ReportProbeResults(ctx context.Context, ticket string, results
 		return nil
 	}
 	sort.Slice(signals, func(i, j int) bool { return signals[i].BaseURL < signals[j].BaseURL })
-	if _, err := s.scores.ApplyProbe(ctx, t.UserID.String(), t.Nonce, signals, s.clock()); err != nil {
+	if _, err := s.scores.ApplyProbe(ctx, t.UserID.String(), t.Nonce, s.regionOf(reqmeta.From(ctx).IP), signals, s.clock()); err != nil {
 		plog.From(ctx).Warn("订阅域名探测分数写入失败", zap.Error(err))
 	}
 	return nil

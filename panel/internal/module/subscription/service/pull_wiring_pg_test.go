@@ -11,6 +11,7 @@ import (
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
+	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
@@ -222,7 +223,7 @@ func TestPullViaSubDomainNotesSuccess(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var score float64
 	for time.Now().Before(deadline) {
-		m, ok := de.svc.scores.Read(ctx, []string{"https://sub-a.example.test"}, cur)
+		m, ok := de.svc.scores.Read(ctx, []string{"https://sub-a.example.test"}, domainRegion{}, cur)
 		if ok && almost(m["https://sub-a.example.test"], 1.05, 0.01) {
 			score = m["https://sub-a.example.test"]
 			break
@@ -248,17 +249,74 @@ func TestPullViaSubDomainNotesSuccess(t *testing.T) {
 	}
 	// 加分在拉取里同步攒进 pending，没攒进去就不会有后台写：直接看 pending 与 Redis 即可，不用等
 	de.svc.scores.mu.Lock()
-	_, queued := de.svc.scores.pending["https://vip.example.test"]
+	queued := false
+	for b := range de.svc.scores.pending {
+		if b.BaseURL == "https://vip.example.test" {
+			queued = true
+		}
+	}
 	de.svc.scores.mu.Unlock()
-	if queued || rdb.HExists(ctx, domainScoreKey, "https://vip.example.test").Val() {
+	if queued || rdb.Exists(ctx, domainScoreKeyFor("https://vip.example.test")).Val() != 0 {
 		t.Fatal("令牌主人不在专线组，vip 域名不应加分")
 	}
 
 	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "other.example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if rdb.HExists(ctx, domainScoreKey, "https://other.example.test").Val() {
+	if rdb.Exists(ctx, domainScoreKeyFor("https://other.example.test")).Val() != 0 {
 		t.Fatal("未登记域名不应写分数")
+	}
+}
+
+func TestPullNotesSuccessByRegion(t *testing.T) {
+	de, ctx, _, _, token := setupPull(t)
+	admin := adminCtx(ctx, uuid.New())
+	_, err := de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{{
+		Name: "缺省", IsDefault: true,
+		Domains: []Domain{{BaseURL: "https://sub-a.example.test", Weight: 1}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	_, rdb := testkit.Redis(t)
+	de.svc.UseDomainScores(rdb)
+
+	geo := &fakeGeo{locs: map[string]geoip.Location{
+		"198.51.100.7": {Country: "中国", Region: "福建", ISP: "电信", Kind: geoip.KindResidential},
+	}}
+	de.svc.geo = geo
+
+	origNow := de.svc.now
+	base := time.Now().UTC()
+	var cur time.Time
+	cur = base
+	de.svc.now = func() time.Time { return cur }
+	t.Cleanup(func() { de.svc.now = origNow })
+
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "sub-a.example.test"}); err != nil {
+		t.Fatalf("第一次拉取: %v", err)
+	}
+	cur = base.Add(11 * time.Second)
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "sub-a.example.test"}); err != nil {
+		t.Fatalf("第二次拉取: %v", err)
+	}
+
+	fj := domainRegion{Province: "福建", ISP: ispTelecom}
+	waitScoreIn(t, de.svc.scores, "https://sub-a.example.test", fj, cur, 1.05)
+
+	key := domainScoreKeyFor("https://sub-a.example.test")
+	if !rdb.HExists(ctx, key, "福建|电信").Val() {
+		t.Fatal("应有省|运营商 field")
+	}
+	if !rdb.HExists(ctx, key, "福建").Val() {
+		t.Fatal("应有省 field")
+	}
+	if !rdb.HExists(ctx, key, domainScoreFieldAll).Val() {
+		t.Fatal("应有全国 field")
+	}
+	if geo.calls.Load() != 1 {
+		t.Fatalf("同一凭据×域名每小时只查一次归属地，calls=%d", geo.calls.Load())
 	}
 }
 

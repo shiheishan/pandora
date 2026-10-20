@@ -42,7 +42,7 @@ func seedProbeReporters(t *testing.T, rdb *redis.Client, base string, now time.T
 	for i, a := range accts {
 		members[i] = a
 	}
-	if err := rdb.SAdd(context.Background(), probeRedisName(probeOKKeyPrefix, base, probeHourBucket(now)), members...).Err(); err != nil {
+	if err := rdb.SAdd(context.Background(), probeLevelName(probeOKKeyPrefix, base, domainScoreFieldAll, probeHourBucket(now)), members...).Err(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -258,7 +258,7 @@ func TestProbeReportOwnGroupOnlyPG(t *testing.T) {
 	}
 
 	waitScore(t, de.svc.scores, "https://sub-a.example.test", base, 1.1)
-	if rdb.HExists(ctx, domainScoreKey, "https://vip.example.test").Val() {
+	if rdb.HExists(ctx, domainScoreKeyFor("https://vip.example.test"), domainScoreFieldAll).Val() {
 		t.Fatal("vip 不在用户组，不应写入分数 hash")
 	}
 }
@@ -291,7 +291,7 @@ func TestProbeReportTicketOncePG(t *testing.T) {
 	if err := de.svc.ReportProbeResults(uctx, ticket, []ProbeResult{{BaseURL: b, OK: true}}); err != nil {
 		t.Fatal(err)
 	}
-	scores, ok := de.svc.scores.Read(ctx, []string{b}, base)
+	scores, ok := de.svc.scores.Read(ctx, []string{b}, domainRegion{}, base)
 	if !ok || !almost(scores[b], 1.1, 1e-3) {
 		t.Fatalf("同票据第二次上报不应再加分：%v（ok=%v）", scores[b], ok)
 	}
@@ -305,7 +305,7 @@ func TestProbeReportBadTicketPG(t *testing.T) {
 		{BaseURL: "https://sub-a.example.test", OK: true},
 	})
 	assertUnauthorized(t, err)
-	if rdb.Exists(ctx, domainScoreKey).Val() != 0 {
+	if rdb.Exists(ctx, domainScoreKeyFor("https://sub-a.example.test")).Val() != 0 {
 		t.Fatal("坏票据不应创建分数 hash")
 	}
 }
@@ -329,7 +329,7 @@ func TestProbeReportSuccessNeedsThreeAccountsPG(t *testing.T) {
 	if err := de.svc.ReportProbeResults(uctx, ticket, []ProbeResult{{BaseURL: a, OK: true}, {BaseURL: b, OK: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if rdb.HExists(ctx, domainScoreKey, a).Val() {
+	if rdb.HExists(ctx, domainScoreKeyFor(a), domainScoreFieldAll).Val() {
 		t.Fatal("只有 2 个账号报成功，a 不该加分")
 	}
 	waitScore(t, de.svc.scores, b, base, 1.1)
