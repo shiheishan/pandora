@@ -106,7 +106,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 换新链接 | `/#/subs` | 卡片底部「换新链接」，弹层「换一个新链接？」确认；见 `paths.ts` 的 C8b | 进完成页「已换新链接」，新链接与「添加到 App」在最上面，尾号变了；每份 10 分钟内只能换一次，再换时按钮置灰写剩余冷却（限频是后端 429，只在测试机上核对，假后端不模拟） |
 | 钱包余额 | `/#/wallet` | 看账户余额；选充值金额，走支付；回来看余额明细 | 金额与概览、结账页的可用余额一致；充值成功后余额增加，明细多一行 |
 | 订单 | `/#/orders` | 看待支付单；取消订单并确认 | 取消见 `paths.ts` 的 A0、C5b；已取消的单不能再支付 |
-| 退出 | `/#/account` | 点退出登录 | 回登录页；`localStorage` 里门户令牌被清掉 |
+| 退出 | `/#/account` | 点退出登录 | 回登录页；`localStorage` 里门户登录标志 `pandora-portal-session` 被删掉，刷新后仍是登录页 |
 
 上表没有逐行对照当前页面复核过；对不上的先改上表，再走流程。叫法以 `tests/mock-portal-wording.test.ts` 的禁用词为准。还没有现成页面的流程不写进来。
 
@@ -133,10 +133,11 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 ## 坑
 
 - **SSE 让网络永远不空闲**：页面开着实时事件长连接，不要等「网络空闲」。导航后等页面的 `load`，再固定等 1 到 2 秒，或直接等某个文字出现（`find`）。只差 `#路由` 的 `navigate` 是同文档跳转，不重新加载、渲染晚 1 到 2 秒：要验「刷新后还在」就显式刷新，马上 `find` 找不到先 `wait` 2 秒。
-- **令牌存储键**：`localStorage` 里门户是 `pandora-portal-token`，后台是 `pandora-admin-token`（`panel/frontend/src/core/token.ts` 的 `tokenStorageKey`）。
-  - 同源的两个入口键不同、互不通用。
-  - 验退出、验令牌被清、验登录态是否保持时看它；不要把令牌值贴进记录表。
-  - 存储被禁用时令牌只留在内存，刷新后要重新登录，这是设计行为。
+- **令牌不在存储里**：访问令牌只在页面内存，刷新后凭 HttpOnly 的 refresh cookie（门户 `pandora_rt`、后台 `pandora_admin_rt`，Path=/v1/auth）换回来（`panel/frontend/src/core/token.ts`、`shell/session.ts`）。
+  - `localStorage` 里只有不含秘密的登录标志：门户 `pandora-portal-session`、后台 `pandora-admin-session`，值是 `"1"`；验退出、验登录态是否保持时看它和刷新后的页面，`localStorage` 里出现任何 `*-token` 键都是缺陷。
+  - 刷新后先有一瞬空白（开机恢复登录），再进外框；接口 429、5xx 或断网时显示「暂时连不上服务器，还没确认你的登录状态」和「重试」，不会掉回登录页。
+  - 一个标签页退出，同入口的其它标签页跟着回登录页（BroadcastChannel）；一个标签页登录，其它停在登录页的标签页自己恢复登录。
+  - cookie 是 HttpOnly，页面脚本读不到；要核对就看浏览器的 cookie 列表，不要把 cookie 值贴进记录表。
 - **假后端状态在内存**：vite 重启即复原，每次验收从干净状态开始比较稳；写操作做完想重来就重启（`mock-up.sh down` 再 `up`）。
 - **后台主题互通**：两个 vite 进程经 `node_modules/.cache/pandora-mock/appearance.json` 共享生效主题，后台启动时会重写它；先起后台再看门户外观，别被上次激活的主题误导。
 - **弹窗里的按钮在 `<dialog>` 里**：`read_page` 能读到，但页面背景被遮；点完弹窗再读背景页的文字。

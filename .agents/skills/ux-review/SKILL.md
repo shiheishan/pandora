@@ -31,7 +31,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
   - `up <前端目录> <个数>` 在 5191 起依次开门户实例（`--strictPort`，被占就报错）；
   - `down`、`status`。
   - 5181、5182 留给 flow-walk，8766 是原型服务器，都不占。
-  - 起完后，主 Agent 在内置浏览器里**逐个端口登录一次**（门户账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`，令牌按源存 `localStorage`，端口不同就要分别登录）。测试员不登录、不碰口令；测「注册 / 登录 / 找回密码」的测试员拿一个没登录的端口。
+  - 起完后，主 Agent 在内置浏览器里**逐个端口登录一次**（门户账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`，令牌只在内存，刷新靠按源存的 HttpOnly refresh cookie，端口不同就要分别登录）。测试员不登录、不碰口令；测「注册 / 登录 / 找回密码」的测试员拿一个没登录的端口。
   - vite 重启后会话失效，要重新登录。
 - 后台：`npm run dev:admin`（flow-walk 的 `admin-mock`，5182），场景只有一份默认数据。
 
