@@ -16,14 +16,16 @@ paths:
 
 生命周期与服务器：
 
-- 10-16 设计稿删掉了节点的复制、迁移、删除与「发布配置」入口（后端接口仍在，前端不再调用），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。
+- 10-16 设计稿删掉了节点的复制、删除与「发布配置」入口（后端接口仍在，前端不再调用），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。旧的「迁移」接口 10-20 已删，换成绑定 / 解绑（见下）。
 - 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。编辑时 NodeForm 不再有节点池（`validateBasic` 只在新建时要求节点池）。
+- 节点可以不绑服务器（用户 2026-10-20 定）：向导的服务器下拉缺省「暂不绑定」（`Select` 的 `emptyOption`，说明 `logic.UNBOUND_HINT`）；`validateBasic(b, creating, live)` 选了服务器才要端口、在役（live）才要地址；`createBody` 没选服务器 / 没填端口时不带这两个键，`patchBody` 不发空端口。
 - 节点详情是整页（`NodeDetailPage.tsx`，kit `DetailPage`；外框 `DETAIL_ROUTES` 已登记 `nodes:nodes`），4 个页签 概览 / 协议参数 / 路由与流量 / 身份与操作（`DETAIL_TABS`），地址 `/nodes/nodes/<id>/<metrics|proto|settings|ops>`；`index.tsx` 按 `rest[0]` 分发到列表或详情。数据以 `useNodeDetail` 为主，列表缓存里有这一行时先拿来秒出，404 交给 QueryView。返回链接与切页签都带上列表的查询串（筛选不丢）。
 - 页头：地区码 + 名称 + StatusDot，副行 地址 · 协议 · 服务器；右侧上线 / 停用（`NodeOps.tsx` 的 `NodeHeaderAction`，停用要确认）。右栏 SideFacts 六项：服务器（链到服务器详情）、地区（去掉「HK · 」前缀）、节点池、是否下发、本周期用量、运行状态（`runState`）。样稿的「内核」后端没有，不显示。
 - 概览是 4 格指标加近 24 小时带宽曲线（探针数据，Mbps），标题带「峰值 X · HH:00」（`logic.bandwidthPeak`）。
 - 「协议参数」是只读键值摘要（`logic.protocolSummary`：按后端 schema 的中文名与 `option_labels` 生成，敏感字段写「不回显」，隐藏字段不列），「编辑」开 760 弹窗装 NodeForm（`NodeProtocol.tsx`）；弹窗里有未保存修改时关闭要确认（NodeForm 的 `onDirtyChange`）。
 - 「路由与流量」是三块只读摘要（路由 / 流量与标签 / 访问，`NodeSettings.tsx`），「编辑」各开一个弹窗装现成的编辑器（`NodeRouting`、`NodeTraffic`、`NodeAccess`）。节点池选择在「访问」弹窗里单独保存（`NodePoolSection`，PATCH 只带 `row_version` 与 `pool_id`）；ECH 也在「访问」。
-- 「身份与操作」：`NodeIdentity`（kit KvList + CopyButton）+ DangerRow 吊销身份 / 退役（确认框、二次认证照旧）。退役后留在详情页显示已退役，文案「退役后不可恢复」，不写「可以删除」。
+- 「身份与操作」：`NodeIdentity`（kit KvList + CopyButton）+「所在服务器」（未绑：绑定服务器；已绑：改绑 + DangerRow 解绑，确认框）+ DangerRow 吊销身份 / 退役（确认框、二次认证照旧）。退役后留在详情页显示已退役，文案「退役后不可恢复」，不写「可以删除」。
+- 绑定 / 改绑弹窗选服务器 + 端口，`POST v1/nodes/:id/bind`（`logic.validateBind`、`bindBody`），端口冲突 / 容量满的 409 标到表单；解绑 `POST v1/nodes/:id/unbind`。能不能操作只看后端 `movable`（草稿或停用）经 `logic.bindBlock`，在役置灰写「节点在役，先停用再改绑 / 解绑」。没绑服务器时页头「上线节点」置灰（`logic.activateBlock`），右栏服务器写「未绑定 · 去绑定」链到「身份与操作」，列表服务器列写「未绑定」。
 - 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点详情页还要能继续显示。
 - 列表的筛选 `f`、搜索 `q`、标签 `tag` 都在地址查询串里（`logic.parseNodeFilter`；replace 回写，搜索框本地状态 + 300ms 防抖写回）；勾选后实心 BulkBar（kit）替换筛选行；标签筛选是 Menu；页脚常驻「共 N 个节点 · M 个在线」（`logic.nodeCounts`），超过一页走服务端分页时换成 `<Pager inline>`；「新建节点」在 PageActions；≤639 次要列隐藏，名称下折一行摘要。
 - 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用详情页头「上线节点」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。

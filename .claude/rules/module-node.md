@@ -54,7 +54,14 @@ paths:
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。
 - L4 三种取值 `tcp` / `udp` / `tcp+udp`；shadowsocks 无条件 `tcp+udp`（同端口 TCP、UDP 都听，用户 2026-10-14 定）。冲突口径 `protocol.L4Conflicts`：相等，或一方是 `tcp+udp`；`tcp` 与 `udp` 同端口可共存。门禁按 `protocol.ConflictingL4s` 查占用者（`repo.NodePortHolder`），提示标签 `443/TCP+UDP`。
 - 库里兜底是两条部分唯一索引 `nodes_listen_tcp_claim_key`（`listen_l4 IN ('tcp','tcp+udp')`）与 `nodes_listen_udp_claim_key`（`IN ('udp','tcp+udp')`），都译成 `repo.ErrListenClaimTaken`（00038）。改 L4 规则时两条索引、`repo.inventoryErrs` 映射、pdnd 用例表一起改。
-- 建、改、克隆、迁服务器在服务器行锁内 `claimNodePort`；冲突 409。锁序：改节点为节点行 → 服务器行（`service/nodes.go` `PatchNode`）。
+- 建（绑了服务器时）、改、复制到服务器、绑定 / 改绑都在服务器行锁内 `claimNodePort`；冲突 409。锁序：节点行 → 服务器行（`PatchNode`、`BindNode`）。没绑服务器的节点不占端口：端口唯一索引带 `server_id IS NOT NULL`，端口值只是配置。
+
+## 节点与服务器的绑定（用户 2026-10-20 定）
+- 节点是配置，可以不绑服务器（`nodes.server_id` 可空，不用迁移）：新建时 `NodeInput.ServerID` 为 nil 即「暂不绑定」，不锁服务器、不查端口，端口与地址都可以先空着；绑了服务器时端口必填。地址只在在役时必填（`nodeValidateProtocol` 的 `nodeEndpointNeed`：在役要地址，绑了服务器要端口；端口留空时丢掉 protocol 包的端口范围错误）。PATCH 不能把端口清成 0。
+- 绑定 / 改绑 `BindNode`、解绑 `UnbindNode`（`service/nodes_binding.go`，接口 `POST /nodes/:id/bind`、`/unbind`，取代旧的 `/move`）：只许草稿或已停用（`nodeMovableState`，列表的 `movable` 也用它），在役 409「节点在役，先停用再改绑 / 解绑」，退役 409。绑定要有端口（请求可带 `server_port`），换服务器走 `lockServerForNodes`（容量、退役），同一台只锁行；都过 `claimNodePort`。解绑只把 `server_id` 置空（端口释放，端口值留着）。两者都经 `repo.SetNodeServer` 一并清掉运行状态与配置回执（上一台报的不算数），推进配置与名单纪元，审计 `node.server_bind` / `node.server_unbind`。
+- 上线与批量启用：没绑服务器回 409 `fields.server_id`（`nodeUnboundActivateMsg`），先于协议就绪的检查；库里 `nodes_active_shape` 兜底。复制：源节点没绑、也没给目标服务器时副本也不绑。
+- 后台「是否下发」第一项就是绑没绑（`nodeDeliveryFacts.Bound` → `nodeNoteUnbound`）。下发、名单、配置文档天然排除未绑节点（只取在役节点、INNER JOIN servers），不改那些 SQL。
+- 删服务器时名下节点先退役再置空 `server_id`（`repo/servers.go`），这类节点已退役，不能再绑。
 
 ## 服务状态与运行态
 - 只有 `serving_status`（`draft` / `active` / `disabled` / `retired`），边表在 `nodeServingTransitions`（`service/node_status.go`）；无旧版 17 态生命周期触发器。
