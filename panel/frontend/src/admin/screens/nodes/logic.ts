@@ -160,6 +160,36 @@ export const protocolKind = (s: ProtocolSchema) => (s.enums?.network?.length ===
  */
 export const canActivate = (n: Pick<NodeRow, 'serving_status'>) => n.serving_status === 'draft'
 
+/** 下拉「暂不绑定」的说明：新建向导的服务器下拉与提示同一句 */
+export const UNBOUND_HINT = '暂不绑定：节点先作为配置存着，不占端口、不下发；要上线时在详情「身份与操作」里绑定服务器'
+
+/** 上线按钮置灰的原因：没绑服务器时返回提示，能上线（就状态而言）时返回 null */
+export function activateBlock(n: Pick<NodeRow, 'server_id'>): string | null {
+  return n.server_id == null ? '先在「身份与操作」里绑定服务器再上线' : null
+}
+
+/** 绑定 / 改绑 / 解绑置灰的原因；能操作时返回 null。只看后端给的 movable 与状态，不自己按别的字段判断 */
+export function bindBlock(n: Pick<NodeRow, 'serving_status' | 'movable'>): string | null {
+  if (n.serving_status === 'retired') return '节点已退役'
+  if (n.serving_status === 'active') return '节点在役，先停用再改绑 / 解绑'
+  if (!n.movable) return '节点在役，先停用再改绑 / 解绑'
+  return null
+}
+
+/** 绑定弹窗的校验：服务器必选，端口 1–65535 必填 */
+export function validateBind(serverId: string, port: string): Record<string, string> {
+  const e: Record<string, string> = {}
+  if (!serverId) e.server_id = '选择要绑定的服务器'
+  const p = Number(port)
+  if (!Number.isInteger(p) || p < 1 || p > 65535) e.server_port = '1–65535'
+  return e
+}
+
+/** POST v1/nodes/:id/bind 的请求体 */
+export function bindBody(n: Pick<NodeRow, 'row_version'>, serverId: string, port: string): { row_version: number; server_id: string; server_port: number } {
+  return { row_version: n.row_version, server_id: serverId, server_port: Number(port) }
+}
+
 /**
  * R113 上线响应的 warnings → 带下一步的提示（Toast 用普通语气，不是错误）。首次搭建时池还没绑套餐是正常流程：
  * 先上线节点，再去套餐页发布绑了这个池的版本。只认 node/service 上线（nodeNoPoolWarning）与未绑套餐的两条提示原文，其余原样接在后面
@@ -461,17 +491,22 @@ export function basicFromRow(n: NodeDetail): BasicForm {
   }
 }
 
-export function validateBasic(b: BasicForm, creating: boolean): Record<string, string> {
+/** live = 节点在役，地址必填 */
+export function validateBasic(b: BasicForm, creating: boolean, live = false): Record<string, string> {
   const e: Record<string, string> = {}
   if (!b.name.trim()) e.name = '必填'
   else if ([...b.name.trim()].length > 120) e.name = '不超过 120 字'
-  if (creating && !b.serverId) e.server_id = '选择承载的服务器'
   // 新建必须选节点池（R104）；编辑时节点池在详情『访问』里单独改，协议表单不再校验它
   if (creating && !b.poolId) e.pool_id = NO_POOL_HINT
   if (creating && !b.nodeType) e.node_type = '选择协议'
-  if (!b.host.trim()) e.server_host = '必填'
-  const port = Number(b.port)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) e.server_port = '1–65535'
+  if (live && !b.host.trim()) e.server_host = '必填：在役节点要有对外地址'
+  const portTrim = b.port.trim()
+  if (portTrim === '') {
+    if (b.serverId) e.server_port = '选了服务器就要填端口（1–65535）'
+  } else {
+    const port = Number(portTrim)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) e.server_port = '1–65535'
+  }
   const rate = Number(b.rate)
   if (!(rate > 0)) e.traffic_rate = '倍率必须大于 0'
   if (creating && !b.country.trim()) e.country_code = '请选择地区'
@@ -482,12 +517,12 @@ export function validateBasic(b: BasicForm, creating: boolean): Record<string, s
 export function createBody(b: BasicForm, config: Record<string, unknown>): Record<string, unknown> {
   return {
     name: b.name.trim(),
-    server_id: b.serverId,
     node_type: b.nodeType,
     server_host: b.host.trim(),
-    server_port: Number(b.port),
     protocol_config: config,
     traffic_rate: Number(b.rate),
+    ...(b.serverId ? { server_id: b.serverId } : {}),
+    ...(b.port.trim() ? { server_port: Number(b.port) } : {}),
     ...(b.poolId ? { pool_id: b.poolId } : {}),
     ...(b.displayName.trim() ? { display_name: b.displayName.trim() } : {}),
     ...(b.country.trim() ? { country_code: b.country.trim().toUpperCase() } : {}),
@@ -506,7 +541,7 @@ export function patchBody(row: NodeDetail, b: BasicForm, protocol: { changed: bo
   if (b.poolId !== before.poolId) body.pool_id = b.poolId || null
   if (b.nodeType !== before.nodeType) body.node_type = b.nodeType
   if (b.host.trim() !== before.host) body.server_host = b.host.trim()
-  if (b.port !== before.port) body.server_port = Number(b.port)
+  if (b.port.trim() !== '' && b.port !== before.port) body.server_port = Number(b.port)
   if (Number(b.rate) !== row.traffic_rate) body.traffic_rate = Number(b.rate)
   if (b.country.trim().toUpperCase() !== before.country) body.country_code = b.country.trim() ? b.country.trim().toUpperCase() : null
   if (protocol.changed || b.nodeType !== before.nodeType) body.protocol_config = protocol.config

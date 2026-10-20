@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { NODE_PROTOCOL_SCHEMAS } from '../../../../dev/mock/admin/node-schemas'
 import {
+  activateBlock,
   bandwidthBuckets,
   bandwidthPeak,
   basicFromRow,
   batchPlan,
+  bindBlock,
+  bindBody,
   canTransition,
   createBody,
   emptyBasic,
@@ -40,6 +43,7 @@ import {
   toFormValues,
   toProtocolConfig,
   validateBasic,
+  validateBind,
   NO_POOL_HINT,
   NODE_LINE_FIELDS,
   sameNodeLine,
@@ -346,10 +350,10 @@ describe('basic info and PATCH', () => {
     expect(validateBasic(filled, true)).toEqual({})
   })
 
-  it('uses new error copy for name, host and port', () => {
-    const e = validateBasic({ ...filled, name: '', host: '', port: '70000' }, true)
+  it('uses new error copy for name and port', () => {
+    const e = validateBasic({ ...filled, name: '', port: '70000' }, true)
     expect(e.name).toBe('必填')
-    expect(e.server_host).toBe('必填')
+    expect(e.server_host).toBeUndefined()
     expect(e.server_port).toBe('1–65535')
   })
 
@@ -364,7 +368,45 @@ describe('basic info and PATCH', () => {
 
   it('creates with only filled optionals, uppercasing the country', () => {
     const body = createBody({ ...filled, poolId: 'p1', port: '8388', rate: '1.5', country: 'hk' }, { cipher: 'aes-256-gcm' })
-    expect(body).toMatchObject({ name: 'A', server_port: 8388, country_code: 'HK', pool_id: 'p1' })
+    expect(body).toMatchObject({ name: 'A', server_id: 's', server_port: 8388, country_code: 'HK', pool_id: 'p1' })
+  })
+
+  it('validateBasic: unbound create allows empty server, port and host', () => {
+    const base = { ...filled, serverId: '', port: '', host: '' }
+    const e = validateBasic(base, true)
+    expect(e.server_id).toBeUndefined()
+    expect(e.server_port).toBeUndefined()
+    expect(e.server_host).toBeUndefined()
+    expect(validateBasic({ ...base, serverId: 's1', port: '' }, true).server_port).toBe('选了服务器就要填端口（1–65535）')
+    expect(validateBasic({ ...filled, host: '' }, false, true).server_host).toBe('必填：在役节点要有对外地址')
+  })
+
+  it('createBody omits server_id and server_port when empty', () => {
+    const body = createBody({ ...filled, serverId: '', port: '', host: '' }, {})
+    expect(body).not.toHaveProperty('server_id')
+    expect(body).not.toHaveProperty('server_port')
+  })
+
+  it('patchBody omits server_port when port cleared', () => {
+    const n = row()
+    const b = { ...basicFromRow(n), port: '' }
+    const body = patchBody(n, b, { changed: false, config: {} })
+    expect(body).not.toHaveProperty('server_port')
+  })
+
+  it('activateBlock and bindBlock', () => {
+    expect(activateBlock({ server_id: null })).toBe('先在「身份与操作」里绑定服务器再上线')
+    expect(activateBlock({ server_id: 's1' })).toBeNull()
+    expect(bindBlock({ serving_status: 'draft', movable: true })).toBeNull()
+    expect(bindBlock({ serving_status: 'disabled', movable: true })).toBeNull()
+    expect(bindBlock({ serving_status: 'active', movable: false })).toBe('节点在役，先停用再改绑 / 解绑')
+    expect(bindBlock({ serving_status: 'retired', movable: false })).toBe('节点已退役')
+  })
+
+  it('validateBind and bindBody', () => {
+    expect(validateBind('', '443')).toEqual({ server_id: '选择要绑定的服务器' })
+    expect(validateBind('s1', 'x').server_port).toBe('1–65535')
+    expect(bindBody({ row_version: 3 }, 's1', '443')).toEqual({ row_version: 3, server_id: 's1', server_port: 443 })
   })
 
   it('sends only changed fields and leaves protocol_config out unless the protocol changed', () => {
