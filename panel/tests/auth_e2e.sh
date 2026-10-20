@@ -88,7 +88,7 @@ NEW=$(echo "$R" | jqr "['access_token']")
 RT2=$(rt_of "$TMP/u1" pandora_rt)
 [ -n "$NEW" ] && [ -n "$RT2" ] && [ "$RT1" != "$RT2" ] && ok "refresh 发新 access 并轮换 cookie" || bad "refresh 没有轮换" "$R"
 SID=${RT1%%.*}
-FAKE="$SID.$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
+FAKE="$SID.0.$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
 C=$(code -X POST "$PUB/v1/auth/refresh" -b "pandora_rt=$FAKE")
 [ "$C" = 401 ] && ok "随便拼的 refresh 回 401" || bad "伪造的 refresh 没被拒" "HTTP $C"
 C=$(code "$PUB/v1/me" -H "Authorization: Bearer $NEW")

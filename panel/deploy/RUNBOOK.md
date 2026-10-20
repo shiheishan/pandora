@@ -172,6 +172,7 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 | 能登录，保存时全部失败、提示只读 | 降级开关 `admin.writes` 被关了，到「系统 › 安全与运维 › 降级开关」打开 |
 | 在门户用管理员账号登录被拒 | 设计如此：管理员账号不能登录门户，请走后台地址 |
 | 登录后隔一阵被踢回登录页 | 后台会话 7 天、空闲 2 小时过期 |
+| 用着用着突然掉线，审计里有 `session.refresh_reuse` | 下面「refresh 重放」 |
 
 「邮箱或密码不正确」对外是同一句话，背后有几种情况。审计里记了真实原因（同一来源 10 分钟内只记一条）：
 
@@ -201,6 +202,18 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 
 - **【写】** 一个管理员都没有了（`pandora admin has-admin` 退出 3；退出 1 是连不上库或配置错，不等于没有）：同样的写法，子命令换成 `create --email <邮箱> --password-stdin`。
 - **【写】** 账号在、只是不是管理员了：`pandora-as-service admin grant --email <邮箱>`（会吊销它的门户会话）。
+
+### refresh 重放（session.refresh_reuse）
+
+面板见到一枚已经被换下的 refresh cookie 再出现（超过 30 秒宽限的上一代，或更早的任一代），就认为 cookie 落在了两个人手里，吊销整条会话并写这条审计（门户、后台同一套）。只读查最近的记录：
+
+```bash
+pg -c "SELECT occurred_at, resource_id AS user_id, data->>'audience' AS audience, data->>'session_id' AS session_id FROM audit_events WHERE action = 'session.refresh_reuse' ORDER BY occurred_at DESC LIMIT 20;"
+```
+
+- 偶尔一条、用户重新登录后不再出现：多半是误报。已知两种：轮换的响应丢了（关页、断网）而浏览器过了 30 秒才重试；服务端卡顿超过 30 秒，排队的旧请求晚到。看同一时间前后 `serve.log` 里这个用户的 refresh 是否有 5xx 或慢请求。
+- 同一用户反复出现、或伴随陌生 IP 的登录：按 cookie 被盗处理。**【写】** 重置这个账号的口令（会吊销全部会话，命令见上），并提醒用户检查设备与浏览器扩展。
+- 主密钥（`secrets.env` 里派生各类密钥的那一把）疑似泄漏：它加会话 id 能算出 refresh，必须换主密钥并让全部会话失效，按升级处理。
 
 ### 什么时候升级处理
 

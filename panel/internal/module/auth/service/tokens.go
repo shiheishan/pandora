@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -39,11 +41,16 @@ func newSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// nextSecret 是轮换出的下一枚 refresh 随机串：HMAC(主密钥派生, sid ‖ 0 ‖ 上一枚)，32 字节 base64url。
-// 由上一枚确定性地算出，所以 30 秒宽限内拿上一枚来能重算出同一枚当前值原样补发，Redis 里不用存明文；
-// 没有主密钥算不出来，登录时的第一枚仍是 newSecret 的随机值。
-func (s *Service) nextSecret(sid, secret string) string {
-	return base64.RawURLEncoding.EncodeToString(s.keys.HMAC(crypto.InfoHMACRefreshNext, []byte(sid+"\x00"+secret)))
+// refreshSecret 是会话 sid 第 gen 代的 refresh 随机串：HMAC(主密钥派生, sid ‖ 0 ‖ gen)，32 字节 base64url。
+// 每一代都由服务端密钥确定性算出，Redis 里只存哈希：30 秒宽限内拿上一代来能重算出当前那一枚原样再发；
+// 任何一代签发过的旧值再出现都能认出真伪，判重放（不管中间被轮换了几次）。没有主密钥算不出任何一代。
+func (s *Service) refreshSecret(sid string, gen uint64) string {
+	return base64.RawURLEncoding.EncodeToString(s.keys.HMAC(crypto.InfoHMACRefresh, []byte(sid+"\x00"+strconv.FormatUint(gen, 10))))
+}
+
+// refreshAuthentic 核对随机串确是本服务给 sid 第 gen 代签发的（常数时间比较）。
+func (s *Service) refreshAuthentic(sid string, gen uint64, secret string) bool {
+	return subtle.ConstantTimeCompare([]byte(secret), []byte(s.refreshSecret(sid, gen))) == 1
 }
 
 // hashSecret 返回随机串的 SHA-256（hex）；Redis 里只存它。
@@ -52,25 +59,30 @@ func hashSecret(secret string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// formatRefresh 拼出 refresh cookie 的值：<sid>.<随机串>。
-func formatRefresh(sid, secret string) string {
-	return sid + "." + secret
+// formatRefresh 拼出 refresh cookie 的值：<sid>.<代数>.<随机串>。
+func formatRefresh(sid string, gen uint64, secret string) string {
+	return sid + "." + strconv.FormatUint(gen, 10) + "." + secret
 }
 
-// parseRefresh 拆 refresh cookie；sid 必须是 UUID、随机串必须解出 32 字节。
-func parseRefresh(raw string) (sid, secret string, ok bool) {
-	sid, secret, found := strings.Cut(raw, ".")
-	if !found {
-		return "", "", false
+// parseRefresh 拆 refresh cookie；sid 必须是 UUID、代数是规范的十进制、随机串必须解出 32 字节。只核格式，真伪用 refreshAuthentic。
+func parseRefresh(raw string) (sid string, gen uint64, secret string, ok bool) {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return "", 0, "", false
 	}
+	sid, genStr, secret := parts[0], parts[1], parts[2]
 	if _, err := uuid.Parse(sid); err != nil {
-		return "", "", false
+		return "", 0, "", false
+	}
+	gen, err := strconv.ParseUint(genStr, 10, 64)
+	if err != nil || strconv.FormatUint(gen, 10) != genStr {
+		return "", 0, "", false
 	}
 	b, err := base64.RawURLEncoding.DecodeString(secret)
 	if err != nil || len(b) != secretBytes {
-		return "", "", false
+		return "", 0, "", false
 	}
-	return sid, secret, true
+	return sid, gen, secret, true
 }
 
 // newSessionID 生成会话 ID（UUIDv7 字符串）。
@@ -135,10 +147,7 @@ func (s *Service) newSession(ctx context.Context, uid uuid.UUID, aud string, amr
 	if err != nil {
 		return sessionRecord{}, "", errs.Wrap(errs.Internal, err)
 	}
-	secret, err := newSecret()
-	if err != nil {
-		return sessionRecord{}, "", errs.Wrap(errs.Internal, err)
-	}
+	secret := s.refreshSecret(sid, 0)
 	rec := sessionRecord{
 		ID:        sid,
 		UserID:    uid,
@@ -155,5 +164,5 @@ func (s *Service) newSession(ctx context.Context, uid uuid.UUID, aud string, amr
 	if reauth {
 		rec.ReauthAt = now
 	}
-	return rec, formatRefresh(sid, secret), nil
+	return rec, formatRefresh(sid, 0, secret), nil
 }

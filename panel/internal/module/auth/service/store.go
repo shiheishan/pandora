@@ -27,7 +27,7 @@ import (
 const (
 	// lastSeenEvery 是 last_seen 的节流间隔：距上次写超过它才写。
 	lastSeenEvery = 5 * time.Minute
-	// refreshGrace 内拿上一代 refresh 来的请求不轮换：发 access，并把当前那一枚原样再发一遍（auth 的 nextSecret 能重算出它）。
+	// refreshGrace 内拿上一代 refresh 来的请求不轮换：发 access，并把当前那一枚原样再发一遍（auth 的 refreshSecret 由上一代的代数重算出它）。
 	refreshGrace = 30 * time.Second
 )
 

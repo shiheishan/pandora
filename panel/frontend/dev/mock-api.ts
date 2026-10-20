@@ -32,12 +32,13 @@ const TTL_SECONDS = 2592000
 
 const RT_COOKIE: Record<MockApp, string> = { portal: 'pandora_rt', admin: 'pandora_admin_rt' }
 
-/** 一条登录会话的 refresh 链：照 Go 记当前一枚、上一枚与轮换时间 */
+/** 一条登录会话的 refresh 链：照 Go 记当前一枚、上一枚与轮换时间；retired 是更早的各代（Go 靠代数与 HMAC 认出它们） */
 interface RefreshFamily {
   userId: string
   app: MockApp
   cur: string
   prev: string | null
+  retired: Set<string>
   rotatedAt: number
 }
 
@@ -176,10 +177,11 @@ export function mockApi(app: MockApp): Plugin {
   const refreshFamilies = new Set<RefreshFamily>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
 
-  const findFamily = (value: string): { family: RefreshFamily; which: 'cur' | 'prev' } | null => {
+  const findFamily = (value: string): { family: RefreshFamily; which: 'cur' | 'prev' | 'retired' } | null => {
     for (const family of refreshFamilies) {
       if (family.cur === value) return { family, which: 'cur' }
       if (family.prev === value) return { family, which: 'prev' }
+      if (family.retired.has(value)) return { family, which: 'retired' }
     }
     return null
   }
@@ -190,7 +192,7 @@ export function mockApi(app: MockApp): Plugin {
   }
   const bindRefresh = (res: ServerResponse, userId: string) => {
     const value = randomUUID()
-    const family: RefreshFamily = { userId, app, cur: value, prev: null, rotatedAt: Date.now() }
+    const family: RefreshFamily = { userId, app, cur: value, prev: null, retired: new Set(), rotatedAt: Date.now() }
     refreshFamilies.add(family)
     setRefreshCookie(res, app, value)
     return value
@@ -258,6 +260,7 @@ export function mockApi(app: MockApp): Plugin {
       }
       const okBody = (access: string) => ({ access_token: access, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN })
       if (which === 'cur') {
+        if (family.prev !== null) family.retired.add(family.prev)
         family.prev = family.cur
         family.cur = randomUUID()
         family.rotatedAt = Date.now()
@@ -265,11 +268,11 @@ export function mockApi(app: MockApp): Plugin {
         return send(res, 200, okBody(issue(refreshedUser.userId, req)))
       }
       // 上一枚在宽限内：照 Go 不改状态，把当前那一枚原样再发一遍（Go 用 HMAC 从上一枚重算出它，这里直接取）
-      if (Date.now() - family.rotatedAt <= REFRESH_GRACE_MS) {
+      if (which === 'prev' && Date.now() - family.rotatedAt <= REFRESH_GRACE_MS) {
         setRefreshCookie(res, app, family.cur)
         return send(res, 200, okBody(issue(refreshedUser.userId, req)))
       }
-      // 照 Go 判为重放、吊销整条会话；假后端的 access 不挂会话，已发的 access 照旧到期，这点与 Go 不同、不影响前端流程
+      // 上一枚过了宽限、或更早的一代（会话已被别人往前轮换过）：照 Go 判为重放、吊销整条会话；假后端的 access 不挂会话，已发的 access 照旧到期，这点与 Go 不同、不影响前端流程
       refreshFamilies.delete(family)
       clearRefreshCookie(res, app)
       return fail(res, 401, 'unauthorized', '需要登录')
@@ -429,7 +432,7 @@ export function mockApi(app: MockApp): Plugin {
       const rt = cookies[RT_COOKIE[app]]
       if (rt) {
         const found = findFamily(rt)
-        if (found) refreshFamilies.delete(found.family)
+        if (found && found.which !== 'retired') refreshFamilies.delete(found.family)
       }
       clearRefreshCookie(res, app)
       return send(res, 204)

@@ -214,6 +214,17 @@ describe('mock api · refresh cookie', () => {
     expect((await refresh(third)).status).toBe(401)
   })
 
+  it('an older generation after two rotations is a replay even inside the grace', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const second = rtFrom(await refresh(first))
+    const third = rtFrom(await refresh(second))
+    const replay = await refresh(first)
+    expect(replay.status).toBe(401)
+    expect(replay.headers.get('set-cookie')).toMatch(/pandora_rt=;.*Max-Age=0/)
+    expect((await refresh(third)).status).toBe(401)
+  })
+
   it('the previous cookie after the grace is a replay and kills the session', async () => {
     const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
     const first = rtFrom(login)

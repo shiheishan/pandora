@@ -341,6 +341,10 @@ func TestRotateAndGrace(t *testing.T) {
 	if err != nil || status != rotateOK {
 		t.Fatalf("grace 10s 内应 rotateOK，status=%d err=%v", status, err)
 	}
+	// 宽限不改 refresh 状态：rt_cur、rt_prev、轮换时间都原样
+	if after, _, err := st.readRefresh(ctx, rec.ID); err != nil || after.RTCur != hashSecret("s2") || after.RTPrev != hashSecret("s1") || !after.RTRotatedAt.Equal(now) {
+		t.Fatalf("grace 后状态被改了: %+v %v", after, err)
+	}
 
 	status, _, err = st.rotate(ctx, rec.ID, uid, "public", now.Add(31*time.Second), 0,
 		refreshModeGrace, hashSecret("s1"), "")

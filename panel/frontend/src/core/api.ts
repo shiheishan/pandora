@@ -326,7 +326,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   async function refreshSessionCore(usedToken: string | null, signal: AbortSignal): Promise<boolean> {
     // 令牌只在内存，这里只看得到本页：拿到锁时本页令牌已被本页别的请求换过（另一个请求刚刷新完或刚重新验证），就不再刷新。
     // 跨标签页的串行靠 navigator.locks；两页先后用同一枚 cookie、或轮换的响应没送到，由服务端 30 秒宽限兜住
-    // （上一代 cookie 30 秒内还能换 access 并补发新 cookie）。
+    // （上一代 cookie 30 秒内还能换 access，并拿回当前那一枚 cookie）。
     const current = tokens.get()
     if (usedToken !== null && current !== null && current !== usedToken) {
       return true
