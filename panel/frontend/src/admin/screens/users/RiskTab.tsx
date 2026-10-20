@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { formatDateTime, relativeTime } from '../../../core/format'
 import { href, navigate } from '../../../core/router'
 import { Button, Empty, QueryView, Table, Tag } from '../../../ui'
@@ -10,6 +11,7 @@ import { LOGIN_IPS_WARN, loginIps7d, RISK_VIEW } from './model'
 export function RiskTab({ d, now }: { d: UserDetail; now: Date }) {
   const q = useUserProfile(d.id)
   const risk = RISK_VIEW[d.risk_level]
+  const [showFetchIp, setShowFetchIp] = useState(false)
   return (
     <QueryView query={q} rows={4} isEmpty={() => false} empty={null}>
       {(p) => {
@@ -67,6 +69,51 @@ export function RiskTab({ d, now }: { d: UserDetail; now: Date }) {
               />
             </section>
 
+            <section>
+              <SectionTitle
+                hint={`近 7 天 ${p.fetch_sources_7d} 个来源 · 最近 ${p.fetches.length} 次`}
+                action={
+                  <Button size="sm" variant="link" onClick={() => setShowFetchIp((v) => !v)}>
+                    {showFetchIp ? '隐藏' : '显示完整 IP'}
+                  </Button>
+                }
+              >
+                最近订阅拉取
+              </SectionTitle>
+              <Table
+                boxed
+                label="最近订阅拉取"
+                rows={p.fetches}
+                rowKey={(r) => `${r.at}-${r.ip}-${r.ua}`}
+                empty={<Empty bare title="还没有订阅拉取" description="用户在客户端更新订阅后，这里会列出来源与客户端。" />}
+                columns={[
+                  {
+                    key: 'ip',
+                    header: 'IP',
+                    mono: true,
+                    render: (r) => {
+                      if (!r.ip) return '—'
+                      const shown = showFetchIp ? r.ip : maskIp(r.ip)
+                      return shown || '—'
+                    },
+                  },
+                  {
+                    key: 'family',
+                    header: '客户端',
+                    hideOnMobile: true,
+                    render: (r) => <span title={r.ua}>{r.family}</span>,
+                  },
+                  { key: 'result', header: '结果', render: (r) => fetchResultLabel(r.result) },
+                  {
+                    key: 'at',
+                    header: '时间',
+                    align: 'right',
+                    render: (r) => <span className={css.muted}>{relativeTime(r.at, now)}</span>,
+                  },
+                ]}
+              />
+            </section>
+
             {!shared && (
               <Callout action={<Button size="sm" variant="link" onClick={() => navigate('/security/risk')}>去风控</Button>}>
                 这个用户的出口 IP 没有和其他账号共用。共用情况在「安全与运维 › 风控」里按 IP 汇总。
@@ -77,4 +124,37 @@ export function RiskTab({ d, now }: { d: UserDetail; now: Date }) {
       }}
     </QueryView>
   )
+}
+
+/** 与 identity/service/trace.go 的 maskIP 同口径 */
+function maskIp(ip: string): string {
+  let s = ip.trim()
+  if (!s) return ''
+  if (s.toLowerCase().startsWith('::ffff:')) s = s.slice(7)
+  if (s.includes('.') && /^\d+\.\d+\.\d+\.\d+$/.test(s)) {
+    const [a, b] = s.split('.')
+    return `${a}.${b}.*.*`
+  }
+  if (s.includes(':')) {
+    const parts = s.split(':')
+    if (parts.length >= 2) return `${parts[0]}:${parts[1]}:*`
+  }
+  return '*'
+}
+
+function fetchResultLabel(result: string): string {
+  switch (result) {
+    case 'ok':
+      return '成功'
+    case 'expired':
+      return '已过期提示'
+    case 'rate_limited':
+      return '被限流'
+    case 'error':
+      return '失败'
+    case 'not_found':
+      return '链接无效'
+    default:
+      return result
+  }
 }

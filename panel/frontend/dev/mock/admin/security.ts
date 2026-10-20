@@ -434,6 +434,187 @@ async function setSwitch(ctx: MockContext): Promise<MockResult> {
 }
 
 // ---------------------------------------------------------------------------
+// 溯源总览（identity/handler/trace.go）
+// ---------------------------------------------------------------------------
+const TRACE_WINDOWS = new Set(['24h', '7d', '30d'])
+const TRACE_SUB_SORTS = new Set(['fetches', 'ips', 'ua_kinds', 'failures', 'last'])
+const TRACE_ACC_SORTS = new Set(['linked_ips', 'logins', 'login_ips', 'fetch_ips', 'shared_ips', 'ua_kinds', 'datacenter_hits'])
+const TRACE_FAMILIES = ['clash', 'sing-box', 'shadowrocket'] as const
+
+const TRACE_IP_LIST: string[] = []
+for (let n = 10; n <= 37; n++) TRACE_IP_LIST.push(`198.51.100.${n}`)
+TRACE_IP_LIST.push('203.0.113.1', '203.0.113.4')
+
+/** 与 identity/service/trace.go 的 maskIP 同口径 */
+function traceMaskIp(ip: string): string {
+  let s = ip.trim()
+  if (!s) return ''
+  if (s.toLowerCase().startsWith('::ffff:')) s = s.slice(7)
+  if (s.includes('.') && /^\d+\.\d+\.\d+\.\d+$/.test(s)) {
+    const [a, b] = s.split('.')
+    return `${a}.${b}.*.*`
+  }
+  if (s.includes(':')) {
+    const parts = s.split(':')
+    if (parts.length >= 2) return `${parts[0]}:${parts[1]}:*`
+  }
+  return '*'
+}
+
+function traceTokenFor(ip: string) {
+  return `mock-${Buffer.from(ip, 'utf8').toString('base64url')}`
+}
+
+function traceIpFromToken(token: string): string | null {
+  const t = token.trim()
+  if (!t.startsWith('mock-')) return null
+  try {
+    const ip = Buffer.from(t.slice(5), 'base64url').toString('utf8')
+    return TRACE_IP_LIST.includes(ip) ? ip : null
+  } catch {
+    return null
+  }
+}
+
+function traceWindowMul(window: string) {
+  if (window === '7d') return 5
+  if (window === '30d') return 18
+  return 1
+}
+
+function traceSinceIso(window: string) {
+  const h = window === '7d' ? 7 * 24 : window === '30d' ? 30 * 24 : 24
+  return new Date(Date.now() - h * 3_600_000).toISOString()
+}
+
+function parseTraceWindow(q: URLSearchParams): { window: string; since: string; mul: number } | MockResult {
+  const window = (q.get('window') ?? '').trim() || '24h'
+  if (!TRACE_WINDOWS.has(window)) return invalid({ window: '只支持 24h、7d 或 30d' })
+  return { window, since: traceSinceIso(window), mul: traceWindowMul(window) }
+}
+
+function traceUsersForIp(i: number): User[] {
+  const idx = new Set<number>([i % userStore.length])
+  if (i % 3 === 0) {
+    idx.add((i + 1) % userStore.length)
+    idx.add((i + 2) % userStore.length)
+  }
+  return [...idx].map((j) => userAt(j)).sort((a, b) => a.email.localeCompare(b.email))
+}
+
+function traceIpRow(i: number, mul: number) {
+  const ip = TRACE_IP_LIST[i]!
+  const fetches = (40 - i) * mul
+  const events = ((i * 7) % 9) * mul
+  const g = geoOf(ip)
+  const users = traceUsersForIp(i)
+  return {
+    token: traceTokenFor(ip),
+    ip_masked: traceMaskIp(ip),
+    geo: g.geo,
+    network_kind: g.kind,
+    hits: fetches + events,
+    fetches,
+    events,
+    accounts: users.length,
+    accounts_capped: false,
+    ua_kinds: 1 + (i % 3),
+    last_seen: iso((i * 13 + 2) * MIN),
+    users: users.map((u) => ({ id: u.id, email: u.email, status: u.status })),
+  }
+}
+
+function traceOverview(mul: number, rows: ReturnType<typeof traceIpRow>[]) {
+  let fetches = 0
+  let events = 0
+  for (const r of rows) {
+    fetches += r.fetches
+    events += r.events
+  }
+  const regionMap = new Map<string, { ips: number; hits: number }>()
+  for (const r of rows) {
+    const region = r.geo || '未知'
+    const cur = regionMap.get(region) ?? { ips: 0, hits: 0 }
+    cur.ips += 1
+    cur.hits += r.hits
+    regionMap.set(region, cur)
+  }
+  const top_regions = [...regionMap.entries()]
+    .map(([region, v]) => ({ region, ips: v.ips, hits: v.hits }))
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, 5)
+  const datacenter_ips = rows.filter((r) => r.network_kind === 'datacenter').length
+  return {
+    distinct_ips: 30,
+    distinct_ips_approx: false,
+    fetches,
+    fetch_failures: Math.floor(fetches * 0.02),
+    logins: Math.floor(events / 2),
+    login_failures: 3 * mul,
+    analyzed_ips: 30,
+    datacenter_ips,
+    top_regions,
+  }
+}
+
+function traceIpsResponse(window: string, since: string, mul: number) {
+  const built = TRACE_IP_LIST.map((_, i) => traceIpRow(i, mul))
+  const ips = [...built].sort((a, b) => b.hits - a.hits)
+  return { window, since, overview: traceOverview(mul, built), ips }
+}
+
+function traceSubscriberRow(k: number, mul: number, u: User) {
+  const famN = 1 + (k % 3)
+  return {
+    user_id: u.id,
+    email: u.email,
+    status: u.status,
+    fetches: (60 - k) * mul,
+    failures: k % 4,
+    ips: 1 + (k % 5),
+    ua_kinds: 1 + (k % 3),
+    families: TRACE_FAMILIES.slice(0, famN),
+    regions: 1 + (k % 4),
+    last_fetch: iso((k * 11 + 1) * MIN),
+  }
+}
+
+function traceAccountRow(k: number, mul: number, u: User) {
+  const login_ips = 1 + (k % 4)
+  const fetch_ips = 1 + (k % 5)
+  return {
+    user_id: u.id,
+    email: u.email,
+    status: u.status,
+    linked_ips: login_ips + fetch_ips - (k % 2),
+    logins: (k % 9) * mul,
+    login_ips,
+    fetch_ips,
+    shared_ips: k % 3 === 0 ? 2 : 0,
+    ua_kinds: 2 + (k % 3),
+    datacenter_hits: k % 7 === 0 ? 5 * mul : 0,
+    last_seen: iso((k * 17 + 3) * MIN),
+  }
+}
+
+function sortSubscribers(rows: ReturnType<typeof traceSubscriberRow>[], sort: string) {
+  const copy = [...rows]
+  copy.sort((a, b) => {
+    if (sort === 'last') return b.last_fetch.localeCompare(a.last_fetch)
+    const key = sort as 'fetches' | 'ips' | 'ua_kinds' | 'failures'
+    return b[key] - a[key]
+  })
+  return copy.slice(0, 100)
+}
+
+function sortAccounts(rows: ReturnType<typeof traceAccountRow>[], sort: string) {
+  const copy = [...rows]
+  const key = sort as 'linked_ips' | 'logins' | 'login_ips' | 'fetch_ips' | 'shared_ips' | 'ua_kinds' | 'datacenter_hits'
+  copy.sort((a, b) => b[key] - a[key])
+  return copy.slice(0, 100)
+}
+
+// ---------------------------------------------------------------------------
 // 路由表
 // ---------------------------------------------------------------------------
 export const security: MockModule = {
@@ -479,6 +660,52 @@ export const security: MockModule = {
         .slice(0, 50)
         .map(clusterJson)
       ctx.send(200, { clusters: rows })
+    },
+
+    'GET /v1/trace/ips': (ctx) => {
+      const w = parseTraceWindow(ctx.query)
+      if ('status' in w) return reply(ctx, w)
+      ctx.send(200, traceIpsResponse(w.window, w.since, w.mul))
+    },
+    'GET /v1/trace/subscribers': (ctx) => {
+      const w = parseTraceWindow(ctx.query)
+      if ('status' in w) return reply(ctx, w)
+      const sort = (ctx.query.get('sort') ?? '').trim() || 'fetches'
+      if (!TRACE_SUB_SORTS.has(sort)) return reply(ctx, invalid({ sort: '不支持的排序' }))
+      const users = userStore.slice(0, 40)
+      const subscribers = sortSubscribers(users.map((u, k) => traceSubscriberRow(k, w.mul, u)), sort)
+      ctx.send(200, { window: w.window, since: w.since, sort, subscribers })
+    },
+    'GET /v1/trace/accounts': (ctx) => {
+      const w = parseTraceWindow(ctx.query)
+      if ('status' in w) return reply(ctx, w)
+      const sort = (ctx.query.get('sort') ?? '').trim() || 'linked_ips'
+      if (!TRACE_ACC_SORTS.has(sort)) return reply(ctx, invalid({ sort: '不支持的排序' }))
+      const users = userStore.slice(0, 40)
+      const accounts = sortAccounts(users.map((u, k) => traceAccountRow(k, w.mul, u)), sort)
+      ctx.send(200, { window: w.window, since: w.since, sort, accounts })
+    },
+    'GET /v1/trace/reveal': (ctx) => {
+      const token = (ctx.query.get('token') ?? '').trim()
+      const ip = traceIpFromToken(token)
+      if (!ip) return reply(ctx, invalid({ token: '已失效，请刷新列表后再试' }))
+      const g = geoOf(ip)
+      record({
+        actor_kind: 'admin',
+        actor_id: ctx.user.userId,
+        actor_email: ctx.user.email,
+        action: 'security.source_ip_viewed',
+        resource_type: null,
+        resource_id: null,
+        resource_label: null,
+        api_domain: 'admin',
+        outcome: 'success',
+        reason: null,
+        auth_context: 'session',
+        source_ip: '10.8.0.12',
+        user_agent: BROWSER,
+      })
+      ctx.send(200, { ip, geo: g.geo, network_kind: g.kind })
     },
     'POST /v1/ip-clusters/:key/review': async (ctx) => {
       const d = await decode(ctx, { note: 'string' })
