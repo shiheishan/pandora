@@ -81,6 +81,15 @@ paths:
 - 全量名单按 `UsersChunkSize`（500 人，一块编码后不到 32 KB）分块，发送循环逐块现转现发（`grpc/control_convert.go` 的 `usersFullChunks`），不要改回先转整份再发：gRPC 发送缓冲 32 KB 以上直接占 1 MB 一档，合批对齐后几百条流同时发全量，块大或整份先转就是几百 MB 的瞬时内存（10-14 闸门量到，守卫 `TestUsersFullChunkFitsSendBuffer`）。增量上限是另一个常量 `UsersDeltaMax`（5000），增量不分块。
 - 建流对齐合批（`service/session_align.go`）：同一时段到达的建流共用一次 `ServerConfigs` + `Rosters`，批串行（同时只有一批读库）、一批一对序号（先配置后名单）；批的 ctx 用 `context.WithoutCancel` 派生，单条流断开不连累同批。`AlignTimeout`（缺省 10s）既是等待者的总时限（到期 `ErrAlignBusy`）也是一批读库的时限；没有并发数参数，不要再加逐流的对齐读。
 
+## 在线升级（面板侧，迁移 00060；规格 `.claude/briefs/upgrade-spec.md`）
+- 信任根在节点：面板不验签，只检查 `pdnd-manifest.json` 与 `.sig` 在分发目录里、清单能解析（schema 1、版本、serial、只认 linux-amd64 / arm64、文件名固定），且托管的二进制摘要与清单一致（`service/pdnd_manifest.go` 的 `PdndTarget`，小文件按 size+mtime 缓存）。下载地址 = 安装脚本同一个 origin + `/pdnd/bin/<file>`。
+- 能不能升按 `upgrades.go` 的 `upgradeBlock` 依次判：未结束任务 → 发布包原因 → 非 ready → 没在线会话 → 会话没协商 `upgrade_v1` → 架构不在清单（取 Hello 自报的 arch，不用后台可改的 `servers.architecture`）→ 摘要已是目标 → `build_serial` 不比目标新。原因码与后台 `infra.ts` 的 `UPGRADE_REASON_TEXT` 同一张表，加码两边一起改。
+- `build_serial` 与 arch 只在会话状态里（`SessionUpgradeInfo`，Hello 时取），不落库。
+- `RequestUpgrades`：去重后 1..50 台；没装配分发 503、发布包不可用整单 409；一个事务里逐台判、批量插 sent（部分唯一索引 `server_upgrades_open_key` 挡同台第二条未结束任务，冲突的回 `in_progress`）、审计 `server.upgrade_requested`（`server_set`，带建成的 server_ids、目标版本与 serial、请求数与拒绝数）；提交后（`tx.AfterCommit` 键 `node:upgrade_dispatch`）经会话排 `Command.upgrade`，排上才写 `sent_at`，没排上当场 failed + `not_connected`。
+- 状态只在带旧状态条件的 UPDATE 里改，影响 0 行当作别处已处理：staged 只从 sent；failed 与 rolled_back 都从 sent / staged / succeeded / timed_out（新进程连上判 succeeded 后助手仍可能确认超时去回退，回退失败报 FAILED rollback_failed；超时只是面板猜测；都以节点回报为准）；Hello 自报摘要等于目标 → succeeded（未结束的，或这台最近一次已超时的；更早的超时不翻）；Hello 带的 `last_upgrade` 与 `UpgradeReport` 走同一个 `RecordUpgradeReport`。`RecordHello` 先记 `last_upgrade`，记不上返回 `ErrUpgradeOutcomeUnrecorded`、建流失败不发 Welcome（节点拿到 Welcome 就删本机结局文件，这样它留着文件重连再报）；流上的 `UpgradeReport` 记不上只能记日志（节点发出即删，没有回执），是已知限制。下发后流在送达前断了的任务停在 sent，要等 deadline（约 13 分钟）超时才能重发。签名文件面板只看结构（key_id 16 位小写 hex、sig 解码 64 字节），不验签。前端一次最多勾 50 台（`UPGRADE_BATCH_MAX`，与 Go `UpgradeBatchMax` 同值）。节点没给原因记 `unknown`，detail 截到 1024 字节。
+- 期限 = 建任务时刻 + 180 秒确认窗 + 10 分钟；任务 `node:upgrade_watch`（每分钟，`task/task.go`）把过期未结束的标为 timed_out（每轮 500 条，SKIP LOCKED）。每次状态变化推 `nodes.changed`。
+- 后台服务器 DTO 带 `binary_sha256`、`upgrade{available,target_version,reason}`、`last_upgrade`；目标版本不另开接口（同一份发布包，每台的 `upgrade.target_version` 即目标）。`server_upgrades` 暂无保留期清理。
+
 ## 保留期
 - 任务 `retention:node`（`task/task.go`）按 `service/retention.go` 的 `RetentionTables` 逐表分批清：流量上报、指标、在线设备 31 天，小时汇总 400 天，安装令牌 30 天。
 - 安装令牌（`bootstrap_tokens`）只删没用过、且过期或作废满 30 天的（`repo/bootstrap_retention.go`，也排除被身份引用的）；用过的跟身份走，永远不删（`server_identities.enroll_token_id` 以 RESTRICT 引用）。

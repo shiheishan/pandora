@@ -168,6 +168,9 @@ export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'retired'] as const
 export type ServerStatus = (typeof SERVER_STATUSES)[number]
 
+export const UPGRADE_STATUSES = ['sent', 'staged', 'succeeded', 'failed', 'rolled_back', 'timed_out'] as const
+export type UpgradeStatus = (typeof UPGRADE_STATUSES)[number]
+
 export const serverSchema = z.object({
   id: uuid,
   name: z.string(),
@@ -201,10 +204,21 @@ export const serverSchema = z.object({
   disk_used_gb: z.number().nullable(),
   disk_total_gb: z.number().nullable(),
   metrics_at: iso.nullable(),
+  binary_sha256: z.string().nullable(),
+  upgrade: z.object({ available: z.boolean(), target_version: z.string().nullable(), reason: z.string().nullable() }),
+  last_upgrade: z
+    .object({ status: z.enum(UPGRADE_STATUSES), target_version: z.string(), reason_code: z.string().nullable(), updated_at: iso })
+    .nullable(),
 })
 // 三个列表 Go 侧都以空切片起步，不会是 null，按严格数组写
 export const serversResponse = z.object({ servers: z.array(serverSchema), total: z.number() })
 export type Server = z.output<typeof serverSchema>
+
+export const serverUpgradeResponse = z.object({
+  target_version: z.string(),
+  results: z.array(z.object({ server_id: uuid, ok: z.boolean(), reason: z.string().nullable() })),
+})
+export type ServerUpgradeResponse = z.output<typeof serverUpgradeResponse>
 
 /** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
 const serverNodeSchema = z.object({

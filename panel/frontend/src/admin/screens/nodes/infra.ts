@@ -1,5 +1,5 @@
 import { heartbeatLabel, protocolLabel, type Tone } from './logic'
-import type { NodeRow, Pool, PoolStatus, Server, ServerStatus } from './schemas'
+import type { NodeRow, Pool, PoolStatus, Server, ServerStatus, ServerUpgradeResponse, UpgradeStatus } from './schemas'
 
 // ---------------------------------------------------------------------------
 // 服务器状态
@@ -295,4 +295,133 @@ export function patchPoolBody(p: Pool, f: PoolForm): Record<string, unknown> | n
   if (f.region.trim() && f.region.trim() !== p.region) body.region = f.region.trim()
   if (f.status !== p.status) body.status = f.status
   return Object.keys(body).length ? body : null
+}
+
+// ---------------------------------------------------------------------------
+// 在线升级
+// ---------------------------------------------------------------------------
+export const UPGRADE_REASON_TEXT: Readonly<Record<string, string>> = {
+  manifest_missing: '面板上没有节点端发布清单',
+  signature_missing: '面板上没有有效的发布清单签名',
+  manifest_invalid: '发布清单格式不对',
+  binary_mismatch: '面板托管的节点端程序与发布清单不符',
+  in_progress: '正在升级',
+  not_ready: '服务器不在服务中',
+  not_connected: '节点端没有连着面板',
+  no_upgrade_support: '节点端版本太旧或没装升级助手，重装一次后才能在线升级',
+  arch_unsupported: '发布清单里没有这台机器的架构',
+  up_to_date: '已是最新版本',
+  serial_not_newer: '目标版本不比这台上的新',
+  not_found: '服务器不存在或已删除',
+  download_failed: '下载新版本失败',
+  sha256_mismatch: '下载的文件与发布清单的摘要不符',
+  signature_invalid: '发布清单的签名验不过',
+  busy: '这台已有一次升级在进行',
+  apply_failed: '替换程序或重启失败，已保持旧版',
+  confirm_timeout: '新版本没能连上面板，已自动装回旧版',
+  rollback_failed: '装回旧版失败，需要登录服务器处理',
+  unknown: '节点端没有给出原因',
+}
+
+export function upgradeReasonText(code: string | null | undefined): string {
+  if (code === null || code === undefined || code === '') return '节点端没有给出原因'
+  const text = UPGRADE_REASON_TEXT[code]
+  return text ?? `原因码 ${code}`
+}
+
+export const UPGRADE_STATUS: Readonly<Record<UpgradeStatus, { label: string; tone: Tone }>> = {
+  sent: { label: '升级中', tone: 'info' },
+  staged: { label: '升级中', tone: 'info' },
+  succeeded: { label: '已升级', tone: 'ok' },
+  failed: { label: '失败', tone: 'danger' },
+  rolled_back: { label: '已回退', tone: 'warn' },
+  timed_out: { label: '超时', tone: 'warn' },
+}
+
+export function upgradeOffer(s: Pick<Server, 'upgrade'>): string | null {
+  if (s.upgrade.available && s.upgrade.target_version) return `可升级到 ${s.upgrade.target_version}`
+  return null
+}
+
+const UPGRADE_BLOCK_SILENT = new Set(['not_ready', 'not_connected', 'up_to_date', 'in_progress'])
+
+export function upgradeBlockNote(s: Pick<Server, 'upgrade'>): string | null {
+  const { available, reason } = s.upgrade
+  if (available || reason === null || UPGRADE_BLOCK_SILENT.has(reason)) return null
+  return `不能在线升级：${upgradeReasonText(reason)}`
+}
+
+export function upgradeTarget(list: readonly Pick<Server, 'upgrade'>[]): string | null {
+  for (const s of list) {
+    if (s.upgrade.available && s.upgrade.target_version) return s.upgrade.target_version
+  }
+  return null
+}
+
+export function upgradeSelectable(s: Pick<Server, 'upgrade'>): boolean {
+  return s.upgrade.available
+}
+
+/** 一次批量升级最多几台：与 Go 的 UpgradeBatchMax 同值，超过后端整批拒绝 */
+export const UPGRADE_BATCH_MAX = 50
+
+/** 已勾满上限时，没勾的卡片不能再勾 */
+export function upgradePickFull(picked: ReadonlySet<string>, id: string): boolean {
+  return picked.size >= UPGRADE_BATCH_MAX && !picked.has(id)
+}
+
+export function pruneUpgradePicks(picked: ReadonlySet<string>, list: readonly Pick<Server, 'id' | 'upgrade'>[]): Set<string> {
+  const out = new Set<string>()
+  const byId = new Map(list.map((s) => [s.id, s]))
+  for (const id of picked) {
+    const s = byId.get(id)
+    if (s && s.upgrade.available) out.add(id)
+  }
+  return out
+}
+
+const MS_24H = 24 * 60 * 60 * 1000
+
+function lastUpgradePresentation(
+  lu: NonNullable<Server['last_upgrade']>,
+  hideSucceededAfter24h: boolean,
+  now: Date,
+): { label: string; tone: Tone; text: string } | null {
+  const { status, target_version, reason_code, updated_at } = lu
+  if (hideSucceededAfter24h && status === 'succeeded' && now.getTime() - new Date(updated_at).getTime() >= MS_24H) return null
+  const { label, tone } = UPGRADE_STATUS[status]
+  let text: string
+  if (status === 'sent' || status === 'staged') text = `正在升级到 ${target_version}`
+  else if (status === 'succeeded') text = `已升级到 ${target_version}`
+  else if (status === 'timed_out' && reason_code === null) text = `升级到 ${target_version}超时：十几分钟内没有结果，请查看节点端日志`
+  else text = `升级到 ${target_version}${UPGRADE_STATUS[status].label}：${upgradeReasonText(reason_code)}`
+  return { label, tone, text }
+}
+
+export function lastUpgradeLine(s: Pick<Server, 'last_upgrade'>, now: Date = new Date()): { label: string; tone: Tone; text: string } | null {
+  if (s.last_upgrade === null) return null
+  return lastUpgradePresentation(s.last_upgrade, true, now)
+}
+
+export function lastUpgradeDetail(s: Pick<Server, 'last_upgrade'>): { label: string; tone: Tone; text: string } | null {
+  if (s.last_upgrade === null) return null
+  return lastUpgradePresentation(s.last_upgrade, false, new Date())
+}
+
+export function upgradeConfirmBody(count: number, version: string): string {
+  return `会重启这 ${count} 台服务器上的全部节点，正在连接的用户会断开后自动重连。新版本 3 分钟内连不上面板时，会自动装回旧版。整个过程约几分钟，结果显示在各台的卡片上。目标版本 ${version}。`
+}
+
+export function upgradeResultToast(r: ServerUpgradeResponse, names: ReadonlyMap<string, string>): { text: string; tone: 'ok' | 'danger' } {
+  const failed = r.results.filter((x) => !x.ok)
+  const n = r.results.length - failed.length
+  const m = failed.length
+  const listPart = (items: typeof failed) => {
+    const shown = items.slice(0, 3).map((x) => `${names.get(x.server_id) ?? x.server_id}（${upgradeReasonText(x.reason)}）`)
+    if (items.length <= 3) return shown.join('、')
+    return `${shown.join('、')}等 ${m} 台`
+  }
+  if (m === 0) return { text: `已向 ${n} 台服务器下发升级到 ${r.target_version}`, tone: 'ok' }
+  if (n === 0) return { text: `没有发起升级：${listPart(failed)}`, tone: 'danger' }
+  return { text: `已向 ${n} 台下发升级，${m} 台没有发起：${listPart(failed)}`, tone: 'ok' }
 }

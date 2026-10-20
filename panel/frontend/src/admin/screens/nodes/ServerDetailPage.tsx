@@ -2,9 +2,10 @@ import { PencilEdit01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
+import { formatDateTime } from '../../../core/format'
 import { href, navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Input, Modal, QueryView, Tag, TextArea, useToast } from '../../../ui'
 import {
   Callout,
   DangerRow,
@@ -23,6 +24,7 @@ import {
   deleteServerNotice,
   nextServerStatuses,
   patchServerBody,
+  lastUpgradeDetail,
   serverDeleteBlock,
   serverDot,
   serverFormFrom,
@@ -30,6 +32,8 @@ import {
   serverNodeLines,
   serverNotes,
   serverSubtitle,
+  upgradeBlockNote,
+  upgradeOffer,
   validateServerForm,
   type Meter,
   type ServerForm,
@@ -262,6 +266,9 @@ function ServerDetailBody({
   const lines = serverNodeLines(nodes, s.id)
   const canRetire = nextServerStatuses(s.status).includes('retired')
   const notes = serverNotes(s)
+  const offer = upgradeOffer(s)
+  const blockNote = upgradeBlockNote(s)
+  const lastUp = lastUpgradeDetail(s)
 
   return (
     <>
@@ -296,7 +303,24 @@ function ServerDetailBody({
                 <span className={css.mono}>{s.public_ipv6}</span>
               </SideFact>
             ) : null}
-            <SideFact label="Agent">{s.agent_version ?? '未连接'}</SideFact>
+            <SideFact label="Agent">
+              <div>{s.agent_version ?? '未连接'}</div>
+              {offer ? <div className={css.faint}>{offer}</div> : null}
+              {blockNote ? <div className={css.faint}>{blockNote}</div> : null}
+            </SideFact>
+            <SideFact label="最近一次升级">
+              {lastUp === null ? (
+                '还没有在线升级过'
+              ) : (
+                <>
+                  <div>
+                    <Tag tone={lastUp.tone}>{lastUp.label}</Tag>
+                  </div>
+                  <div className={css.faint}>{lastUp.text}</div>
+                  <div className={css.faint}>{formatDateTime(s.last_upgrade!.updated_at)}</div>
+                </>
+              )}
+            </SideFact>
             <SideFact label="最近心跳">{heartbeatLabel(s.last_heartbeat_at)}</SideFact>
             {s.os_name ? <SideFact label="系统">{s.os_name}</SideFact> : null}
             {s.architecture ? <SideFact label="架构">{s.architecture}</SideFact> : null}

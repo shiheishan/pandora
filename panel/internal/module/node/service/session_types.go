@@ -26,6 +26,10 @@ type Hello struct {
 	AppliedConfigs map[uuid.UUID]string
 	// AppliedUsers 是各节点内核里的名单版本（节点 id → u1-…）
 	AppliedUsers map[uuid.UUID]string
+	// BuildSerial 是节点二进制的发版序号（开发构建为 0），在线升级判断目标是否更新用
+	BuildSerial uint64
+	// LastUpgrade 是上一次升级的结局（节点本机结果文件）；没有为 nil
+	LastUpgrade *UpgradeReport
 }
 
 // 节点运行状态（nodes.runtime_status 的取值）。
@@ -83,7 +87,7 @@ type UsersAck struct {
 // OutKind 是面板发往节点的消息种类。
 type OutKind int
 
-// 发往节点的消息种类（与 proto SessionResponse.body 一一对应；OutReconnect、OutTombstone 是 Command）。
+// 发往节点的消息种类（与 proto SessionResponse.body 一一对应；OutReconnect、OutTombstone、OutUpgrade 是 Command）。
 const (
 	OutWelcome OutKind = iota + 1
 	OutConfig
@@ -93,6 +97,7 @@ const (
 	OutCertificate
 	OutReconnect
 	OutTombstone
+	OutUpgrade
 )
 
 // Welcome 是对 Hello 的应答。
@@ -134,4 +139,6 @@ type Outbound struct {
 	Reconnect Reconnect
 	// OutTombstone
 	Reason string
+	// OutUpgrade
+	Upgrade UpgradeCommand
 }

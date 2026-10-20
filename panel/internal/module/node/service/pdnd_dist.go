@@ -47,6 +47,7 @@ type pdndDist struct {
 	origin    string // 规范化后的面板地址；originErr 非空时为空
 	originErr error
 	digests   *pdndDigestCache
+	files     *pdndFileCache // 发布清单与签名的原字节缓存，pdnd_manifest.go
 }
 
 // pdndDigestCache 按（大小、修改时间）缓存产物的 SHA-256：公开的校验和接口不能每个匿名请求都把几十 MB 读一遍。
@@ -64,7 +65,11 @@ type pdndDigest struct {
 
 // UsePdndDist 只在启动装配时调用：dir 是二进制目录，publicBaseURL 是 config 的 public_base_url。
 func (s *Service) UsePdndDist(dir, publicBaseURL string) {
-	d := pdndDist{dir: dir, digests: &pdndDigestCache{entries: map[string]pdndDigest{}}}
+	d := pdndDist{
+		dir:     dir,
+		digests: &pdndDigestCache{entries: map[string]pdndDigest{}},
+		files:   &pdndFileCache{entries: map[string]pdndFile{}},
+	}
 	d.origin, d.originErr = pdndOrigin(publicBaseURL)
 	s.pdnd = d
 }

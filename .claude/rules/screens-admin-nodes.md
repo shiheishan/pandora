@@ -32,6 +32,7 @@ paths:
 - 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判。
 - 批量启停整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员（`batchPlan`）。
 - 服务器卡片（`ServersTab.tsx`）：头是 StatusDot 包等宽名称、非 ready 跟状态 Tag、右上角 IconButton「…」进详情；副行合并地区 · IP · agent 版本（`infra.serverSubtitle`）；`status_reason` 与心跳过期提示来自 `infra.serverNotes`；删除是次要按钮，不能删时禁用并在 title 说明原因（`infra.serverDeleteBlock`）。
+- 在线升级（10-20）：卡片副行照旧带 agent 版本，可升级时下面一行 info Tag「可升级到 vX」，卡片头最前面出勾选框（只在 `upgrade.available` 且列表里有目标版本时）；勾选后 kit BulkBar 替换顶部说明，动作「升级到 vX（N 台）」→ ConfirmModal「开始升级」，文案 `infra.upgradeConfirmBody`（会重启这些服务器上的全部节点、3 分钟连不上自动装回旧版、整个过程约几分钟）。勾选集合每次渲染经 `pruneUpgradePicks` 去掉已不能升的。`POST v1/servers/upgrade` 要重认证与幂等键（`useUpgradeServers`），结果逐台 toast（`upgradeResultToast`）。不能升且原因值得说时（不是未就绪、离线、已最新、升级中）卡片 note 写「不能在线升级：…」（`upgradeBlockNote`）；最近一次升级状态行 `lastUpgradeLine`（已升级超过 24 小时不显示），详情右栏「最近一次升级」用 `lastUpgradeDetail` 加时间。原因码中文表 `UPGRADE_REASON_TEXT` 与后端同一张，`infra.test.ts` 逐码钉住。详情页不做升级按钮。
 - 服务器详情是整页 `/nodes/servers/<id>`（`ServerDetailPage.tsx`）：页头名称 + 状态，副行同卡片；主栏占用（没数据时「装好 agent 后这里显示占用」）与这台服务器上的节点（用节点列表按 `server_id` 过滤，`infra.serverNodeLines`，没有就「没有在役节点」）；右栏键值（含 `status_reason`、心跳）；改名称 / 容量 / 备注照旧弹窗；退役与删除用 DangerRow（不能删时禁用说明）。
 - 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；退役要先标记维护；`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。

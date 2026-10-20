@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -101,8 +102,17 @@ func agentInfo(h Hello) repo.ServerAgentInfo {
 	}
 }
 
-// RecordHello 记 Hello：自报信息变了才写（自报信息不推，后台靠轮询）；最后心跳时间照写（建流即视为一拍心跳）。
+// RecordHello 记 Hello：先记 Hello 带来的上一次升级结局；自报信息变了才写（自报信息不推，后台靠轮询）；
+// 最后心跳时间照写（建流即视为一拍心跳）；再按摘要对账在线升级任务。
+//
+// 节点拿到 Welcome 就删本机的结局文件，所以结局记不上时返回 ErrUpgradeOutcomeUnrecorded，建流随之失败、不发 Welcome，
+// 节点留着文件重连再报；其余写失败只是展示数据，建流照常。
 func (s *Service) RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error {
+	if h.LastUpgrade != nil {
+		if err := s.RecordUpgradeReport(ctx, serverID, *h.LastUpgrade, at); err != nil {
+			return fmt.Errorf("%w: %w", ErrUpgradeOutcomeUnrecorded, err)
+		}
+	}
 	if _, err := s.repo.UpdateServerAgent(ctx, serverID, agentInfo(h)); err != nil {
 		return err
 	}
@@ -113,7 +123,7 @@ func (s *Service) RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, 
 	if found && beatFlipsOnline(prev, at) {
 		s.serverChanged(ctx, realtime.OpUpdate, serverID)
 	}
-	return nil
+	return s.succeedUpgradeBySHA(ctx, serverID, h, at)
 }
 
 // runtimeRows 把心跳里的运行状态规整成列值：认不出的状态丢掉，同一节点后出现的为准，running 不带原因。

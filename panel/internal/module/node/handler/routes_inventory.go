@@ -8,6 +8,7 @@ import (
 
 // registerInventory 注册服务器与节点的后台路由。全部要登录；
 // 中间件顺序 RequireAuth → RecentReauth → Idempotency。
+// 批量在线升级要近期重认证与幂等键。
 // 节点通道相关接口（身份、接入令牌、指标、路由）分别在 routes_identity.go、routes_metrics.go、routes_routing.go 注册。
 func (h *Handler) registerInventory(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/nodes", k.RequireAuth, h.listNodes)
@@ -28,6 +29,7 @@ func (h *Handler) registerInventory(v1 *gin.RouterGroup, k route.Kit) {
 
 	v1.GET("/servers", k.RequireAuth, h.listServers)
 	v1.POST("/servers", k.RequireAuth, h.createServer)
+	v1.POST("/servers/upgrade", k.RequireAuth, k.RecentReauth, k.Idempotency("server_upgrade"), h.upgradeServers)
 	v1.GET("/servers/:id", k.RequireAuth, h.getServer)
 	v1.PATCH("/servers/:id", k.RequireAuth, h.patchServer)
 	v1.POST("/servers/:id/status", k.RequireAuth, h.setServerStatus)

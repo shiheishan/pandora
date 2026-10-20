@@ -1,10 +1,12 @@
 package grpc
 
 import (
+	"bytes"
 	"math"
 	"strings"
 	"testing"
 
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/mem"
 	"google.golang.org/protobuf/proto"
@@ -59,5 +61,116 @@ func TestUsersFullChunksEmptyAndStop(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("break 后还在出块：%d", n)
+	}
+}
+
+func TestUpgradeReportFromProto(t *testing.T) {
+	job := uuid.MustParse("0190a000-0000-7000-8000-000000000099")
+	cases := []struct {
+		name string
+		in   *nodev1.UpgradeReport
+		ok   bool
+		want service.UpgradeReport
+	}{
+		{
+			name: "staged",
+			in: &nodev1.UpgradeReport{
+				JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED,
+				ReasonCode: "rc", Detail: "det",
+			},
+			ok:   true,
+			want: service.UpgradeReport{JobID: job, Phase: service.UpgradePhaseStaged, ReasonCode: "rc", Detail: "det"},
+		},
+		{
+			name: "failed",
+			in:   &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_FAILED},
+			ok:   true,
+			want: service.UpgradeReport{JobID: job, Phase: service.UpgradePhaseFailed},
+		},
+		{
+			name: "rolled_back",
+			in:   &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_ROLLED_BACK},
+			ok:   true,
+			want: service.UpgradeReport{JobID: job, Phase: service.UpgradePhaseRolledBack},
+		},
+		{name: "empty job", in: &nodev1.UpgradeReport{Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED}, ok: false},
+		{name: "bad job", in: &nodev1.UpgradeReport{JobId: "not-a-uuid", Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED}, ok: false},
+		{name: "unspecified", in: &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_UNSPECIFIED}, ok: false},
+		{name: "unknown phase", in: &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase(99)}, ok: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := upgradeReportFromProto(tc.in)
+			if ok != tc.ok {
+				t.Fatalf("ok=%v 期望 %v", ok, tc.ok)
+			}
+			if !tc.ok {
+				return
+			}
+			if got.JobID != tc.want.JobID || got.Phase != tc.want.Phase || got.ReasonCode != tc.want.ReasonCode || got.Detail != tc.want.Detail {
+				t.Fatalf("got %+v want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHelloFromProtoUpgradeFields(t *testing.T) {
+	job := uuid.MustParse("0190a000-0000-7000-8000-000000000088")
+	h := helloFromProto(&nodev1.Hello{
+		BuildSerial: 1792540800,
+		LastUpgrade: &nodev1.UpgradeReport{
+			JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_ROLLED_BACK, ReasonCode: "confirm_timeout",
+		},
+	})
+	if h.BuildSerial != 1792540800 {
+		t.Fatalf("BuildSerial=%d", h.BuildSerial)
+	}
+	if h.LastUpgrade == nil {
+		t.Fatal("LastUpgrade 应为非 nil")
+	}
+	if h.LastUpgrade.JobID != job || h.LastUpgrade.Phase != service.UpgradePhaseRolledBack || h.LastUpgrade.ReasonCode != "confirm_timeout" {
+		t.Fatalf("LastUpgrade=%+v", h.LastUpgrade)
+	}
+
+	h2 := helloFromProto(&nodev1.Hello{
+		BuildSerial: 1,
+		LastUpgrade: &nodev1.UpgradeReport{JobId: "bad", Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED},
+	})
+	if h2.LastUpgrade != nil {
+		t.Fatalf("非法 LastUpgrade 应为 nil，得到 %+v", h2.LastUpgrade)
+	}
+
+	h3 := helloFromProto(&nodev1.Hello{BuildSerial: 2})
+	if h3.LastUpgrade != nil {
+		t.Fatal("无 LastUpgrade 应为 nil")
+	}
+}
+
+func TestOutboundUpgradeToProto(t *testing.T) {
+	job := uuid.MustParse("0190a000-0000-7000-8000-000000000077")
+	manifest := []byte("{}")
+	sig := []byte("sig")
+	msgs := outboundToProto(service.Outbound{
+		Kind: service.OutUpgrade,
+		Upgrade: service.UpgradeCommand{
+			JobID: job, Manifest: manifest, Signature: sig,
+			BinaryURL: "https://panel.example.com/pdnd/bin/pandora-native-linux-amd64", ConfirmWithinSec: 180,
+		},
+	})
+	if len(msgs) != 1 {
+		t.Fatalf("消息数 %d", len(msgs))
+	}
+	u := msgs[0].GetCommand().GetUpgrade()
+	if u == nil {
+		t.Fatal("期望 Upgrade command")
+	}
+	if u.GetJobId() != job.String() {
+		t.Fatalf("job_id=%q", u.GetJobId())
+	}
+	if !bytes.Equal(u.GetManifest(), manifest) || !bytes.Equal(u.GetSignature(), sig) {
+		t.Fatalf("manifest/sig 不符")
+	}
+	if u.GetBinaryUrl() != "https://panel.example.com/pdnd/bin/pandora-native-linux-amd64" || u.GetConfirmWithinSec() != 180 {
+		t.Fatalf("url/sec 不符 url=%q sec=%d", u.GetBinaryUrl(), u.GetConfirmWithinSec())
 	}
 }
