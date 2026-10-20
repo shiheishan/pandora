@@ -86,6 +86,9 @@ type Service struct {
 	groupUsage OpsGroupUsage
 
 	geo *geoip.Resolver
+
+	// 溯源总览（trace.go）：拉取这一路由 subscription 实现，装配时注入。
+	traceFetches TraceFetches
 }
 
 // New 构造 identity service。keys 用于验证码、收件目标与限流键的 HMAC；rdb 存改密失败计数；
@@ -236,6 +239,7 @@ func (s *Service) MissingPorts() []string {
 		{"OrderCanceller", s.cancelOrders != nil},
 		{"CommissionVoider", s.voidCommission != nil},
 		{"TelegramUnbinder", s.tgUnbind != nil},
+		{"TraceFetches", s.traceFetches != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)

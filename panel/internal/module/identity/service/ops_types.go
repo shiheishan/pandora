@@ -332,6 +332,9 @@ type auditOps interface {
 	MarkClusterNormal(ctx context.Context, key, note string) (time.Time, error)
 	MarkClusterDisabled(ctx context.Context, key, note string) (uuid.UUID, error)
 	RecordSourceIPView(ctx context.Context, view string, userID *uuid.UUID, filter map[string]any) error
+	// 溯源总览的两个聚合读（audit/service/trace_reads.go）
+	TraceIPs(ctx context.Context, q auditsvc.TraceIPQuery) (auditsvc.TraceIPSet, error)
+	TraceUsers(ctx context.Context, q auditsvc.TraceUserQuery) ([]auditsvc.TraceUser, error)
 }
 
 var _ auditOps = (*auditsvc.Service)(nil)
