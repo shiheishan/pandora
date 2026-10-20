@@ -59,7 +59,7 @@ export function ThemeTab() {
       <Card
         flush
         title="前端插槽"
-        subtitle="在用户端固定位置插入文本或 HTML；失焦自动保存，脚本、样式与事件属性会被过滤"
+        subtitle="在用户端固定位置插入文本或 HTML；失焦自动保存，脚本、样式与事件属性会被过滤，类名只保留 slot- 开头的，图片只能用站内地址或 data:image"
       >
         <QueryView
           query={slots}

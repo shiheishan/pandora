@@ -371,3 +371,51 @@ func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
 		t.Fatalf("pub.SiteName=%q, want 夜海加速", pub.SiteName)
 	}
 }
+
+func TestAppearancePublicResanitizesStoredSlot(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	_, err := e.svc.SaveSlot(actx, SaveSlotInput{
+		Key: "portal.footer", Content: `<p>页脚</p>`, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var k string
+	if err := e.row(ctx, `UPDATE site_slots SET content = ? WHERE slot_key = ? RETURNING slot_key`,
+		`<p onclick="x()">改过</p><img src="https://cdn.example.com/a.png">`, "portal.footer").Scan(&k); err != nil {
+		t.Fatal(err)
+	}
+
+	pub, err := e.svc.Public(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	footer := pub.Slots["portal.footer"]
+	if !strings.Contains(footer, "改过") {
+		t.Fatalf("public footer: %q", footer)
+	}
+	if strings.Contains(footer, "onclick") {
+		t.Fatalf("不应含 onclick: %q", footer)
+	}
+	if strings.Contains(footer, "cdn.example.com") {
+		t.Fatalf("img 外链应被去掉: %q", footer)
+	}
+
+	if err := e.row(ctx, `UPDATE site_slots SET content = ? WHERE slot_key = ? RETURNING slot_key`,
+		`<script>alert(1)</script>`, "portal.footer").Scan(&k); err != nil {
+		t.Fatal(err)
+	}
+
+	// TxCtx 整例回滚，SaveSlot 的提交后钩子不执行；这里靠原文比较让备忘重算，正好也验证兜底。
+	pub2, err := e.svc.Public(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := pub2.Slots["portal.footer"]; ok {
+		t.Fatalf("纯 script 再净化后不应下发: %v", pub2.Slots)
+	}
+}

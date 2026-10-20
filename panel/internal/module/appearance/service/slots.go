@@ -10,6 +10,7 @@ import (
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
 // ListSlots 按目录顺序返回全部插槽位（库里没有的为零值）。
@@ -73,6 +74,7 @@ func (s *Service) SaveSlot(ctx context.Context, in SaveSlotInput) ([]string, err
 		if err := s.repo.UpsertSlot(ctx, &sl); err != nil {
 			return err
 		}
+		tx.AfterCommit(ctx, "appearance:slots", func(context.Context) { s.slots.reset() })
 		return s.audit.Write(ctx, auditsvc.Event{
 			Action:       ActionSlotSave,
 			ResourceType: "site_slot",
