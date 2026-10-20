@@ -234,6 +234,22 @@ type TraceAccountRow struct {
 	Last           time.Time
 }
 
+// TraceSubscriberReport 是订阅更新排行（Window、Sort 是规整后的取值）。
+type TraceSubscriberReport struct {
+	Window string
+	Since  time.Time
+	Sort   string
+	Rows   []TraceSubscriberRow
+}
+
+// TraceAccountReport 是账号综合排行（Window、Sort 是规整后的取值）。
+type TraceAccountReport struct {
+	Window string
+	Since  time.Time
+	Sort   string
+	Rows   []TraceAccountRow
+}
+
 // TraceReveal 是「显示」解出的明文 IP 与归属地。
 type TraceReveal struct {
 	IP          string

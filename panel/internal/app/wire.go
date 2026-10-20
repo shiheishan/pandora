@@ -241,6 +241,8 @@ func buildServices(r *runtime) (*services, error) {
 	identitySvc.UseOpsTelegram(notifySvc)
 	identitySvc.UseOpsGroupUsage(groupUsageAdapter{catalog: catalogSvc, promo: promoSvc, node: nodeSvc})
 	identitySvc.UseJobQueue(queue)
+	// 溯源总览：identity 经 subscription 取拉取日志的按 IP、按用户聚合
+	identitySvc.UseTraceFetches(subSvc)
 	// 节点上报的流量经 subscription 扣量（配额 → 流量包 → 按日用量）
 	nodeSvc.UseTrafficCharger(subSvc)
 	nodeSvc.UseKeys(keys)
