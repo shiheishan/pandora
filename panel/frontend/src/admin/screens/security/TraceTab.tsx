@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatDateTime, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Button, Empty, FilterTabs, QueryView, Segmented, StatStrip, Table, Tag, type TableColumn } from '../../../ui'
-import { useFailure, useTraceAccounts, useTraceIPs, useTraceReveal, useTraceSubscribers } from './queries'
+import { useFailure, useRefreshTrace, useTraceAccounts, useTraceIPs, useTraceReveal, useTraceSubscribers } from './queries'
 import {
   accountsText,
   datacenterShare,
@@ -32,6 +32,7 @@ export function TraceTab() {
   const [view, setView] = useState<TraceView>('ips')
   const ips = useTraceIPs(win)
   const since = ips.data?.since
+  const { refresh, busy } = useRefreshTrace()
 
   return (
     <div className={sec.stack}>
@@ -43,6 +44,9 @@ export function TraceTab() {
             {win === '30d' && ' · 拉取日志只保留 31 天，最早一天可能不全'}
           </p>
         )}
+        <Button size="sm" variant="outline" disabled={busy} onClick={refresh}>
+          {busy ? '刷新中…' : '刷新'}
+        </Button>
       </div>
 
       <Overview overview={ips.data?.overview} />
