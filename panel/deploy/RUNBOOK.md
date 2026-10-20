@@ -112,9 +112,9 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 ### 怎么确认
 
 - 先看状态码是谁回的：
-  - **502**：nginx 连不上 `pandora-serve`，进程没起来或卡死了。
-  - **503**：两种可能。一是 nginx 限速；二是面板自己说依赖不可用（就绪检查失败、并发名额满）。
-  - **504**：面板没在时限内回，多半是库慢，转第 7 章。
+  - **502**：nginx 连不上 `pandora-serve`，进程没起来或卡死了。API 路径（`/v1/…`、后台前缀下的 `/v1/…`）回的是 JSON 信封 `service_unavailable`，`request_id` 是 nginx 的（在 `/var/log/nginx/pandora-access.log` 里按 `request_id=` 查），面板日志里没有这条。
+  - **503**：面板自己说依赖不可用（就绪检查失败、并发名额满），信封 `service_unavailable`，`request_id` 在面板日志里查得到。nginx 的限速与连接数超限回 **429**（`rate_limited`），不再是 503。
+  - **504**：两种来源。信封里的 `request_id` 在面板日志里查得到，是面板自己的请求超时（`timeout`，`http.public.request_timeout` / `http.admin.request_timeout`，缺省 25 秒）；查不到、只在 nginx 访问日志里，是 nginx 等上游超时（`proxy_read_timeout`）。多半是库慢，转第 7 章。
   - **500**：面板内部错误，响应体里有 `req_id`。
 - 看进程和日志：
 
