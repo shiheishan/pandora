@@ -165,15 +165,25 @@ func insertBeforeHeadClose(doc, insert string) string {
 	return doc[:at] + insert + doc[at:]
 }
 
-// rendered 返回按 m 改写后的入口与 ETag；meta 不变时复用上次的结果（入口页是最热的地址，不每次重写、重算哈希）。
-func (h *handler) rendered(m IndexMeta) ([]byte, string) {
+// rendered 返回按 meta 与首页内容改写后的入口与 ETag；meta 与首页不变时复用上次的结果（入口页是最热的地址，不每次重写、重算哈希）。
+func (h *handler) rendered(m IndexMeta, home Home, hasHome bool) ([]byte, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.hasLast && h.lastMeta == m {
+	if h.hasLast && h.lastMeta == m && h.lastHasHome == hasHome && (!hasHome || h.lastHome.equal(home)) {
 		return h.lastBody, h.lastETag
 	}
 	body := renderIndex(h.index, m)
+	if hasHome {
+		if frag := renderHome(home); frag != "" {
+			body = insertBeforeRoot(body, frag)
+		}
+	}
 	sum := sha256.Sum256(body)
-	h.lastMeta, h.lastBody, h.lastETag, h.hasLast = m, body, `"`+hex.EncodeToString(sum[:8])+`"`, true
+	h.lastMeta = m
+	h.lastHome = home.clone()
+	h.lastHasHome = hasHome
+	h.lastBody = body
+	h.lastETag = `"` + hex.EncodeToString(sum[:8]) + `"`
+	h.hasLast = true
 	return h.lastBody, h.lastETag
 }
