@@ -436,7 +436,7 @@ func (h *Inbound) handleTCP(ctx context.Context, conn net.Conn, req *model.Reque
 	if err := resp.WriteToSocks5(conn); err != nil {
 		return
 	}
-	mcommon.BidiCopy(conn, target)
+	_ = mcommon.BidiCopy(conn, target)
 }
 
 func (h *Inbound) handleUDP(ctx context.Context, conn net.Conn) {
@@ -621,7 +621,7 @@ func writeMieruUDPPacket(tunnel *apicommon.PacketOverStreamTunnel, addr net.Addr
 	}
 	var buf bytes.Buffer
 	buf.Write([]byte{0, 0, 0})
-	if err := spec.AddrSpec.WriteToSocks5(&buf); err != nil {
+	if err := spec.WriteToSocks5(&buf); err != nil {
 		return 0, err
 	}
 	buf.Write(payload)

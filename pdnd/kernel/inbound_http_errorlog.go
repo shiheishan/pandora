@@ -53,7 +53,7 @@ func (w inboundHTTPErrorWriter) Write(p []byte) (int, error) {
 	line := strings.TrimRight(string(p), "\n")
 	if rest, ok := strings.CutPrefix(line, httpTLSHandshakeErrorPrefix); ok {
 		if remote, reason, ok := strings.Cut(rest, ": "); ok {
-			var err error = errors.New(reason)
+			err := errors.New(reason)
 			if reason == io.EOF.Error() {
 				err = io.EOF
 			}

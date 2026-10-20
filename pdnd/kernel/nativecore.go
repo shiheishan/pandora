@@ -100,11 +100,6 @@ func (p *routedDataPlane) ListenUDP(ctx context.Context, meta route.Meta, destin
 	return conn, markConnError(connErrUpstream, err)
 }
 
-// NewNativeCore 用 slog.Default() 记连接失败，给测试与不关心日志的调用方。
-func NewNativeCore(registry *AdapterRegistry) *NativeCore {
-	return NewNativeCoreWithLogger(registry, nil)
-}
-
 // NewNativeCoreWithLogger 是生产入口：main.go 把 installLogger 装好的 logger 直接传进来，
 // 入站连接失败与进程其余日志同级别、同格式、同一个出口。log 为 nil 时用 slog.Default()。
 func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *NativeCore {
@@ -224,7 +219,7 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		return fmt.Errorf("入站 %s 端口 %d 无效", cfg.Tag, cfg.Port)
 	}
 	c.mu.RLock()
-	ctx, started, closed := c.ctx, c.started, c.closed
+	started, closed := c.started, c.closed
 	c.mu.RUnlock()
 	if closed || !started {
 		return fmt.Errorf("原生内核尚未启动或已关闭")
@@ -280,7 +275,7 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	c.seq++
 	spec.Generation = c.seq
 	c.desired[cfg.Tag] = spec.Generation
-	ctx = c.ctx
+	ctx := c.ctx
 	c.mu.Unlock()
 
 	// 替换同一个 tag 之前必须先把旧入站关掉。

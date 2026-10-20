@@ -505,3 +505,14 @@ func TestKeyID(t *testing.T) {
 		t.Fatalf("key_id is not lowercase hex: %s", kid)
 	}
 }
+
+// NewKeyring 从给定的公钥列表构造 Keyring。若公钥列表为空，生成空 Keyring。
+func NewKeyring(pubs ...ed25519.PublicKey) *Keyring {
+	km := make(map[string]ed25519.PublicKey, len(pubs))
+	for _, pub := range pubs {
+		if len(pub) == ed25519.PublicKeySize {
+			km[KeyID(pub)] = pub
+		}
+	}
+	return &Keyring{keys: km}
+}

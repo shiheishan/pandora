@@ -78,7 +78,7 @@ func TestAgentStageSuccess(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		w.Write(binary)
+		_, _ = w.Write(binary)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -225,7 +225,7 @@ func TestAgentStageMaxBytes(t *testing.T) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		w.Write(payload)
+		_, _ = w.Write(payload)
 	}))
 	t.Cleanup(srv.Close)
 	a := newTestAgent(t, pub, srv, func(a *Agent) { a.MaxBytes = 16 })
@@ -252,7 +252,7 @@ func TestAgentStageSHA256Mismatch(t *testing.T) {
 	manifest, sig, _ := agentTestManifest(t, priv, pub, 200, []byte("other-body"), true)
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(binary)
+		_, _ = w.Write(binary)
 	}))
 	t.Cleanup(srv.Close)
 	a := newTestAgent(t, pub, srv, nil)
@@ -275,7 +275,7 @@ func TestAgentStageBusy(t *testing.T) {
 	binary := []byte("x")
 	manifest, sig, _ := agentTestManifest(t, priv, pub, 200, binary, true)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(binary)
+		_, _ = w.Write(binary)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -321,7 +321,7 @@ func TestAgentStageHTTPAndRedirect(t *testing.T) {
 	manifest, sig, _ := agentTestManifest(t, priv, pub, 200, binary, true)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(binary)
+		_, _ = w.Write(binary)
 	}))
 	t.Cleanup(srv.Close)
 

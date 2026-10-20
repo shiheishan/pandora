@@ -61,7 +61,7 @@ func TestDataSegmentEncodedByXrayDecodesHere(t *testing.T) {
 	theirs.Timestamp = 0xDEADBEEF
 	theirs.Number = 42
 	theirs.SendingNext = 43
-	theirs.Data().Write([]byte("from-xray"))
+	_, _ = theirs.Data().Write([]byte("from-xray"))
 
 	buf := make([]byte, theirs.ByteSize())
 	theirs.Serialize(buf)

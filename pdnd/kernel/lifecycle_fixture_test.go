@@ -268,7 +268,7 @@ func (c *NativeCore) liveSessionsForTest(tag string) int {
 // echoOnce 写一段数据并等回显，确认整条链路通了。
 func echoOnce(conn net.Conn, payload string) error {
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	defer conn.SetDeadline(time.Time{})
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 	if _, err := conn.Write([]byte(payload)); err != nil {
 		return err
 	}

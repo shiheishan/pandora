@@ -6,14 +6,30 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/aegispanel/nodeagent/upgrade"
 )
+
+// keyringOf 经生产的 upgrade.LoadKeyring 从内存文件系统装出公钥环（一把公钥一个 .pub 文件）。
+func keyringOf(t *testing.T, pubs ...ed25519.PublicKey) *upgrade.Keyring {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for i, pub := range pubs {
+		fsys[fmt.Sprintf("k%d.pub", i)] = &fstest.MapFile{Data: []byte(base64.StdEncoding.EncodeToString(pub) + "\n")}
+	}
+	ring, err := upgrade.LoadKeyring(fsys, "*.pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ring
+}
 
 func validManifestJSON() string {
 	return `{
@@ -103,7 +119,7 @@ func TestSignAndVerifyWithUpgradeKeyring(t *testing.T) {
 		t.Fatalf("ParsePublicKey: %v", err)
 	}
 
-	kr := upgrade.NewKeyring(pub)
+	kr := keyringOf(t, pub)
 	if err := kr.Verify(manifest, sigFile); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -237,20 +253,20 @@ func TestVerifyAgainstKeyring(t *testing.T) {
 		t.Fatalf("签名失败: %v", err)
 	}
 
-	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(pub), &bytes.Buffer{}); err != nil {
+	if err := verify(manifestPath, sigPath, keyringOf(t, pub), &bytes.Buffer{}); err != nil {
 		t.Fatalf("对得上的公钥应通过: %v", err)
 	}
 	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
-	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(otherPub), &bytes.Buffer{}); err == nil {
+	if err := verify(manifestPath, sigPath, keyringOf(t, otherPub), &bytes.Buffer{}); err == nil {
 		t.Fatal("别的公钥不应通过")
 	}
-	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(), &bytes.Buffer{}); err == nil {
+	if err := verify(manifestPath, sigPath, keyringOf(t), &bytes.Buffer{}); err == nil {
 		t.Fatal("空公钥环不应通过")
 	}
 	if err := os.WriteFile(manifestPath, []byte(validManifestJSON()+" "), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := verify(manifestPath, sigPath, upgrade.NewKeyring(pub), &bytes.Buffer{}); err == nil {
+	if err := verify(manifestPath, sigPath, keyringOf(t, pub), &bytes.Buffer{}); err == nil {
 		t.Fatal("清单改过一个字节不应通过")
 	}
 

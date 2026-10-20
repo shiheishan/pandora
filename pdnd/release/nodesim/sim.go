@@ -381,7 +381,7 @@ func (s *Sim) onTombstone(reason string) {
 	s.order = nil
 	s.inflight = nil
 	s.board.Update(s.name, func(st *ServerStatus) { st.Tombstoned = true })
-	s.board.RecordError(s.name, fmt.Errorf("Tombstone: %s", reason))
+	s.board.RecordError(s.name, fmt.Errorf("tombstone: %s", reason))
 	s.refreshApplied()
 }
 

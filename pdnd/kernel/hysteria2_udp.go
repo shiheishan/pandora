@@ -65,10 +65,6 @@ const (
 	hy2UDPResolveTTL = 30 * time.Second
 )
 
-// quicSocketBufferWant 是 quic-go 给监听 socket 要的 UDP 收发缓冲（sagernet/quic-go 的
-// protocol.DesiredReceiveBufferSize 与 DesiredSendBufferSize，各 8MB）。
-const quicSocketBufferWant = 8 << 20
-
 // hy2UDPBatchSupported：x/net 的 ReadBatch / WriteBatch 只在 Linux 上是
 // recvmmsg / sendmmsg，别的平台一次只收发一包且每包多几次分配，不如逐包。
 var hy2UDPBatchSupported = runtime.GOOS == "linux"

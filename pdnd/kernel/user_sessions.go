@@ -180,17 +180,6 @@ func (s *userSessions) add(id int64, up, down int64) {
 	}
 }
 
-// peek 读一个用户当前未取走的增量，不清零（测试与诊断用）。
-func (s *userSessions) peek(id int64) core.UserTraffic {
-	s.mu.Lock()
-	c := s.traffic[id]
-	s.mu.Unlock()
-	if c == nil {
-		return core.UserTraffic{ID: id}
-	}
-	return core.UserTraffic{ID: id, Upload: c.up.Load(), Download: c.down.Load()}
-}
-
 // snapshot 取走全部用户的增量。
 func (s *userSessions) snapshot() []core.UserTraffic {
 	s.mu.Lock()

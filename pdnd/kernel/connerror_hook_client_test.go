@@ -55,7 +55,7 @@ func TestConnErrorHookHysteria2WrongPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(nil)
+	defer func() { _ = client.CloseWithError(nil) }()
 	if _, err := client.DialConn(ctx, M.ParseSocksaddr("target.test:80")); err == nil {
 		t.Fatal("错误口令居然通过了认证")
 	}
@@ -85,7 +85,7 @@ func TestConnErrorHookTUICWrongPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(nil)
+	defer func() { _ = client.CloseWithError(nil) }()
 	if conn, err := client.DialConn(ctx, M.ParseSocksaddr("target.test:80")); err == nil {
 		_, _ = conn.Write([]byte("force-auth"))
 		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -115,7 +115,7 @@ func TestConnErrorHookTUICUpstreamRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(nil)
+	defer func() { _ = client.CloseWithError(nil) }()
 	conn, err := client.DialConn(ctx, M.ParseSocksaddr("target.test:80"))
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestConnErrorHookJuicityWrongToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(0, "test complete")
+	defer func() { _ = client.CloseWithError(0, "test complete") }()
 	parsed, err := uuid.FromString(hookUserUUID)
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestConnErrorHookMieruUpstreamRefusal(t *testing.T) {
 	if err := client.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if conn, err := client.DialContext(ctx, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 80}); err == nil {

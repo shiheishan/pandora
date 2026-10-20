@@ -530,9 +530,6 @@ func (a *vlessAdapter) serveAccepted(conn net.Conn) {
 		_ = a.handleConnSessionProbe(ctx, session, realitySession, true)
 	})
 }
-func (a *vlessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
-	return a.handleConnSession(ctx, conn, nil)
-}
 
 // reportConnError 把一条连接的失败原因交给观测出口。
 //

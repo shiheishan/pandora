@@ -11,10 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing/common/buf"
-	M "github.com/sagernet/sing/common/metadata"
-	N "github.com/sagernet/sing/common/network"
-
 	"github.com/aegispanel/nodeagent/core"
 )
 
@@ -142,38 +138,6 @@ func (c *Conn) CloseWrite() error {
 // 不实现它的话，splice / sendfile 之类的零拷贝路径会被这层挡掉，
 // 转发性能会有可观的下降。
 func (c *Conn) Upstream() any { return c.Conn }
-
-// PacketConn 对 UDP 做同样的统计。
-// UDP 必须单独包一层：TCP 的 net.Conn 与 sing 的 N.PacketConn 是两套接口，
-// 只包 TCP 的话，走 UDP 的流量（QUIC、游戏、DNS）会完全不计费。
-type PacketConn struct {
-	N.PacketConn
-	st *UserStats
-}
-
-func NewPacketConn(conn N.PacketConn, st *UserStats) *PacketConn {
-	return &PacketConn{PacketConn: conn, st: st}
-}
-
-func (c *PacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
-	before := buffer.Len()
-	dest, err := c.PacketConn.ReadPacket(buffer)
-	if n := buffer.Len() - before; n > 0 {
-		c.st.up.Add(int64(n))
-	}
-	return dest, err
-}
-
-func (c *PacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
-	n := buffer.Len()
-	err := c.PacketConn.WritePacket(buffer, destination)
-	if err == nil && n > 0 {
-		c.st.down.Add(int64(n))
-	}
-	return err
-}
-
-func (c *PacketConn) Upstream() any { return c.PacketConn }
 
 //------------------------------------------------------------------------------
 // 用户表

@@ -114,9 +114,6 @@ func isClosedChan(done <-chan struct{}) bool {
 // connHandlerPanics 累计被兜住的连接处理 panic 次数，进程级。
 var connHandlerPanics atomic.Int64
 
-// ConnHandlerPanics 返回进程启动以来被兜住的连接处理 panic 次数。
-func ConnHandlerPanics() int64 { return connHandlerPanics.Load() }
-
 // guardConnHandler 在 recover 保护下把一条连接交给 handle。
 //
 // 一个进程承载这台机器上的全部节点：任何一个协议解析器被畸形报文打出 panic，

@@ -112,30 +112,6 @@ func parseAddonsVarint(b []byte) (uint64, int) {
 	return 0, 0
 }
 
-// EncodeVLESSAddons 按同一套规则编码，供测试与将来的出站方向使用。
-func EncodeVLESSAddons(a VLESSAddons) []byte {
-	var out []byte
-	if a.Flow != "" {
-		out = append(out, byte(addonsFieldFlow<<3|2))
-		out = appendAddonsVarint(out, uint64(len(a.Flow)))
-		out = append(out, a.Flow...)
-	}
-	if len(a.Seed) > 0 {
-		out = append(out, byte(addonsFieldSeed<<3|2))
-		out = appendAddonsVarint(out, uint64(len(a.Seed)))
-		out = append(out, a.Seed...)
-	}
-	return out
-}
-
-func appendAddonsVarint(b []byte, v uint64) []byte {
-	for v >= 0x80 {
-		b = append(b, byte(v)|0x80)
-		v >>= 7
-	}
-	return append(b, byte(v))
-}
-
 // NegotiateVLESSFlow 判断这个 flow 该怎么处理。
 //
 // 返回 vision 表示后续数据要走 Vision 帧解析；错误表示这条连接不该继续。
