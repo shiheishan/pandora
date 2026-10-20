@@ -14,6 +14,10 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
+// scenarioRound 是场景用例的一轮间隔：比探测去重键的 TTL（30 分钟）多 1 秒，不卡在过期边界上
+// （真实 Redis 剩余 TTL 为 0 时还不算过期，miniredis 会删；多 1 秒两边一致）。
+const scenarioRound = 30*time.Minute + time.Second
+
 // scenarioClock 让 miniredis 的键过期时间跟着测试里的 now 走（探测的去重、上报人集合、净变动都靠 TTL）。
 type scenarioClock struct {
 	mr  *miniredis.Miniredis
@@ -74,7 +78,7 @@ func TestDomainScoresOneISPBlockedInBusyProvince(t *testing.T) {
 
 	prev := domainScoreMax
 	for r := 0; r <= 4; r++ {
-		at := start.Add(time.Duration(r) * 30 * time.Minute)
+		at := start.Add(time.Duration(r) * scenarioRound)
 		clock.to(at)
 		probeFailFrom(t, d, a, gdTelecom, accts, fmt.Sprintf("n%d", r), at)
 		// 前半小时、后半小时各一批凭据，同一个凭据隔一小时再拉一次
@@ -149,12 +153,12 @@ func TestDomainScoresProvinceBlockedDropsWithinHour(t *testing.T) {
 		setLevel(t, rdb, a, "广东|电信", 2.9, start)
 
 		for r := 0; r < 2; r++ {
-			at := start.Add(time.Duration(r) * 30 * time.Minute)
+			at := start.Add(time.Duration(r) * scenarioRound)
 			clock.to(at)
 			probeFailFrom(t, d, a, gdTelecom, accts, fmt.Sprintf("n%d", r), at)
 			pullFrom(t, d, a, bj, fmt.Sprintf("bj%d-", r), 30, at)
 		}
-		at := start.Add(30 * time.Minute)
+		at := start.Add(scenarioRound)
 		if got := readOne(t, d, a, bj, at); !almost(got, domainScoreMax, 1e-3) {
 			t.Fatalf("北京读 A = %v，要 3", got)
 		}
