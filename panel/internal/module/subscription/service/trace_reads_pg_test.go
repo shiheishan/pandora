@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -19,7 +20,8 @@ func traceIPv6(t *testing.T) string {
 	if _, err := rand.Read(b); err != nil {
 		t.Fatal(err)
 	}
-	return fmt.Sprintf("2001:db8::%x:%x", binary.BigEndian.Uint16(b[:2]), binary.BigEndian.Uint16(b[2:]))
+	// 经 netip 转成规范写法：段为 0 时 %x 会拼出「::0:5」这类非规范串，入库哈希就和补查对不上
+	return netip.MustParseAddr(fmt.Sprintf("2001:db8::%x:%x", binary.BigEndian.Uint16(b[:2]), binary.BigEndian.Uint16(b[2:]))).String()
 }
 
 // traceFixture 造两个用户 A、B 各一份订阅，写入拉取日志，返回用户 id 与三个来源 IP：

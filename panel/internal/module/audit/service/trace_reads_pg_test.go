@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -24,7 +25,8 @@ func randomDocIPv6(t *testing.T) string {
 	}
 	r1 := binary.BigEndian.Uint16(b[0:2])
 	r2 := binary.BigEndian.Uint16(b[2:4])
-	return fmt.Sprintf("2001:db8::%x:%x", r1, r2)
+	// 经 netip 转成规范写法：段为 0 时 %x 会拼出「::0:5」这类非规范串，入库哈希就和补查对不上
+	return netip.MustParseAddr(fmt.Sprintf("2001:db8::%x:%x", r1, r2)).String()
 }
 
 func userCtxUA(ctx context.Context, user uuid.UUID, ip, ua string) context.Context {

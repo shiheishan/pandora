@@ -30,6 +30,7 @@ import {
 } from '../../src/admin/screens/nodes/schemas'
 import { planPoolsSchema, planResponseSchema, plansSchema, poolOptionsSchema } from '../../src/admin/screens/plans/schemas'
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from '../../src/admin/screens/security/schemas'
+import { traceAccountsResponse, traceIPsResponse, traceSubscribersResponse } from '../../src/admin/screens/security/trace'
 import { deliveriesResponse, hooksResponse, mailSettingsSchema, telegramExtrasSchema, telegramSettingsSchema, templatesResponse as mailTemplatesResponse } from '../../src/admin/screens/system/schemas'
 import { assigneesSchema, macrosSchema, queueSchema, ticketDetailSchema } from '../../src/admin/screens/tickets/api'
 import { devicesSchema, planOptionsSchema, profileSchema, userDetailSchema, userGroupsSchema, usersSchema } from '../../src/admin/screens/users/api'
@@ -139,6 +140,9 @@ const rows: Row[] = [
   { at: 'security/queries.ts', seed: '登录与写操作的审计', path: 'v1/access-log', query: { limit: 50, offset: 0 }, schema: accessResponse },
   { at: 'security/queries.ts', seed: '三个账号都从 127.0.0.1 登录（同一 IP 哈希）', path: 'v1/ip-clusters', schema: clustersResponse },
   { at: 'security/queries.ts', path: 'v1/switches', schema: switchesResponse },
+  { at: 'security/queries.ts', seed: '登录审计与订阅拉取日志', path: 'v1/trace/ips', query: { window: '7d' }, schema: traceIPsResponse },
+  { at: 'security/queries.ts', seed: '订阅拉取日志', path: 'v1/trace/subscribers', query: { window: '7d', sort: 'fetches' }, schema: traceSubscribersResponse },
+  { at: 'security/queries.ts', seed: '登录审计与订阅拉取日志', path: 'v1/trace/accounts', query: { window: '7d' }, schema: traceAccountsResponse },
 
   // ---- 财务 ----
   { at: 'billing/api.ts', seed: '门户下单三张', path: 'v1/orders', query: { limit: 25, offset: 0 }, schema: ordersSchema },
