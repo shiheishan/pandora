@@ -172,6 +172,7 @@ func TestRoutes(t *testing.T) {
 	wantAdm := []string{
 		"DELETE /v1/user-groups/:id",
 		"GET /v1/access-log", "GET /v1/ip-clusters",
+		"GET /v1/trace/accounts", "GET /v1/trace/ips", "GET /v1/trace/reveal", "GET /v1/trace/subscribers",
 		"GET /v1/user-groups", "GET /v1/users", "GET /v1/users/:id", "GET /v1/users/:id/profile",
 		"GET /v1/users/bulk/export", "GET /v1/users/bulk/generate/jobs",
 		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",

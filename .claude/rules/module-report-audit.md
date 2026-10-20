@@ -52,3 +52,8 @@ paths:
 ## audit 给 report 的读模型
 
 - `audit/service/report_reads.go` 的 `ActivityByDay`：按站点时区切日统计注册/登录/下单与 `unique_ips`（`ip_hash` 去重）；report 的 `liveActivity` / `RefreshActivity` 只调此端口，不在 report repo 里拼 audit SQL。
+
+## audit 给 identity 溯源总览的读（`service/trace_reads.go`，2026-10-20）
+- `TraceIPs`（按来源 IP 聚合，只算 actor_kind 为 user / anonymous、带 ip_hash 的事件；窗口总数用窗口函数随行带回）与 `TraceUsers`（按用户聚合，带每人最多 100 个 IP 与是否和别人共用）。取头部（Limit > 0）各一条 SQL，走 `audit_events_time_idx`；按用户的那条先在原表窄聚合到 (actor_id, ip_hash, user_agent)，后面几个 CTE 都从它派生，不让整窗原始行因被引用两次而物化。只补查（Limit = 0）走另一条窄 SQL：按 ip_hash 过滤（`audit_events_ip_idx`）或按操作者过滤（`audit_events_actor_idx`，共用 IP 用 EXISTS 回查），不算全窗总数（为 0）。排序列只从 repo 的白名单取（`traceUserSort`），拼进 SQL 的不是用户输入。
+- 按明文补查的 IP 在这里做 `netip` 规范写法再算 `InfoHMACIP`；数组参数以文本字面量传（`CAST(? AS text[])`），GORM 会把切片展开成列表。
+- 「显示」明文 IP 记 `security.source_ip_viewed`，`data.view` = `ViewTrace`（`"trace"`），`data.filter` 里是打码串 `masked` 与 `ip_hash`（`InfoHMACIP` 的小写 hex，与 `audit_events.ip_hash` 同口径，可按哈希对上是哪个 IP），不记明文。

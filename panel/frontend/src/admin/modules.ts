@@ -84,6 +84,7 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['audit', '审计日志'],
       ['access', '访问日志'],
       ['risk', '风控'],
+      ['trace', '溯源总览'],
       ['signup', '注册防护'],
       ['switches', '降级开关'],
     ],
@@ -138,6 +139,7 @@ const PALETTE_EXTRAS: ReadonlyArray<readonly [ModuleKey, string | null, string]>
   ['nodes', 'subscription', '订阅模板 / 订阅域名'],
   ['system', 'templates', '实发测试信'],
   ['security', 'risk', '共享 IP 聚类 / 设备策略'],
+  ['security', 'trace', 'IP 访问排行 / 订阅更新排行 / 账号综合排行'],
   ['security', 'signup', '人机验证 / 邮箱后缀'],
 ]
 

@@ -1,0 +1,78 @@
+.note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+}
+
+.sub {
+  margin-left: var(--space-8);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: normal;
+}
+
+.regions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.regionsTitle {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.regionRow {
+  display: flex;
+  gap: var(--space-12);
+  align-items: baseline;
+}
+
+.regionName {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.regionMeta {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.userList {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 4px;
+  text-align: left;
+}
+
+.bad {
+  color: var(--danger);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.muted {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.toolbarNote {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+
+@media (max-width: 639px) {
+  .toolbarNote {
+    flex: 1 1 100%;
+    text-align: left;
+  }
+}

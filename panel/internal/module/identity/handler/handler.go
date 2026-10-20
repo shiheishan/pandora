@@ -45,6 +45,10 @@ type Service interface {
 	IPClusters(ctx context.Context, includeReviewed bool) ([]service.IPCluster, error)
 	ReviewIPCluster(ctx context.Context, key, note string) (time.Time, error)
 	DisableIPClusterAccounts(ctx context.Context, key string, ids []uuid.UUID, reason string) (service.DisableClusterResult, error)
+	TraceIPs(ctx context.Context, window string) (service.TraceIPReport, error)
+	TraceSubscribers(ctx context.Context, window, sort string) (service.TraceSubscriberReport, error)
+	TraceAccounts(ctx context.Context, window, sort string) (service.TraceAccountReport, error)
+	TraceReveal(ctx context.Context, token string) (service.TraceReveal, error)
 
 	// 注册与邀请、后台用户操作（xb-reg）
 	MyInviteCodes(ctx context.Context, userID uuid.UUID) (service.MyInviteCodes, error)
@@ -102,6 +106,11 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/ip-clusters", k.RequireAuth, h.ipClusters)
 	v1.POST("/ip-clusters/:key/review", k.RequireAuth, h.reviewIPCluster)
 	v1.POST("/ip-clusters/:key/disable-accounts", k.RequireAuth, k.RecentReauth, k.Idempotency("ip_cluster_disable"), h.disableIPCluster)
+	// 溯源总览：概览与 IP 排行、订阅更新排行、账号综合排行、按令牌显示一个明文 IP（写审计）
+	v1.GET("/trace/ips", k.RequireAuth, h.traceIPs)
+	v1.GET("/trace/subscribers", k.RequireAuth, h.traceSubscribers)
+	v1.GET("/trace/accounts", k.RequireAuth, h.traceAccounts)
+	v1.GET("/trace/reveal", k.RequireAuth, h.traceReveal)
 
 	v1.GET("/users", k.RequireAuth, h.listUsers)
 	v1.GET("/users/:id", k.RequireAuth, h.getUser)
