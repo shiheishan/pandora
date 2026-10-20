@@ -247,6 +247,55 @@ describe('mock api · admin nodes infra', () => {
     expect(saved.affected_nodes).toBeGreaterThan(0)
     expect((await call('GET', '/v1/nodes/routing').then((r) => r.json())) as { routes: unknown[] }).toMatchObject({ revision: saved.revision, routes: [{ outbound_tag: 'block' }] })
   })
+
+  it('reports per-server upgrade eligibility in the server DTO', async () => {
+    const raw = (await (await call('GET', '/v1/servers')).json()) as { servers: Array<Record<string, unknown>> }
+    const rows = serversResponse.parse(raw).servers
+    const byName = (name: string) => rows.find((s) => s.name === name)!
+    expect(byName('hk-hkg-edge-1').upgrade).toEqual({ available: true, target_version: 'v2026.10.21', reason: null })
+    expect(byName('jp-tyo-edge-2').upgrade.reason).toBe('no_upgrade_support')
+    expect(byName('sg-sin-edge-1').upgrade.reason).toBe('up_to_date')
+    expect(byName('tw-tpe-edge-1').upgrade.reason).toBe('not_connected')
+    expect(byName('kr-sel-edge-1').upgrade.reason).toBe('not_ready')
+    expect(byName('us-lax-edge-1').last_upgrade).toMatchObject({ status: 'rolled_back', reason_code: 'confirm_timeout' })
+    expect(byName('us-lax-edge-1').upgrade.available).toBe(true)
+    for (const s of raw.servers) {
+      expect(s).not.toHaveProperty('upgradeV1')
+      expect(s).not.toHaveProperty('buildSerial')
+    }
+  })
+
+  it('starts upgrades per server, replays by key and validates the body', async () => {
+    const hk = (await servers()).find((s) => s.name === 'hk-hkg-edge-1')!
+    const sg = (await servers()).find((s) => s.name === 'sg-sin-edge-1')!
+    const missing = '00000000-0000-4000-8000-000000000000'
+    const first = await call('POST', '/v1/servers/upgrade', { server_ids: [hk.id, sg.id, missing, hk.id] }, 'upg-1')
+    expect(first.status).toBe(200)
+    const firstBody = await first.json()
+    expect(firstBody).toMatchObject({
+      target_version: 'v2026.10.21',
+      results: [
+        { server_id: hk.id, ok: true, reason: null },
+        { server_id: sg.id, ok: false, reason: 'up_to_date' },
+        { server_id: missing, ok: false, reason: 'not_found' },
+      ],
+    })
+    const listed = (await servers()).find((s) => s.id === hk.id)!
+    expect(listed.last_upgrade?.status).toBe('sent')
+    expect(listed.upgrade.reason).toBe('in_progress')
+    const replay = await call('POST', '/v1/servers/upgrade', { server_ids: [hk.id, sg.id, missing, hk.id] }, 'upg-1')
+    expect(await replay.json()).toEqual(firstBody)
+    const again = await call('POST', '/v1/servers/upgrade', { server_ids: [hk.id] }, 'upg-2')
+    expect(await again.json()).toMatchObject({ results: [{ server_id: hk.id, ok: false, reason: 'in_progress' }] })
+    const empty = await call('POST', '/v1/servers/upgrade', { server_ids: [] }, 'upg-empty')
+    expect(empty.status).toBe(422)
+    expect(await empty.json()).toMatchObject({ error: { fields: { server_ids: '一次选 1 到 50 台服务器' } } })
+    const badId = await call('POST', '/v1/servers/upgrade', { server_ids: ['nope'] }, 'upg-bad')
+    expect(badId.status).toBe(422)
+    expect(await badId.json()).toMatchObject({ error: { fields: { server_ids: '服务器 ID 格式不正确' } } })
+    const extra = await call('POST', '/v1/servers/upgrade', { server_ids: [hk.id], force: true }, 'upg-extra')
+    expect(extra.status).toBe(400)
+  })
 })
 
 describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)', () => {
