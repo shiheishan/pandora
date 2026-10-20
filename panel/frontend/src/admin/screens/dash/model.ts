@@ -196,14 +196,15 @@ export function todoBoard(items: readonly TaskItem[] | undefined): TodoBoard {
   ]
 
   // 巡检有违例才出第四格，标红；数字是各项违例数之和，去处是第一项有违例的检查对应的页
-  if (failing.length > 0) {
+  const firstFailing = failing[0]
+  if (firstFailing) {
     cards.push({
       key: 'integrity',
       title: '数据巡检',
       count: failing.reduce((n, c) => n + c.count, 0),
       meta: integrityMeta(failing),
       action: '去核对',
-      target: INTEGRITY_CHECKS.find((c) => c.code === failing[0].code)?.target ?? { module: 'billing', tab: null },
+      target: INTEGRITY_CHECKS.find((c) => c.code === firstFailing.code)?.target ?? { module: 'billing', tab: null },
       hot: true,
     })
   }
