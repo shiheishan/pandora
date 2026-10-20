@@ -198,6 +198,8 @@ const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
 
 // 服务器状态机里能进 ready 的状态（已 ready 的不动）
 const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
+// 节点还没绑服务器就上线时的文案（activate 与批量改状态同一条）
+const UNBOUND_ACTIVATE = '节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线'
 
 /** 上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113；见 node/service 的 nodeNoPoolWarning） */
 function activationWarnings(n: Node): string[] {
@@ -207,6 +209,7 @@ function activationWarnings(n: Node): string[] {
 
 // subscription.DeliveryState / NodeDeliveryFacts.Refine 的文案，与 Go 一字不差
 const DELIVERY_NOTES = {
+  unbound: '未绑定服务器，不下发：先在节点详情「身份与操作」里绑定服务器，再上线',
   notActive: '节点不在服务中（草稿、已停用或已退役）',
   neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
   stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
@@ -231,6 +234,7 @@ export const deliverableNodesInPool = (poolId: string): number => store.filter((
 
 /** 后台节点列表的 delivered_to_users / delivery_note：DeliveryState 之后按 Refine 补齐 */
 function deliveryOf(n: Node): { delivered: boolean; note: string } {
+  if (!n.server_id) return { delivered: false, note: DELIVERY_NOTES.unbound }
   if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
   if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
   if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
@@ -271,8 +275,8 @@ function listRow(n: Node) {
     delivered_to_users: delivered,
     delivery_note: note,
     identity_serial: n.identity_serial,
-    // 与 service.nodeMovableState 同口径：假后端里草稿不会回到草稿，草稿就等于从没服务过（不看服务器心跳与身份）
-    movable: n.serving_status === 'draft',
+    // 与 service.nodeMovableState 同口径：草稿或已停用能改绑 / 解绑
+    movable: n.serving_status === 'draft' || n.serving_status === 'disabled',
     created_at: n.created_at,
     node_type: n.node_type,
     server_host: n.server_host,
@@ -407,10 +411,24 @@ function basicErrors(body: Json, creating: boolean): Record<string, string> {
   const f: Record<string, string> = {}
   const name = body.name === undefined && !creating ? null : text(body.name).trim()
   if (name !== null && (!name || [...name].length > 120)) f.name = '名称必填，不超过 120 字'
-  if (creating && !servers.some((s) => s.id === body.server_id)) f.server_id = '服务器不存在'
+  // 新建时服务器可以不传（= 暂不绑定）；给了才要求存在
+  const serverId = text(body.server_id)
+  const serverExists = !serverId || servers.some((s) => s.id === serverId)
+  if (creating && !serverExists) f.server_id = '服务器不存在'
   if (body.pool_id && !pools.some((p) => p.id === body.pool_id)) f.pool_id = '资源池不存在'
-  if ((creating || body.server_host !== undefined) && !/^[A-Za-z0-9.-]+$/.test(text(body.server_host))) f.server_host = '必须是 IP 或 ASCII 主机名'
-  if ((creating || body.server_port !== undefined) && !(int(body.server_port)! >= 1 && int(body.server_port)! <= 65535)) f.server_port = '端口 1–65535'
+  // 地址任何时候都可以空，给了才校验格式
+  const host = text(body.server_host)
+  if ((creating || body.server_host !== undefined) && host !== '' && !/^[A-Za-z0-9.-]+$/.test(host)) f.server_host = '必须是 IP 或 ASCII 主机名'
+  const portOk = int(body.server_port) !== null && int(body.server_port)! >= 1 && int(body.server_port)! <= 65535
+  if (creating) {
+    // 新建：端口给了就要合法；绑了服务器时端口必填，不绑时可以空
+    if (body.server_port !== undefined && body.server_port !== null && body.server_port !== '') {
+      if (!portOk) f.server_port = '端口 1–65535'
+    } else if (serverId && serverExists) f.server_port = '绑定了服务器就要填端口（1 到 65535）'
+  } else if (body.server_port !== undefined && !portOk) {
+    // 编辑：给了就必须 1–65535，不能清空
+    f.server_port = '端口 1–65535'
+  }
   if (body.traffic_rate !== undefined && !(Number(body.traffic_rate) > 0)) f.traffic_rate = '必须大于 0'
   if (body.country_code != null && body.country_code !== '' && !/^[A-Za-z]{2}$/.test(text(body.country_code))) f.country_code = '必须是两位字母国家代码'
   return f
@@ -465,6 +483,7 @@ function batchStatusCheck(rows: Node[], to: string): MockResult | null {
   if (!(to in EDGES)) return invalid({ serving_status: '不支持的服务状态' })
   for (const n of rows) {
     if (!EDGES[n.serving_status]!.includes(to)) return err(409, 'conflict', '不允许的节点服务状态转换', { serving_status: `${n.serving_status} -> ${to}` })
+    if (to === 'active' && !n.server_id) return err(409, 'conflict', UNBOUND_ACTIVATE, { server_id: UNBOUND_ACTIVATE, id: n.id })
     if (to === 'active' && (!n.node_type || servers.find((s) => s.id === n.server_id)?.status !== 'ready')) return err(409, 'conflict', '节点协议或服务器状态未满足启用条件')
   }
   return null
@@ -526,8 +545,9 @@ export const nodes: MockModule = {
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
         const fields = { ...basicErrors(body, true), ...validateProtocol(text(body.node_type), body.protocol_config), ...xbErrors(body) }
         if (Object.keys(fields).length) return invalid(fields)
-        const srv = servers.find((s) => s.id === body.server_id)!
-        if (srv.status !== 'ready' && srv.status !== 'draft') return err(409, 'conflict', '目标服务器当前不接受节点')
+        // 不绑服务器时不查服务器状态
+        const srv = text(body.server_id) ? servers.find((s) => s.id === body.server_id) : undefined
+        if (srv && srv.status !== 'ready' && srv.status !== 'draft') return err(409, 'conflict', '目标服务器当前不接受节点')
         if (store.some((n) => n.name === text(body.name).trim() && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
         const n = node({
           name: text(body.name).trim(),
@@ -543,7 +563,7 @@ export const nodes: MockModule = {
           last_heartbeat_at: null,
           identity_serial: null,
         })
-        n.server_id = srv.id
+        n.server_id = srv?.id ?? null
         n.row_version = 1
         applyXB(n.xb, body)
         store.push(n)
@@ -566,6 +586,8 @@ export const nodes: MockModule = {
       const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}), ...xbErrors(body) }
       // node/service 的 PatchNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
       if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
+      // 对外地址可以清空，但在役节点上线前必须填
+      if (body.server_host !== undefined && !text(body.server_host) && n.serving_status === 'active') fields.server_host = '必填：上线前要填对外地址'
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (body.name !== undefined && store.some((x) => x !== n && x.name === text(body.name).trim())) return ctx.fail(409, 'conflict', '节点名称已存在')
       if (body.name !== undefined) n.name = text(body.name).trim()
@@ -590,14 +612,16 @@ export const nodes: MockModule = {
         if (body.row_version !== src.row_version) return conflict(src)
         const name = text(body.name).trim() || `${src.name}-copy`
         if (store.some((n) => n.name === name && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
-        const target = body.target_server_id ? servers.find((s) => s.id === body.target_server_id) : servers.find((s) => s.id === src.server_id)
-        if (!target) return invalid({ target_server_id: '服务器不存在' })
-        if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
+        // 源节点没绑服务器、也没指定目标服务器时，复制出来同样不绑，不查服务器状态
+        const targetId = text(body.target_server_id) || src.server_id
+        const target = targetId ? servers.find((s) => s.id === targetId) : undefined
+        if (targetId && !target) return invalid({ target_server_id: '服务器不存在' })
+        if (target && target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
         const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0 })
         // node() 先给新 id 与编号，再被源节点的字段覆盖：复制出来的必须是新节点
         copy.id = randomUUID()
         copy.node_no = nodeNo
-        copy.server_id = target.id
+        copy.server_id = target?.id ?? null
         copy.sort_order = src.sort_order + 1
         copy.row_version = 1
         copy.xb = {
@@ -618,20 +642,57 @@ export const nodes: MockModule = {
         return { status: 201, body: adminNode(copy) }
       })
     },
-    'POST /v1/nodes/:id/move': async (ctx) => {
+    // 绑定 / 解绑服务器，照 node/service 的 BindNode / UnbindNode（nodes_binding.go）：幂等、无 reauth；
+    // 判断顺序同 Go——版本号非法 422、端口范围 422、服务器 id 必填、节点不存在 404、版本冲突 409、
+    // 已退役 / 在役 409、端口为空 422、目标就是当前服务器 200、服务器不存在 422、目标已退役 409、端口被占 409
+    'POST /v1/nodes/:id/bind': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('node_server_move', () => {
+      await ctx.idempotent('node_bind', () => {
+        const extra = Object.keys(body).find((k) => !['row_version', 'server_id', 'server_port', 'reason'].includes(k))
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
+        if (body.server_port !== undefined && !(int(body.server_port)! >= 1 && int(body.server_port)! <= 65535)) return invalid({ server_port: '端口必须在 1 到 65535 之间' })
+        if (!text(body.server_id)) return invalid({ server_id: '必填' })
         const n = findNode(ctx.params.id)
         if (!n) return notFound('节点不存在')
         if (body.row_version !== n.row_version) return conflict(n)
+        if (n.serving_status === 'retired') return err(409, 'conflict', '节点已退役，不能改绑或解绑服务器')
+        if (n.serving_status === 'active') return err(409, 'conflict', '节点在役，先停用再改绑 / 解绑')
+        // 端口取请求里的，没给就沿用节点已有的
+        const port = int(body.server_port) ?? n.server_port
+        if (port === null) return invalid({ server_port: '绑定服务器前要先填端口' })
         const target = servers.find((s) => s.id === body.server_id)
-        if (!target) return invalid({ server_id: '服务器不存在' })
-        if (target.id === n.server_id) return { status: 200, body: adminNode(n) }
-        // 与 service.nodeMovableState 一致：只有从没服务过的草稿（不看服务器心跳与身份）；409 只带文案，不带 fields
-        if (n.serving_status !== 'draft') return err(409, 'conflict', '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点')
-        if (target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
+        if (!target) return invalid({ server_id: '服务器不存在或已删除' })
+        if (target.id === n.server_id && port === n.server_port) return { status: 200, body: adminNode(n) }
+        if (target.id !== n.server_id && target.status === 'retired') return err(409, 'conflict', '目标服务器已退役，不接受节点')
+        // 同一服务器上未退役、未删除的节点占用同一端口（假后端不区分 L4，统一按 TCP）
+        const holder = store.find((x) => x !== n && !x.deleted && x.serving_status !== 'retired' && x.server_id === target.id && x.server_port === port)
+        if (holder) {
+          const note = `端口 ${port}/TCP 已被同一服务器上的节点「${holder.name}」占用`
+          return err(409, 'conflict', `${note}，换一个端口或先退役占用的节点`, { server_port: note })
+        }
         n.server_id = target.id
+        n.server_port = port
+        touch(n)
+        return { status: 200, body: adminNode(n) }
+      })
+    },
+    'POST /v1/nodes/:id/unbind': async (ctx) => {
+      const body = await ctx.body()
+      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      await ctx.idempotent('node_unbind', () => {
+        const extra = Object.keys(body).find((k) => !['row_version', 'reason'].includes(k))
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
+        const n = findNode(ctx.params.id)
+        if (!n) return notFound('节点不存在')
+        if (body.row_version !== n.row_version) return conflict(n)
+        if (n.serving_status === 'retired') return err(409, 'conflict', '节点已退役，不能改绑或解绑服务器')
+        if (n.serving_status === 'active') return err(409, 'conflict', '节点在役，先停用再改绑 / 解绑')
+        // 本来就没绑：200 原样返回，不改版本
+        if (!n.server_id) return { status: 200, body: adminNode(n) }
+        n.server_id = null
         touch(n)
         return { status: 200, body: adminNode(n) }
       })
@@ -691,7 +752,7 @@ export const nodes: MockModule = {
     },
     // R108 / R113：一步上线，照 node/service 的 ActivateNode：幂等 node_activate、无 reauth；
     // 判断顺序同 Go——版本号非法 422、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409、
-    // retired 409、协议就绪、未绑服务器、服务器不存在、节点身份、服务器状态；服务器跟着进 ready；warnings 没有提示时不出现
+    // retired 409、未绑服务器 409、协议就绪、服务器不存在、节点身份、服务器状态；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
@@ -704,8 +765,8 @@ export const nodes: MockModule = {
         if (n.serving_status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
         if (body.row_version !== n.row_version) return conflict(n)
         if (n.serving_status === 'retired') return err(409, 'conflict', '节点已退役，不能上线')
-        if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、端口与稳定协议配置），先保存协议再上线')
-        if (!n.server_id) return err(409, 'conflict', '节点没有绑定服务器，不能上线')
+        if (!n.server_id) return err(409, 'conflict', UNBOUND_ACTIVATE, { server_id: UNBOUND_ACTIVATE })
+        if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、对外地址、端口），补齐后再上线')
         const srv = servers.find((s) => s.id === n.server_id)
         if (!srv) return err(409, 'conflict', '节点所在的服务器已删除，不能上线')
         if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '服务器还没接入（先在服务器页生成安装命令完成接入）')

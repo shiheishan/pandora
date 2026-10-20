@@ -64,7 +64,7 @@ describe('mock api · admin nodes', () => {
     }
   })
 
-  it('copies into a new node and refuses illegal transitions and deployed moves', async () => {
+  it('copies into a new node and refuses illegal transitions and server rebinds', async () => {
     const [src] = await list()
     const copy = await call('POST', `/v1/nodes/${src!.id}/copy`, { row_version: src!.row_version, name: `${src!.name} 副本` }, 'copy-1')
     expect(copy.status).toBe(201)
@@ -74,19 +74,54 @@ describe('mock api · admin nodes', () => {
     const draft = await call('POST', '/v1/nodes/status:batch', { items: [{ id: src!.id, row_version: src!.row_version }], serving_status: 'draft' }, 'batch-1')
     expect(draft.status).toBe(409)
     expect(await draft.json()).toMatchObject({ error: { fields: { serving_status: 'active -> draft' } } })
-    // 停用节点不可迁移：列表 movable=false，强行迁移 409
+    // 停用节点能改绑 / 解绑：列表 movable=true
     const disabled = (await list()).find((n) => n.serving_status === 'disabled')!
-    expect(disabled.movable).toBe(false)
-    const move = await call('POST', `/v1/nodes/${disabled.id}/move`, { server_id: src!.server_id, row_version: disabled.row_version }, 'move-1')
-    expect(move.status).toBe(409)
-    expect(await move.json()).toMatchObject({ error: { code: 'conflict', message: '只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点' } })
-    // 已接入服务器上的新草稿可迁移：副本建在在役节点（服务器有心跳、有身份）的那台服务器上，movable=true，能迁到另一台就绪的服务器
+    expect(disabled.movable).toBe(true)
+    const disabledServer = disabled.server_id
+    const target = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id !== disabledServer && s.status === 'ready')!
+    // 在役节点不能改绑 / 解绑：movable=false，强行绑定 409
+    expect(src!.movable).toBe(false)
+    const boundActive = await call('POST', `/v1/nodes/${src!.id}/bind`, { row_version: src!.row_version, server_id: target.id }, 'bind-1')
+    expect(boundActive.status).toBe(409)
+    expect(await boundActive.json()).toMatchObject({ error: { code: 'conflict', message: '节点在役，先停用再改绑 / 解绑' } })
+    // 停用节点能解绑；解绑后列表里说未绑定服务器，不下发
+    const unbound = await call('POST', `/v1/nodes/${disabled.id}/unbind`, { row_version: disabled.row_version, reason: '换机房' }, 'unbind-1')
+    expect(unbound.status).toBe(200)
+    const afterUnbind = (await unbound.json()) as { server_id: string | null; row_version: number }
+    expect(afterUnbind.server_id).toBeNull()
+    const unboundRow = (await list()).find((n) => n.id === disabled.id)!
+    expect(unboundRow).toMatchObject({ server_id: null, delivered_to_users: false, delivery_note: '未绑定服务器，不下发：先在节点详情「身份与操作」里绑定服务器，再上线' })
+    // 再绑到另一台就绪服务器上的空闲端口
+    const rebound = await call('POST', `/v1/nodes/${disabled.id}/bind`, { row_version: afterUnbind.row_version, server_id: target.id, server_port: 24443 }, 'bind-2')
+    expect(rebound.status).toBe(200)
+    expect(((await rebound.json()) as { server_id: string | null }).server_id).toBe(target.id)
+    // 副本停在草稿、movable=true；绑到同端口已被别的节点占着的服务器（停用节点原来那台）→ 409 带 server_port
     const fresh = (await list()).find((n) => n.id === created.id)!
     expect(fresh).toMatchObject({ serving_status: 'draft', server_id: src!.server_id, movable: true })
-    const target = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id !== src!.server_id && s.status === 'ready')!
-    const moved = await call('POST', `/v1/nodes/${fresh.id}/move`, { server_id: target.id, row_version: fresh.row_version }, 'move-2')
-    expect(moved.status).toBe(200)
-    expect(((await moved.json()) as { server_id: string }).server_id).toBe(target.id)
+    const busy = await call('POST', `/v1/nodes/${fresh.id}/bind`, { row_version: fresh.row_version, server_id: disabledServer }, 'bind-3')
+    expect(busy.status).toBe(409)
+    expect(await busy.json()).toMatchObject({ error: { code: 'conflict', fields: { server_port: expect.any(String) } } })
+    // 老迁移接口已删：路由不存在，假后端按未匹配路由回 404
+    expect((await call('POST', `/v1/nodes/${fresh.id}/move`, { row_version: fresh.row_version, server_id: target.id })).status).toBe(404)
+  })
+
+  it('creates an unbound node and refuses to activate it', async () => {
+    const made = await call('POST', '/v1/nodes', { name: '未绑服务器 01', node_type: 'shadowsocks', protocol_config: { cipher: 'aes-256-gcm' } }, 'unbound-node-1')
+    expect(made.status).toBe(201)
+    const created = (await made.json()) as { id: string; row_version: number; server_id: string | null }
+    expect(created.server_id).toBeNull()
+    // 没绑服务器就不下发，列表里说清楚
+    const row = (await list()).find((n) => n.id === created.id)!
+    expect(row).toMatchObject({ server_id: null, delivered_to_users: false, delivery_note: '未绑定服务器，不下发：先在节点详情「身份与操作」里绑定服务器，再上线' })
+    const activated = await call('POST', `/v1/nodes/${created.id}/activate`, { row_version: created.row_version }, 'unbound-activate-1')
+    expect(activated.status).toBe(409)
+    expect(await activated.json()).toMatchObject({
+      error: {
+        code: 'conflict',
+        message: '节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线',
+        fields: { server_id: '节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线' },
+      },
+    })
   })
 
   it('validates protocol config against the schema and rejects unknown fields', async () => {
