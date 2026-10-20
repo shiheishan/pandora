@@ -225,6 +225,16 @@ describe('mock api · refresh cookie', () => {
     expect((await refresh(third)).status).toBe(401)
   })
 
+  it('logging out with an older generation ends the whole session', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const second = rtFrom(await refresh(first))
+    const third = rtFrom(await refresh(second))
+    const out = await fetch(`${base}/v1/auth/logout`, { method: 'POST', headers: { cookie: `pandora_rt=${first}` } })
+    expect(out.status).toBe(204)
+    expect((await refresh(third)).status).toBe(401)
+  })
+
   it('the previous cookie after the grace is a replay and kills the session', async () => {
     const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
     const first = rtFrom(login)

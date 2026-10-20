@@ -211,9 +211,9 @@ pg -c "SELECT occurred_at, data->>'reason' AS reason FROM audit_events WHERE act
 pg -c "SELECT occurred_at, resource_id AS user_id, data->>'audience' AS audience, data->>'session_id' AS session_id FROM audit_events WHERE action = 'session.refresh_reuse' ORDER BY occurred_at DESC LIMIT 20;"
 ```
 
-- 偶尔一条、用户重新登录后不再出现：多半是误报。已知两种：轮换的响应丢了（关页、断网）而浏览器过了 30 秒才重试；服务端卡顿超过 30 秒，排队的旧请求晚到。看同一时间前后 `serve.log` 里这个用户的 refresh 是否有 5xx 或慢请求。
+- 偶尔一条、用户重新登录后不再出现：多半是误报。已知三种：轮换的响应丢了（关页、断网）而浏览器过了 30 秒才重试；服务端卡顿超过 30 秒，排队的旧请求晚到；浏览器还原了旧的 cookie（还原配置文件、同步或备份）。看同一时间前后 `serve.log` 里这个用户的 refresh 是否有 5xx 或慢请求。
 - 同一用户反复出现、或伴随陌生 IP 的登录：按 cookie 被盗处理。**【写】** 重置这个账号的口令（会吊销全部会话，命令见上），并提醒用户检查设备与浏览器扩展。
-- 主密钥（`secrets.env` 里派生各类密钥的那一把）疑似泄漏：它加会话 id 能算出 refresh，必须换主密钥并让全部会话失效，按升级处理。
+- refresh 的各代由主密钥加每条会话在 Redis 里的随机种子算出：只泄漏主密钥或只泄漏 Redis 都伪造不了。两者同时疑似泄漏时按升级处理（要让全部会话失效并换主密钥）。
 
 ### 什么时候升级处理
 

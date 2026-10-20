@@ -16,7 +16,7 @@ import (
 
 // Redis 里的会话状态（docs/architecture.md 8.2）：
 //
-//	sess:{sid}     hash   uid aud amr created_at last_seen reauth_at abs_exp ua ip_hash rt_cur rt_prev rt_rotated_at epoch
+//	sess:{sid}     hash   uid aud amr created_at last_seen reauth_at abs_exp ua ip_hash rt_seed rt_cur rt_prev rt_rotated_at epoch
 //	usess:{uid}    set    该用户的全部 sid（可能含已过期的，读与吊销时顺手清掉）
 //	uepoch:{uid}   string 凭据纪元：改密、重置、停用、授予或取消管理员时 INCR；会话里的 epoch 与它不等即失效
 //	ql:{sha256}    string 快捷登录：<源 sid>|<uid>，60 秒；qls:{sid} 记源会话当前那一条的哈希
@@ -49,6 +49,7 @@ type sessionRecord struct {
 	AbsExp      time.Time
 	UserAgent   string
 	IPHash      string
+	RTSeed      string // 会话建立时的随机种子：各代 refresh 由它与主密钥派生（auth 的 refreshSecret）
 	RTCur       string // refresh 随机串的 SHA-256（hex）
 	RTPrev      string
 	RTRotatedAt time.Time
@@ -67,6 +68,7 @@ type sessionState struct {
 type refreshState struct {
 	UserID      uuid.UUID
 	Audience    string
+	RTSeed      string
 	RTCur       string
 	RTPrev      string
 	RTRotatedAt time.Time
@@ -131,6 +133,7 @@ func (st *sessionStore) create(ctx context.Context, rec sessionRecord, now time.
 		"abs_exp", rec.AbsExp.Unix(),
 		"ua", rec.UserAgent,
 		"ip_hash", rec.IPHash,
+		"rt_seed", rec.RTSeed,
 		"rt_cur", rec.RTCur,
 		"rt_prev", "",
 		"rt_rotated_at", 0,
@@ -193,11 +196,11 @@ func (st *sessionStore) check(ctx context.Context, sid string, uid uuid.UUID, au
 
 // readRefresh 读 refresh 判定需要的字段；会话不存在 found 为 false。
 func (st *sessionStore) readRefresh(ctx context.Context, sid string) (refreshState, bool, error) {
-	vals, err := st.rdb.HMGet(ctx, sessKey(sid), "uid", "aud", "rt_cur", "rt_prev", "rt_rotated_at").Result()
+	vals, err := st.rdb.HMGet(ctx, sessKey(sid), "uid", "aud", "rt_cur", "rt_prev", "rt_rotated_at", "rt_seed").Result()
 	if err != nil {
 		return refreshState{}, false, err
 	}
-	if len(vals) != 5 || vals[0] == nil {
+	if len(vals) != 6 || vals[0] == nil {
 		return refreshState{}, false, nil
 	}
 	uid, err := uuid.Parse(toString(vals[0]))
@@ -210,6 +213,7 @@ func (st *sessionStore) readRefresh(ctx context.Context, sid string) (refreshSta
 		RTCur:       toString(vals[2]),
 		RTPrev:      toString(vals[3]),
 		RTRotatedAt: fromUnix(parseInt64(toString(vals[4]))),
+		RTSeed:      toString(vals[5]),
 	}, true, nil
 }
 

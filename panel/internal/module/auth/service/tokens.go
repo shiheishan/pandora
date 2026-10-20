@@ -41,16 +41,21 @@ func newSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// refreshSecret 是会话 sid 第 gen 代的 refresh 随机串：HMAC(主密钥派生, sid ‖ 0 ‖ gen)，32 字节 base64url。
-// 每一代都由服务端密钥确定性算出，Redis 里只存哈希：30 秒宽限内拿上一代来能重算出当前那一枚原样再发；
-// 任何一代签发过的旧值再出现都能认出真伪，判重放（不管中间被轮换了几次）。没有主密钥算不出任何一代。
-func (s *Service) refreshSecret(sid string, gen uint64) string {
-	return base64.RawURLEncoding.EncodeToString(s.keys.HMAC(crypto.InfoHMACRefresh, []byte(sid+"\x00"+strconv.FormatUint(gen, 10))))
+// refreshSecret 是会话 sid 第 gen 代的 refresh 随机串：HMAC(主密钥派生, sid ‖ 0 ‖ seed ‖ 0 ‖ gen)，32 字节 base64url。
+// seed 是会话建立时的随机值（Redis 的 rt_seed，base64url 不含 0 字节，拼接无歧义）：只有主密钥、没有这条会话的种子算不出任何一代，
+// 只有 Redis、没有主密钥同样算不出。每一代都可重算，所以 30 秒宽限内拿上一代来能算出当前那一枚原样再发；
+// 任何一代签发过的旧值再出现都能认出真伪，判重放（不管中间被轮换了几次）。
+func (s *Service) refreshSecret(sid, seed string, gen uint64) string {
+	msg := sid + "\x00" + seed + "\x00" + strconv.FormatUint(gen, 10)
+	return base64.RawURLEncoding.EncodeToString(s.keys.HMAC(crypto.InfoHMACRefresh, []byte(msg)))
 }
 
-// refreshAuthentic 核对随机串确是本服务给 sid 第 gen 代签发的（常数时间比较）。
-func (s *Service) refreshAuthentic(sid string, gen uint64, secret string) bool {
-	return subtle.ConstantTimeCompare([]byte(secret), []byte(s.refreshSecret(sid, gen))) == 1
+// refreshAuthentic 核对随机串确是本服务给这条会话（sid 与种子）第 gen 代签发的（常数时间比较）；没有种子一律不认。
+func (s *Service) refreshAuthentic(sid, seed string, gen uint64, secret string) bool {
+	if seed == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(secret), []byte(s.refreshSecret(sid, seed, gen))) == 1
 }
 
 // hashSecret 返回随机串的 SHA-256（hex）；Redis 里只存它。
@@ -147,7 +152,11 @@ func (s *Service) newSession(ctx context.Context, uid uuid.UUID, aud string, amr
 	if err != nil {
 		return sessionRecord{}, "", errs.Wrap(errs.Internal, err)
 	}
-	secret := s.refreshSecret(sid, 0)
+	seed, err := newSecret()
+	if err != nil {
+		return sessionRecord{}, "", errs.Wrap(errs.Internal, err)
+	}
+	secret := s.refreshSecret(sid, seed, 0)
 	rec := sessionRecord{
 		ID:        sid,
 		UserID:    uid,
@@ -158,6 +167,7 @@ func (s *Service) newSession(ctx context.Context, uid uuid.UUID, aud string, amr
 		AbsExp:    now.Add(s.sessionTTL(aud)),
 		UserAgent: userAgent(ctx),
 		IPHash:    s.ipHash(ctx),
+		RTSeed:    seed,
 		RTCur:     hashSecret(secret),
 		Epoch:     epoch,
 	}

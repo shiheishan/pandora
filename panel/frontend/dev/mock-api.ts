@@ -432,7 +432,8 @@ export function mockApi(app: MockApp): Plugin {
       const rt = cookies[RT_COOKIE[app]]
       if (rt) {
         const found = findFamily(rt)
-        if (found && found.which !== 'retired') refreshFamilies.delete(found.family)
+        // 照 Go：本会话签发过的任一代（含被换下的旧代）都能退出整条会话
+        if (found) refreshFamilies.delete(found.family)
       }
       clearRefreshCookie(res, app)
       return send(res, 204)

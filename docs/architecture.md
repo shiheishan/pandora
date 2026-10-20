@@ -301,11 +301,11 @@ identity, auth ─► settings, audit
 
 | 项 | 做法 |
 |---|---|
-| 形态 | `<sid>.<代数>.<32 字节 base64url>`：第 g 代的值 = `HMAC(主密钥派生 InfoHMACRefresh, sid ‖ 0 ‖ g)`，登录时是第 0 代。没有主密钥算不出任何一代；Redis 只存当前与上一代的 SHA-256，比较用常量时间。代价：主密钥加某会话的 sid 能算出它的每一代，主密钥泄漏时要吊销全部会话（主密钥本来也能签任意 access） |
+| 形态 | `<sid>.<代数>.<32 字节 base64url>`：第 g 代的值 = `HMAC(主密钥派生 InfoHMACRefresh, sid ‖ 0 ‖ 种子 ‖ 0 ‖ g)`，种子是会话建立时的 32 字节随机值（Redis 的 `rt_seed`），登录时是第 0 代。只有主密钥、或只有 Redis，都算不出任何一代；Redis 只存种子与当前、上一代的 SHA-256，比较用常量时间 |
 | 存放 | HttpOnly、Secure、SameSite=Strict 的 cookie，Path=`/v1/auth`；public 叫 `pandora_rt`，admin 叫 `pandora_admin_rt`（admin 经 nginx 的 `proxy_cookie_path` 改成带后台前缀的路径） |
 | 轮换 | `POST /v1/auth/refresh` 拿当前代来就换成下一代：`rt_prev ← rt_cur`、`rt_cur ← 第 g+1 代`，Lua 原子 CAS |
 | 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新，或轮换的响应没送到浏览器：关页、F5、断网、前端超时放弃）：不改任何状态，发新的 access，并把当前那一枚 cookie 原样再发一遍（由上一代的代数重算出来，Redis 里不存明文）。偷到上一枚的人在宽限内拿到的是与合法用户同一枚 |
-| 重放 | 先核真伪：值不是本服务给这个 sid 这一代签发的，只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人。真值里：超出宽限还拿上一代、或拿更早的任一代（会话已被别人往前轮换过，哪怕连换了几次）：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。所以同一枚落在两个人手里，谁先轮换，另一方再用就判重放 |
+| 重放 | 先核真伪：值不是本服务给这个 sid 这一代签发的，只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人。真值里：超出宽限还拿上一代、或拿更早的任一代（会话已被别人往前轮换过，哪怕连换了几次）：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。所以同一枚落在两个人手里，谁先轮换，另一方过了宽限再用（或对方又轮换过一次后再用）就判重放；宽限内再用只会拿回同一枚。退出（logout）凭本会话任一代真值都吊销整条会话 |
 | CSRF | cookie 只在 refresh 和 logout 两个接口上读；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查。下发 cookie 的登录、快捷登录也挂同一个来源检查（防登录 CSRF：跨站 text/plain 表单能拼出合法 JSON，把受害者浏览器登进攻击者账号） |
 | 刷新不续 rat | 新 access 沿用会话里的 amr；重认证时间只由 reauth 接口改写 |
 

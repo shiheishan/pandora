@@ -78,8 +78,7 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 		return Tokens{}, errs.Newf(errs.Internal, "未知的登录域")
 	}
 	sid, gen, secret, ok := parseRefresh(raw)
-	// 不是本服务签发的值只回 401，不吊销（sid 不保密，乱拼的值不能踢掉别人的会话）
-	if !ok || !s.refreshAuthentic(sid, gen, secret) {
+	if !ok {
 		return Tokens{}, errSessionInvalid
 	}
 	h := hashSecret(secret)
@@ -93,9 +92,13 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 		if !found || st.Audience != audience {
 			return Tokens{}, errSessionInvalid
 		}
+		// 不是本服务给这条会话签发的值只回 401，不吊销（sid 不保密，乱拼的值不能踢掉别人的会话）
+		if !s.refreshAuthentic(sid, st.RTSeed, gen, secret) {
+			return Tokens{}, errSessionInvalid
+		}
 
 		// 轮换写进去的是下一代；宽限内拿上一代来，重算出的正是当前那一枚
-		next := s.refreshSecret(sid, gen+1)
+		next := s.refreshSecret(sid, st.RTSeed, gen+1)
 		var mode string
 		if sameHash(h, st.RTCur) {
 			mode = refreshModeRotate
@@ -202,10 +205,9 @@ func (s *Service) Logout(ctx context.Context, audience, rawRefresh string) error
 		return nil
 	}
 	sid, gen, secret, ok := parseRefresh(rawRefresh)
-	if !ok || !s.refreshAuthentic(sid, gen, secret) {
+	if !ok {
 		return nil
 	}
-	h := hashSecret(secret)
 	st, found, err := s.sessions.readRefresh(ctx, sid)
 	if err != nil {
 		return errs.Wrap(errs.Unavailable, err)
@@ -213,8 +215,8 @@ func (s *Service) Logout(ctx context.Context, audience, rawRefresh string) error
 	if !found || st.Audience != audience {
 		return nil
 	}
-	match := sameHash(h, st.RTCur) || (st.RTPrev != "" && sameHash(h, st.RTPrev))
-	if !match {
+	// 本会话签发过的任一代都能退出（含被换下的旧代）：会话被盗后用户点退出，攻击者那条也一起结束
+	if !s.refreshAuthentic(sid, st.RTSeed, gen, secret) {
 		return nil
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {
