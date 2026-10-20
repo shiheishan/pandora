@@ -1,4 +1,4 @@
-// Package safehttp 提供支付渠道适配器共用的外部 HTTP 客户端：不走环境代理、不跟随跳转、拨号时按真实 IP 拦非公网地址（防 SSRF 与 DNS 重绑定）。
+// Package safehttp 提供防 SSRF 的外部 HTTP 客户端（支付渠道适配器与 settings 的主域名连通核对共用）：不走环境代理、不跟随跳转、拨号时按真实 IP 拦非公网地址（防 SSRF 与 DNS 重绑定）。
 package safehttp
 
 import (

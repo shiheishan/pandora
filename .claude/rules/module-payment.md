@@ -8,7 +8,7 @@ paths:
 - 易支付（EPay）约束：
   - 易支付方式只收支付宝与微信支付（`EpayMethods = alipay, wxpay`），后台配置与下单严格过滤。
   - 协议规范：金额为元单位十进制字符串（`money.FormatProvider`）；MD5 签名参数名 ASCII 升序拼接，末尾直接拼商户密钥（不做 URL 编码）；异步通知为 GET 请求，处理成功必须回纯文本 `success`；无渠道事件 ID，以 `trade_no:TRADE_STATUS` 合成幂等键。
-- 加密货币渠道（#57，适配器在 `provider/btcpay`、`provider/coinpayments`，外部 HTTP 一律走 `provider/safehttp`）：
+- 加密货币渠道（#57，适配器在 `provider/btcpay`、`provider/coinpayments`，外部 HTTP 一律走 `internal/pkg/safehttp`）：
   - BTCPay Server（Greenfield）：凭据 = Store ID（商户号位）+ API Key（密钥位）+ Webhook 密钥，都封存。按人民币（`provider.FiatCurrency` = CNY，全系统只此一处写币种代码）建发票、跳 `checkoutLink`；人民币发票要商店的汇率源支持 CNY，属商店配置；Webhook 在 BTCPay 商店里配（后台渠道卡显示回调地址），`BTCPay-Sig: sha256=hex(HMAC-SHA256)` 常数时间比对，验签通过后按发票号回查，金额币种状态一律以回查为准。只有 `Settled` 且附加状态不是手动标记（`Marked`）或部分付款（`PaidPartial`，商店开了付款容差时出现）才算成功；`Expired` / `Invalid` 算失败；部分付款不算成功，留证据给后台线下处理。事件 ID = `发票号:状态[:MARKED|:PARTIAL]`。
   - CoinPayments（新版 v2 REST，`https://a-api.coinpayments.net`）：凭据 = Client ID + Client Secret。请求与回调同一种签名：`base64(HMAC-SHA256(secret, BOM + 方法 + 完整 URL + ClientID + 时间戳 + 请求体))`，回调还核对 `X-CoinPayments-Client` 与时间窗（±5 分钟），URL 用建发票时登记的回调地址（`NotifyURLs` 候选）。只有 `completed` 算成功；`cancelled` / `timedOut` / `deleted` 算失败；任一笔付款实收低于应收按待定（部分付款不算成功）。法币 ID 按 `provider.FiatCurrency` 从公开接口查，包级缓存 24 小时；查不到 CNY 时建单直接报错，不做换算。
   - 两个适配器都：渠道回传的法币币种须等于 `provider.FiatCurrency`、金额与意图一致，不符拒绝；不跟随跳转；Raw 与日志里不出现 API Key、密钥。
