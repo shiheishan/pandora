@@ -232,6 +232,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 	}
 
 	facts := nodeDeliveryFacts{
+		Bound:           row.ServerID != nil,
 		Serving:         row.ServingStatus,
 		Pooled:          row.PoolID != nil,
 		PoolActive:      poolActive,
@@ -270,7 +271,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		Delivered:         delivered,
 		DeliveryNote:      note,
 		CreatedAt:         row.CreatedAt,
-		Movable:           nodeMovableState(row.ServingStatus, row.AppliedConfigSHA256, row.ApplyFailedSHA256, row.RuntimeStatus),
+		Movable:           nodeMovableState(row.ServingStatus),
 		NodeType:          row.NodeType,
 		ServerHost:        row.ServerHost,
 		ServerPort:        row.ServerPort,

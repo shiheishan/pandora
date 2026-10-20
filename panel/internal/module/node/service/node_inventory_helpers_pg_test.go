@@ -164,7 +164,7 @@ func (e *invEnv) hy2Node(t *testing.T, ctx context.Context, serverID uuid.UUID, 
 func (e *invEnv) node(t *testing.T, ctx context.Context, serverID uuid.UUID, name, nodeType string, port int, cfg string) AdminNode {
 	t.Helper()
 	n, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name(name), ServerID: serverID, NodeType: nodeType, ServerHost: "203.0.113.10",
+		Name: e.name(name), ServerID: &serverID, NodeType: nodeType, ServerHost: "203.0.113.10",
 		ServerPort: port, ProtocolConfig: json.RawMessage(cfg),
 	})
 	if err != nil {

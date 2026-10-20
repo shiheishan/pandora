@@ -86,7 +86,7 @@ func (s *Service) nodeAudit(ctx context.Context, action string, id uuid.UUID, da
 	return s.audit.Write(ctx, auditsvc.Event{Action: action, ResourceType: "node", ResourceID: &id, Data: data})
 }
 
-// CreateNode 新建一个草稿节点：协议必须配齐并通过校验，同机端口先到先得。
+// CreateNode 新建一个草稿节点：协议必须配齐并通过校验；可以不绑服务器（暂不绑定），绑了服务器时要有端口，同机端口先到先得、检查服务器容量。
 func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, error) {
 	name, err := nodeValidateName(in.Name)
 	if err != nil {
@@ -127,7 +127,7 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, erro
 	if len(raw) == 0 {
 		raw = json.RawMessage("{}")
 	}
-	version, err := nodeValidateProtocol(nodeType, host, in.ServerPort, raw)
+	version, err := nodeValidateProtocol(nodeType, host, in.ServerPort, raw, nodeEndpointNeed{Port: in.ServerID != nil})
 	if err != nil {
 		return AdminNode{}, err
 	}
@@ -136,32 +136,40 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, erro
 	var id uuid.UUID
 	var warnings []string
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		srv, err := s.lockServerForNodes(ctx, in.ServerID)
-		if err != nil {
-			return err
-		}
-		warnings, err = s.claimNodePort(ctx, srv, nodePortClaim{
-			ServerID: in.ServerID, Port: in.ServerPort, L4: l4, Host: host, CheckReserved: true,
-		})
-		if err != nil {
-			return err
+		if in.ServerID != nil {
+			srv, err := s.lockServerForNodes(ctx, *in.ServerID)
+			if err != nil {
+				return err
+			}
+			warnings, err = s.claimNodePort(ctx, srv, nodePortClaim{
+				ServerID: *in.ServerID, Port: in.ServerPort, L4: l4, Host: host, CheckReserved: true,
+			})
+			if err != nil {
+				return err
+			}
 		}
 		if err := s.nodeLockPool(ctx, in.PoolID); err != nil {
 			return err
 		}
 		now := s.now()
-		serverID, port := in.ServerID, in.ServerPort
+		port := in.ServerPort
+		var serverPort *int
+		var listenL4 *string
+		if port != 0 {
+			serverPort = &port
+			listenL4 = &l4
+		}
 		n := model.Node{
-			ServerID:              &serverID,
+			ServerID:              in.ServerID,
 			PoolID:                in.PoolID,
 			Name:                  name,
 			DisplayName:           display,
 			CountryCode:           country,
 			ServingStatus:         NodeDraft,
 			NodeType:              &nodeType,
-			ServerHost:            &host,
-			ServerPort:            &port,
-			ListenL4:              &l4,
+			ServerHost:            nodeOpt(host),
+			ServerPort:            serverPort,
+			ListenL4:              listenL4,
 			ProtocolConfig:        string(raw),
 			ProtocolSchemaVersion: version,
 			ConfigValidatedAt:     &now,
@@ -177,8 +185,12 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (AdminNode, erro
 		}
 		s.nodeChanged(ctx, realtime.OpInsert, n.ID)
 		id = n.ID
+		var serverID any
+		if in.ServerID != nil {
+			serverID = in.ServerID.String()
+		}
 		if err := s.nodeAudit(ctx, "node.create", id, map[string]any{
-			"name": name, "server_id": serverID.String(), "node_type": nodeType, "schema_version": version,
+			"name": name, "server_id": serverID, "node_type": nodeType, "schema_version": version,
 			"tags": tags,
 		}); err != nil {
 			return err
@@ -243,6 +255,11 @@ func nodePatchPrecheck(in *NodePatch) error {
 			return err
 		}
 		*in.TrafficRateSchedule = rateScheduleInputs(sched)
+	}
+	if in.ServerPort != nil {
+		if *in.ServerPort < 1 || *in.ServerPort > 65535 {
+			return inventoryInvalid("server_port", "端口必须在 1 到 65535 之间")
+		}
 	}
 	return nil
 }
@@ -359,7 +376,10 @@ func (s *Service) patchNodeTx(ctx context.Context, id uuid.UUID, in NodePatch) (
 	touched := in.NodeType != nil || in.ServerHost != nil || in.ServerPort != nil || in.ProtocolConfig != nil
 	protocolChanged := false
 	if touched {
-		version, err = nodeValidateProtocol(newType, host, port, raw)
+		version, err = nodeValidateProtocol(newType, host, port, raw, nodeEndpointNeed{
+			Host: before.ServingStatus == NodeActive,
+			Port: before.ServerID != nil,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -393,8 +413,13 @@ func (s *Service) patchNodeTx(ctx context.Context, id uuid.UUID, in NodePatch) (
 	if touched {
 		next.NodeType = nodeOpt(newType)
 		next.ServerHost = nodeOpt(host)
-		next.ServerPort = &port
-		next.ListenL4 = nodeOpt(l4)
+		if port == 0 {
+			next.ServerPort = nil
+			next.ListenL4 = nil
+		} else {
+			next.ServerPort = &port
+			next.ListenL4 = nodeOpt(l4)
+		}
 		next.ProtocolConfig = string(raw)
 		next.ProtocolSchemaVersion = version
 	}

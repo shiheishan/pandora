@@ -156,10 +156,11 @@ type NodeTrafficLimit struct {
 }
 
 // NodeInput 是新建节点的输入。TrafficRate 为 nil 取 1.00；PoolID 为 nil 不划池。
+// ServerID 为 nil = 暂不绑定服务器（节点先作为配置存着，上线前再绑定）；没绑服务器时端口、地址都可以先空着。
 // Tags、TrafficLimitBytes、TrafficResetDay、TrafficRateSchedule 都可不给（没有标签、不限、不自动重置、没有时段倍率）。
 type NodeInput struct {
 	Name           string
-	ServerID       uuid.UUID
+	ServerID       *uuid.UUID
 	PoolID         *uuid.UUID
 	NodeType       string
 	ServerHost     string
@@ -232,13 +233,6 @@ type NodeCopyInput struct {
 	SortOrder      *int
 	ServerPort     *int
 	CopyRouting    bool
-}
-
-// NodeMoveInput 是把草稿节点迁到另一台服务器的输入。
-type NodeMoveInput struct {
-	RowVersion int64
-	ServerID   uuid.UUID
-	Reason     string
 }
 
 // NodeOrderItem 是排序的一项。
@@ -366,7 +360,7 @@ type NodeRow struct {
 	MetricsAt  *time.Time
 	// IdentitySerial 是所在服务器当前 active 身份的 seq；没有为 nil
 	IdentitySerial *int64
-	// Movable：能不能迁移到别的服务器（nodeMovableState，只看节点自己）
+	// Movable：能不能改绑 / 解绑服务器（nodeMovableState：草稿或已停用；在役要先停用，已退役不行）
 	Movable bool
 	// GrantedPlans 是绑定了节点所在池的套餐名（去重、升序），永不为 nil
 	GrantedPlans []string

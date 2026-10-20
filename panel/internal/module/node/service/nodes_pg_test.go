@@ -28,7 +28,7 @@ func TestNodeCreateDefaultsAndRedact(t *testing.T) {
 		t.Fatalf("缺省倍率 1.00：%s", tcp.TrafficRate)
 	}
 	hy2, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("hy2-sec"), ServerID: srv.ID, NodeType: "hysteria2",
+		Name: e.name("hy2-sec"), ServerID: &srv.ID, NodeType: "hysteria2",
 		ServerHost: "203.0.113.10", ServerPort: 22002, ProtocolConfig: json.RawMessage(invHy2SecretField),
 	})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestNodeCreateDefaultsAndRedact(t *testing.T) {
 		t.Fatalf("回包不应含明文密钥：%s", hy2.ProtocolConfig)
 	}
 	n443, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("ss-443"), ServerID: srv.ID, NodeType: "shadowsocks",
+		Name: e.name("ss-443"), ServerID: &srv.ID, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 443, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 	first := e.ssNode(t, ctx, srv.ID, "dup", 22010)
 	err := e.invSavepoint(t, ctx, func() error {
 		_, err := e.svc.CreateNode(ctx, NodeInput{
-			Name: first.Name, ServerID: srv.ID, NodeType: "shadowsocks",
+			Name: first.Name, ServerID: &srv.ID, NodeType: "shadowsocks",
 			ServerHost: "203.0.113.10", ServerPort: 22011, ProtocolConfig: json.RawMessage(invSSConfig),
 		})
 		return err
@@ -72,7 +72,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 	}
 	pool := e.pool(t, ctx, "disabled")
 	_, err = e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("bad-pool"), ServerID: srv.ID, PoolID: &pool, NodeType: "shadowsocks",
+		Name: e.name("bad-pool"), ServerID: &srv.ID, PoolID: &pool, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 22012, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	_ = invWantCode(t, err, errs.ValidationFailed)
@@ -84,7 +84,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 	}
 	_ = e.ssNode(t, ctx, small.ID, "full-1", 22013)
 	_, err = e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("full-2"), ServerID: small.ID, NodeType: "shadowsocks",
+		Name: e.name("full-2"), ServerID: &small.ID, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 22014, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	_ = invWantCode(t, err, errs.Conflict)
@@ -93,7 +93,7 @@ func TestNodeCreateConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("on-ret"), ServerID: ret.ID, NodeType: "shadowsocks",
+		Name: e.name("on-ret"), ServerID: &ret.ID, NodeType: "shadowsocks",
 		ServerHost: "203.0.113.10", ServerPort: 22015, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	_ = invWantCode(t, err, errs.Conflict)
@@ -104,7 +104,7 @@ func TestNodePatchSecretsAndPool(t *testing.T) {
 	srv := e.server(t, ctx, "nd-patch")
 	e.enroll(t, ctx, srv.ID)
 	hy2, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("hy2-p"), ServerID: srv.ID, NodeType: "hysteria2",
+		Name: e.name("hy2-p"), ServerID: &srv.ID, NodeType: "hysteria2",
 		ServerHost: "203.0.113.10", ServerPort: 22020, ProtocolConfig: json.RawMessage(invHy2SecretField),
 	})
 	if err != nil {

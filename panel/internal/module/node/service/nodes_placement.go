@@ -1,6 +1,6 @@
 package service
 
-// 节点的复制、迁移与排序。
+// 节点的复制与排序。
 
 import (
 	"context"
@@ -21,7 +21,8 @@ import (
 // nodeReorderMax 是一次排序最多的节点数。
 const nodeReorderMax = 200
 
-// CopyNode 把节点复制成另一台（或同一台）服务器上的草稿：协议原样复制，端口可换；
+// CopyNode 把节点复制成草稿：协议原样复制，端口可换；不给目标服务器时与原节点同一台，
+// 原节点没绑服务器时副本也不绑。复制到服务器上时要有端口、检查容量与同机端口。
 // CopyRouting 时连节点私有路由与所在路由组一起复制（copyNodeRouting）。
 func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) (AdminNode, error) {
 	if in.RowVersion <= 0 {
@@ -49,27 +50,29 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 		if before.RowVersion != in.RowVersion {
 			return nodeVersionConflict(before.RowVersion)
 		}
-		if before.ServerID == nil {
-			return inventoryConflict("原节点未绑定服务器")
-		}
-		target := *before.ServerID
+		target := before.ServerID
 		if in.TargetServerID != nil {
-			target = *in.TargetServerID
-		}
-		srv, err := s.lockServerForNodes(ctx, target)
-		if err != nil {
-			return err
+			target = in.TargetServerID
 		}
 		port := nodeInt(before.ServerPort)
 		if in.ServerPort != nil {
 			port = *in.ServerPort
 		}
 		l4 := protocol.ListenL4(nodeStr(before.NodeType), json.RawMessage(before.ProtocolConfig))
-		warnings, err = s.claimNodePort(ctx, srv, nodePortClaim{
-			ServerID: target, Port: port, L4: l4, Host: nodeStr(before.ServerHost), CheckReserved: true,
-		})
-		if err != nil {
-			return err
+		if target != nil {
+			if port == 0 {
+				return inventoryInvalid("server_port", nodeBindNeedsPortMsg)
+			}
+			srv, err := s.lockServerForNodes(ctx, *target)
+			if err != nil {
+				return err
+			}
+			warnings, err = s.claimNodePort(ctx, srv, nodePortClaim{
+				ServerID: *target, Port: port, L4: l4, Host: nodeStr(before.ServerHost), CheckReserved: true,
+			})
+			if err != nil {
+				return err
+			}
 		}
 		pool := before.PoolID
 		if in.PoolID != nil {
@@ -91,7 +94,7 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 			sortOrder = *in.SortOrder
 		}
 		n := model.Node{
-			ServerID:              &target,
+			ServerID:              target,
 			PoolID:                pool,
 			Name:                  name,
 			DisplayName:           before.DisplayName,
@@ -131,8 +134,12 @@ func (s *Service) CopyNode(ctx context.Context, id uuid.UUID, in NodeCopyInput) 
 		if pool != nil {
 			poolID = pool.String()
 		}
+		var serverID any
+		if target != nil {
+			serverID = target.String()
+		}
 		if err := s.nodeAudit(ctx, "node.copy", copyID, map[string]any{
-			"source_node_id": id.String(), "name": name, "server_id": target.String(),
+			"source_node_id": id.String(), "name": name, "server_id": serverID,
 			"pool_id": poolID, "copy_routing": in.CopyRouting,
 			"outbounds": copied.outbounds, "routes": copied.routes, "route_groups": copied.groups,
 		}); err != nil {
@@ -186,85 +193,6 @@ func (s *Service) copyNodeRouting(ctx context.Context, srcID, dstID uuid.UUID) (
 		return routingCopy{}, err
 	}
 	return routingCopy{outbounds: len(outs), routes: len(routes), groups: len(groups)}, nil
-}
-
-// nodeMovable 报告节点能不能迁移：只有从没服务过的草稿（没有配置回执、没有运行状态）。
-func nodeMovable(n model.Node) bool {
-	return nodeMovableState(n.ServingStatus, n.AppliedConfigSHA256, n.ApplyFailedSHA256, n.RuntimeStatus)
-}
-
-// nodeMovableState 是迁移资格的唯一判断，只看节点自己的字段（不看服务器心跳与身份）；
-// MoveNode 与后台列表的 movable 都用它，前端只读 movable、不自己算。
-func nodeMovableState(servingStatus string, appliedSHA, applyFailedSHA, runtimeStatus *string) bool {
-	return servingStatus == NodeDraft && appliedSHA == nil && applyFailedSHA == nil && runtimeStatus == nil
-}
-
-// MoveNode 把从没服务过的草稿节点迁到另一台服务器；目标就是当前服务器时不改。
-func (s *Service) MoveNode(ctx context.Context, id uuid.UUID, in NodeMoveInput) (AdminNode, error) {
-	if in.RowVersion <= 0 {
-		return AdminNode{}, inventoryInvalid("row_version", nodeRowVersionHint)
-	}
-	reason, err := nodeValidateReason(in.Reason)
-	if err != nil {
-		return AdminNode{}, err
-	}
-	var warnings []string
-	err = s.tx.Do(ctx, func(ctx context.Context) error {
-		before, found, err := s.repo.NodeByID(ctx, id, true)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return errs.New(errs.NotFound)
-		}
-		if before.RowVersion != in.RowVersion {
-			return nodeVersionConflict(before.RowVersion)
-		}
-		if before.ServerID != nil && *before.ServerID == in.ServerID {
-			return nil
-		}
-		if !nodeMovable(before) {
-			return inventoryConflict("只有从没服务过的草稿节点能迁移；其余请复制到新服务器后再退役原节点")
-		}
-		srv, err := s.lockServerForNodes(ctx, in.ServerID)
-		if err != nil {
-			return err
-		}
-		port := nodeInt(before.ServerPort)
-		l4 := nodeStr(before.ListenL4)
-		if port > 0 {
-			warnings, err = s.claimNodePort(ctx, srv, nodePortClaim{
-				ServerID: in.ServerID, Exclude: &id, Port: port, L4: l4,
-				Host: nodeStr(before.ServerHost), CheckReserved: true,
-			})
-			if err != nil {
-				return err
-			}
-		}
-		ok, err := s.repo.MoveNodeServer(ctx, id, in.RowVersion, in.ServerID)
-		if err != nil {
-			return nodeWriteErr(err, port, l4)
-		}
-		if !ok {
-			return nodeVersionConflict(before.RowVersion)
-		}
-		s.nodeChanged(ctx, realtime.OpUpdate, id)
-		var from any
-		if before.ServerID != nil {
-			from = before.ServerID.String()
-		}
-		if err := s.nodeAudit(ctx, "node.server_move", id, map[string]any{
-			"from_server_id": from, "server_id": in.ServerID.String(), "reason": reason,
-		}); err != nil {
-			return err
-		}
-		s.MarkConfigChanged(ctx)
-		return nil
-	})
-	if err != nil {
-		return AdminNode{}, err
-	}
-	return s.nodeWithWarnings(ctx, id, warnings)
 }
 
 // nodeSortedIDs 校验一批节点引用（1–max 项、id 不重复、版本为正）并按 id 排序（批量操作统一锁序）。

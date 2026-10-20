@@ -16,7 +16,7 @@ func TestNodePortClaimSameServerSameL4(t *testing.T) {
 	first := e.ssNode(t, ctx, srv.ID, "ss-1", 20001)
 
 	_, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("ss-2"), ServerID: srv.ID, NodeType: "shadowsocks", ServerHost: "203.0.113.10",
+		Name: e.name("ss-2"), ServerID: &srv.ID, NodeType: "shadowsocks", ServerHost: "203.0.113.10",
 		ServerPort: 20001, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	ee := invWantCode(t, err, errs.Conflict)
@@ -101,7 +101,7 @@ func TestNodePortReserved(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "ports-g")
 	_, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("ssh"), ServerID: srv.ID, NodeType: "shadowsocks", ServerHost: "203.0.113.10",
+		Name: e.name("ssh"), ServerID: &srv.ID, NodeType: "shadowsocks", ServerHost: "203.0.113.10",
 		ServerPort: 22, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	ee := invWantCode(t, err, errs.ValidationFailed)
@@ -133,7 +133,7 @@ func TestNodePortClaimShadowsocksTCPUDP(t *testing.T) {
 	}
 
 	_, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("hy2"), ServerID: srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
+		Name: e.name("hy2"), ServerID: &srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
 		ServerPort: 20011, ProtocolConfig: json.RawMessage(invHy2Config),
 	})
 	ee := invWantCode(t, err, errs.Conflict)
@@ -142,7 +142,7 @@ func TestNodePortClaimShadowsocksTCPUDP(t *testing.T) {
 	}
 
 	_, err = e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("mieru"), ServerID: srv.ID, NodeType: "mieru", ServerHost: "203.0.113.10",
+		Name: e.name("mieru"), ServerID: &srv.ID, NodeType: "mieru", ServerHost: "203.0.113.10",
 		ServerPort: 20011, ProtocolConfig: json.RawMessage(`{"transport":"TCP"}`),
 	})
 	ee = invWantCode(t, err, errs.Conflict)
@@ -151,7 +151,7 @@ func TestNodePortClaimShadowsocksTCPUDP(t *testing.T) {
 	}
 
 	_, err = e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("hy2-ok"), ServerID: srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
+		Name: e.name("hy2-ok"), ServerID: &srv.ID, NodeType: "hysteria2", ServerHost: "203.0.113.10",
 		ServerPort: 20012, ProtocolConfig: json.RawMessage(invHy2Config),
 	})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestNodePortClaimShadowsocksAfterUDP(t *testing.T) {
 	e.hy2Node(t, ctx, srv.ID, "hy2", 20013)
 
 	_, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("ss"), ServerID: srv.ID, NodeType: "shadowsocks", ServerHost: "203.0.113.10",
+		Name: e.name("ss"), ServerID: &srv.ID, NodeType: "shadowsocks", ServerHost: "203.0.113.10",
 		ServerPort: 20013, ProtocolConfig: json.RawMessage(invSSConfig),
 	})
 	ee := invWantCode(t, err, errs.Conflict)
