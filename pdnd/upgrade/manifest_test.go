@@ -437,12 +437,12 @@ func TestValidJobID(t *testing.T) {
 	}
 
 	invalid := []string{
-		"",                       // 空串
-		strings.Repeat("a", 65),  // 超长
-		"job/1",                  // 斜杠
-		"job.1",                  // 点号
-		"job 1",                  // 空格
-		"job_1",                  // 下划线
+		"",                      // 空串
+		strings.Repeat("a", 65), // 超长
+		"job/1",                 // 斜杠
+		"job.1",                 // 点号
+		"job 1",                 // 空格
+		"job_1",                 // 下划线
 	}
 	for _, id := range invalid {
 		if ValidJobID(id) {

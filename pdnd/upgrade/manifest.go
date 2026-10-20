@@ -98,12 +98,13 @@ func (m *Manifest) Artifact(goarch string) (Artifact, error) {
 }
 
 // Check 是节点进程与 root 助手共用的校验四步，顺序固定：
-// 1. 验签：k.Verify(manifest, sig)
-// 2. 解析：ParseManifest(manifest)
-// 3. 本机架构：m.Artifact(goarch)
-// 4. serial 检查：
-//    buildSerial == 0（dev 构建）一律 ReasonSerialNotNewer（说明 dev 构建不接受升级）；
-//    m.Serial <= buildSerial 也是 ReasonSerialNotNewer。
+//  1. 验签：k.Verify(manifest, sig)
+//  2. 解析：ParseManifest(manifest)
+//  3. 本机架构：m.Artifact(goarch)
+//  4. serial 检查：
+//     buildSerial == 0（dev 构建）一律 ReasonSerialNotNewer（说明 dev 构建不接受升级）；
+//     m.Serial <= buildSerial 也是 ReasonSerialNotNewer。
+//
 // 任何一步失败直接返回该步的错误。
 func Check(k *Keyring, manifest, sig []byte, buildSerial uint64, goarch string) (*Manifest, Artifact, error) {
 	// 1. 验签
