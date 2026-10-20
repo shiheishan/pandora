@@ -98,7 +98,7 @@ count_eq 1 '~^/v1/ 1;'
 count_eq 1 "~^/$path/v1/ 1;"
 count_eq 1 'limit_req_status 429;'
 count_eq 1 'limit_conn_status 429;'
-refute -Fq 'proxy_intercept_errors' "$OUT"
+refute -Eq '^[[:space:]]*proxy_intercept_errors' "$OUT"
 for pair in '413 payload_too_large' '429 rate_limited' '502 service_unavailable' '503 service_unavailable' '504 timeout'; do
   code="${pair%% *}"
   name="${pair#* }"
