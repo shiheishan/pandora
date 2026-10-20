@@ -34,6 +34,8 @@ jobs:
     name: Build release packages
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # 推标签发版时要进需要审批的 environment release-signing 才拿得到签名私钥；workflow_dispatch 演练不进环境、不签名。
+    environment: ${{ (github.event_name == 'push' && github.ref_type == 'tag') && 'release-signing' || '' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -90,14 +92,33 @@ jobs:
           # Pro 图标包（@hugeicons-pro）走私有源：setup-node 写 .npmrc，令牌只在装依赖的步骤经 NODE_AUTH_TOKEN 传入
           registry-url: https://npm.collectui.pro/
           scope: '@hugeicons-pro'
+      - name: Write the pdnd signing key
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          PDND_SIGNING_KEY: ${{ secrets.PDND_SIGNING_KEY }}
+        run: |
+          # 发出去的包必须能在线升级：推标签发版时没有签名私钥就失败
+          if [ -z "${PDND_SIGNING_KEY:-}" ]; then
+            echo "::error::environment release-signing 里没有 secret PDND_SIGNING_KEY：发布包的节点端清单签不了名，节点无法在线升级"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/pdnd-signing.key"
+          umask 077
+          printf '%s\n' "$PDND_SIGNING_KEY" > "$key"
+          chmod 0600 "$key"
+          echo "PDND_SIGNING_KEY_FILE=$key" >> "$GITHUB_ENV"
       - name: Build both architectures
         env:
           PANDORA_VERSION: ${{ steps.version.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
         run: bash panel/deploy/build-release.sh "$RUNNER_TEMP/dist"
+      - name: Remove the pdnd signing key
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/pdnd-signing.key"
       - name: Collect the release assets and write SHA256SUMS
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           dist="$RUNNER_TEMP/dist"
           out="$RUNNER_TEMP/assets"
@@ -105,6 +126,10 @@ jobs:
           for arch in amd64 arm64; do
             pkg="pandora-panel_${VERSION}_linux_${arch}.tar.gz"
             cp -- "$dist/$pkg" "$dist/$pkg.sha256" "$dist/$pkg.manifest.sha256" "$out/"
+            if [ "$EVENT_NAME" = push ]; then
+              tar -tzf "$dist/$pkg" | grep -qx "pandora-panel_${VERSION}_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" \
+                || { echo "::error::发布包缺少 pdnd-manifest.json.sig: $pkg"; exit 1; }
+            fi
           done
           cp -- panel/deploy/get.sh "$out/get.sh"
           cd "$out"

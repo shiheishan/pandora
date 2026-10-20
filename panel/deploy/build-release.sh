@@ -11,6 +11,9 @@
 # 缓存于输出目录 .cache/，两架构共用。可用 PANDORA_GEOIP_V4_URL 与 PANDORA_GEOIP_V4_SHA256
 # 同时覆盖（只给一个则失败）。提交号与 panel/go.mod 里 ip2region binding 伪版本同一提交，换版本时 URL 与摘要一起改。
 #
+# pdnd-dist 另有 pdnd-manifest.json（serial = 发版提交的提交时间，同值经 -X main.buildSerial 编进 pdnd）；
+# 给了 PDND_SIGNING_KEY_FILE 时用 pdnd 的 release/signmanifest 签出 pdnd-manifest.json.sig；两份都进 SHA256SUMS。
+#
 # 依赖：go、npm（Node 22.12+）、GNU tar、curl、sha256sum、make、grep。
 set -euo pipefail
 
@@ -21,6 +24,19 @@ OUT="${1:-$ROOT/dist}"
 # 会取到它，版本号带斜杠，被下面的格式检查拒掉，不设 PANDORA_VERSION 就出不了包。
 # 没有 v* 标签时 --always 回落到短提交号。
 VERSION="${PANDORA_VERSION:-$(git -C "$ROOT" describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)}"
+
+BUILD_SERIAL="${PANDORA_BUILD_SERIAL:-}"
+if [ -z "$BUILD_SERIAL" ]; then
+  BUILD_SERIAL="$(git -C "$ROOT" log -1 --format=%ct HEAD 2>/dev/null || true)"
+fi
+if [ -z "$BUILD_SERIAL" ]; then
+  BUILD_SERIAL=0
+  echo "拿不到提交时间（不是 git 工作区）：pdnd 的 build_serial 为 0，这份包的节点端不能在线升级" >&2
+fi
+if [[ ! "$BUILD_SERIAL" =~ ^[0-9]{1,19}$ ]]; then
+  echo "BUILD_SERIAL must be 1–19 decimal digits, got: $BUILD_SERIAL" >&2
+  exit 1
+fi
 
 # 与 panel/go.mod 里 github.com/lionsoul2014/ip2region/binding/golang 伪版本同一提交（xdb 与读取库配套），约 11 MB。
 GEOIP_V4_URL_DEFAULT='https://raw.githubusercontent.com/lionsoul2014/ip2region/5a401aaebbe26b80cf0702bcc1934f1a556c9cf7/data/ip2region_v4.xdb'
@@ -135,6 +151,17 @@ mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
 [ "$OUT" != / ] || { echo "release output directory cannot be /" >&2; exit 1; }
 
+if [ -n "${PDND_SIGNING_KEY_FILE:-}" ]; then
+  if [ ! -f "$PDND_SIGNING_KEY_FILE" ] || [ ! -r "$PDND_SIGNING_KEY_FILE" ]; then
+    echo "PDND_SIGNING_KEY_FILE must be a readable regular file: ${PDND_SIGNING_KEY_FILE}" >&2
+    exit 1
+  fi
+  if [ "$BUILD_SERIAL" = 0 ]; then
+    echo "serial 为 0 的清单签了也没有节点会接受" >&2
+    exit 1
+  fi
+fi
+
 resolve_geoip_source
 ensure_geoip_cache
 
@@ -174,7 +201,7 @@ for arch in amd64 arm64; do
     pdnd_name="pandora-native-linux-$node_arch"
     echo "building linux/$node_arch $pdnd_name"
     (cd "$PDND_ROOT" && GOTOOLCHAIN="$PDND_TOOLCHAIN" GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$node_arch" \
-      go build -buildvcs=false -mod=readonly -trimpath -ldflags="-s -w -buildid= -X main.buildVersion=$VERSION" \
+      go build -buildvcs=false -mod=readonly -trimpath -ldflags="-s -w -buildid= -X main.buildVersion=$VERSION -X main.buildSerial=$BUILD_SERIAL" \
       -o "$target/pdnd-dist/$pdnd_name" .)
     [ -s "$target/pdnd-dist/$pdnd_name" ] || {
       echo "empty node binary: linux/$node_arch $pdnd_name" >&2
@@ -217,7 +244,29 @@ for arch in amd64 arm64; do
   } > "$target/deploy/BUILD-INFO"
   chmod 0644 "$target/deploy/BUILD-INFO"
 
-  chmod 0755 "$target/bin/pandora" "$target"/pdnd-dist/*
+  # VERSION 已限制在 [A-Za-z0-9._-]+，写入 JSON 不需要转义。
+  {
+    printf '{\n'
+    printf '  "schema": 1,\n'
+    printf '  "version": "%s",\n' "$VERSION"
+    printf '  "serial": %s,\n' "$BUILD_SERIAL"
+    printf '  "artifacts": {\n'
+    printf '    "linux-amd64": { "file": "pandora-native-linux-amd64", "sha256": "%s" },\n' "$amd64_digest"
+    printf '    "linux-arm64": { "file": "pandora-native-linux-arm64", "sha256": "%s" }\n' "$arm64_digest"
+    printf '  }\n}\n'
+  } > "$target/pdnd-dist/pdnd-manifest.json"
+  if [ -n "${PDND_SIGNING_KEY_FILE:-}" ]; then
+    # 私钥只经文件路径传给签名工具，不进命令行与日志。
+    (cd "$PDND_ROOT" && GOTOOLCHAIN="$PDND_TOOLCHAIN" GOFLAGS='' go run -mod=readonly ./release/signmanifest \
+      -key "$PDND_SIGNING_KEY_FILE" -in "$target/pdnd-dist/pdnd-manifest.json" -out "$target/pdnd-dist/pdnd-manifest.json.sig")
+    [ -s "$target/pdnd-dist/pdnd-manifest.json.sig" ] || { echo "signing produced no pdnd-manifest.json.sig" >&2; exit 1; }
+  fi
+
+  chmod 0755 "$target/bin/pandora" "$target/pdnd-dist/pandora-native-linux-amd64" "$target/pdnd-dist/pandora-native-linux-arm64"
+  chmod 0644 "$target/pdnd-dist/pdnd-manifest.json"
+  if [ -f "$target/pdnd-dist/pdnd-manifest.json.sig" ]; then
+    chmod 0644 "$target/pdnd-dist/pdnd-manifest.json.sig"
+  fi
   chmod 0755 "$target"/deploy/*.sh
   chmod 0755 "$target/geoip"
   chmod 0644 "$target"/deploy/systemd/*
@@ -270,8 +319,18 @@ for arch in amd64 arm64; do
     --mode=0755 -cf "$archive_tar" "$target_base"
   tar -C "$OUT" --owner=0 --group=0 --numeric-owner \
     --mode=0755 -rf "$archive_tar" "$target_base/bin"
-  tar -C "$OUT" --owner=0 --group=0 --numeric-owner \
+  tar -C "$OUT" --owner=0 --group=0 --numeric-owner --no-recursion \
     --mode=0755 -rf "$archive_tar" "$target_base/pdnd-dist"
+  tar -C "$OUT" --owner=0 --group=0 --numeric-owner \
+    --mode=0755 -rf "$archive_tar" \
+    "$target_base/pdnd-dist/pandora-native-linux-amd64" \
+    "$target_base/pdnd-dist/pandora-native-linux-arm64"
+  tar -C "$OUT" --owner=0 --group=0 --numeric-owner \
+    --mode=0644 -rf "$archive_tar" "$target_base/pdnd-dist/pdnd-manifest.json"
+  if [ -f "$target/pdnd-dist/pdnd-manifest.json.sig" ]; then
+    tar -C "$OUT" --owner=0 --group=0 --numeric-owner \
+      --mode=0644 -rf "$archive_tar" "$target_base/pdnd-dist/pdnd-manifest.json.sig"
+  fi
   tar -C "$OUT" --owner=0 --group=0 --numeric-owner --no-recursion \
     --mode=0755 -rf "$archive_tar" "$target_base/geoip"
   tar -C "$OUT" --owner=0 --group=0 --numeric-owner \

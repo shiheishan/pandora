@@ -5,7 +5,8 @@
 #   2. 所有 go build 带 GOTOOLCHAIN=go<panel|pdnd 版本>，BUILD-INFO 写两版本；
 #   3. curl 只调一次，缓存命中后不再下载；
 #   4–6. 摘要/只给 URL/工具链三种失败；
-#   7. 脚本静态禁词。
+#   7. 脚本静态禁词；
+#   8. pdnd 发布清单（摘要与二进制一致、serial 编进 pdnd）与可选签名。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +57,7 @@ local_tc="${FAKE_GO_LOCAL:-go1.27.1}"
 effective() {
   if [ "${FAKE_GO_IGNORE_TOOLCHAIN:-}" != 1 ] && [[ "${GOTOOLCHAIN:-}" == go1* ]]; then echo "$GOTOOLCHAIN"; else echo "$local_tc"; fi
 }
+[ -n "${FAKE_GO_ARGS_LOG:-}" ] && printf '%s|%s\n' "$PWD" "$*" >>"$FAKE_GO_ARGS_LOG"
 printf '%s|%s|GOTOOLCHAIN=%s\n' "$1" "$PWD" "${GOTOOLCHAIN-<unset>}" >>"$FAKE_GO_LOG"
 case "$1" in
   env) [ "${2:-}" = GOVERSION ] && effective ;;
@@ -65,6 +67,18 @@ case "$1" in
     out=""; prev=""
     for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
     printf 'gobuild:%s\n' "${FAKE_GO_BUILD_TC:-$(effective)}" >"$out" ;;
+  run)
+    if [[ "$*" == *./release/signmanifest* ]]; then
+      out=""; key=""; infile=""; prev=""
+      for a in "$@"; do
+        [ "$prev" = -out ] && out="$a"
+        [ "$prev" = -key ] && key="$a"
+        [ "$prev" = -in ] && infile="$a"
+        case "$a" in -out|-key|-in) prev="$a" ;; *) prev="" ;; esac
+      done
+      printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$out"
+      [ -n "${FAKE_SIGN_LOG:-}" ] && printf 'signmanifest key=%s in=%s out=%s\n' "$key" "$infile" "$out" >>"$FAKE_SIGN_LOG"
+    fi ;;
 esac
 exit 0
 GO
@@ -101,8 +115,11 @@ run_build() {
     : >"$T/curl.log"
   fi
   : >"$T/go.log"
+  : >"$T/sign.log"
+  : >"$T/goargs.log"
   env PATH="$T/stub:$PATH" FAKE_GO_LOG="$T/go.log" FAKE_CURL_LOG="$T/curl.log" \
-    PANDORA_VERSION=toolchain-test GOTOOLCHAIN=local "$@" \
+    FAKE_SIGN_LOG="$T/sign.log" FAKE_GO_ARGS_LOG="$T/goargs.log" \
+    PANDORA_VERSION=toolchain-test PANDORA_BUILD_SERIAL=1792540800 GOTOOLCHAIN=local "$@" \
     bash "$T/tree/panel/deploy/build-release.sh" "$T/out" >"$T/stdout" 2>"$T/stderr"
 }
 
@@ -138,6 +155,18 @@ assert_release_tree() {
   find "$root" -name goose -print -quit | grep -q . && fail "goose must not exist ($arch)"
   find "$root" -name 'aegis-*' -print -quit | grep -q . && fail "aegis-named file must not exist ($arch)"
   grep -q 'geoip/ip2region_v4.xdb' "$root/SHA256SUMS" || fail "SHA256SUMS missing geoip line ($arch)"
+  [ -f "$root/pdnd-dist/pdnd-manifest.json" ] || fail "missing pdnd-manifest.json ($arch)"
+  local amd64_sha arm64_sha
+  amd64_sha="$(sha256sum "$root/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
+  arm64_sha="$(sha256sum "$root/pdnd-dist/pandora-native-linux-arm64" | awk '{print $1}')"
+  grep -Fq "\"linux-amd64\": { \"file\": \"pandora-native-linux-amd64\", \"sha256\": \"$amd64_sha\" }" "$root/pdnd-dist/pdnd-manifest.json" \
+    || fail "manifest amd64 sha ($arch)"
+  grep -Fq "\"linux-arm64\": { \"file\": \"pandora-native-linux-arm64\", \"sha256\": \"$arm64_sha\" }" "$root/pdnd-dist/pdnd-manifest.json" \
+    || fail "manifest arm64 sha ($arch)"
+  grep -Fq '"serial": 1792540800,' "$root/pdnd-dist/pdnd-manifest.json" || fail "manifest serial ($arch)"
+  grep -Fq '"version": "toolchain-test",' "$root/pdnd-dist/pdnd-manifest.json" || fail "manifest version ($arch)"
+  grep -Fq '"schema": 1,' "$root/pdnd-dist/pdnd-manifest.json" || fail "manifest schema ($arch)"
+  grep -q 'pdnd-dist/pdnd-manifest.json' "$root/SHA256SUMS" || fail "SHA256SUMS missing manifest ($arch)"
 }
 
 # --- 1. 正常构建 ---
@@ -157,6 +186,16 @@ grep -E '^build\|' "$T/go.log" | grep -v '/tree/pdnd|' | grep -vq "GOTOOLCHAIN=$
 [ "$(grep -c '^build|.*/tree/panel|' "$T/go.log")" -eq 2 ] || fail 'expected two panel pandora builds (amd64+arm64)'
 info="$T/out/pandora-panel_toolchain-test_linux_amd64/deploy/BUILD-INFO"
 grep -qx "PANEL_GO_TOOLCHAIN=$panel_tc" "$info" && grep -qx "PDND_GO_TOOLCHAIN=$pdnd_tc" "$info" || fail "BUILD-INFO content: $(cat "$info")"
+
+for arch in amd64 arm64; do
+  [ ! -f "$T/out/pandora-panel_toolchain-test_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" ] \
+    || fail "unexpected .sig without signing key ($arch)"
+done
+[ ! -s "$T/sign.log" ] || fail 'sign.log must be empty without signing key'
+# goargs.log 每行是「目录|全部参数」：pdnd 的四次 build（两棵树 × 两架构）都要带 buildSerial。
+pdnd_builds="$(grep -E '/tree/pdnd\|build ' "$T/goargs.log" || true)"
+[ "$(grep -c . <<<"$pdnd_builds")" = 4 ] || fail "expected four pdnd builds in goargs.log, got: $pdnd_builds"
+grep -vq -- '-X main.buildSerial=1792540800' <<<"$pdnd_builds" && fail 'pdnd build missing buildSerial ldflag'
 
 # --- 3. curl 只一次；再构建命中缓存 ---
 curl_calls="$(wc -l <"$T/curl.log" | tr -d ' ')"
@@ -192,6 +231,33 @@ printf 'module example.test/panel\ngo 1.26\n' >"$T/tree/panel/go.mod"
 if run_build "${GEOIP_ENV[@]}"; then fail 'go directive without patch was accepted'; fi
 grep -q 'full x.y.z' "$T/stderr" || fail "directive message missing: $(cat "$T/stderr")"
 printf 'module example.test/panel\ngo %s\n' "$PANEL_TC_VERSION" >"$T/tree/panel/go.mod"
+
+# --- 8. pdnd 发布清单与签名（带私钥与失败路径）---
+printf 'stub-key\n' >"$T/test.key"
+chmod 600 "$T/test.key"
+run_build "${GEOIP_ENV[@]}" PDND_SIGNING_KEY_FILE="$T/test.key" || fail 'build with signing key failed'
+for arch in amd64 arm64; do
+  root="$T/out/pandora-panel_toolchain-test_linux_${arch}"
+  [ -f "$root/pdnd-dist/pdnd-manifest.json.sig" ] || fail "missing .sig ($arch)"
+  grep -q 'pdnd-dist/pdnd-manifest.json.sig' "$root/SHA256SUMS" || fail "SHA256SUMS missing .sig ($arch)"
+done
+sign_lines="$(wc -l <"$T/sign.log" | tr -d ' ')"
+[ "$sign_lines" = 2 ] || fail "expected two signmanifest calls, got $sign_lines"
+grep -q "key=$T/test.key" "$T/sign.log" || fail 'sign log missing key path'
+grep -q 'in=.*/pdnd-dist/pdnd-manifest.json' "$T/sign.log" || fail 'sign log missing manifest path'
+
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNING_KEY_FILE="$T/missing.key"; then
+  fail 'missing signing key file was accepted'
+fi
+
+if run_build "${GEOIP_ENV[@]}" PDND_SIGNING_KEY_FILE="$T/test.key" PANDORA_BUILD_SERIAL=0; then
+  fail 'signing with serial 0 was accepted'
+fi
+grep -q serial "$T/stderr" || fail "serial 0 message missing: $(cat "$T/stderr")"
+
+if run_build "${GEOIP_ENV[@]}" PANDORA_BUILD_SERIAL=abc; then
+  fail 'non-numeric BUILD_SERIAL was accepted'
+fi
 
 # --- 7. 静态禁词 ---
 for word in aegis goose PREBUILT migrations; do
