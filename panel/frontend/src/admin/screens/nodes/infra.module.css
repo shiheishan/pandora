@@ -129,6 +129,11 @@
   min-width: 0;
 }
 
+.pick {
+  display: inline-flex;
+  margin-right: 6px;
+}
+
 .ch b {
   font-weight: var(--fw-medium);
 }

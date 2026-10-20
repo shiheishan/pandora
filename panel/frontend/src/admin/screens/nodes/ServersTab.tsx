@@ -4,19 +4,26 @@ import { MoreHorizontalIcon, PlusSignIcon } from '@hugeicons-pro/core-stroke-rou
 import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
-import { PageActions, StatusDot } from '../../kit'
+import { Button, Checkbox, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
+import { BulkAction, BulkBar, PageActions, StatusDot } from '../../kit'
 import {
   createServerBody,
   deleteServerNotice,
   emptyServerForm,
+  lastUpgradeLine,
   nodesByServer,
+  pruneUpgradePicks,
   quickToggle,
   SERVER_STATUS,
   serverDeleteBlock,
   serverMeters,
   serverNotes,
   serverSubtitle,
+  upgradeBlockNote,
+  upgradeConfirmBody,
+  upgradeOffer,
+  upgradeSelectable,
+  upgradeTarget,
   validateServerForm,
 } from './infra'
 import x from './infra.module.css'
@@ -24,7 +31,7 @@ import css from './nodes.module.css'
 import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
 import { serverSchema, type Server } from './schemas'
 import { Meters, serverStatusTone, ServerFields } from './ServerDetailPage'
-import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
+import { useDeleteServer, useIssueServerToken, useSetServerStatus, useUpgradeServers, type InstallSecret } from './serverActions'
 
 export function ServersTab() {
   const servers = useServers()
@@ -32,11 +39,27 @@ export function ServersTab() {
   const [adding, setAdding] = useState(false)
   const [install, setInstall] = useState<InstallSecret | null>(null)
   const [removing, setRemoving] = useState<Server | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [confirmUpgrade, setConfirmUpgrade] = useState(false)
   const token = useIssueServerToken(setInstall)
   const status = useSetServerStatus()
+  const upgrade = useUpgradeServers(() => setPicked(new Set()))
   // 删掉的服务器，它的安装命令也没用了
   const remove = useDeleteServer((gone) => setInstall((cur) => (cur?.serverId === gone.id ? null : cur)))
   const tags = useMemo(() => nodesByServer(nodes.data?.nodes ?? []), [nodes.data])
+  const list = useMemo(() => servers.data ?? [], [servers.data])
+  const target = useMemo(() => upgradeTarget(list), [list])
+  const live = useMemo(() => pruneUpgradePicks(picked, list), [picked, list])
+  const chosen = useMemo(() => list.filter((s) => live.has(s.id)), [list, live])
+
+  const setPick = (id: string, on: boolean) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
 
   return (
     <div className={css.stack}>
@@ -45,9 +68,17 @@ export function ServersTab() {
           添加服务器
         </Button>
       </PageActions>
-      <div className={x.bar}>
-        <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
-      </div>
+      {target && live.size > 0 ? (
+        <BulkBar count={live.size} onClear={() => setPicked(new Set())}>
+          <BulkAction busy={upgrade.isPending} onClick={() => setConfirmUpgrade(true)}>
+            升级到 {target}（{live.size} 台）
+          </BulkAction>
+        </BulkBar>
+      ) : (
+        <div className={x.bar}>
+          <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
+        </div>
+      )}
 
       <QueryView
         query={servers}
@@ -57,18 +88,23 @@ export function ServersTab() {
       >
         {(list) => (
           <div className={x.cards}>
-            {list.map((s) => (
-              <ServerCard
-                key={s.id}
-                server={s}
-                nodes={tags.get(s.id) ?? []}
-                busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
-                onOpen={() => navigate(`/nodes/servers/${s.id}`)}
-                onToken={() => token.mutate(s)}
-                onToggle={(t) => status.mutate({ server: s, to: t.to, done: t.done })}
-                onRemove={() => setRemoving(s)}
-              />
-            ))}
+            {list.map((s) => {
+              const canPick = target !== null && upgradeSelectable(s)
+              return (
+                <ServerCard
+                  key={s.id}
+                  server={s}
+                  nodes={tags.get(s.id) ?? []}
+                  picked={live.has(s.id)}
+                  onPick={canPick ? (on) => setPick(s.id, on) : undefined}
+                  busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
+                  onOpen={() => navigate(`/nodes/servers/${s.id}`)}
+                  onToken={() => token.mutate(s)}
+                  onToggle={(t) => status.mutate({ server: s, to: t.to, done: t.done })}
+                  onRemove={() => setRemoving(s)}
+                />
+              )
+            })}
           </div>
         )}
       </QueryView>
@@ -94,6 +130,17 @@ export function ServersTab() {
         }}
         onCancel={() => setRemoving(null)}
       />
+      <ConfirmModal
+        open={confirmUpgrade && chosen.length > 0 && !!target}
+        title={`升级 ${chosen.length} 台服务器到 ${target ?? ''}？`}
+        body={target ? upgradeConfirmBody(chosen.length, target) : ''}
+        confirmLabel="开始升级"
+        onConfirm={() => {
+          setConfirmUpgrade(false)
+          upgrade.mutate(chosen)
+        }}
+        onCancel={() => setConfirmUpgrade(false)}
+      />
     </div>
   )
 }
@@ -101,6 +148,8 @@ export function ServersTab() {
 function ServerCard({
   server: s,
   nodes,
+  picked,
+  onPick,
   busy,
   onOpen,
   onToken,
@@ -109,6 +158,8 @@ function ServerCard({
 }: {
   server: Server
   nodes: readonly string[]
+  picked: boolean
+  onPick?: (on: boolean) => void
   busy: boolean
   onOpen: () => void
   onToken: () => void
@@ -120,11 +171,20 @@ function ServerCard({
   const meters = serverMeters(s)
   const allMetersNull = meters.every((m) => m.percent === null)
   const notes = serverNotes(s)
+  const blockNote = upgradeBlockNote(s)
+  const noteLines = blockNote ? [...notes, blockNote] : notes
+  const offer = upgradeOffer(s)
+  const upgradeLine = lastUpgradeLine(s)
   const block = serverDeleteBlock(s)
   return (
     <section className={`${x.card} ${s.status === 'retired' ? x.cardRetired : ''}`} aria-label={`服务器 ${s.name}`}>
       {/* 头：状态点包等宽名称 + 状态标签 + 右上角「…」打开详情（整头不再是按钮） */}
       <div className={x.ch}>
+        {onPick ? (
+          <span className={x.pick}>
+            <Checkbox small aria-label={`选择 ${s.name} 升级`} checked={picked} onChange={(e) => onPick(e.target.checked)} />
+          </span>
+        ) : null}
         <StatusDot tone={serverStatusTone(s)}>
           <span className={css.mono}>{s.name}</span>
         </StatusDot>
@@ -133,6 +193,11 @@ function ServerCard({
         <IconButton label={`${s.name} 详情`} icon={MoreHorizontalIcon} size="sm" onClick={onOpen} />
       </div>
       <div className={x.cs}>{serverSubtitle(s)}</div>
+      {offer ? (
+        <div className={x.cs}>
+          <Tag tone="info">{offer}</Tag>
+        </div>
+      ) : null}
       {allMetersNull ? <div className={css.faint}>装好 agent 后这里显示占用</div> : <Meters meters={meters} />}
       <div className={x.chips}>
         {nodes.length > 0 ? (
@@ -141,11 +206,16 @@ function ServerCard({
           <span className={css.faint}>没有在役节点</span>
         )}
       </div>
-      {notes.map((n) => (
+      {noteLines.map((n) => (
         <div key={n} className={x.note}>
           {n}
         </div>
       ))}
+      {upgradeLine ? (
+        <div className={x.note}>
+          <Tag tone={upgradeLine.tone}>{upgradeLine.label}</Tag> {upgradeLine.text}
+        </div>
+      ) : null}
       <div className={x.cf}>
         <span className={css.mono}>
           在役 {s.serving_node_count} / 容量 {s.capacity_nodes}
