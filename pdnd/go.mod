@@ -6,11 +6,11 @@ require (
 	github.com/aegispanel/nodeapi v0.0.0-00010101000000-000000000000
 	github.com/anytls/sing-anytls v0.0.13
 	github.com/daeuniverse/outbound v0.0.0-20250219135309-c607702d1c85
-	github.com/enfein/mieru/v3 v3.34.1
+	github.com/enfein/mieru/v3 v3.38.2
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/google/uuid v1.6.0
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
-	github.com/sagernet/sing v0.8.11
+	github.com/sagernet/sing v0.8.14
 	github.com/sagernet/sing-quic v0.6.1
 	github.com/sagernet/sing-shadowsocks v0.2.8
 	github.com/sagernet/sing-shadowsocks2 v0.2.2
@@ -56,9 +56,9 @@ require (
 	github.com/juju/ratelimit v1.0.2
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/metacubex/utls v1.8.4
+	github.com/metacubex/utls v1.8.8
 	github.com/miekg/dns v1.1.72 // indirect
-	github.com/pires/go-proxyproto v0.11.0
+	github.com/pires/go-proxyproto v0.15.0
 	github.com/quic-go/qpack v0.6.0
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
 	github.com/vishvananda/netns v0.0.5 // indirect
@@ -72,8 +72,8 @@ require (
 	golang.org/x/time v0.16.0
 	golang.org/x/tools v0.51.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	google.golang.org/grpc v1.83.2
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
+	google.golang.org/grpc v1.84.0
 	lukechampine.com/blake3 v1.4.1
 )
 

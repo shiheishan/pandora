@@ -131,7 +131,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json.sig" ]; then
             cp -- "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json.sig" "$out/"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pdnd-manifest-${{ needs.preflight.outputs.version }}
           path: ${{ runner.temp }}/pdnd-signed/
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pdnd-manifest-${{ needs.preflight.outputs.version }}
           path: ${{ runner.temp }}/pdnd-signed
@@ -208,7 +208,7 @@ jobs:
           [ "${#files[@]}" -eq 7 ] || { echo "::error::附件数不对：${files[*]}"; exit 1; }
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pandora-panel-${{ needs.preflight.outputs.version }}
           path: ${{ runner.temp }}/assets/
@@ -227,7 +227,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pandora-panel-${{ needs.build.outputs.version }}
           path: assets
@@ -285,7 +285,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pandora-panel-${{ needs.build.outputs.version }}
           path: assets

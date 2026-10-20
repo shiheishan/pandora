@@ -270,7 +270,8 @@ func (h *Inbound) Start() error {
 	if err != nil {
 		return fmt.Errorf("构建流量模式: %w", err)
 	}
-	endpoints, err := appctlcommon.PortBindingsToUnderlayProperties(
+	// 监听地址传空串即所有地址，与上游 apis/server.Start 相同（v3.37 起该函数多了监听 IP 参数）
+	endpoints, err := appctlcommon.AddrPortToUnderlayProperties("",
 		[]*appctlpb.PortBinding{{
 			Port:     proto.Int32(int32(h.port)),
 			Protocol: h.proto.Enum(),
