@@ -81,6 +81,12 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 	}
 	// 拦截器的鉴权可能是很久之前做的（流建好后迟迟不发 Hello），登记前后各复核一次，副作用都落在复核之后
 	verify := func(ctx context.Context) error { return c.auth.AuthorizeSession(ctx, serverID, serial) }
+	if lu := hello.GetLastUpgrade(); lu != nil {
+		if _, ok := upgradeReportFromProto(lu); !ok {
+			// 与流上的升级回报同口径：不合法就丢，但留一条线索，排查「结局去哪了」时有据可查
+			log.Warn("Hello 里的升级结局不合法，忽略", zap.Int("job_id_len", len(lu.GetJobId())), zap.String("phase", lu.GetPhase().String()))
+		}
+	}
 	sess, err := m.OpenVerified(ctx, serverID, helloFromProto(hello), verify)
 	if err != nil {
 		switch {
