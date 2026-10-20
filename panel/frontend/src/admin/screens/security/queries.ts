@@ -3,6 +3,17 @@ import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { accessQuery, auditQuery, TAIL_MS, type AccessFilter, type AuditFilter } from './logic'
 import { accessResponse, auditResponse, clustersResponse, switchesResponse } from './schemas'
+import {
+  traceAccountsResponse,
+  traceIPsResponse,
+  traceQuery,
+  traceRevealResponse,
+  traceSubscribersResponse,
+  type AccSort,
+  type SubSort,
+  type TraceReveal,
+  type TraceWindow,
+} from './trace'
 
 export { useFailure, useIntentKey } from '../../actions'
 
@@ -50,4 +61,41 @@ export function useSwitches() {
 export function useInvalidateSecurity() {
   const client = useQueryClient()
   return useCallback((...scope: string[]) => client.invalidateQueries({ queryKey: [...SK, ...scope] }), [client])
+}
+
+// ---------------------------------------------------------------------------
+// 溯源总览：三张排行都不在 SSE 里，不挂 topics、不轮询；换 window 时保留上一份数据
+// ---------------------------------------------------------------------------
+
+export function useTraceIPs(window: TraceWindow) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...SK, 'trace', 'ips', window],
+    queryFn: ({ signal }) => api.get('v1/trace/ips', traceIPsResponse, { query: traceQuery(window), signal }),
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useTraceSubscribers(window: TraceWindow, sort: SubSort) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...SK, 'trace', 'subscribers', window, sort],
+    queryFn: ({ signal }) => api.get('v1/trace/subscribers', traceSubscribersResponse, { query: traceQuery(window, sort), signal }),
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function useTraceAccounts(window: TraceWindow, sort: AccSort) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...SK, 'trace', 'accounts', window, sort],
+    queryFn: ({ signal }) => api.get('v1/trace/accounts', traceAccountsResponse, { query: traceQuery(window, sort), signal }),
+    placeholderData: (prev) => prev,
+  })
+}
+
+/** 「显示」完整 IP：不缓存，每次都写入审计；返回一个按令牌取地址的函数 */
+export function useTraceReveal(): (token: string) => Promise<TraceReveal> {
+  const api = useApi()
+  return useCallback((token: string) => api.get('v1/trace/reveal', traceRevealResponse, { query: { token } }), [api])
 }
