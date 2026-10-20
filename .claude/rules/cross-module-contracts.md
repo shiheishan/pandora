@@ -24,7 +24,8 @@ panel 与 pdnd 是两个独立的 Go module。两端之间的契约分两类：�
 - 端口占用的 L4：面板 `panel/internal/module/node/protocol/port_l4.go` 的 `listenL4` 与 pdnd `kernel/port_claims.go` 的 `inboundPortKey` 同一套规则。面板的 `TestListenL4MatchesPdndPortClaims` 直接读 pdnd 的 `TestInboundPortKeyDerivation` 用例表，pdnd 加用例面板自动跟上。
 - 设备键：面板 `panel/internal/module/node/service/online.go` 的 `deviceKey` 与 pdnd `core.DeviceKey`（IPv4 按地址、IPv6 按 /64）。两边各有一张 `TestDeviceKey` 用例表，不互相读，改口径要两张表一起改。
 - 稳定协议名单：pdnd `kernel/capabilities.go` 与面板 `panel/internal/module/node/protocol/schema.go` 的 `stableTypes` / `stableSchemas`，由 `pdnd/release/check_native_panel_parity.py` 比对（CI pandora-native）。
-- 节点安装器写的 systemd 单元：面板 `TestInstallScriptUnitMatchesPackaged`（`panel/internal/module/node/service/pdnd_install_script_test.go`）读 `pdnd/release/pandora-native.service` 逐行比对。
+- 节点安装器写的 systemd 单元：面板 `TestInstallScriptUnitMatchesPackaged`（`panel/internal/module/node/service/pdnd_install_script_test.go`）读 `pdnd/release/pandora-native.service` 逐行比对；在线升级的两个 root 单元 `pandora-native-upgrade.path` / `.service` 由同文件的 `TestInstallScriptUpgradeUnitsMatchPackaged` 比对，`TestPackagedUpgradeUnitsContract` 钉住监视的路径、`ExecStart`、oneshot 与超时。
+- 在线升级（`docs/architecture.md` 11.6）：能力名 `upgrade_v1`（pdnd `upgrade.Feature` = `panel.FeatureUpgrade`，面板侧一份常量）；发布清单 `pdnd-manifest.json` 与 `.sig` 的格式由 pdnd `upgrade/manifest.go`、`release/signmanifest` 与 `panel/deploy/build-release.sh` 写读，面板只读不验签；原因码表（`upgrade/reason.go`）与面板的状态对账、前端中文文案一一对应，加码要两端一起加；结果文件的 phase 字符串是 `FAILED` / `ROLLED_BACK`，只在节点本机用，上线时翻成 proto 的 `UpgradePhase`。
 
 ## 节点入站证书
 
