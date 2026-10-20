@@ -101,7 +101,7 @@ func agentInfo(h Hello) repo.ServerAgentInfo {
 	}
 }
 
-// RecordHello 记 Hello：自报信息变了才写（自报信息不推，后台靠轮询）；最后心跳时间照写（建流即视为一拍心跳）。
+// RecordHello 记 Hello：自报信息变了才写（自报信息不推，后台靠轮询）；最后心跳时间照写（建流即视为一拍心跳）；再对账在线升级任务。
 func (s *Service) RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error {
 	if _, err := s.repo.UpdateServerAgent(ctx, serverID, agentInfo(h)); err != nil {
 		return err
@@ -112,6 +112,10 @@ func (s *Service) RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, 
 	}
 	if found && beatFlipsOnline(prev, at) {
 		s.serverChanged(ctx, realtime.OpUpdate, serverID)
+	}
+	// 在线升级对账：摘要等于目标 = 成功；带着上一次升级的结局就按它改状态（upgrades.go）
+	if err := s.reconcileUpgradeHello(ctx, serverID, h, at); err != nil {
+		return err
 	}
 	return nil
 }
