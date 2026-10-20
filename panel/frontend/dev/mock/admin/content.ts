@@ -17,14 +17,21 @@ const at = (days: number, hours = 0) => new Date(Date.now() + days * 86_400_000 
 
 /** 请求体读成对象；非法 JSON、未知字段、类型不符分别按 httpx.DecodeJSON 回 400 */
 type Decoded = { ok: true; body: Json } | { ok: false; result: MockResult }
-async function decode(ctx: MockContext, shape: Record<string, 'string' | 'boolean' | 'number' | 'strings' | 'object'>): Promise<Decoded> {
+async function decode(ctx: MockContext, shape: Record<string, 'string' | 'boolean' | 'number' | 'strings' | 'object' | 'array'>): Promise<Decoded> {
   const bad = (message: string): Decoded => ({ ok: false, result: err(400, 'bad_request', message) })
   const body = await ctx.body()
   if (!body) return bad('请求体不是合法的 JSON')
   for (const [k, v] of Object.entries(body)) {
     const want = shape[k]
     if (!want) return bad(`请求体包含未知字段 "${k}"`)
-    const ok = want === 'strings' ? v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')) : want === 'object' ? v === null || isObject(v) : v === null || typeof v === want
+    const ok =
+      want === 'strings'
+        ? v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string'))
+        : want === 'object'
+          ? v === null || isObject(v)
+          : want === 'array'
+            ? v === null || Array.isArray(v)
+            : v === null || typeof v === want
     if (!ok) return bad(`字段 "${k}" 类型不正确`)
   }
   return { ok: true, body }
@@ -573,6 +580,16 @@ const validTimezone = (name: string) => {
   }
 }
 
+let homeEnabled = true
+let homeIntro = ''
+let homeFaq: Array<{ q: string; a: string }> = []
+const normalizeMultiline = (s: string) => s.replace(/\r\n?/g, '\n').trim()
+// eslint-disable-next-line no-control-regex
+const HOME_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/
+// eslint-disable-next-line no-control-regex
+const LINE_CONTROL = /[\u0000-\u001f\u007f-\u009f]/
+const homeBody = () => ({ enabled: homeEnabled, intro: homeIntro, faq: homeFaq.map((x) => ({ ...x })) })
+
 // ---------------------------------------------------------------------------
 // 路由
 // ---------------------------------------------------------------------------
@@ -742,6 +759,78 @@ export const content: MockModule = {
         seo_description: siteSeoDescription,
         allow_indexing: siteAllowIndexing,
       })
+    },
+
+    'GET /v1/settings/home': (ctx) => ctx.send(200, homeBody()),
+    'POST /v1/settings/home': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const decoded = await decode(ctx, { enabled: 'boolean', intro: 'string', faq: 'array' })
+      if (!decoded.ok) return reply(ctx, decoded.result)
+      const body = decoded.body
+      const fields: Record<string, string> = {}
+      let nextEnabled = homeEnabled
+      let nextIntro = homeIntro
+      let nextFaq = homeFaq
+
+      if ('enabled' in body && body.enabled !== null) {
+        nextEnabled = body.enabled === true
+      }
+
+      if ('intro' in body && body.intro !== null) {
+        const intro = normalizeMultiline(str(body.intro))
+        if (runes(intro) > 500) fields.intro = '介绍最多 500 个字'
+        else if (HOME_CONTROL.test(intro)) fields.intro = '介绍不能包含控制字符'
+        else nextIntro = intro
+      }
+
+      if ('faq' in body && body.faq !== null) {
+        const raw = body.faq as unknown[]
+        if (raw.length > 20) fields.faq = '常见问题最多 20 条'
+        else {
+          const parsed: Array<{ q: string; a: string }> = []
+          let faqShapeBad = false
+          for (let i = 0; i < raw.length; i++) {
+            const item = raw[i]
+            if (!isObject(item)) {
+              faqShapeBad = true
+              break
+            }
+            const keys = Object.keys(item)
+            if (keys.length !== 2 || !keys.includes('q') || !keys.includes('a')) {
+              faqShapeBad = true
+              break
+            }
+            if (typeof item.q !== 'string' || typeof item.a !== 'string') {
+              faqShapeBad = true
+              break
+            }
+            parsed.push({ q: item.q, a: item.a })
+          }
+          if (faqShapeBad) return reply(ctx, err(400, 'bad_request', '字段 "faq" 类型不正确'))
+          if (!fields.faq) {
+            const normalized: Array<{ q: string; a: string }> = []
+            for (let i = 0; i < parsed.length; i++) {
+              const q = parsed[i]!.q.trim()
+              const a = normalizeMultiline(parsed[i]!.a)
+              if (!q) fields[`faq.${i}.q`] = '问题必填'
+              else if (runes(q) > 100) fields[`faq.${i}.q`] = '问题最多 100 个字'
+              else if (LINE_CONTROL.test(q)) fields[`faq.${i}.q`] = '问题不能包含换行或控制字符'
+              if (!a) fields[`faq.${i}.a`] = '回答必填'
+              else if (runes(a) > 500) fields[`faq.${i}.a`] = '回答最多 500 个字'
+              else if (HOME_CONTROL.test(a)) fields[`faq.${i}.a`] = '回答不能包含控制字符'
+              normalized.push({ q, a })
+            }
+            if (Object.keys(fields).length === 0) nextFaq = normalized
+          }
+        }
+      }
+
+      if (Object.keys(fields).length > 0) return reply(ctx, invalid(fields))
+
+      homeEnabled = nextEnabled
+      homeIntro = nextIntro
+      homeFaq = nextFaq
+      ctx.send(200, homeBody())
     },
   },
 }

@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { announcementsResponse, annSaved, pageArchived, pageResponse, pageSaved, pagesResponse, siteSettingsSchema, slotSaved, slotsResponse, themesResponse } from '../src/admin/screens/content/schemas'
+import { announcementsResponse, annSaved, homeSettingsSchema, pageArchived, pageResponse, pageSaved, pagesResponse, siteSettingsSchema, slotSaved, slotsResponse, themesResponse } from '../src/admin/screens/content/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin content', () => {
@@ -99,6 +99,49 @@ describe('mock api · admin content', () => {
     expect(await (await call('POST', '/v1/settings/site', { seo_keywords: ' 加速, 节点 ', allow_indexing: true })).json()).toMatchObject({ name: '夜海加速', seo_keywords: '加速, 节点', allow_indexing: true })
     await call('POST', '/v1/settings/site', { seo_keywords: '', allow_indexing: false })
     await call('POST', '/v1/settings/site', { name: 'Pandora', timezone: 'Asia/Shanghai' })
+  })
+
+  it('saves home settings with the same rules as the backend', async () => {
+    expect(homeSettingsSchema.parse(await (await call('GET', '/v1/settings/home')).json())).toEqual({ enabled: true, intro: '', faq: [] })
+
+    expect((await (await call('POST', '/v1/settings/home', { intro: '字'.repeat(501) })).json()).error.fields.intro).toBe('介绍最多 500 个字')
+    expect((await (await call('POST', '/v1/settings/home', { intro: '你\u0007好' })).json()).error.fields.intro).toBe('介绍不能包含控制字符')
+    expect((await (await call('POST', '/v1/settings/home', { faq: Array.from({ length: 21 }, (_, i) => ({ q: `问题${i}`, a: '回答' })) })).json()).error.fields.faq).toBe('常见问题最多 20 条')
+
+    const twoBad = await (await call('POST', '/v1/settings/home', { faq: [{ q: '  ', a: '可以' }, { q: '能试用吗？', a: '' }] })).json()
+    expect(twoBad.error.fields['faq.0.q']).toBe('问题必填')
+    expect(twoBad.error.fields['faq.1.a']).toBe('回答必填')
+
+    expect((await (await call('POST', '/v1/settings/home', { faq: [{ q: '第一行\n第二行', a: '可以' }] })).json()).error.fields['faq.0.q']).toBe('问题不能包含换行或控制字符')
+
+    expect((await call('POST', '/v1/settings/home', { faq: [{ q: '能试用吗？', a: '可以', x: 1 }] })).status).toBe(400)
+    expect((await call('POST', '/v1/settings/home', { extra: 1 })).status).toBe(400)
+
+    expect(homeSettingsSchema.parse(await (await call('GET', '/v1/settings/home')).json())).toEqual({ enabled: true, intro: '', faq: [] })
+
+    expect(
+      homeSettingsSchema.parse(
+        await (
+          await call('POST', '/v1/settings/home', {
+            enabled: false,
+            intro: ' 欢迎光临\r\n虚构加速 ',
+            faq: [{ q: ' 能试用吗？ ', a: ' 可以\r\n先注册 ' }],
+          })
+        ).json(),
+      ),
+    ).toEqual({
+      enabled: false,
+      intro: '欢迎光临\n虚构加速',
+      faq: [{ q: '能试用吗？', a: '可以\n先注册' }],
+    })
+
+    expect(homeSettingsSchema.parse(await (await call('POST', '/v1/settings/home', { enabled: true })).json())).toEqual({
+      enabled: true,
+      intro: '欢迎光临\n虚构加速',
+      faq: [{ q: '能试用吗？', a: '可以\n先注册' }],
+    })
+
+    await call('POST', '/v1/settings/home', { intro: '', faq: [] })
   })
 
   it('creates, edits, switches and deletes themes with the Go rules', async () => {
