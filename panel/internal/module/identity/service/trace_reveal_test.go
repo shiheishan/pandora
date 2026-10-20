@@ -63,7 +63,7 @@ func tamperBase64URLToken(tok string) string {
 	mid := len(tok) / 2
 	old := tok[mid]
 	for _, c := range "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" {
-		if c != old {
+		if byte(c) != old {
 			return tok[:mid] + string(c) + tok[mid+1:]
 		}
 	}
