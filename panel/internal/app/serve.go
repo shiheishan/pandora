@@ -289,12 +289,27 @@ func authOptions(cfg *config.Config) authh.Options {
 	return authh.Options{AuthPerMin: cfg.RateLimit.AuthPerMin, SecureCookie: cfg.IsProduction()}
 }
 
+// healthzResponse 是 /healthz 的响应：进程活着。
+type healthzResponse struct {
+	Status string `json:"status"`
+}
+
+// readyzResponse 是 /readyz 的响应：PG 与 Redis 都 ping 得通。
+type readyzResponse struct {
+	Status string `json:"status"`
+}
+
 func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extra ...gin.HandlerFunc) *gin.Engine {
 	if r.cfg.Env != config.EnvDevelopment {
 		ginReleaseOnce.Do(func() { gin.SetMode(gin.ReleaseMode) })
 	}
 
 	e := gin.New()
+	// 错方法回 405 信封（gin 先写 Allow 头），不再落到 NoRoute 的 404；只开开关不挂 NoMethod 时 gin 回纯文本。
+	e.HandleMethodNotAllowed = true
+	// 不做尾斜杠跳转：后台挂在 nginx 的前缀下，gin 跳转的 Location 不带前缀，会把浏览器带到门户。多一个斜杠就是 404。
+	e.RedirectTrailingSlash = false
+
 	// 两个监听只绑回环，前面是 nginx：只信 nginx 覆写的 X-Real-IP，不解析 X-Forwarded-For 链。
 	e.TrustedPlatform = "X-Real-IP"
 	if err := e.SetTrustedProxies(nil); err != nil {
@@ -314,7 +329,7 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 	e.Use(extra...)
 
 	e.GET("/healthz", func(c *gin.Context) {
-		httpx.OK(c, gin.H{"status": "ok"})
+		httpx.OK(c, healthzResponse{Status: "ok"})
 	})
 	e.GET("/readyz", func(c *gin.Context) {
 		readyCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
@@ -327,9 +342,10 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 			httpx.Fail(c, errs.Wrap(errs.Unavailable, err))
 			return
 		}
-		httpx.OK(c, gin.H{"status": "ok"})
+		httpx.OK(c, readyzResponse{Status: "ok"})
 	})
 	e.NoRoute(httpx.NoRoute)
+	e.NoMethod(httpx.NoMethod)
 
 	return e
 }

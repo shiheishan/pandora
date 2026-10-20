@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/csv"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,9 +14,6 @@ import (
 
 // csvTime 是 CSV 里的时间格式（UTC）。
 const csvTime = "2006-01-02 15:04"
-
-// utf8BOM 让 Excel 按 UTF-8 打开 CSV：运营几乎一定会用 Excel 打开，没有它中文是乱码。
-var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // listTemplates 后台模板列表。
 func (h *Handler) listTemplates(c *gin.Context) {
@@ -228,16 +224,6 @@ func codeFilter(c *gin.Context) (service.CodeFilter, error) {
 		return service.CodeFilter{}, err
 	}
 	return service.CodeFilter{TemplateID: tid, BatchID: bid, Status: c.Query("status")}, nil
-}
-
-// csvHeaders 写 CSV 下载的响应头与 BOM。
-func csvHeaders(c *gin.Context, filename string) {
-	h := c.Writer.Header()
-	h.Set("Content-Type", "text/csv; charset=utf-8")
-	h.Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	h.Set("Cache-Control", "no-store")
-	c.Status(http.StatusOK)
-	_, _ = c.Writer.Write(utf8BOM)
 }
 
 // csvSafe 防 CSV 公式注入：用户可控的文本以 = + - @ 制表符 回车开头时前面加单引号。

@@ -15,6 +15,7 @@ paths:
 - 几条通用规则：`handler-no-db`（handler、task、grpc 不碰 gorm、`internal/pkg/db`、`internal/pkg/tx`）、`service-no-gorm`（service 不碰 gorm 与 `internal/pkg/db`，事务只经 `internal/pkg/tx`）、`model-plain`、`pure-packages`（`render`、`protocol` 不依赖任何模块与库）、`pkg-no-business`（`internal/pkg` 不依赖模块与 app）、`httpx-no-db`（中间件不碰库）。
 - 每个模块一条 `module-<名>-boundary`：不许 import 别的模块的 repo、model、handler、task、grpc、provider，模块之间只调 service（测试可以用别的模块的 repo 装真 service、用支付 provider 造验签回调）；`module-<名>-entry`：本模块的 handler、task、grpc 也不许 import 本模块的 repo 与 model。
 - 技术栈规则：`stack-conventions` 禁 chi、pgxpool；`stack-no-stdlog` 禁生产代码用 `log`、`log/slog`（日志用 zap；测试里 pebble 之类要 `*log.Logger` 的夹具可用）；`stack-no-database-sql` 禁生产代码用 `database/sql`（`internal/app/migrate.go`、`internal/pkg/testkit`、`db/migrations` 例外，测试不管）；`stack-no-pgx` 禁 `github.com/jackc/pgx`（含 pgconn，测试同样适用；只有 `internal/pkg/db`、`testkit`、`migrate.go`、`db/migrations/migrations_test.go` 例外）。
+- 写响应由 forbidigo 钉住（同一份生成器模板，`analyze-types: true` 按类型匹配 `gin.Context` / `gin.ResponseWriter` 的方法，`smtp.Client.Data` 之类同名方法不误报）：handler 只经 `httpx.OK` / `Created` / `Accepted` / `NoContent` / `Fail` 写，不用 `gin.H`。非 JSON 出口的白名单在模板的 `exclusions.rules`（按文件路径）；加新的非 JSON 出口时把写响应的几行抽到同包单独文件，在生成器里加一条路径再重新生成，不用 `//nolint`。清单见 `panel-http.md`。
 - lint 命令：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（本机加 `GOTOOLCHAIN=go1.26.9`）。
 
 ## 模块与表属主

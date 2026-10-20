@@ -9,6 +9,7 @@ paths:
 - 对外错误只有 `panel/internal/pkg/errs` 一套：封闭的码表、HTTP 状态和中性中文文案。service 返回 `*errs.Error`（`errs.New` / `errs.Newf` / `errs.Wrap` / `errs.Invalid`），handler 交给 `httpx` 写信封；未知错误一律 500 `internal_error`，原因只进日志。
 - 前端 `panel/frontend/src/core/api.ts` 的 `SERVER_ERROR_CODES` 按同一张表解析，新增码两处同改；守卫是 `errs` 包的 `TestServerErrorCodesMatchFrontend`。
 - `reauth_required` 与 `forbidden` 同为 403、码不同，前端靠码弹重认证框。
+- 框架层的出口同样回信封：错方法 405 `method_not_allowed`（引擎开 `HandleMethodNotAllowed` 并挂 `httpx.NoMethod`，带 `Allow` 头）；请求体超限 413 `payload_too_large`（`httpx.BindJSON` 与幂等中间件按 `*http.MaxBytesError` 判；支付回调与 Telegram webhook 的超限照旧 400，对方不解析信封）；请求 ctx 到期（`httpx.Timeout`）后 handler 报的 5xx 且错误链含 `context.DeadlineExceeded`，由 `httpx.Errors` 改成 504 `timeout`——handler 自己另设的短期限到期不算。前端没有信封时按状态兜底（405/413/504 各对应上面的码，502/503 是 `service_unavailable`）。
 - 库的约束违例只经 `db.ConstraintErrors`（`panel/internal/pkg/db/constraint.go`）翻译成模块哨兵：各 repo 一张 `constraintErrs` 表（按约束名 ByName、按 SQLSTATE ByCode），不自己 import pgconn 判码、不用 `gorm.ErrDuplicatedKey` 一类逐个判断；要看码用 `db.AsViolation`（只在 repo 里），死锁与序列化失败用 `db.IsRetryable`。service 只用 `errors.Is(err, 本模块哨兵)` 判；翻译后的哨兵用 `%w` 包着原 PgError，对别的模块传上来的错误调 `db.AsViolation` 会把它的违例当成本模块的。
 - LIKE / ILIKE 的用户输入一律经 `db.EscapeLike` / `db.ContainsPattern` 转义 `\ % _`，不再各写一份。
 

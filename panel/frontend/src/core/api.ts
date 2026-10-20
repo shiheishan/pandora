@@ -32,6 +32,11 @@ export const SERVER_ERROR_CODES = [
   'order_pending',
   'order_lapsed',
   'payment_in_progress',
+  // 405 路由存在但方法不对 / 413 请求体超过上限（面板或 nginx 的 client_max_body_size）/
+  // 504 请求超时（面板的请求期限或 nginx 等上游超时）
+  'method_not_allowed',
+  'payload_too_large',
+  'timeout',
 ] as const
 type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
 type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'
@@ -87,16 +92,21 @@ function codeForStatus(status: number): ApiErrorCode {
       return 'forbidden'
     case 404:
       return 'not_found'
+    case 405:
+      return 'method_not_allowed'
     case 409:
       return 'conflict'
+    case 413:
+      return 'payload_too_large'
     case 422:
       return 'validation_failed'
     case 429:
       return 'rate_limited'
     case 502:
     case 503:
-    case 504:
       return 'service_unavailable'
+    case 504:
+      return 'timeout'
     default:
       return status >= 500 ? 'internal_error' : 'invalid_response'
   }
@@ -105,6 +115,9 @@ function codeForStatus(status: number): ApiErrorCode {
 const FALLBACK_MESSAGE: Partial<Record<ApiErrorCode, string>> = {
   unauthorized: '登录已失效，请重新登录',
   not_found: '资源不存在或无权访问',
+  method_not_allowed: '请求方法不被允许',
+  payload_too_large: '请求内容过大',
+  timeout: '请求超时，请稍后再试',
   rate_limited: '操作太频繁，请稍后再试',
   service_unavailable: '服务暂时不可用，请稍后重试',
   internal_error: '服务暂时不可用，请稍后重试',
@@ -317,8 +330,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       tokens.set(data.access_token)
       return true
     }
-    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；5xx 是暂时故障，抛给调用方、不清令牌
+    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；
+    // 429（面板或 nginx 限速，同一出口 IP 后面人多时会碰到）与 5xx 是暂时故障，抛给调用方、不清令牌
     const error = await readError(res)
+    if (error.status === 429) throw error
     if (error.status >= 400 && error.status < 500) return false
     throw error
   }
