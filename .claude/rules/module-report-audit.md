@@ -52,3 +52,8 @@ paths:
 ## audit 给 report 的读模型
 
 - `audit/service/report_reads.go` 的 `ActivityByDay`：按站点时区切日统计注册/登录/下单与 `unique_ips`（`ip_hash` 去重）；report 的 `liveActivity` / `RefreshActivity` 只调此端口，不在 report repo 里拼 audit SQL。
+
+## audit 给 identity 溯源总览的读（`service/trace_reads.go`，2026-10-20）
+- `TraceIPs`（按来源 IP 聚合，只算 actor_kind 为 user / anonymous、带 ip_hash 的事件；窗口总数用窗口函数随行带回）与 `TraceUsers`（按用户聚合，带每人最多 100 个 IP 与是否和别人共用）；各一条 SQL，走 `audit_events_time_idx`。排序列只从 repo 的白名单取（`traceUserSort`），拼进 SQL 的不是用户输入。
+- 按明文补查的 IP 在这里做 `netip` 规范写法再算 `InfoHMACIP`；数组参数以文本字面量传（`CAST(? AS text[])`），GORM 会把切片展开成列表。
+- 「显示」明文 IP 记 `security.source_ip_viewed`，`data.view` = `ViewTrace`（`"trace"`）。
