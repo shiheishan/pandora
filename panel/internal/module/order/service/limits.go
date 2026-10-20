@@ -51,7 +51,7 @@ func (s *Service) checkSubscriptionCap(ctx context.Context, userID uuid.UUID, ma
 	if err != nil {
 		return err
 	}
-	liveMap, err := s.subs.LiveSubscriptionCounts(ctx, []uuid.UUID{userID}, now)
+	liveMap, err := s.subs.LiveCountsByUser(ctx, []uuid.UUID{userID}, now)
 	if err != nil {
 		return err
 	}

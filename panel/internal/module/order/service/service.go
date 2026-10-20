@@ -93,8 +93,8 @@ type Subscriptions interface {
 	ResetsUsed(ctx context.Context, subID uuid.UUID) (int, error)
 	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
 	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
-	// LiveSubscriptionCounts 是每个用户此刻生效中的订阅份数：下单检查每人订阅数上限
-	LiveSubscriptionCounts(ctx context.Context, userIDs []uuid.UUID, now time.Time) (map[uuid.UUID]int, error)
+	// LiveCountsByUser 是每个用户此刻生效中的订阅份数：下单检查每人订阅数上限
+	LiveCountsByUser(ctx context.Context, userIDs []uuid.UUID, now time.Time) (map[uuid.UUID]int, error)
 }
 
 // Payments 是 payment service 用到的面。

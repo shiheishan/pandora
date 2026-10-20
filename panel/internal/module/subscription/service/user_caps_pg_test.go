@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestLiveSubscriptionCounts(t *testing.T) {
+func TestLiveCountsByUser(t *testing.T) {
 	e := newEnv(t)
 	ctx := e.txCtx()
 	now := e.svc.clock()
@@ -25,7 +25,7 @@ func TestLiveSubscriptionCounts(t *testing.T) {
 	// status 还停在 active、但已走过到期日（过期扫描没赶上）：不算生效（关窗要求 status = expired，由 A 的过期那份覆盖）
 	e.exec(t, ctx, `UPDATE subscriptions SET current_period_start = now() - interval '2 days', current_period_end = now() - interval '1 day' WHERE id = ?`, subB.ID)
 
-	got, err := e.svc.LiveSubscriptionCounts(ctx, []uuid.UUID{userA, userB, userC}, now)
+	got, err := e.svc.LiveCountsByUser(ctx, []uuid.UUID{userA, userB, userC}, now)
 	if err != nil {
 		t.Fatalf("批量读: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestLiveSubscriptionCounts(t *testing.T) {
 	}
 
 	for _, ids := range [][]uuid.UUID{nil, {}} {
-		m, err := e.svc.LiveSubscriptionCounts(ctx, ids, now)
+		m, err := e.svc.LiveCountsByUser(ctx, ids, now)
 		if err != nil {
 			t.Fatalf("空 userIDs: %v", err)
 		}
