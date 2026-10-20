@@ -20,6 +20,7 @@ UNIT_DIR="${PANDORA_UNIT_DIR:-/etc/systemd/system}"
 STATE_DIR="/var/lib/pandora-native"
 IDENTITY_DIR="${STATE_DIR}/identity"
 SERVICE="pandora-native"
+UPGRADE_UNIT="pandora-native-upgrade"
 PANEL_ADDR="" CA_SHA256="" TOKEN="" ORIGIN="" CURL_PROTO="" ARCH="" ARTIFACT=""
 TMP="" ENROLLED=0 DONE=0
 
@@ -299,6 +300,8 @@ pandora_write_unit() {
 Description=Pandora NativeCore node agent
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -338,6 +341,40 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# 写入节点在线升级触发器（path 单元）与 root 侧升级助手服务（service 单元）。
+# path 单元监听请求与残留进行态；service 单元执行 upgrade-apply 进行验签、替换与回退。
+pandora_write_upgrade_units() {
+  cat >"$1" <<PATHUNIT
+[Unit]
+Description=Pandora NativeCore upgrade trigger
+
+[Path]
+PathExists=/var/lib/pandora-native/upgrade/request
+PathExists=/var/lib/pandora-native-upgrade/applying
+Unit=pandora-native-upgrade.service
+
+[Install]
+WantedBy=multi-user.target
+PATHUNIT
+
+  cat >"$2" <<HELPERUNIT
+[Unit]
+Description=Pandora NativeCore upgrade helper
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=${INSTALL_DIR}/${SERVICE} upgrade-apply
+TimeoutStartSec=600
+UMask=0077
+StateDirectory=pandora-native-upgrade
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+HELPERUNIT
+}
+
 pandora_prepare_files() {
   install -d -o root -g pandora -m 0750 "$CONFIG_DIR"
   mkdir -p "$UNIT_DIR"
@@ -347,6 +384,8 @@ pandora_prepare_files() {
   chmod 0640 "${CONFIG_DIR}/config.json.new"
   pandora_write_unit "${UNIT_DIR}/${SERVICE}.service.new"
   chmod 0644 "${UNIT_DIR}/${SERVICE}.service.new"
+  pandora_write_upgrade_units "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service.new"
+  chmod 0644 "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service.new"
 }
 
 pandora_validate() {
@@ -360,11 +399,14 @@ pandora_commit_files() {
   mv -f "${INSTALL_DIR}/${SERVICE}.new" "${INSTALL_DIR}/${SERVICE}"
   mv -f "${CONFIG_DIR}/config.json.new" "${CONFIG_DIR}/config.json"
   mv -f "${UNIT_DIR}/${SERVICE}.service.new" "${UNIT_DIR}/${SERVICE}.service"
+  mv -f "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.path"
+  mv -f "${UNIT_DIR}/${UPGRADE_UNIT}.service.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service"
 }
 
 pandora_start() {
   systemctl daemon-reload
   systemctl enable "$SERVICE" >/dev/null
+  systemctl enable --now "${UPGRADE_UNIT}.path" >/dev/null
   systemctl restart "$SERVICE"
   local i=0
   while (( i < 15 )); do
@@ -385,7 +427,7 @@ pandora_cleanup() {
   local rc=$?
   trap - EXIT
   [[ -n "$TMP" ]] && rm -rf "$TMP"
-  rm -f "${INSTALL_DIR}/${SERVICE}.new" "${CONFIG_DIR}/config.json.new" "${UNIT_DIR}/${SERVICE}.service.new"
+  rm -f "${INSTALL_DIR}/${SERVICE}.new" "${CONFIG_DIR}/config.json.new" "${UNIT_DIR}/${SERVICE}.service.new" "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service.new"
   if [[ $rc -ne 0 && $DONE -ne 1 ]]; then
     if [[ $ENROLLED -eq 1 ]]; then
       echo "已接入面板，但安装没有完成：处理上面的错误后，在后台重新签发令牌再跑安装命令" >&2

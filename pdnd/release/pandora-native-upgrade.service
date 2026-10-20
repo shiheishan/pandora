@@ -1,0 +1,17 @@
+# 节点在线升级的 root 侧助手（只由 pandora-native-upgrade.path 触发）：用已安装的 root 属主二进制自己内置的公钥
+# 验签、核摘要，替换 /usr/local/bin/pandora-native 并重启 pandora-native，在时限内等新进程连上面板，否则装回旧版。
+# TimeoutStartSec 覆盖：确认时限至多 300 秒 + 两次重启（各至多 90 秒）+ 拷贝与校验。
+[Unit]
+Description=Pandora NativeCore upgrade helper
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/pandora-native upgrade-apply
+TimeoutStartSec=600
+UMask=0077
+StateDirectory=pandora-native-upgrade
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
