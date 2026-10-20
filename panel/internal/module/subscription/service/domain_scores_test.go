@@ -220,13 +220,15 @@ func TestDomainScoresReadFlushes(t *testing.T) {
 	}
 }
 
-// 读分 = 全国分 + 省偏移 + 省|运营商偏移：只有自己那一级的偏移参与，别的地区、别的运营商不参与。
+// 读分逐级夹：读_省 = clamp(全国 + 省偏移)，读_省|运营商 = clamp(读_省 + 省|运营商偏移)；只有自己那一级的偏移参与，
+// 别的地区、别的运营商不参与。
 func TestDomainScoresReadSumsLevels(t *testing.T) {
 	_, rdb := testkit.Redis(t)
 	d := newDomainScores(rdb)
 	ctx := context.Background()
 	a := "https://a.example.test"
 	b := "https://b.example.test"
+	c := "https://c.example.test"
 	fj := domainRegion{Province: "福建", ISP: ispTelecom}
 
 	if err := d.Apply(ctx, map[string]map[string]float64{
@@ -266,11 +268,12 @@ func TestDomainScoresReadSumsLevels(t *testing.T) {
 		t.Fatalf("6 小时后福建电信读 a = %v，要 1.25 − 0.25 + 0.5 = 1.5", scores[a])
 	}
 
-	// 偏移本身夹在 [−2.9, 2.9]，读分再夹进 [0.1, 3]
+	// 写偏移时按上一级当前读分夹：b 全国 1，省偏移最多 +2（读_省 = 3）；省|运营商按读_省 3 夹，最多 −2.9（读 0.1）。
+	// 省偏移不攒超出上限的余量，所以省|运营商的失败照样能把当地压到下限（复审阻塞 1 场景一）
 	if err := d.Apply(ctx, map[string]map[string]float64{b: {"福建": 10, "福建|电信": -10}}, t0); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	for field, want := range map[string]float64{"福建": domainOffsetMax, "福建|电信": domainOffsetMin} {
+	for field, want := range map[string]float64{"福建": 2, "福建|电信": -2.9} {
 		v, at, ok := parseScore(rdb.HGet(ctx, domainScoreKeyFor(b), field).Val())
 		if !ok || !at.Equal(t0) || !almost(v, want, 1e-9) {
 			t.Fatalf("b[%s] = (%v, %v, %v)，要 %v", field, v, at, ok, want)
@@ -278,11 +281,20 @@ func TestDomainScoresReadSumsLevels(t *testing.T) {
 	}
 	scores, _ = d.Read(ctx, []string{b}, domainRegion{Province: "福建", ISP: ispUnicom}, t0)
 	if !almost(scores[b], domainScoreMax, 1e-3) {
-		t.Fatalf("福建联通读 b = %v，要夹到上限 3", scores[b])
+		t.Fatalf("福建联通读 b = %v，要上限 3", scores[b])
 	}
 	scores, _ = d.Read(ctx, []string{b}, fj, t0)
-	if !almost(scores[b], 1, 1e-3) {
-		t.Fatalf("福建电信读 b = %v，要 1 + 2.9 − 2.9 = 1", scores[b])
+	if !almost(scores[b], domainScoreMin, 1e-3) {
+		t.Fatalf("福建电信读 b = %v，要 clamp(3 − 2.9) = 0.1", scores[b])
+	}
+
+	// 读分逐级夹：全国被别处拉高后，旧的正偏移超出上限的部分对下一级不可见（读_省 封顶 3，省|运营商在 3 的基础上减）
+	setLevel(t, rdb, c, "*", 3, t0)
+	setLevel(t, rdb, c, "福建", 2.9, t0)
+	setLevel(t, rdb, c, "福建|电信", -1, t0)
+	scores, _ = d.Read(ctx, []string{c}, fj, t0)
+	if !almost(scores[c], 2, 1e-3) {
+		t.Fatalf("福建电信读 c = %v，要 clamp(clamp(3 + 2.9) − 1) = 2", scores[c])
 	}
 }
 
@@ -312,7 +324,7 @@ func TestDomainScoresStaleOffsetsAreZero(t *testing.T) {
 		t.Fatalf("福建电信读 a = %v（ok=%v），要 1.5 + 0.5（省偏移衰减一半）+ 0（过期）= 2", scores[a], ok)
 	}
 
-	// 过期的负偏移不会被一次新信号「复活」：按 0 起步再加
+	// 过期的负偏移不会被一次新信号「复活」：按 0 起步再加（这条旧偏移写入时按当时的全国分 1 夹成 −0.9）
 	if err := d.Apply(ctx, map[string]map[string]float64{b: {"福建": -2.9}}, old); err != nil {
 		t.Fatalf("Apply b 旧: %v", err)
 	}
@@ -431,7 +443,8 @@ func waitFlushIdle(t *testing.T, d *domainScores) {
 }
 
 // 完成标准 (a)：任何一次成功信号（拉取 +0.05、探测成功）都不会让该域名在任何地区读到的分数比写入前低。
-// 覆盖细分级在上下限、已过期的负偏移（写入时按 0 起步，读也按 0，不会被「复活」）、没有记录。
+// 覆盖读分在上下限（偏移已按上一级夹满）、全国被别处拉高后留下的余量（写入时会被夹掉，但读分逐级夹，余量本来就不可见）、
+// 已过期的负偏移（写入时按 0 起步，读也按 0，不会被「复活」）、没有记录。
 func TestDomainScoresSuccessNeverLowers(t *testing.T) {
 	a := "https://a.example.test"
 	fj := domainRegion{Province: "福建", ISP: ispTelecom}
@@ -447,8 +460,10 @@ func TestDomainScoresSuccessNeverLowers(t *testing.T) {
 	}
 	states := map[string][]level{
 		"没有记录":      nil,
-		"全国上限、偏移上限": {{"*", 3, fresh}, {"福建", 2.9, fresh}, {"福建|电信", 2.9, fresh}},
-		"全国下限、偏移下限": {{"*", 0.1, fresh}, {"福建", -2.9, fresh}, {"福建|电信", -2.9, fresh}},
+		"读分在上限":     {{"*", 2, fresh}, {"福建", 1, fresh}, {"福建|电信", 0, fresh}, {"福建|联通", 0, fresh}},
+		"读分在下限":     {{"*", 1, fresh}, {"福建", -0.9, fresh}, {"福建|电信", 0, fresh}, {"福建|联通", 0, fresh}},
+		"省|运营商压到下限": {{"*", 3, fresh}, {"福建", 0, fresh}, {"福建|电信", -2.9, fresh}},
+		"全国拉高后的余量":  {{"*", 3, fresh}, {"福建", 2.9, fresh}, {"福建|电信", 1.5, fresh}, {"福建|联通", -1, fresh}},
 		"过期的负偏移":    {{"*", 2, fresh}, {"福建", -2.9, stale}, {"福建|电信", -2.9, stale}},
 		"新旧混合":      {{"*", 1.5, stale}, {"福建", 1, fresh}, {"福建|电信", -2, stale}, {"福建|联通", -1, fresh}},
 	}

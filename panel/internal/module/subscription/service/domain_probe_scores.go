@@ -3,7 +3,8 @@
 // 每个域名每小时每一级探测净变动封顶 ±0.5。以上在一段 Lua 里原子完成，一次上报一次 Redis 往返。
 // 一次上报按上报者 IP 的地区同时作用于全国 / 省 / 省|运营商三级（地区不可用只作用于全国），人数门槛与净变动封顶按级别分开计：
 // 全国一级 3 个账号；省、省|运营商要 5 个——小桶里能抵消的真实拉取少，门槛更高（10-20 审查应改 1）。
-// 全国加减在绝对分上，细分级加减在相对上一级的偏移上（domain_scores.go），所以细分级的封顶就是「相对上一级每小时最多偏 0.5」。
+// 全国加减在绝对分上，细分级加减在相对上一级的偏移上（domain_scores.go），所以细分级的封顶就是「相对上一级每小时最多偏 0.5」；
+// 偏移写入时按上一级当前读分夹，超出读分上下限的那部分不计入分数（net 记的是请求的变动量，封顶只会更紧）。
 // seen 去重仍按账号 × 域名。
 // 拉取成功信号不走这里：它是真实流量，已按令牌主人所在组、同一凭据每小时一次计。
 
@@ -47,13 +48,13 @@ type probeSignal struct {
 // applyProbeScript 原子处理一次探测上报。
 // KEYS[1] = 票据键；每条信号占 2+3*nl 个键：分数 hash、seen、再对每个 field 各 ok 集合、fail 集合、net。
 // ARGV[1..13]：now 毫秒、半衰期毫秒、全国分下限、上限、分数 TTL 毫秒、票据 TTL 毫秒、去重毫秒、全国一级最少人数、窗口毫秒、
-// 封顶、成功分、失败分、acct；ARGV[14] = 细分级最少人数；ARGV[15]、ARGV[16] = 偏移下限、上限；ARGV[17] = 细分级新鲜度毫秒；
-// ARGV[18] = nl（级别数）；接着 nl 个 field（第一个是全国 "*"）；接着每条信号一个 okFlag（"1" / "0"）。
+// 封顶、成功分、失败分、acct；ARGV[14] = 细分级最少人数；ARGV[15] = 细分级新鲜度毫秒；
+// ARGV[16] = nl（级别数）；接着 nl 个 field（从粗到细，第一个是全国 "*"，按这个顺序写，下一级按更新后的上一级夹）；
+// 接着每条信号一个 okFlag（"1" / "0"）。
 var applyProbeScript = redis.NewScript(luaApplyDelta + `
 if not redis.call('SET', KEYS[1], '1', 'NX', 'PX', ARGV[6]) then return 0 end
 local now = tonumber(ARGV[1])
-local cfg = {hl = tonumber(ARGV[2]), lo = tonumber(ARGV[3]), hi = tonumber(ARGV[4]),
-  olo = tonumber(ARGV[15]), ohi = tonumber(ARGV[16]), fresh = tonumber(ARGV[17])}
+local cfg = {hl = tonumber(ARGV[2]), lo = tonumber(ARGV[3]), hi = tonumber(ARGV[4]), fresh = tonumber(ARGV[15])}
 local ttl = tonumber(ARGV[5])
 local dedupe = tonumber(ARGV[7])
 local minrepAll = tonumber(ARGV[8])
@@ -63,8 +64,8 @@ local cap = tonumber(ARGV[10])
 local succ = tonumber(ARGV[11])
 local fail = tonumber(ARGV[12])
 local acct = ARGV[13]
-local nl = tonumber(ARGV[18])
-local fbase = 19
+local nl = tonumber(ARGV[16])
+local fbase = 17
 local per = 2 + 3 * nl
 local n = (#KEYS - 1) / per
 local applied = 0
@@ -134,8 +135,6 @@ func (d *domainScores) ApplyProbe(ctx context.Context, acct, nonce string, regio
 		scoreProbeFailure,
 		acct,
 		probeMinReportersRegional,
-		domainOffsetMin,
-		domainOffsetMax,
 		domainScoreFresh.Milliseconds(),
 		nl,
 	}

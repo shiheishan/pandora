@@ -1,7 +1,9 @@
 // 订阅域名的分数（Redis，多进程共享）：有效权重 = 基础权重 × 分数，按分数放大或缩小一个域名的被选中概率。
 // 每个域名一个 hash（key = subdom:score:<base_url>），field 为全国 "*"、省、省|运营商三级：
-// 全国存绝对分（向 1 衰减、夹在 [domainScoreMin, domainScoreMax]）；省存相对全国的偏移、省|运营商存相对省的偏移
-// （向 0 衰减、夹在 [domainOffsetMin, domainOffsetMax]）。读分 = clamp(全国分 + 省偏移 + 省|运营商偏移, 0.1, 3)，
+// 全国存绝对分（向 1 衰减）；省存相对全国的偏移、省|运营商存相对省的偏移（向 0 衰减）。读分逐级夹：
+// 读_全国 = clamp(全国分)，读_省 = clamp(读_全国 + 省偏移)，读_省|运营商 = clamp(读_省 + 省|运营商偏移)，clamp 到 [0.1, 3]；
+// 写偏移时按上一级当前的读分把偏移夹到 [0.1 − 上一级, 3 − 上一级]，细分级不攒超出上下限的「看不见的余量」
+// （否则拉取多的省把省偏移顶满后，某个运营商被封、失败压满也读不出来，10-20 复审阻塞 1）。
 // 某一级 24 小时内没写过（domainScoreFresh）偏移按 0 算；全国分不受新鲜度约束（与分桶前一致）。
 // 这样同组的域名在任何地区都按同一口径（全国分）比较，细分级只在它之上加减，样本少的地区不会把全国分盖掉。
 // 一次信号的加减量加在它写到的每一级上（地区不可用只写 "*"）：成功信号在全国加在绝对分上、在细分级加在偏移上，
@@ -45,9 +47,6 @@ const (
 	domainScoreMin = 0.1
 	// domainScoreMax 是分数上限（防止单个域名独占流量）。
 	domainScoreMax = 3.0
-	// domainOffsetMin、domainOffsetMax 是细分级偏移的界：单独一级就能把读分从任一端推到另一端，读分最后再夹进 [0.1, 3]。
-	domainOffsetMin = domainScoreMin - domainScoreMax
-	domainOffsetMax = domainScoreMax - domainScoreMin
 	// scorePullSuccess 是一次经该域名的正常订阅拉取加的分。
 	scorePullSuccess = 0.05
 	// scoreProbeSuccess 是探测页报告一次「连得上」加的分（要满足多人规则才生效，见 domain_probe_scores.go）。
@@ -66,37 +65,58 @@ const (
 	domainScoreTimeout = 2 * time.Second
 	// domainScoreNeutral 是中性分数（没有记录、不可用时的缺省值）。
 	domainScoreNeutral = 1.0
-	// domainOffsetNeutral 是细分级的中性偏移（没有记录、已不新鲜时的缺省值）。
-	domainOffsetNeutral = 0.0
 )
 
 // domainScoreKeyFor 返回某域名分数 hash 的 Redis 键。
 func domainScoreKeyFor(baseURL string) string { return domainScoreKeyPrefix + baseURL }
 
 // luaApplyDelta 定义 Lua 函数 apply_delta(key, field, delta, now, cfg)，cfg 是各脚本从 ARGV 组好的参数表
-// {hl, lo, hi, olo, ohi, fresh}（半衰期、全国分的界、偏移的界、细分级新鲜度，单位毫秒）。
-// 全国一级（field "*"）是绝对分：读旧值 "<score>|<毫秒>"，能解析就先向 1 衰减到 now，再加 delta、夹到 [lo, hi]；
-// 解析不了按 1 起步。细分级是偏移：向 0 衰减、夹到 [olo, ohi]；解析不了或超过 fresh 没写过按 0 起步（与读分口径一致，
-// 过期的旧偏移不会被一次新信号「复活」）。写回时带上 now。
+// {hl, lo, hi, fresh}（半衰期、读分的上下限、细分级新鲜度，时间单位毫秒）。
+// stored 取某一级衰减到 now 的存储值：全国向 1 衰减；细分级向 0 衰减；没有、解析不了、（细分级）超过 fresh 没写过回中性值
+// （全国 1、细分级 0；过期的旧偏移不会被一次新信号「复活」）。level_read 是某一级当前的读分，逐级夹，与 Go 的 combineLevels 同口径。
+// apply_delta：全国一级先衰减、再加 delta、夹到 [lo, hi]；细分级先算上一级当前的读分 p（同一 hash、同一脚本里，
+// 调用方保证先写上一级，所以 p 是更新后的值），把旧偏移先夹到 [lo − p, hi − p] 去掉余量，再加 delta、再夹一次。写回时带上 now。
 const luaApplyDelta = `
-local function apply_delta(key, field, delta, now, cfg)
+local function clamp(v, lo, hi)
+  return math.min(math.max(v, lo), hi)
+end
+local function stored(key, field, now, cfg)
   local offset = field ~= '*'
-  local neutral, lo, hi = 1, cfg.lo, cfg.hi
-  if offset then neutral, lo, hi = 0, cfg.olo, cfg.ohi end
-  local s = neutral
+  local neutral = 1
+  if offset then neutral = 0 end
   local old = redis.call('HGET', key, field)
-  if old then
-    local sep = string.find(old, '|', 1, true)
-    if sep then
-      local sc = tonumber(string.sub(old, 1, sep - 1))
-      local ts = tonumber(string.sub(old, sep + 1))
-      if sc and ts and not (offset and now - ts > cfg.fresh) then
-        local age = math.max(now - ts, 0)
-        s = neutral + (sc - neutral) * math.pow(0.5, age / cfg.hl)
-      end
-    end
+  if not old then return neutral end
+  local sep = string.find(old, '|', 1, true)
+  if not sep then return neutral end
+  local sc = tonumber(string.sub(old, 1, sep - 1))
+  local ts = tonumber(string.sub(old, sep + 1))
+  if not sc or not ts or sc ~= sc then return neutral end
+  if offset and now - ts > cfg.fresh then return neutral end
+  local age = math.max(now - ts, 0)
+  return neutral + (sc - neutral) * math.pow(0.5, age / cfg.hl)
+end
+local function level_read(key, field, now, cfg)
+  local r = clamp(stored(key, '*', now, cfg), cfg.lo, cfg.hi)
+  if field == '*' then return r end
+  local sep = string.find(field, '|', 1, true)
+  local prov = field
+  if sep then prov = string.sub(field, 1, sep - 1) end
+  r = clamp(r + stored(key, prov, now, cfg), cfg.lo, cfg.hi)
+  if sep then r = clamp(r + stored(key, field, now, cfg), cfg.lo, cfg.hi) end
+  return r
+end
+local function apply_delta(key, field, delta, now, cfg)
+  local s
+  if field == '*' then
+    s = clamp(stored(key, field, now, cfg) + delta, cfg.lo, cfg.hi)
+  else
+    local sep = string.find(field, '|', 1, true)
+    local parent = '*'
+    if sep then parent = string.sub(field, 1, sep - 1) end
+    local p = level_read(key, parent, now, cfg)
+    local lo, hi = cfg.lo - p, cfg.hi - p
+    s = clamp(clamp(stored(key, field, now, cfg), lo, hi) + delta, lo, hi)
   end
-  s = math.min(math.max(s + delta, lo), hi)
   redis.call('HSET', key, field, string.format('%.4f|%d', s, now))
 end
 `
@@ -150,14 +170,6 @@ func decayOffset(offset float64, at, now time.Time) float64 {
 	return offset * math.Pow(0.5, age.Seconds()/domainScoreHalfLife.Seconds())
 }
 
-// clampOffset 把细分级偏移夹进 [domainOffsetMin, domainOffsetMax]；NaN 当 0。
-func clampOffset(v float64) float64 {
-	if math.IsNaN(v) {
-		return domainOffsetNeutral
-	}
-	return math.Min(math.Max(v, domainOffsetMin), domainOffsetMax)
-}
-
 // clampScore 把分数夹进 [domainScoreMin, domainScoreMax]；NaN 当中性分 1。
 func clampScore(v float64) float64 {
 	if math.IsNaN(v) {
@@ -198,8 +210,9 @@ func parseScore(v string) (score float64, at time.Time, ok bool) {
 }
 
 // Read 批量读分数，返回 base_url → 读分（map 含全部 baseURLs，没有记录的当 1）。
-// 读分 = clamp(全国分 + 省偏移 + 省|运营商偏移)：全国分没有记录当 1、不看新鲜度，向 1 衰减；
-// region 决定读哪几级偏移（零值只读全国），偏移超过 domainScoreFresh 没写或解析不了当 0，向 0 衰减。
+// 读分逐级夹：读_全国 = clamp(全国分)，读_省 = clamp(读_全国 + 省偏移)，读_省|运营商 = clamp(读_省 + 省|运营商偏移)；
+// 全国分没有记录当 1、不看新鲜度，向 1 衰减；region 决定读到哪一级（零值只读全国），
+// 偏移超过 domainScoreFresh 没写、解析不了或是 NaN 当 0，向 0 衰减。
 // 第二个返回值是 Redis 是否可用：不可用（没注入、读失败）时调用方按基础权重选域名。
 // baseURLs 为空不碰 Redis，也算可用。
 func (d *domainScores) Read(ctx context.Context, baseURLs []string, region domainRegion, now time.Time) (map[string]float64, bool) {
@@ -231,7 +244,8 @@ func (d *domainScores) Read(ctx context.Context, baseURLs []string, region domai
 	return out, true
 }
 
-// combineLevels 把一个域名 HMGET 回来的各级值合成读分；vals 与 fields 一一对应（fields[0] 是全国 "*"）。
+// combineLevels 把一个域名 HMGET 回来的各级值逐级夹成读分；vals 与 fields 一一对应（fields[0] 是全国 "*"，往后从粗到细）。
+// 与 Lua 的 level_read 同口径：写偏移时按的上一级读分，就是这里算到上一级时的值。
 func combineLevels(fields []string, vals []any, now time.Time) float64 {
 	raw := func(j int) (float64, time.Time, bool) {
 		if j >= len(vals) {
@@ -243,29 +257,28 @@ func combineLevels(fields []string, vals []any, now time.Time) float64 {
 		}
 		return parseScore(v)
 	}
-	total := domainScoreNeutral
+	read := domainScoreNeutral
 	if score, at, ok := raw(0); ok {
-		total = clampScore(decayScore(score, at, now))
+		read = clampScore(decayScore(score, at, now))
 	}
 	for j := 1; j < len(fields); j++ {
 		off, at, ok := raw(j)
-		if !ok || now.Sub(at) > domainScoreFresh {
+		if !ok || math.IsNaN(off) || now.Sub(at) > domainScoreFresh {
 			continue
 		}
-		total += clampOffset(decayOffset(off, at, now))
+		read = clampScore(read + decayOffset(off, at, now))
 	}
-	return clampScore(total)
+	return read
 }
 
 // applyScoresScript 原子地把一批加量套到多个域名分数 hash 上：
-// KEYS[i] = 某域名的 hash 键；ARGV[1] = now 毫秒；ARGV[2] = 半衰期毫秒；ARGV[3]、ARGV[4] = 全国分下限、上限；
-// ARGV[5] = 每个 key 的 TTL 毫秒；ARGV[6]、ARGV[7] = 偏移下限、上限；ARGV[8] = 细分级新鲜度毫秒；
-// 随后每个 key 一段：field 个数 n，再 n 组 (field, delta)。
+// KEYS[i] = 某域名的 hash 键；ARGV[1] = now 毫秒；ARGV[2] = 半衰期毫秒；ARGV[3]、ARGV[4] = 读分下限、上限；
+// ARGV[5] = 每个 key 的 TTL 毫秒；ARGV[6] = 细分级新鲜度毫秒；
+// 随后每个 key 一段：field 个数 n，再 n 组 (field, delta)；field 按字典序，上一级是下一级的前缀、排在前面，先写。
 var applyScoresScript = redis.NewScript(luaApplyDelta + `
 local now = tonumber(ARGV[1])
-local cfg = {hl = tonumber(ARGV[2]), lo = tonumber(ARGV[3]), hi = tonumber(ARGV[4]),
-  olo = tonumber(ARGV[6]), ohi = tonumber(ARGV[7]), fresh = tonumber(ARGV[8])}
-local p = 9
+local cfg = {hl = tonumber(ARGV[2]), lo = tonumber(ARGV[3]), hi = tonumber(ARGV[4]), fresh = tonumber(ARGV[6])}
+local p = 7
 for k = 1, #KEYS do
   local n = tonumber(ARGV[p])
   p = p + 1
@@ -278,7 +291,8 @@ end
 return 1
 `)
 
-// Apply 把一批加减量原子地套到分数上（base 与 field 均按字典序排好，保证同一批的参数顺序稳定）。
+// Apply 把一批加减量原子地套到分数上（base 与 field 均按字典序排好，保证同一批的参数顺序稳定；
+// "*" 排在所有省前面、省是省|运营商的前缀，所以同一 hash 里总是先写上一级，下一级按更新后的上一级夹）。
 // deltas 为 base_url → field → 加减量：全国 "*" 加在绝对分上，省、省|运营商加在各自的偏移上。没注入 Redis 或 deltas 为空时什么都不做。
 func (d *domainScores) Apply(ctx context.Context, deltas map[string]map[string]float64, now time.Time) error {
 	if d == nil || d.rdb == nil || len(deltas) == 0 {
@@ -305,8 +319,6 @@ func (d *domainScores) Apply(ctx context.Context, deltas map[string]map[string]f
 		domainScoreMin,
 		domainScoreMax,
 		domainScoreTTL.Milliseconds(),
-		domainOffsetMin,
-		domainOffsetMax,
 		domainScoreFresh.Milliseconds(),
 	}
 	for _, base := range bases {
@@ -371,7 +383,7 @@ func (d *domainScores) NoteSuccess(ctx context.Context, baseURL, credKey string,
 
 // expandBuckets 把攒批桶展开成 Apply 要的 base → field → delta：一个桶的加量写到它的每一级上
 // （全国加绝对分、省与省|运营商加偏移）；同一域名不同地区的信号在全国一级 "*"、同省不同运营商的在省一级相加。
-// 每级加量封顶 domainScoreMax - domainScoreMin（与 domainOffsetMax 相同，再多也只会被夹回上限）。
+// 每级加量封顶 domainScoreMax - domainScoreMin（再多也只会被夹回上限）。
 func expandBuckets(batch map[scoreBucket]float64) map[string]map[string]float64 {
 	out := make(map[string]map[string]float64)
 	most := domainScoreMax - domainScoreMin
