@@ -44,7 +44,7 @@ const UsersChunkSize = 500
 const UsersDeltaMax = 5000
 
 // panelFeatures 是面板支持的可选能力。
-var panelFeatures = []string{FeatureUsersDelta}
+var panelFeatures = []string{FeatureUsersDelta, FeatureUpgradeV1}
 
 // 会话结束的原因（传输层译成 gRPC 状态码）。
 var (
@@ -72,6 +72,8 @@ type SessionBackend interface {
 	RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error
 	RecordHeartbeat(ctx context.Context, serverID uuid.UUID, nodes []NodeRuntime, at time.Time) error
 	RecordConfigAck(ctx context.Context, serverID uuid.UUID, ack ConfigAck, at time.Time) error
+	// RecordUpgradeReport 按节点回报对账升级任务（upgrades.go）
+	RecordUpgradeReport(ctx context.Context, serverID uuid.UUID, r UpgradeReport, at time.Time) error
 }
 
 // SessionOptions 是会话管理的参数；零值项取缺省（见 withDefaults）。
