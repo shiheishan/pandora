@@ -89,7 +89,7 @@ jobs:
           fi
       - name: Upload results and client configs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: subscription-e2e
           path: |
