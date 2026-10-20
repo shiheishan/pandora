@@ -2,7 +2,7 @@ import { RuntimeProvider, useSignedIn, type AppRuntime } from '../shell/runtime'
 import { LoginPage } from './LoginPage'
 import { ReauthDialog } from './ReauthDialog'
 import type { ReauthController } from './reauth'
-import { Shell } from './Shell'
+import { ShellLoader } from './ShellLoader'
 
 export function App({ runtime, reauth }: { runtime: AppRuntime; reauth: ReauthController }) {
   return (
@@ -14,5 +14,5 @@ export function App({ runtime, reauth }: { runtime: AppRuntime; reauth: ReauthCo
 }
 
 function Root() {
-  return useSignedIn() ? <Shell /> : <LoginPage />
+  return useSignedIn() ? <ShellLoader /> : <LoginPage />
 }

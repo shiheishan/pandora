@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isChunkLoadError } from './ScreenFrame'
+import { isChunkLoadError } from './chunk-error'
 
 describe('isChunkLoadError', () => {
   it('recognizes failed dynamic imports in Chromium, Firefox and Safari', () => {

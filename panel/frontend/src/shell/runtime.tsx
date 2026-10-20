@@ -4,7 +4,7 @@ import { createApiClient, isApiError, noContent, type ApiClient } from '../core/
 import { createQueryClient, createRealtimeInvalidator } from '../core/query'
 import { openEventStream, type SseEvent } from '../core/sse'
 import { createTokenStore, type AppName, type TokenStore } from '../core/token'
-import { ToastProvider } from '../ui'
+import { ToastProvider } from '../ui/Toast'
 
 // ---------------------------------------------------------------------------
 // 每个入口一份运行时：两个网关的令牌互不通用，后台还要注入 reauth 对话框，

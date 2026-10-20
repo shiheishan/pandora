@@ -4,10 +4,10 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { z } from 'zod'
 import { Logo } from '../shell/Logo'
 import { useRuntime } from '../shell/runtime'
-import { useToast } from '../ui'
+import { useToast } from '../ui/Toast'
 import { hasLoginErrors, loginFailure, validateLogin, type LoginErrors } from './login-form'
 import css from './LoginPage.module.css'
-import { documentSiteName } from './site'
+import { documentSiteName } from './site-name'
 
 const loginSchema = z.object({
   access_token: z.string().min(1),

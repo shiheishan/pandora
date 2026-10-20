@@ -5,7 +5,7 @@ import { passwordStrength } from './ChangePasswordDialog'
 import { hasOwnHead, isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
 import { PAGE_HELP, pageHelp } from './page-help'
 import { createReauthController } from './reauth'
-import { documentSiteName } from './site'
+import { documentSiteName } from './site-name'
 import { formatWait, navBadges, taskCount, tasksSchema, ticketAlert } from './tasks'
 
 describe('documentSiteName', () => {
