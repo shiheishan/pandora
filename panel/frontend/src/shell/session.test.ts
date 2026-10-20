@@ -116,10 +116,13 @@ describe('createSessionTracker', () => {
     const refresh = vi
       .fn()
       .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(() => {
-        tokens.set('t')
-        return Promise.resolve(true)
-      })
+      // 令牌在 refresh 返回之后才写：同步写的话 retry() 一调用就已是 signed-in，看不到 unknown
+      .mockImplementationOnce(() =>
+        Promise.resolve().then(() => {
+          tokens.set('t')
+          return true
+        }),
+      )
     const session = createSessionTracker({ tokens, refresh })
     first.reject(new Error('503'))
     await waitForState(() => session.get(), 'unavailable')
