@@ -117,19 +117,28 @@ func (r *Repo) TraceIPs(ctx context.Context, since time.Time, limit int, extraHe
 	return rows, nil
 }
 
-// traceUsersSQL 取头部。原表只扫一遍、先窄聚合到 (user_id, ip_hash, ua_hash, ua_family) 一行（g），
-// 后面的 ui / shared / u / us 都从 g 派生：被引用多次而物化的只是分组后的行，不是整窗原始行。%s 是排序列。
+// traceUsersSQL 取头部。原表只扫一遍、先按凭据窄聚合（gc，不连表），再连凭据并到 (user_id, ip_hash, ua_hash, ua_family) 一行（g），
+// 后面的 ui / shared / u / us 都从 g 派生：被引用多次而物化的只是分组后的行，不是整窗原始行。
+// 先按凭据分组：整窗原始行不用先连表再排序，30 天 400 万行实测 7.2–8.4 秒降到 6.0–6.4 秒，结果逐行相同。%s 是排序列。
 const traceUsersSQL = `
-WITH g AS (
-  SELECT c.user_id, f.ip_hash, f.ua_hash, f.ua_family,
+WITH gc AS (
+  SELECT f.credential_id, f.ip_hash, f.ua_hash, f.ua_family,
          count(*)::int AS n,
          (count(*) FILTER (WHERE f.result <> 'ok'))::int AS failed,
          max(f.fetched_at) AS last_at,
          max(f.ip_enc) AS ip_enc
     FROM subscription_fetch_log f
-    JOIN subscription_credentials c ON c.id = f.credential_id
-   WHERE f.fetched_at > ?
-   GROUP BY c.user_id, f.ip_hash, f.ua_hash, f.ua_family
+   WHERE f.fetched_at > ? AND f.credential_id IS NOT NULL
+   GROUP BY f.credential_id, f.ip_hash, f.ua_hash, f.ua_family
+), g AS (
+  SELECT c.user_id, gc.ip_hash, gc.ua_hash, gc.ua_family,
+         sum(gc.n)::int AS n,
+         sum(gc.failed)::int AS failed,
+         max(gc.last_at) AS last_at,
+         max(gc.ip_enc) AS ip_enc
+    FROM gc
+    JOIN subscription_credentials c ON c.id = gc.credential_id
+   GROUP BY c.user_id, gc.ip_hash, gc.ua_hash, gc.ua_family
 ), ui AS (
   SELECT user_id, ip_hash, sum(n)::int AS n, max(last_at) AS last_at, max(ip_enc) AS ip_enc
     FROM g
@@ -172,6 +181,8 @@ SELECT p.user_id, p.fetches, p.failures, p.ips, p.ua_kinds, p.families, p.shared
 
 // traceUsersOnlySQL 只补查指定用户：先取这些用户的凭据，按凭据走 subscription_fetch_log_cred_idx，不排名。
 // 「与别人共用」：只把这些用户用过的 ip_hash 拿去和同窗口里别的用户的拉取比（时间窗扫描，只过滤不分组），口径与头部 SQL 的 shared 相同。
+// other 必须 MATERIALIZED：它只被引用一次，不写就被内联进 uis 的 EXISTS，而拉取表没有 ip_hash 索引，
+// 每个 IP 全表扫一遍（30 天 400 万行、1000 个 IP 实测 24 分钟；物化后整窗扫一遍，3.4 秒）。
 const traceUsersOnlySQL = `
 WITH cred AS (
   SELECT id, user_id FROM subscription_credentials WHERE user_id = ANY(CAST(? AS uuid[]))
@@ -190,7 +201,7 @@ WITH cred AS (
     FROM g
    WHERE ip_hash IS NOT NULL
    GROUP BY user_id, ip_hash
-), other AS (
+), other AS MATERIALIZED (
   SELECT DISTINCT f.ip_hash, oc.user_id
     FROM subscription_fetch_log f
     JOIN subscription_credentials oc ON oc.id = f.credential_id

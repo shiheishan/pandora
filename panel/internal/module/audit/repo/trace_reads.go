@@ -23,20 +23,31 @@ type TraceIPRow struct {
 	TotalFailures int       `gorm:"column:total_login_failures"`
 }
 
-// traceIPsSQL 取头部：窗口内按 ip_hash 一次分组，窗口函数随行带回排名与全窗总数，再取前 limit 名并带上指定的 IP。
+// traceIPsSQL 取头部：窗口内先窄聚合到 (ip_hash, user_agent, actor_kind, actor_id) 一行（g，哈希聚合），再按 ip_hash 合并，
+// 窗口函数随行带回排名与全窗总数，再取前 limit 名并带上指定的 IP。不在原表上直接 count(DISTINCT)：那样要按 ip_hash 排好序的输入，
+// 规划器会顺着 audit_events_ip_idx 逐行回表（30 天 113 万行实测中位 4.4 秒，先窄聚合 1.1 秒，结果逐行相同）。
 const traceIPsSQL = `
-WITH ip AS (
-  SELECT ip_hash,
-         count(*)::int AS events,
-         (count(*) FILTER (WHERE action = 'user.login' AND outcome = 'success'))::int AS logins,
-         (count(*) FILTER (WHERE action = 'user.login_failed'))::int AS login_failures,
-         count(DISTINCT user_agent)::int AS ua_kinds,
-         (count(DISTINCT actor_id) FILTER (WHERE actor_kind = 'user'))::int AS accounts,
-         COALESCE(array_to_string((array_agg(DISTINCT actor_id::text) FILTER (WHERE actor_kind = 'user'))[1:20], ','), '') AS account_ids,
+WITH g AS (
+  SELECT ip_hash, user_agent, actor_kind, actor_id,
+         count(*) AS n,
+         count(*) FILTER (WHERE action = 'user.login' AND outcome = 'success') AS logins,
+         count(*) FILTER (WHERE action = 'user.login_failed') AS login_failures,
          max(occurred_at) AS last_at,
          max(ip_enc) AS ip_enc
     FROM audit_events
    WHERE occurred_at > ? AND ip_hash IS NOT NULL AND actor_kind IN ('user', 'anonymous')
+   GROUP BY ip_hash, user_agent, actor_kind, actor_id
+), ip AS (
+  SELECT ip_hash,
+         sum(n)::int AS events,
+         sum(logins)::int AS logins,
+         sum(login_failures)::int AS login_failures,
+         count(DISTINCT user_agent)::int AS ua_kinds,
+         (count(DISTINCT actor_id) FILTER (WHERE actor_kind = 'user'))::int AS accounts,
+         COALESCE(array_to_string((array_agg(DISTINCT actor_id::text) FILTER (WHERE actor_kind = 'user'))[1:20], ','), '') AS account_ids,
+         max(last_at) AS last_at,
+         max(ip_enc) AS ip_enc
+    FROM g
    GROUP BY ip_hash
 ), ranked AS (
   SELECT ip.*,
