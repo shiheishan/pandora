@@ -32,6 +32,10 @@ type fakeSvc struct {
 	echPurges   int
 	echPurgeRet int64
 	echPurgeErr error
+
+	watches  int
+	watchRet int
+	watchErr error
 }
 
 func (f *fakeSvc) PurgeRetention(_ context.Context, table string, now time.Time, batch int) (int64, error) {
@@ -67,6 +71,14 @@ func (f *fakeSvc) PurgeRetiredECHKeys(_ context.Context) (int64, error) {
 	return f.echPurgeRet, nil
 }
 
+func (f *fakeSvc) WatchUpgrades(_ context.Context) (int, error) {
+	f.watches++
+	if f.watchErr != nil {
+		return 0, f.watchErr
+	}
+	return f.watchRet, nil
+}
+
 func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Duration) {
 	retry = -1
 	for _, o := range p {
@@ -86,8 +98,8 @@ func optsOf(p []asynq.Option) (queue string, retry int, unique, timeout time.Dur
 
 func TestPeriodicSchedule(t *testing.T) {
 	ps := New(&fakeSvc{}).Periodic()
-	if len(ps) != 4 {
-		t.Fatalf("periodic: got %d want 4", len(ps))
+	if len(ps) != 5 {
+		t.Fatalf("periodic: got %d want 5", len(ps))
 	}
 	e := ps[0]
 	if e.Type != TypeRetention || e.Cronspec != "44 3 * * *" {
@@ -129,6 +141,15 @@ func TestPeriodicSchedule(t *testing.T) {
 	queue, retry, unique, timeout = optsOf(e.Opts)
 	if queue != "low" || retry != 0 || unique != 50*time.Minute || timeout != 1*time.Minute {
 		t.Fatalf("ech purge opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
+	}
+
+	e = ps[4]
+	if e.Type != TypeUpgradeWatch || e.Cronspec != "@every 1m" {
+		t.Fatalf("upgrade watch periodic = %+v", e)
+	}
+	queue, retry, unique, timeout = optsOf(e.Opts)
+	if queue != "low" || retry != 0 || unique != 50*time.Second || timeout != 30*time.Second {
+		t.Fatalf("upgrade watch opts: queue=%q retry=%d unique=%v timeout=%v", queue, retry, unique, timeout)
 	}
 }
 
@@ -261,6 +282,30 @@ func TestECHPurgeErrorWrapped(t *testing.T) {
 	fp := &fakeSvc{echPurgeErr: sentinel}
 	mod := New(fp)
 	err := mod.echPurge(context.Background(), asynq.NewTask(TypeECHPurge, nil))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is: %v", err)
+	}
+}
+
+func TestUpgradeWatchCallsService(t *testing.T) {
+	fp := &fakeSvc{watchRet: 3}
+	mod := New(fp)
+	if err := mod.upgradeWatch(context.Background(), asynq.NewTask(TypeUpgradeWatch, nil)); err != nil {
+		t.Fatalf("upgradeWatch: %v", err)
+	}
+	if fp.watches != 1 {
+		t.Fatalf("watches=%d want 1", fp.watches)
+	}
+}
+
+func TestUpgradeWatchErrorWrapped(t *testing.T) {
+	sentinel := errors.New("watch failed")
+	fp := &fakeSvc{watchErr: sentinel}
+	mod := New(fp)
+	err := mod.upgradeWatch(context.Background(), asynq.NewTask(TypeUpgradeWatch, nil))
 	if err == nil {
 		t.Fatal("want error")
 	}

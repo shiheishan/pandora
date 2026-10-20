@@ -205,6 +205,7 @@ func serverFromModel(m model.Server, c repo.ServerNodeCount, now time.Time) Serv
 		Architecture:    m.Architecture,
 		OSName:          m.OSName,
 		AgentVersion:    m.AgentVersion,
+		BinarySHA256:    m.BinarySHA256,
 		LastHeartbeatAt: m.LastHeartbeatAt,
 		CPUCores:        m.CPUCores,
 		MemoryMB:        m.MemoryMB,

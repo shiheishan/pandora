@@ -1,4 +1,4 @@
-// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定、节点流量按重置日清零、过期 ECH 密钥清理。
+// Package task 是 node 模块的 asynq 任务：节点数据的保留期清理、strict 设备模式的重新判定、节点流量按重置日清零、过期 ECH 密钥清理、在线升级超时巡检。
 package task
 
 import (
@@ -25,6 +25,9 @@ const TypeTrafficReset = "node:traffic_reset"
 // TypeECHPurge 是过期 ECH 密钥清理任务类型。
 const TypeECHPurge = "node:ech_purge"
 
+// TypeUpgradeWatch 是在线升级超时巡检任务类型（过了期限仍未结束的任务标为 timed_out）。
+const TypeUpgradeWatch = "node:upgrade_watch"
+
 const (
 	purgeBatch = 5000
 	maxBatches = 200
@@ -39,6 +42,8 @@ type Service interface {
 	ResetDueNodeTraffic(ctx context.Context) (int, error)
 	// PurgeRetiredECHKeys：删除过渡期已过的旧 ECH 密钥。
 	PurgeRetiredECHKeys(ctx context.Context) (int64, error)
+	// WatchUpgrades：把过了期限仍未结束的在线升级任务标为 timed_out，返回改了几条。
+	WatchUpgrades(ctx context.Context) (int, error)
 }
 
 // Module 注册 node 相关的 asynq 任务与定时调度。
@@ -58,9 +63,10 @@ func (m *Module) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TypeDevicesStrict, m.devicesStrict)
 	mux.HandleFunc(TypeTrafficReset, m.trafficReset)
 	mux.HandleFunc(TypeECHPurge, m.echPurge)
+	mux.HandleFunc(TypeUpgradeWatch, m.upgradeWatch)
 }
 
-// Periodic 声明节点数据保留期清理（每天凌晨）、strict 设备判定（每分钟）、节点流量重置（每 5 分钟）与过期 ECH 密钥清理（每小时）。
+// Periodic 声明节点数据保留期清理（每天凌晨）、strict 设备判定（每分钟）、节点流量重置（每 5 分钟）、过期 ECH 密钥清理（每小时）与在线升级超时巡检（每分钟）。
 func (m *Module) Periodic() []jobs.Periodic {
 	return []jobs.Periodic{
 		{
@@ -101,6 +107,16 @@ func (m *Module) Periodic() []jobs.Periodic {
 				asynq.MaxRetry(0),
 				asynq.Timeout(1 * time.Minute),
 				asynq.Unique(50 * time.Minute),
+			},
+		},
+		{
+			Cronspec: "@every 1m",
+			Type:     TypeUpgradeWatch,
+			Opts: []asynq.Option{
+				asynq.Queue("low"),
+				asynq.MaxRetry(0),
+				asynq.Timeout(30 * time.Second),
+				asynq.Unique(50 * time.Second),
 			},
 		},
 	}
@@ -154,6 +170,18 @@ func (m *Module) trafficReset(ctx context.Context, _ *asynq.Task) error {
 func (m *Module) echPurge(ctx context.Context, _ *asynq.Task) error {
 	if _, err := m.svc.PurgeRetiredECHKeys(ctx); err != nil {
 		return fmt.Errorf("清理过期 ECH 密钥: %w", err)
+	}
+	return nil
+}
+
+// upgradeWatch 调 service 做在线升级超时巡检；出错包装返回（MaxRetry 0，下一分钟再巡）。
+func (m *Module) upgradeWatch(ctx context.Context, _ *asynq.Task) error {
+	n, err := m.svc.WatchUpgrades(ctx)
+	if err != nil {
+		return fmt.Errorf("在线升级超时巡检: %w", err)
+	}
+	if n > 0 {
+		plog.From(ctx).Info("node upgrade watch timed out jobs", zap.Int("timed_out", n))
 	}
 	return nil
 }

@@ -20,19 +20,21 @@ import (
 
 // Server 是后台读到的一台服务器（含名下节点计数）。
 type Server struct {
-	ID              uuid.UUID
-	Name            string
-	Status          string
-	StatusReason    *string
-	RowVersion      int64
-	Region          *string
-	Hostname        *string
-	PublicIPv4      *string
-	PublicIPv6      *string
-	PrivateIPv4     *string
-	Architecture    *string
-	OSName          *string
-	AgentVersion    *string
+	ID           uuid.UUID
+	Name         string
+	Status       string
+	StatusReason *string
+	RowVersion   int64
+	Region       *string
+	Hostname     *string
+	PublicIPv4   *string
+	PublicIPv6   *string
+	PrivateIPv4  *string
+	Architecture *string
+	OSName       *string
+	AgentVersion *string
+	// BinarySHA256 是节点端自报的程序摘要（hex）；没连过为 nil
+	BinarySHA256    *string
 	LastHeartbeatAt *time.Time
 	// HeartbeatOnline：status = ready 且最近心跳在 NodeStaleAfter 之内
 	HeartbeatOnline bool
@@ -57,6 +59,9 @@ type Server struct {
 	DiskUsedGB  *int64
 	DiskTotalGB *int64
 	MetricsAt   *time.Time
+	// Upgrade 是这台现在能不能在线升级（upgrades.go 的 upgradeBlock）；LastUpgrade 是最近一次升级任务，没有为 nil
+	Upgrade     ServerUpgradeOption
+	LastUpgrade *ServerUpgradeJob
 }
 
 // ServerFilter 是服务器列表的筛选：Status 为空不筛；Query 按名称、主机名子串（不分大小写）。

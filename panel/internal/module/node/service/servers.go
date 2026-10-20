@@ -98,15 +98,28 @@ func (s *Service) ListServers(ctx context.Context, f ServerFilter) ([]Server, er
 	if err != nil {
 		return nil, err
 	}
+	opts, jobs, err := s.ServerUpgradeViews(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	for _, r := range rows {
 		srv := serverFromModel(r, counts[r.ID], now)
 		if m, ok := metrics[r.ID]; ok {
 			applyServerMetrics(&srv, m)
 		}
+		applyServerUpgrade(&srv, opts, jobs)
 		out = append(out, srv)
 	}
 	return out, nil
+}
+
+// applyServerUpgrade 把 ServerUpgradeViews 的结果填进 Server。
+func applyServerUpgrade(srv *Server, opts map[uuid.UUID]ServerUpgradeOption, jobs map[uuid.UUID]ServerUpgradeJob) {
+	srv.Upgrade = opts[srv.ID]
+	if j, ok := jobs[srv.ID]; ok {
+		srv.LastUpgrade = &j
+	}
 }
 
 // GetServer 读一台未删除的服务器；没有回 404。
@@ -127,9 +140,14 @@ func (s *Service) GetServer(ctx context.Context, id uuid.UUID) (Server, error) {
 	if err != nil {
 		return Server{}, err
 	}
-	if m, ok := metrics[id]; ok {
-		applyServerMetrics(&srv, m)
+	if mt, ok := metrics[id]; ok {
+		applyServerMetrics(&srv, mt)
 	}
+	opts, jobs, err := s.ServerUpgradeViews(ctx, []model.Server{m})
+	if err != nil {
+		return Server{}, err
+	}
+	applyServerUpgrade(&srv, opts, jobs)
 	return srv, nil
 }
 
