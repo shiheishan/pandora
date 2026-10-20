@@ -62,6 +62,24 @@ func findTraceUser(rows []TraceUser, id uuid.UUID) *TraceUser {
 	return nil
 }
 
+func traceUserIndex(rows []TraceUser, id uuid.UUID) int {
+	for i := range rows {
+		if rows[i].UserID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func traceIPIndex(rows []TraceIP, ip string) int {
+	for i := range rows {
+		if rows[i].IP == ip {
+			return i
+		}
+	}
+	return -1
+}
+
 func uuidInList(ids []uuid.UUID, id uuid.UUID) bool {
 	for _, x := range ids {
 		if x == id {
@@ -121,7 +139,7 @@ func TestTraceIPsPG(t *testing.T) {
 	if row1 == nil {
 		t.Fatalf("应能找到 IP1 %s", ip1)
 	}
-	if row1.Events != 5 || row1.Logins != 4 || row1.Accounts != 2 {
+	if row1.Events != 5 || row1.Accounts != 2 {
 		t.Fatalf("IP1 统计 %+v", *row1)
 	}
 	if !uuidInList(row1.AccountIDs, A) || !uuidInList(row1.AccountIDs, B) {
@@ -134,14 +152,14 @@ func TestTraceIPsPG(t *testing.T) {
 	if row2.Events != 1 || row2.Accounts != 1 {
 		t.Fatalf("IP2 统计 %+v", *row2)
 	}
-	if set.DistinctIPs < 2 {
-		t.Fatalf("DistinctIPs %d", set.DistinctIPs)
+	if set.DistinctIPs != 0 {
+		t.Fatalf("Limit 0 窄 SQL 不算全窗总数，DistinctIPs 应为 0，得到 %d", set.DistinctIPs)
 	}
-	if set.Events < 6 {
-		t.Fatalf("Events %d", set.Events)
+	if set.Logins != 0 {
+		t.Fatalf("Limit 0 时 Logins 应为 0，得到 %d", set.Logins)
 	}
-	if set.LoginFailures < 1 {
-		t.Fatalf("LoginFailures %d", set.LoginFailures)
+	if set.LoginFailures != 0 {
+		t.Fatalf("Limit 0 时 LoginFailures 应为 0，得到 %d", set.LoginFailures)
 	}
 
 	future := time.Now().Add(time.Hour)
@@ -151,6 +169,94 @@ func TestTraceIPsPG(t *testing.T) {
 	}
 	if findTraceIP(setEmpty.Rows, ip1) != nil {
 		t.Fatal("未来 Since 不应含 IP1")
+	}
+}
+
+func TestTraceIPsHeadPG(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+
+	ip1 := randomDocIPv6(t)
+	ip2 := randomDocIPv6(t)
+	A, B := uuid.New(), uuid.New()
+	seedTraceReadsData(t, ctx, svc, A, B, ip1, ip2)
+
+	since := time.Now().Add(-time.Hour)
+	set, err := svc.TraceIPs(ctx, TraceIPQuery{Since: since, Limit: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findTraceIP(set.Rows, ip1) == nil {
+		t.Fatalf("应能找到 ip1 %s", ip1)
+	}
+	if findTraceIP(set.Rows, ip2) == nil {
+		t.Fatalf("应能找到 ip2 %s", ip2)
+	}
+	if traceIPIndex(set.Rows, ip1) >= traceIPIndex(set.Rows, ip2) {
+		t.Fatalf("ip1 事件更多应排在 ip2 前：ip1@%d ip2@%d", traceIPIndex(set.Rows, ip1), traceIPIndex(set.Rows, ip2))
+	}
+	if set.DistinctIPs < 2 {
+		t.Fatalf("DistinctIPs %d，至少 2", set.DistinctIPs)
+	}
+	if set.Logins < 5 {
+		t.Fatalf("Logins %d，至少 5（A 3 + B 2）", set.Logins)
+	}
+	if set.LoginFailures < 1 {
+		t.Fatalf("LoginFailures %d，至少 1", set.LoginFailures)
+	}
+}
+
+func assertTraceUserAStats(t *testing.T, u *TraceUser) {
+	t.Helper()
+	if u.Logins != 3 || u.LoginIPs != 2 || u.DistinctIPs != 2 || u.SharedIPs != 1 {
+		t.Fatalf("A 统计 %+v", *u)
+	}
+	if len(u.IPs) != 2 {
+		t.Fatalf("A IPs 长度 %d，期望 2", len(u.IPs))
+	}
+}
+
+func TestTraceUsersSortsPG(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+
+	ip1 := randomDocIPv6(t)
+	ip2 := randomDocIPv6(t)
+	A, B := uuid.New(), uuid.New()
+	seedTraceReadsData(t, ctx, svc, A, B, ip1, ip2)
+
+	since := time.Now().Add(-time.Hour)
+	for _, key := range []string{"ips", "logins", "login_ips", "shared_ips", "ua_kinds"} {
+		t.Run(key, func(t *testing.T) {
+			users, err := svc.TraceUsers(ctx, TraceUserQuery{Since: since, Sort: key, Limit: 500})
+			if err != nil {
+				t.Fatal(err)
+			}
+			uA := findTraceUser(users, A)
+			uB := findTraceUser(users, B)
+			if uA == nil || uB == nil {
+				t.Fatalf("A、B 都应存在，得到 %d 行", len(users))
+			}
+			assertTraceUserAStats(t, uA)
+			iA, iB := traceUserIndex(users, A), traceUserIndex(users, B)
+			switch key {
+			case "ips", "logins", "login_ips":
+				if iA >= iB {
+					t.Fatalf("%s：A 应排在 B 前，A@%d B@%d", key, iA, iB)
+				}
+			case "ua_kinds":
+				// A：ua-trace-a/1、ua-trace-a/2、userCtx 的 ua-test/1；B：ua-trace-b/1、ua-trace-b/2
+				if uA.UAKinds > uB.UAKinds && iA >= iB {
+					t.Fatalf("ua_kinds：A 种类更多时应排在 B 前，A=%d B=%d，A@%d B@%d", uA.UAKinds, uB.UAKinds, iA, iB)
+				}
+			case "shared_ips":
+				if uA.SharedIPs != 1 || uB.SharedIPs != 1 {
+					t.Fatalf("shared_ips：两人 SharedIPs 都应为 1，A=%d B=%d", uA.SharedIPs, uB.SharedIPs)
+				}
+			}
+		})
 	}
 }
 

@@ -81,6 +81,9 @@ func TestTraceFetchIPsPG(t *testing.T) {
 	if set.Fetches < 6 {
 		t.Fatalf("Fetches = %d，至少 6", set.Fetches)
 	}
+	if set.Failures < 2 {
+		t.Fatalf("Failures = %d，至少 2（ip2 error + ip3 not_found）", set.Failures)
+	}
 
 	byIP := make(map[string]identitysvc.TraceFetchIP, len(set.Rows))
 	for _, r := range set.Rows {
@@ -103,16 +106,13 @@ func TestTraceFetchIPsPG(t *testing.T) {
 	if row1.UAKinds != 2 {
 		t.Errorf("ip1 UAKinds = %d，期望 2", row1.UAKinds)
 	}
-	if row1.Failures != 0 {
-		t.Errorf("ip1 Failures = %d，期望 0", row1.Failures)
-	}
 
 	row2, ok := byIP[ip2]
 	if !ok {
 		t.Fatalf("结果里没有 ip2(%s)", ip2)
 	}
-	if row2.Failures != 1 || row2.Fetches != 1 {
-		t.Errorf("ip2 = %d 次 / %d 失败，期望 1 / 1", row2.Fetches, row2.Failures)
+	if row2.Fetches != 1 {
+		t.Errorf("ip2 Fetches = %d，期望 1", row2.Fetches)
 	}
 
 	row3, ok := byIP[ip3]
@@ -122,8 +122,40 @@ func TestTraceFetchIPsPG(t *testing.T) {
 	if row3.Accounts != 0 {
 		t.Errorf("ip3 Accounts = %d，期望 0", row3.Accounts)
 	}
-	if row3.Failures != 1 || row3.Fetches != 1 {
-		t.Errorf("ip3 = %d 次 / %d 失败，期望 1 / 1", row3.Fetches, row3.Failures)
+	if row3.Fetches != 1 {
+		t.Errorf("ip3 Fetches = %d，期望 1", row3.Fetches)
+	}
+}
+
+func traceFetchIPIndex(rows []identitysvc.TraceFetchIP, ip string) int {
+	for i := range rows {
+		if rows[i].IP == ip {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestTraceFetchIPsHeadPG(t *testing.T) {
+	de := newDeliveryEnv(t, false)
+	ctx := de.txCtx()
+	_, _, ip1, ip2, ip3 := traceFixture(t, de, ctx)
+
+	set, err := de.svc.TraceFetchIPs(ctx, identitysvc.TraceFetchIPQuery{
+		Since: time.Now().Add(-time.Hour),
+		Limit: 5000,
+	})
+	if err != nil {
+		t.Fatalf("按 IP 取头部: %v", err)
+	}
+	if traceFetchIPIndex(set.Rows, ip1) < 0 || traceFetchIPIndex(set.Rows, ip2) < 0 || traceFetchIPIndex(set.Rows, ip3) < 0 {
+		t.Fatalf("ip1/ip2/ip3 都应出现：%+v", set.Rows)
+	}
+	if traceFetchIPIndex(set.Rows, ip1) >= traceFetchIPIndex(set.Rows, ip2) {
+		t.Fatalf("ip1（4 次）应排在 ip2 前")
+	}
+	if traceFetchIPIndex(set.Rows, ip1) >= traceFetchIPIndex(set.Rows, ip3) {
+		t.Fatalf("ip1（4 次）应排在 ip3 前")
 	}
 }
 
@@ -198,6 +230,45 @@ func TestTraceFetchUsersPG(t *testing.T) {
 	}
 }
 
+func TestTraceFetchUsersSortsPG(t *testing.T) {
+	de := newDeliveryEnv(t, false)
+	ctx := de.txCtx()
+	a, b, _, _, _ := traceFixture(t, de, ctx)
+
+	since := time.Now().Add(-time.Hour)
+	for _, key := range []string{"fetches", "ips", "ua_kinds", "failures", "last", "shared_ips"} {
+		t.Run(key, func(t *testing.T) {
+			users, err := de.svc.TraceFetchUsers(ctx, identitysvc.TraceFetchUserQuery{
+				Since: since,
+				Sort:  key,
+				Limit: 500,
+			})
+			if err != nil {
+				t.Fatalf("按用户聚合 sort=%s: %v", key, err)
+			}
+			ua, okA := findTraceUser(users, a)
+			ub, okB := findTraceUser(users, b)
+			if !okA || !okB {
+				t.Fatalf("A、B 都应存在，得到 %d 行", len(users))
+			}
+			if ua.Fetches != 4 || ua.SharedIPs != 1 || len(ua.IPs) != 2 {
+				t.Fatalf("A 统计 Fetches=%d SharedIPs=%d IPs=%d", ua.Fetches, ua.SharedIPs, len(ua.IPs))
+			}
+			iA, iB := traceUserIndex(users, a), traceUserIndex(users, b)
+			switch key {
+			case "fetches", "ips", "ua_kinds", "failures":
+				if iA >= iB {
+					t.Fatalf("%s：A 应排在 B 前，A@%d B@%d", key, iA, iB)
+				}
+			case "last", "shared_ips":
+				if ua.SharedIPs != 1 || ub.SharedIPs != 1 {
+					t.Fatalf("shared 两人都应为 1，A=%d B=%d", ua.SharedIPs, ub.SharedIPs)
+				}
+			}
+		})
+	}
+}
+
 // containsID 报告 ids 里有没有 id。
 func containsID(ids []uuid.UUID, id uuid.UUID) bool {
 	for _, x := range ids {
@@ -216,4 +287,14 @@ func findTraceUser(users []identitysvc.TraceFetchUser, id uuid.UUID) (identitysv
 		}
 	}
 	return identitysvc.TraceFetchUser{}, false
+}
+
+// traceUserIndex 返回用户在排行中的下标，找不到为 -1。
+func traceUserIndex(users []identitysvc.TraceFetchUser, id uuid.UUID) int {
+	for i, u := range users {
+		if u.UserID == id {
+			return i
+		}
+	}
+	return -1
 }
