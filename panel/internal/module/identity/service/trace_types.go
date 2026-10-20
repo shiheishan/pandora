@@ -59,7 +59,8 @@ const (
 // ---- 拉取这一路（subscription 实现）----
 
 // TraceFetches 由 subscription 实现（subscription/service/trace_reads.go），启动装配时经 UseTraceFetches 注入。
-// 两个方法各是一条 SQL：对时间窗内的拉取日志做一次扫描，先按排序取头部，再把 Extra* 指定的 IP / 用户一并带回。
+// 两个方法各是一条 SQL：对时间窗内的拉取日志做一次扫描，先按排序取头部，再把 Extra* 指定的 IP / 用户一并带回；
+// TraceFetchUsers 在 Limit = 0 时只补查 UserIDs（按凭据过滤的窄 SQL）。
 type TraceFetches interface {
 	TraceFetchIPs(ctx context.Context, q TraceFetchIPQuery) (TraceFetchIPSet, error)
 	TraceFetchUsers(ctx context.Context, q TraceFetchUserQuery) ([]TraceFetchUser, error)
@@ -90,9 +91,8 @@ type TraceFetchIPSet struct {
 // TraceFetchIP 是一个来源 IP 在窗内的拉取统计。
 type TraceFetchIP struct {
 	// IP 是解封后的明文（解不开为空串）
-	IP       string
-	Fetches  int
-	Failures int
+	IP      string
+	Fetches int
 	// UAKinds 是不同 UA 原文数（按 ua_hash）
 	UAKinds int
 	// Accounts 是经凭据认出的不同用户数（未认证失败不算）；AccountIDs 最多 TraceIPAccounts 个

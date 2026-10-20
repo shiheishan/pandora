@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -384,7 +385,9 @@ func (s *Service) TraceReveal(ctx context.Context, token string) (TraceReveal, e
 	if !ok {
 		return TraceReveal{}, errTraceTokenInvalid()
 	}
-	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewTrace, nil, map[string]any{"masked": maskIP(ip)}); err != nil {
+	// 审计不记明文：只记打码串与 ip_hash（与 audit_events.ip_hash 同口径），事后能按哈希对上是哪个 IP
+	view := map[string]any{"masked": maskIP(ip), "ip_hash": s.traceAuditIPHash(ip)}
+	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewTrace, nil, view); err != nil {
 		return TraceReveal{}, err
 	}
 	loc := s.geo.Lookup(ip)
@@ -444,6 +447,15 @@ func maskIP(ip string) string {
 		return parts[0] + ":" + parts[1] + ":*"
 	}
 	return "*"
+}
+
+// traceAuditIPHash 按审计写入 ip_hash 的口径（netip 规范写法，InfoHMACIP）算一个明文 IP 的哈希，小写 hex。
+func (s *Service) traceAuditIPHash(ip string) string {
+	ip = strings.TrimSpace(ip)
+	if a, err := netip.ParseAddr(ip); err == nil {
+		ip = a.String()
+	}
+	return hex.EncodeToString(s.keys.HMAC(crypto.InfoHMACIP, []byte(ip)))
 }
 
 // traceRevealAAD 把令牌绑在签发它的管理员上：换个管理员解不开。

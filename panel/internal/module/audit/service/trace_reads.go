@@ -29,11 +29,10 @@ type TraceIPQuery struct {
 	ExtraIPs []string
 }
 
-// TraceIPSet 是按来源 IP 聚合的审计。四个总数是整个时间窗的（不受 Limit 影响），
-// 只在结果至少有一行时可信（窗内没有事件时为 0）。
+// TraceIPSet 是按来源 IP 聚合的审计。三个总数是整个时间窗的（不受 Limit 影响），
+// 只在 Limit > 0 且结果至少有一行时才算；只补查 ExtraIPs（Limit = 0）时为 0。
 type TraceIPSet struct {
 	DistinctIPs   int
-	Events        int
 	Logins        int // action = user.login 且 outcome = success
 	LoginFailures int // action = user.login_failed
 	// Rows 先是头部（事件数降序、最近出现降序），再是只因 ExtraIPs 带回的
@@ -45,7 +44,6 @@ type TraceIP struct {
 	// IP 是解封后的明文（解不开为空串）
 	IP      string
 	Events  int
-	Logins  int
 	UAKinds int // 不同 user_agent 数
 	// Accounts 是 actor_kind = user 的不同操作者数；AccountIDs 最多 20 个
 	Accounts   int
@@ -67,7 +65,6 @@ type TraceUserQuery struct {
 // TraceUser 是一个用户在窗内作为操作者的审计统计。
 type TraceUser struct {
 	UserID uuid.UUID
-	Events int
 	Logins int
 	// LoginIPs 是有过登录成功的不同 IP 数；DistinctIPs 是全部事件的不同 IP 数
 	LoginIPs    int
@@ -117,14 +114,12 @@ func (s *Service) TraceIPs(ctx context.Context, q TraceIPQuery) (TraceIPSet, err
 		return out, nil
 	}
 	out.DistinctIPs = rows[0].DistinctIPs
-	out.Events = rows[0].TotalEvents
 	out.Logins = rows[0].TotalLogins
 	out.LoginFailures = rows[0].TotalFailures
 	for _, row := range rows {
 		out.Rows = append(out.Rows, TraceIP{
 			IP:         s.openIP(row.IPEnc),
 			Events:     row.Events,
-			Logins:     row.Logins,
 			UAKinds:    row.UAKinds,
 			Accounts:   row.Accounts,
 			AccountIDs: splitAccountIDs(row.AccountIDs),
@@ -161,7 +156,6 @@ func (s *Service) TraceUsers(ctx context.Context, q TraceUserQuery) ([]TraceUser
 		if cur == nil || cur.UserID != row.UserID {
 			out = append(out, TraceUser{
 				UserID:      row.UserID,
-				Events:      row.Events,
 				Logins:      row.Logins,
 				LoginIPs:    row.LoginIPs,
 				DistinctIPs: row.IPs,

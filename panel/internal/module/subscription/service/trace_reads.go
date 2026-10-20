@@ -60,7 +60,6 @@ func (s *Service) TraceFetchIPs(ctx context.Context, q identitysvc.TraceFetchIPQ
 		out.Rows = append(out.Rows, identitysvc.TraceFetchIP{
 			IP:         s.openFetchLogField(r.IPEnc),
 			Fetches:    r.Fetches,
-			Failures:   r.Failures,
 			UAKinds:    r.UAKinds,
 			Accounts:   r.Accounts,
 			AccountIDs: splitTraceIDs(r.AccountIDs),
