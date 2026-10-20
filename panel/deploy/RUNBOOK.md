@@ -344,7 +344,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 支付渠道把回调推到 `https://<面板地址>/v1/webhooks/payments/<渠道编码>`（serve 收）。回调丢了也有兜底：worker 每分钟跑一轮主动查单，向渠道查未付的单，查到已付就和回调走同一条路入账。
 
-回调地址的前缀可以单独设：后台「商业 › 订单与收款 › 支付渠道」的「回调地址」卡片（`payment.notify_base_url`，只收 https）。留空 = 用面板地址。单独设的域名要自己解析到面板、并由前面的反向代理或 CDN 终止 TLS 后转给面板（`render-nginx.sh` 只生成面板地址这一个 server，不会替你加这个域名）。从面板地址改成单独前缀（或改回面板地址）时，之前建的 CoinPayments 发票仍能按原地址验签入账；在两个单独前缀之间直接切换时，用旧前缀建、还没回调的 CoinPayments 发票会验签失败，靠 worker 的主动查单补记；渠道卡片上显示的回调地址就是现在生效的那个。
+回调地址的前缀可以单独设：后台「商业 › 订单与收款 › 支付渠道」的「回调地址」卡片（`payment.notify_base_url`，只收 https）。留空 = 用面板地址（后台改过主域名就是主域名，见第 15 章）。单独设的域名要自己解析到面板、并由前面的反向代理或 CDN 终止 TLS 后转给面板（`render-nginx.sh` 只生成面板地址这一个 server，不会替你加这个域名）。从面板地址改成单独前缀（或改回面板地址）时，之前建的 CoinPayments 发票仍能按原地址验签入账；在两个单独前缀之间直接切换时，用旧前缀建、还没回调的 CoinPayments 发票会验签失败，靠 worker 的主动查单补记；渠道卡片上显示的回调地址就是现在生效的那个。
 
 加密货币渠道（BTCPay Server、CoinPayments）：
 - BTCPay 的回调不随发票下发，要在 BTCPay 商店「Settings › Webhooks」里新建一个 Webhook：地址填渠道卡片上的回调地址，事件至少勾选 Invoice settled / expired / invalid，密钥与后台渠道里填的 Webhook 密钥一致。只有「已结算」且不是在 BTCPay 里手动标记的发票才自动入账；手动标记、部分付款都不自动入账，按下面「处理」里的线下办法核对。
@@ -1011,3 +1011,62 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
 
 - `deploy.env` 已正确配置、证书文件存在且 `nginx -t` 报错无法定位。
 - 订阅链接持续返回 502（连不上 `pandora-serve`）或 503（面板依赖不可用）。带上 `pandora.conf`、`journalctl -u pandora-serve -n 50` 和 `curl -v` 输出提给开发。
+
+---
+
+## 15. 换主域名
+
+后台「内容与外观 › 主题与插槽 › 站点设置」的「主域名」（`site.url`）只管面板拼出去的链接：邮件里的链接、支付回调与付完回跳、订阅链接（用户没分到订阅域名组时）、门户首页的 canonical、Telegram webhook、内容页里的 `{{siteUrl}}`。留空就用安装时的地址（`config.yaml` 的 `public_base_url`）。
+
+它**不改** nginx、面板证书，也**不改**节点连面板的地址：这三样只看 `public_base_url`，`edge-tls.sh` 与 `render-nginx.sh` 也只给它生成 server 块。所以换域名的顺序是先让新域名能打开面板，再在后台改；不要为了换域名去改 `config.yaml` 的 `public_base_url`（已装的节点、节点接入命令和面板证书都跟着它）。
+
+保存时面板会从本机请求一次 `https://<新域名>/v1/site-config`（5 秒、不跟随跳转），打不开本面板就拒绝保存（「这个地址打不开本面板」），什么都不改；改动记审计 `site.url_changed`（带新旧值）。
+
+### 顺序
+
+1. **DNS**：新域名的 A / AAAA 解析到面板服务器的公网 IP。确认：`dig +short <新域名>`。
+2. **【写】nginx 先放出 80**（给 Let's Encrypt 的 HTTP-01 校验用；没有这一步，新域名的 80 会落到默认 server 回 444）。新建一个 `render-nginx.sh` 不管的文件，内容照 `/etc/nginx/conf.d/pandora.conf` 里面板地址那个 80 的 server 块原样复制，只把 `server_name` 换成新域名：
+
+   ```bash
+   sudo grep -n 'server_name' /etc/nginx/conf.d/pandora.conf     # 找到面板地址的 80 与 443 两个块
+   sudoedit /etc/nginx/conf.d/pandora-site-domain.conf             # 粘进 80 块，server_name 改成新域名
+   sudo nginx -t && sudo systemctl reload nginx
+   curl -sI http://<新域名>/.well-known/acme-challenge/x           # 应回 404（不是超时，也不是 444 断开）
+   ```
+
+3. **【写】证书**：
+
+   ```bash
+   sudo certbot certonly --webroot -w /var/www/pandora-acme -d <新域名> --deploy-hook 'systemctl reload nginx'
+   ```
+
+   certbot 自带的 `certbot.timer` 会续期它；`edge-tls.sh` 只管面板地址的证书，不管这一张。
+4. **【写】nginx 再放出 443**：把 `pandora.conf` 里面板地址那个 443 的 server 块也复制进 `pandora-site-domain.conf`，改三处：`server_name` 换成新域名；删掉 `listen 127.0.0.1:9080;` 那一行（本机运维入口只留一个）；`ssl_certificate` / `ssl_certificate_key` 换成 `/etc/letsencrypt/live/<新域名>/fullchain.pem` 与 `privkey.pem`。后台前缀等其余内容不动。
+
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   curl -s https://<新域名>/v1/site-config                          # 应回 {"registration_mode":…} 这样的 JSON
+   ```
+
+   这个文件是手工维护的：升级后 `pandora.conf` 由脚本重新渲染，这一份不会跟着变。升级后对照新的 `pandora.conf` 把两个块再复制一遍。
+5. **【写】在后台改主域名**：填 `https://<新域名>`，保存时要重新输入密码。保存成功后新发的邮件、新建的支付单、门户里复制的链接都用新域名，立即生效（worker 里最多晚 30 秒）。
+6. **旧域名至少再留 7 天**，DNS、nginx 与证书都不要动：
+   - 改之前建的支付单，渠道仍按建单时的回调地址推回调（易支付、CoinPayments 的回调地址随单下发）。CoinPayments 的验签同时认新旧两个域名；只认上一个，所以 7 天内不要连着换两次。
+   - 已经发出的邮件里的链接（登录链接 15 分钟内有效）、用户收藏的旧地址、客户端里的旧订阅链接，都还指向旧域名。
+   - BTCPay 的回调地址是在 BTCPay 商店里手工填的（第 5 章），不会自己变：要么在 BTCPay 商店「Settings › Webhooks」里改成新域名，要么旧域名一直留着。单独设了「回调地址」前缀的，回调不受主域名影响。
+7. **Telegram**：保存主域名后，面板会用现有的 webhook 密钥把 Telegram webhook 自动重新注册到 `https://<新域名>/v1/webhooks/telegram`（只在 Telegram 已启用、注册过 webhook 时做；新域名不是 https 时不注册）。失败不影响主域名的保存。确认：
+
+   ```bash
+   sudo grep 'Telegram webhook' /var/log/pandora/serve.log | tail -n 3
+   # 「已重新注册到新地址」= 成功；「重新注册失败」「没有重新注册」= 没成，后面带原因
+   ```
+
+   再用自己的 Telegram 私聊 bot 发 `/start`，有回复就通了。没成功时到后台「通知与插件 › 通知渠道」的 Telegram 卡片点一次保存，会按当前主域名重新注册（这次会换一个新的 webhook 密钥）。不要用 `curl` 带 Bot Token 去查 `getWebhookInfo`：Token 会进 shell 历史和 `ps`。
+
+### 改回去
+
+后台把主域名清空保存，就恢复用 `public_base_url`（不做连通核对）。改回去之后同样把刚才那个域名留 7 天。
+
+### 什么时候升级处理
+
+- 新域名上 `curl -s https://<新域名>/v1/site-config` 回的是本面板的 JSON，后台保存仍然报「这个地址打不开本面板」：先看 `sudo grep '主域名连通核对' /var/log/pandora/serve.log | tail -n 5` 里的原因。面板是从本机去请求新域名的：本机的 DNS 要解析到公网地址（解析成内网或回环地址会被当成不安全的出站请求拦下）、出站防火墙要放行 443。仍查不出原因，带上这几行日志提给开发。
