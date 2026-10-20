@@ -13,7 +13,7 @@ paths:
 - 送的流量（礼品卡、后台加流量）在 `bonus_bytes`：订阅套餐只在本期有效，一次性套餐加在总量上；剩余 = `traffic_limit + bonus_bytes − traffic_used`（`common/purchase.ts` 的 `leftOf`），主卡写「本期剩余 · 共 X，含送的 xG，本期有效」（一次性「剩余 · 共 X，含送的 xG，不清零，用完为止」）。流量快用完 = 已用（含送的）≥ 80%（`isLow`，用户 10-16 定），主卡就地给「重置 · ¥X」与「换更大的 ›」。守卫：`common/common.test.ts`、`subs/copy.test.ts`
 - `pickPrimary` 只留给外框头像菜单的套餐徽标
 - 金额与默认值一律来自报价接口 `POST v1/me/checkout/quote`（`common/quote.ts`），前端不算钱；只做展示用的日期加减（`addPeriod`）
-- 到期展示精确到分钟（`common/traffic.ts` 的 `formatMinute` / `expiryInfo`），最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」
+- 到期展示精确到分钟（`common/card-text.ts` 的 `expiryText`）：7 天以上「还剩 N 天」，7 天内「N 天后到期」，最后 24 小时「还剩 X 小时」，过了「已过期 N 天」
 - 保留规则 3：可用节点只有名称 / 协议 / 倍率，删去设计稿的国家徽标与负载列。节点标签只在后台用（筛选、批量修改），门户不显示（用户 2026-10-14 定）。节点接口对不在生效中的订阅回 404，显示「当前没有可用节点」而不是报错。
 - 换新链接（`subs/RotateSheet.tsx`）接口不幂等：弹层先说「只换这一份」与后果，请求期间禁用按钮；按份限频（每份 10 分钟 1 次、每天 5 次），429 把服务端的剩余分钟写进按钮「刚换过，N 分钟后才能再换」。换好去 `#/subs/<id>/rotated`，新链接与「添加到 App」放最上面
 - 改名（`subs/RenameSheet.tsx`，`PATCH v1/me/subscriptions/{id}`）：候选名排除别的份已用的、不排除自己；撞名 409、不合规 422 落到输入框
