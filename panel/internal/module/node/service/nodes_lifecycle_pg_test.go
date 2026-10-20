@@ -270,43 +270,6 @@ func TestDeleteNode(t *testing.T) {
 	}
 }
 
-func TestMoveNode(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	a := e.server(t, ctx, "move-a")
-	b := e.server(t, ctx, "move-b")
-	n := e.ssNode(t, ctx, a.ID, "n", 21012)
-
-	// 同服务器：不改
-	same, err := e.svc.MoveNode(ctx, n.ID, NodeMoveInput{RowVersion: n.RowVersion, ServerID: a.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if same.RowVersion != n.RowVersion {
-		t.Fatalf("同服务器迁移不应改版本：%d", same.RowVersion)
-	}
-
-	moved, err := e.svc.MoveNode(ctx, n.ID, NodeMoveInput{RowVersion: n.RowVersion, ServerID: b.ID, Reason: "换机"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if moved.ServerID == nil || *moved.ServerID != b.ID {
-		t.Fatalf("server_id 没变：%v", moved.ServerID)
-	}
-
-	// 服务过的草稿不能迁移
-	served := e.ssNode(t, ctx, a.ID, "served", 21013)
-	if err := e.exec(ctx, `UPDATE nodes SET applied_config_sha256 = repeat('a', 64), applied_config_at = now() WHERE id = ?`, served.ID); err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.MoveNode(ctx, served.ID, NodeMoveInput{RowVersion: served.RowVersion, ServerID: b.ID})
-	_ = invWantCode(t, err, errs.Conflict)
-
-	// 在役节点不能迁移
-	_, active := invActiveNode(t, e, ctx, "move-c", "active", 21014)
-	_, err = e.svc.MoveNode(ctx, active.ID, NodeMoveInput{RowVersion: active.RowVersion, ServerID: b.ID})
-	_ = invWantCode(t, err, errs.Conflict)
-}
-
 func TestRepublishNode(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := e.server(t, ctx, "pub-a")

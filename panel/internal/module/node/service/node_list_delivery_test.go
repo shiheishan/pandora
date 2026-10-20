@@ -10,8 +10,20 @@ import (
 
 func nodeAllDeliveryFacts() nodeDeliveryFacts {
 	return nodeDeliveryFacts{
-		Serving: "active", Pooled: true, PoolActive: true, PoolBound: true, EverSeen: true,
+		Bound: true, Serving: "active", Pooled: true, PoolActive: true, PoolBound: true, EverSeen: true,
 		BeatFresh: true, Deliverable: true, ServerReady: true, Degraded: false,
+	}
+}
+
+// 没绑服务器排在最前：即便状态、池这些也都不满足，也先给「未绑定服务器」。
+func TestNodeDeliveryVerdict_unboundFirst(t *testing.T) {
+	f := nodeAllDeliveryFacts()
+	f.Bound = false
+	f.Serving = "draft"
+	f.Pooled = false
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNoteUnbound {
+		t.Fatalf("未绑服务器应最先判为 (false, unbound)，got (%v, %q)", ok, note)
 	}
 }
 

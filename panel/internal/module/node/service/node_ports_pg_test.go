@@ -86,15 +86,18 @@ func TestNodePortClaimOnPatch(t *testing.T) {
 	}
 }
 
-func TestNodePortClaimOnMove(t *testing.T) {
+func TestNodePortClaimOnBind(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	a := e.server(t, ctx, "ports-f1")
 	b := e.server(t, ctx, "ports-f2")
 	e.ssNode(t, ctx, b.ID, "ss-b", 20007)
 	n := e.ssNode(t, ctx, a.ID, "ss-a", 20007)
 
-	_, err := e.svc.MoveNode(ctx, n.ID, NodeMoveInput{RowVersion: n.RowVersion, ServerID: b.ID})
-	_ = invWantCode(t, err, errs.Conflict)
+	_, err := e.svc.BindNode(ctx, n.ID, NodeBindInput{RowVersion: n.RowVersion, ServerID: b.ID})
+	ee := invWantCode(t, err, errs.Conflict)
+	if ee.Fields["server_port"] == "" {
+		t.Fatalf("同机端口冲突应标在 server_port：%v", ee.Fields)
+	}
 }
 
 func TestNodePortReserved(t *testing.T) {

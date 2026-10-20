@@ -132,26 +132,20 @@ func TestValidServerStatus(t *testing.T) {
 	}
 }
 
-// 迁移资格只看节点自己：新草稿（不论所在服务器有没有接入、有没有心跳）能迁；停用、有配置回执或运行状态的不能。
+// 改绑 / 解绑资格：草稿或停用。在役要先停用，已退役不行。
 func TestNodeMovableState(t *testing.T) {
-	sha := "abc"
-	running := "running"
 	cases := []struct {
-		name                     string
-		status                   string
-		applied, failed, runtime *string
-		want                     bool
+		name   string
+		status string
+		want   bool
 	}{
-		{"已接入服务器上的新草稿", NodeDraft, nil, nil, nil, true},
-		{"草稿但有配置回执", NodeDraft, &sha, nil, nil, false},
-		{"草稿但应用失败过", NodeDraft, nil, &sha, nil, false},
-		{"草稿但有运行状态", NodeDraft, nil, nil, &running, false},
-		{"停用节点", NodeDisabled, nil, nil, nil, false},
-		{"在用节点", NodeActive, nil, nil, nil, false},
-		{"已退役节点", NodeRetired, nil, nil, nil, false},
+		{"草稿", NodeDraft, true},
+		{"停用", NodeDisabled, true},
+		{"在役", NodeActive, false},
+		{"已退役", NodeRetired, false},
 	}
 	for _, tc := range cases {
-		if got := nodeMovableState(tc.status, tc.applied, tc.failed, tc.runtime); got != tc.want {
+		if got := nodeMovableState(tc.status); got != tc.want {
 			t.Errorf("%s：得到 %v，want %v", tc.name, got, tc.want)
 		}
 	}
