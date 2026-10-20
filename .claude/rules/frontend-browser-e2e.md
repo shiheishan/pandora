@@ -19,6 +19,7 @@ paths:
   - 在 `panel/frontend`：`npx playwright install --only-shell chromium`，再 `SMOKE_STATE=<状态目录> npx playwright test -c tests/browser/playwright.config.ts`；`node tests/browser/table.ts <状态目录>/browser` 出表
   - 种子写在状态目录的 `browser-world.json`（0600），文件在就整份复用，同一套栈重跑不撞套餐编码
   - 类型检查走 `npm run typecheck`（`tsconfig.node.json` 收 `tests/` 下除 smoke 外的文件），lint 走 `npm run lint`
+- 门户登录从 `/#/login` 进（`fixtures.ts` 的 `openPortal`）：首页缺省开，`/` 未登录时是首页而不是登录表单
 - 选择器只用角色与可见文字（`getByRole` / `getByText` / `getByLabel`），不为测试给组件加 `data-testid`
   - 选购页有「按时间 / 一次性」分段控件（`radiogroup`「套餐类型」，10-16 样稿）：一次性套餐要先点「一次性」；有份时买别的套餐先过落点选择（`radiogroup`「<套餐名>放到哪里」，不预选）
   - 我的套餐的卡片是 `<article>`、套餐卡是 `<section>`，按标题 heading 过滤（`card` / `planCard`）；完成页按「发生了什么」下的列表读（`happened`）
