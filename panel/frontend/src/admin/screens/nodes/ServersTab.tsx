@@ -13,6 +13,8 @@ import {
   lastUpgradeLine,
   nodesByServer,
   pruneUpgradePicks,
+  UPGRADE_BATCH_MAX,
+  upgradePickFull,
   quickToggle,
   SERVER_STATUS,
   serverDeleteBlock,
@@ -73,6 +75,7 @@ export function ServersTab() {
           <BulkAction busy={upgrade.isPending} onClick={() => setConfirmUpgrade(true)}>
             升级到 {target}（{live.size} 台）
           </BulkAction>
+          {live.size >= UPGRADE_BATCH_MAX && <span>一次最多 {UPGRADE_BATCH_MAX} 台</span>}
         </BulkBar>
       ) : (
         <div className={x.bar}>
@@ -96,6 +99,7 @@ export function ServersTab() {
                   server={s}
                   nodes={tags.get(s.id) ?? []}
                   picked={live.has(s.id)}
+                  pickFull={upgradePickFull(live, s.id)}
                   onPick={canPick ? (on) => setPick(s.id, on) : undefined}
                   busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
                   onOpen={() => navigate(`/nodes/servers/${s.id}`)}
@@ -149,6 +153,7 @@ function ServerCard({
   server: s,
   nodes,
   picked,
+  pickFull,
   onPick,
   busy,
   onOpen,
@@ -159,6 +164,8 @@ function ServerCard({
   server: Server
   nodes: readonly string[]
   picked: boolean
+  /** 已勾满一次的上限，这张没勾的不能再勾 */
+  pickFull: boolean
   onPick?: (on: boolean) => void
   busy: boolean
   onOpen: () => void
@@ -182,7 +189,14 @@ function ServerCard({
       <div className={x.ch}>
         {onPick ? (
           <span className={x.pick}>
-            <Checkbox small aria-label={`选择 ${s.name} 升级`} checked={picked} onChange={(e) => onPick(e.target.checked)} />
+            <Checkbox
+              small
+              aria-label={`选择 ${s.name} 升级`}
+              checked={picked}
+              disabled={pickFull}
+              title={pickFull ? `一次最多升级 ${UPGRADE_BATCH_MAX} 台，先升完这批` : undefined}
+              onChange={(e) => onPick(e.target.checked)}
+            />
           </span>
         ) : null}
         <StatusDot tone={serverStatusTone(s)}>

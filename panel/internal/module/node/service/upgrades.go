@@ -95,7 +95,7 @@ func pdndTargetReasonText(code string) string {
 	case UpgradeBlockManifestMissing:
 		return "面板上没有节点端发布清单"
 	case UpgradeBlockSignatureMissing:
-		return "面板上没有发布清单的签名"
+		return "面板上没有有效的发布清单签名"
 	case UpgradeBlockManifestInvalid:
 		return "发布清单格式不对"
 	case UpgradeBlockBinaryMismatch:
@@ -339,7 +339,8 @@ func uniqueUUIDsInOrder(ids []uuid.UUID) []uuid.UUID {
 }
 
 // RecordUpgradeReport 按节点回报对账升级任务（SessionBackend）。
-// Staged：sent → staged；Failed：未结束 → failed；RolledBack：含 succeeded、timed_out 等 → rolled_back（超时是面板猜测，节点结局可覆盖）。
+// Staged：sent → staged；Failed、RolledBack：未结束、succeeded、timed_out → failed / rolled_back
+// （新进程连上判了 succeeded 之后，助手仍可能确认超时去回退，回退失败报 FAILED；超时是面板猜测；都以节点回报为准）。
 // 影响 0 行视为已处理；改到了推 nodes.changed。
 func (s *Service) RecordUpgradeReport(ctx context.Context, serverID uuid.UUID, r UpgradeReport, at time.Time) error {
 	if r.JobID == uuid.Nil {
@@ -358,7 +359,7 @@ func (s *Service) RecordUpgradeReport(ctx context.Context, serverID uuid.UUID, r
 		changed, err = s.repo.StageServerUpgrade(ctx, r.JobID, serverID, at)
 	case UpgradePhaseFailed:
 		changed, err = s.repo.FinishServerUpgrade(ctx, r.JobID, serverID,
-			[]string{UpgradeSent, UpgradeStaged, UpgradeTimedOut}, UpgradeFailed, &reason, detail, at)
+			[]string{UpgradeSent, UpgradeStaged, UpgradeSucceeded, UpgradeTimedOut}, UpgradeFailed, &reason, detail, at)
 	case UpgradePhaseRolledBack:
 		// 新进程已连上并判 succeeded 后，仍可能因未写 healthy 被助手装回旧版；以节点回报为准。
 		changed, err = s.repo.FinishServerUpgrade(ctx, r.JobID, serverID,
@@ -375,18 +376,18 @@ func (s *Service) RecordUpgradeReport(ctx context.Context, serverID uuid.UUID, r
 	return nil
 }
 
-func (s *Service) reconcileUpgradeHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error {
-	if sha := agentInfo(h).BinarySHA256; sha != nil {
-		ok, err := s.repo.SucceedServerUpgradeBySHA(ctx, serverID, *sha, at)
-		if err != nil {
-			return err
-		}
-		if ok {
-			s.serverChanged(ctx, realtime.OpUpdate, serverID)
-		}
+// succeedUpgradeBySHA：新 Hello 自报的摘要等于未结束任务（或这台最近一次已超时的任务）的目标 = 升级成功。
+func (s *Service) succeedUpgradeBySHA(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error {
+	sha := agentInfo(h).BinarySHA256
+	if sha == nil {
+		return nil
 	}
-	if h.LastUpgrade != nil {
-		return s.RecordUpgradeReport(ctx, serverID, *h.LastUpgrade, at)
+	ok, err := s.repo.SucceedServerUpgradeBySHA(ctx, serverID, *sha, at)
+	if err != nil {
+		return err
+	}
+	if ok {
+		s.serverChanged(ctx, realtime.OpUpdate, serverID)
 	}
 	return nil
 }

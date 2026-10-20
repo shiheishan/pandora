@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -46,8 +47,9 @@ func manifestJSON(version string, serial uint64, arts map[string][2]string) []by
 	return raw
 }
 
+// validSig 是结构合规的签名文件（面板不验签，只看结构）：key_id 16 位小写 hex，sig 解码后 64 字节。
 func validSig() []byte {
-	return []byte(`{"key_id":"test","sig":"abc"}`)
+	return []byte(`{"key_id":"0123456789abcdef","sig":"` + base64.StdEncoding.EncodeToString(make([]byte, 64)) + `"}`)
 }
 
 func twoArchManifest(amd64, arm64 []byte) []byte {
@@ -98,6 +100,27 @@ func TestPdndTarget_missingSignature(t *testing.T) {
 	s2.UsePdndDist(dir2, "https://panel.example.com")
 	if got := s2.PdndTarget(context.Background()); got.Reason != UpgradeBlockSignatureMissing {
 		t.Fatalf("空白签名: %+v", got)
+	}
+
+	// 结构不对的签名文件同样当没有：发下去节点只会回 signature_invalid
+	for _, bad := range []string{
+		`占位`,
+		`{"key_id":"test","sig":"abc"}`,
+		`{"key_id":"0123456789ABCDEF","sig":"` + base64.StdEncoding.EncodeToString(make([]byte, 64)) + `"}`,
+		`{"key_id":"0123456789abcdef","sig":"` + base64.StdEncoding.EncodeToString(make([]byte, 63)) + `"}`,
+	} {
+		d := t.TempDir()
+		writeDist(t, d, map[string][]byte{
+			PdndManifestFile: manifestJSON("v1", 1, map[string][2]string{
+				"linux-amd64": {PdndArtifactAMD64, strings.Repeat("a", 64)},
+			}),
+			PdndSignatureFile: []byte(bad),
+		})
+		sx := New(nil, nil, nil, nil)
+		sx.UsePdndDist(d, "https://panel.example.com")
+		if got := sx.PdndTarget(context.Background()); got.Reason != UpgradeBlockSignatureMissing {
+			t.Fatalf("结构不对的签名 %q: %+v", bad, got)
+		}
 	}
 }
 

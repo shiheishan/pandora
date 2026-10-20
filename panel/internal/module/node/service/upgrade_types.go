@@ -38,7 +38,7 @@ const (
 // manifest_invalid、serial_not_newer 与节点回报的同名码意思相同。not_connected 也写进任务的 reason_code（下发时会话已断）。
 const (
 	UpgradeBlockManifestMissing  = "manifest_missing"   // 发布包里没有 pdnd-manifest.json
-	UpgradeBlockSignatureMissing = "signature_missing"  // 发布包里没有 pdnd-manifest.json.sig（或为空）
+	UpgradeBlockSignatureMissing = "signature_missing"  // 发布包里没有 pdnd-manifest.json.sig，或它结构不对（面板不验签）
 	UpgradeBlockManifestInvalid  = "manifest_invalid"   // 清单解析失败、schema 不对、字段不合法
 	UpgradeBlockBinaryMismatch   = "binary_mismatch"    // 面板托管的二进制缺失或摘要与清单不符
 	UpgradeBlockInProgress       = "in_progress"        // 这台已有一次升级没结束

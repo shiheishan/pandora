@@ -39,6 +39,7 @@ type fakeBackend struct {
 	online                   [][]OnlineEntry
 	metrics                  []HostMetrics
 	hellos                   []Hello
+	helloErr                 error // RecordHello 返回它（nil 即成功）
 	heartbeats               [][]NodeRuntime
 	configAcks               []ConfigAck
 	renewSerials             []*big.Int
@@ -140,7 +141,7 @@ func (f *fakeBackend) RecordHello(_ context.Context, _ uuid.UUID, h Hello, _ tim
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hellos = append(f.hellos, h)
-	return nil
+	return f.helloErr
 }
 
 func (f *fakeBackend) RecordHeartbeat(_ context.Context, _ uuid.UUID, nodes []NodeRuntime, _ time.Time) error {

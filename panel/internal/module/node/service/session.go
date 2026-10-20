@@ -211,6 +211,10 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 	return m.OpenVerified(ctx, serverID, h, nil)
 }
 
+// ErrUpgradeOutcomeUnrecorded 是 Hello 带来的上一次升级结局没能记账（SessionBackend.RecordHello 返回）：建流失败、不发 Welcome，
+// 节点留着本机结局文件，退避重连后再报。
+var ErrUpgradeOutcomeUnrecorded = errors.New("node: 升级结局没记上")
+
 // ErrAlignBusy 是建流对齐在 AlignTimeout 内没等到结果（前面的批还没读完，或这批没读完）：回 Unavailable，节点退避重连。
 var ErrAlignBusy = errors.New("node: 建流对齐超时")
 
@@ -269,6 +273,11 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 	actx, cancel := context.WithTimeout(ctx, m.opt.AlignTimeout)
 	defer cancel()
 	if err := m.b.RecordHello(actx, serverID, h, at); err != nil {
+		if errors.Is(err, ErrUpgradeOutcomeUnrecorded) {
+			log.Warn("升级结局没记上，断开让节点留着结局文件重连再报", zap.Error(err))
+			s.Close(ErrSessionPeerGone)
+			return nil, err
+		}
 		// 主机信息与心跳时间只是展示；对齐照常做
 		log.Warn("记录 Hello 失败", zap.Error(err))
 	}

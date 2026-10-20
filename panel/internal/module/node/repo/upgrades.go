@@ -127,12 +127,16 @@ func (r *Repo) FinishServerUpgrade(ctx context.Context, id, serverID uuid.UUID, 
 	return res.RowsAffected > 0, res.Error
 }
 
-// SucceedServerUpgradeBySHA 按节点自报摘要把未结束且目标一致的任务标为 succeeded；返回是否改到行。
+// SucceedServerUpgradeBySHA 按节点自报摘要把目标一致的任务标为 succeeded：未结束的，或这台最近一次已超时的
+// （节点慢、worker 积压时面板先判了超时，随后新进程才连上）；历史上更早的超时不翻。返回是否改到行。
 func (r *Repo) SucceedServerUpgradeBySHA(ctx context.Context, serverID uuid.UUID, sha string, at time.Time) (bool, error) {
 	res := r.d.Conn(ctx).Exec(
-		`UPDATE server_upgrades SET status = 'succeeded', reason_code = NULL, finished_at = ?
-		 WHERE server_id = ? AND status IN ('sent', 'staged') AND target_sha256 = ?`,
-		at, serverID, sha,
+		`UPDATE server_upgrades SET status = 'succeeded', reason_code = NULL, detail = NULL, finished_at = ?
+		 WHERE server_id = ? AND target_sha256 = ?
+		   AND (status IN ('sent', 'staged')
+		        OR (status = 'timed_out' AND id = (
+		              SELECT id FROM server_upgrades WHERE server_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)))`,
+		at, serverID, sha, serverID,
 	)
 	return res.RowsAffected > 0, res.Error
 }

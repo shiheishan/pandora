@@ -6,6 +6,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -31,6 +32,22 @@ const (
 	pdndManifestMaxBytes  = 64 << 10
 	pdndSignatureMaxBytes = 4 << 10
 )
+
+var pdndKeyIDRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// pdndSignatureWellFormed 只看签名文件的结构（key_id 16 位小写 hex、sig 解码后 64 字节），不验签：
+// 占位文本、半截文件发下去节点只会回 signature_invalid，在面板这边就挡住、显示成没有有效签名。
+func pdndSignatureWellFormed(raw []byte) bool {
+	var doc struct {
+		KeyID string `json:"key_id"`
+		Sig   string `json:"sig"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &doc); err != nil || !pdndKeyIDRe.MatchString(doc.KeyID) {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(doc.Sig)
+	return err == nil && len(sig) == 64
+}
 
 // pdndFileCache 按（大小、修改时间）缓存清单与签名的原字节（同 pdndDigestCache 的口径）。
 type pdndFileCache struct {
@@ -64,7 +81,7 @@ func (d pdndDist) readSmall(ctx context.Context, name string, maxBytes int64) (d
 		plog.From(ctx).Warn("读取节点端发布清单失败", zap.String("file", name), zap.Error(err))
 		return nil, false
 	}
-	if info.IsDir() || info.Size() > maxBytes {
+	if !info.Mode().IsRegular() || info.Size() > maxBytes {
 		plog.From(ctx).Warn("节点端发布清单文件过大或不是普通文件", zap.String("file", name))
 		return nil, false
 	}
@@ -157,7 +174,7 @@ func (s *Service) PdndTarget(ctx context.Context) PdndTarget {
 		return PdndTarget{Reason: UpgradeBlockManifestMissing}
 	}
 	sig, ok := s.pdnd.readSmall(ctx, PdndSignatureFile, pdndSignatureMaxBytes)
-	if !ok || len(bytes.TrimSpace(sig)) == 0 {
+	if !ok || !pdndSignatureWellFormed(sig) {
 		return PdndTarget{Reason: UpgradeBlockSignatureMissing}
 	}
 

@@ -34,6 +34,8 @@ import {
   lastUpgradeDetail,
   lastUpgradeLine,
   pruneUpgradePicks,
+  UPGRADE_BATCH_MAX,
+  upgradePickFull,
   UPGRADE_REASON_TEXT,
   UPGRADE_STATUS,
   validateServerForm,
@@ -310,7 +312,7 @@ describe('在线升级', () => {
     expect(Object.keys(UPGRADE_REASON_TEXT).sort()).toEqual(EXPECTED_REASON_CODES)
     expect(upgradeReasonText('confirm_timeout')).toBe('新版本没能连上面板，已自动装回旧版')
     expect(upgradeReasonText('no_upgrade_support')).toBe('节点端版本太旧或没装升级助手，重装一次后才能在线升级')
-    expect(upgradeReasonText('signature_missing')).toBe('面板上没有发布清单的签名')
+    expect(upgradeReasonText('signature_missing')).toBe('面板上没有有效的发布清单签名')
     expect(upgradeReasonText('rollback_failed')).toBe('装回旧版失败，需要登录服务器处理')
     expect(upgradeReasonText(null)).toBe('节点端没有给出原因')
     expect(upgradeReasonText('')).toBe('节点端没有给出原因')
@@ -328,7 +330,7 @@ describe('在线升级', () => {
     expect(upgradeBlockNote({ upgrade: { available: true, target_version: 'v2026.10.21', reason: null } })).toBeNull()
     expect(upgradeOffer({ upgrade: { available: false, target_version: null, reason: 'signature_missing' } })).toBeNull()
     expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'signature_missing' } })).toBe(
-      '不能在线升级：面板上没有发布清单的签名',
+      '不能在线升级：面板上没有有效的发布清单签名',
     )
     expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'not_connected' } })).toBeNull()
     expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'up_to_date' } })).toBeNull()
@@ -345,6 +347,15 @@ describe('在线升级', () => {
     ]
     expect(upgradeTarget(list)).toBe('v2026.10.21')
     expect(upgradeTarget([list[0]!])).toBeNull()
+  })
+
+  it('caps one upgrade batch at the Go limit of 50', () => {
+    expect(UPGRADE_BATCH_MAX).toBe(50)
+    const full = new Set(Array.from({ length: 50 }, (_, i) => `s${i}`))
+    expect(upgradePickFull(full, 'other')).toBe(true)
+    expect(upgradePickFull(full, 's3')).toBe(false)
+    full.delete('s0')
+    expect(upgradePickFull(full, 'other')).toBe(false)
   })
 
   it('pruneUpgradePicks drops missing and non-upgradeable', () => {

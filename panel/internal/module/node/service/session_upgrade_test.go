@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -219,5 +220,28 @@ func TestHandleUpgradeReport(t *testing.T) {
 	s.HandleUpgradeReport(ctx, r)
 	if s.Err() != nil {
 		t.Fatalf("记录失败不应结束会话，Err=%v", s.Err())
+	}
+}
+
+// Hello 带来的升级结局没记上：建流失败、不发 Welcome，节点留着结局文件重连再报；别的 Hello 写失败照常建流
+func TestOpenFailsWhenUpgradeOutcomeUnrecorded(t *testing.T) {
+	b := newFakeBackend()
+	b.helloErr = fmt.Errorf("%w: 库暂时不可用", ErrUpgradeOutcomeUnrecorded)
+	m := NewSessionManager(b, nil, fastOptions())
+	serverID := uuid.New()
+	if _, err := m.Open(context.Background(), serverID, Hello{Features: []string{FeatureUpgradeV1}}); !errors.Is(err, ErrUpgradeOutcomeUnrecorded) {
+		t.Fatalf("应建流失败，得 %v", err)
+	}
+	if _, ok := m.UpgradeInfo(serverID); ok {
+		t.Fatal("建流失败后不应留着会话")
+	}
+
+	b.helloErr = errors.New("主机信息写失败")
+	s, err := m.Open(context.Background(), serverID, Hello{Features: []string{FeatureUpgradeV1}})
+	if err != nil {
+		t.Fatalf("别的 Hello 写失败应照常建流: %v", err)
+	}
+	if out := nextNow(t, s, time.Second); out.Kind != OutWelcome {
+		t.Fatalf("第一条应为 Welcome，实际 %v", out.Kind)
 	}
 }

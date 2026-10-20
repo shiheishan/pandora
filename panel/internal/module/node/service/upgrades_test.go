@@ -198,7 +198,7 @@ func TestPdndTargetReasonText(t *testing.T) {
 	if pdndTargetReasonText(UpgradeBlockManifestMissing) != "面板上没有节点端发布清单" {
 		t.Fatal("manifest_missing")
 	}
-	if pdndTargetReasonText(UpgradeBlockSignatureMissing) != "面板上没有发布清单的签名" {
+	if pdndTargetReasonText(UpgradeBlockSignatureMissing) != "面板上没有有效的发布清单签名" {
 		t.Fatal("signature_missing")
 	}
 	if pdndTargetReasonText(UpgradeBlockManifestInvalid) != "发布清单格式不对" {

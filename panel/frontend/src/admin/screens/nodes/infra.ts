@@ -302,7 +302,7 @@ export function patchPoolBody(p: Pool, f: PoolForm): Record<string, unknown> | n
 // ---------------------------------------------------------------------------
 export const UPGRADE_REASON_TEXT: Readonly<Record<string, string>> = {
   manifest_missing: '面板上没有节点端发布清单',
-  signature_missing: '面板上没有发布清单的签名',
+  signature_missing: '面板上没有有效的发布清单签名',
   manifest_invalid: '发布清单格式不对',
   binary_mismatch: '面板托管的节点端程序与发布清单不符',
   in_progress: '正在升级',
@@ -360,6 +360,14 @@ export function upgradeTarget(list: readonly Pick<Server, 'upgrade'>[]): string 
 
 export function upgradeSelectable(s: Pick<Server, 'upgrade'>): boolean {
   return s.upgrade.available
+}
+
+/** 一次批量升级最多几台：与 Go 的 UpgradeBatchMax 同值，超过后端整批拒绝 */
+export const UPGRADE_BATCH_MAX = 50
+
+/** 已勾满上限时，没勾的卡片不能再勾 */
+export function upgradePickFull(picked: ReadonlySet<string>, id: string): boolean {
+  return picked.size >= UPGRADE_BATCH_MAX && !picked.has(id)
 }
 
 export function pruneUpgradePicks(picked: ReadonlySet<string>, list: readonly Pick<Server, 'id' | 'upgrade'>[]): Set<string> {

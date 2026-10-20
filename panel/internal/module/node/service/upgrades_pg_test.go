@@ -384,6 +384,27 @@ func TestRecordUpgradeReportTransitions(t *testing.T) {
 		t.Fatalf("rolled_back: %s %s", st, reason.String)
 	}
 
+	// 已判 succeeded 之后，助手回退失败报 FAILED rollback_failed：以节点回报为准，要人工处理
+	if err := e.exec(ctx, `UPDATE servers SET binary_sha256 = ? WHERE id = ?`, strings.Repeat("d", 64), a.ID); err != nil {
+		t.Fatal(err)
+	}
+	requestOneUpgrade(t, e, ctx, sess, a.ID)
+	jobA3 := upgradeJobID(t, e, ctx, a.ID)
+	if err := e.svc.RecordHello(ctx, a.ID, Hello{BinarySHA256: targetSHA}, now.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.RecordUpgradeReport(ctx, a.ID, UpgradeReport{
+		JobID: jobA3, Phase: UpgradePhaseFailed, ReasonCode: "rollback_failed",
+	}, now.Add(6*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.row(ctx, `SELECT status, reason_code FROM server_upgrades WHERE id = ?`, jobA3).Scan(&st, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if st != UpgradeFailed || reason.String != "rollback_failed" {
+		t.Fatalf("succeeded 之后的 rollback_failed: %s %s", st, reason.String)
+	}
+
 	detail := strings.Repeat("x", 2000)
 	if err := e.svc.RecordUpgradeReport(ctx, b.ID, UpgradeReport{
 		JobID: jobB, Phase: UpgradePhaseFailed, ReasonCode: "", Detail: detail,
@@ -399,9 +420,9 @@ func TestRecordUpgradeReportTransitions(t *testing.T) {
 		t.Fatalf("failed B: %s %s len=%d", st, reason.String, detailLen)
 	}
 
-	beforeA, beforeB := jobA2, jobB
+	beforeA, beforeB := jobA3, jobB
 	_ = e.svc.RecordUpgradeReport(ctx, a.ID, UpgradeReport{JobID: uuid.Nil, Phase: UpgradePhaseFailed}, now)
-	_ = e.svc.RecordUpgradeReport(ctx, b.ID, UpgradeReport{JobID: jobA2, Phase: UpgradePhaseFailed}, now)
+	_ = e.svc.RecordUpgradeReport(ctx, b.ID, UpgradeReport{JobID: jobA3, Phase: UpgradePhaseFailed}, now)
 	if upgradeJobID(t, e, ctx, a.ID) != beforeA {
 		t.Fatal("Nil JobID 不应改行")
 	}
@@ -446,6 +467,53 @@ func TestWatchUpgradesTimesOut(t *testing.T) {
 	}
 	if err := e.row(ctx, `SELECT status FROM server_upgrades WHERE server_id = ?`, a.ID).Scan(&st); err != nil || st != UpgradeRolledBack {
 		t.Fatalf("超时后 rolled_back: %s", st)
+	}
+}
+
+// 面板先判了超时，新版随后才连上：这台最近一次任务改判 succeeded；更早的超时不翻
+func TestUpgradeSucceedsAfterTimeoutOnlyLatest(t *testing.T) {
+	e, ctx := newInvEnvCommitted(t)
+	sess := newFakeUpgradeSessions()
+	e.svc.UseSessions(sess)
+
+	a := e.readyServer(t, ctx, "late-a")
+	upgradeDist(t, e.svc)
+	requestOneUpgrade(t, e, ctx, sess, a.ID)
+	first := upgradeJobID(t, e, ctx, a.ID)
+	if err := e.exec(ctx, `UPDATE server_upgrades SET created_at = now() - interval '2 hour', deadline_at = now() - interval '1 hour' WHERE id = ?`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.WatchUpgrades(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requestOneUpgrade(t, e, ctx, sess, a.ID)
+	second := upgradeJobID(t, e, ctx, a.ID)
+	if second == first {
+		t.Fatal("应建了第二条任务")
+	}
+	if err := e.exec(ctx, `UPDATE server_upgrades SET created_at = now() - interval '1 hour', deadline_at = now() - interval '1 minute' WHERE id = ?`, second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.WatchUpgrades(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var targetSHA string
+	if err := e.row(ctx, `SELECT target_sha256 FROM server_upgrades WHERE id = ?`, second).Scan(&targetSHA); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.RecordHello(ctx, a.ID, Hello{BinarySHA256: targetSHA}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var st1, st2 string
+	if err := e.row(ctx, `SELECT status FROM server_upgrades WHERE id = ?`, first).Scan(&st1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.row(ctx, `SELECT status FROM server_upgrades WHERE id = ?`, second).Scan(&st2); err != nil {
+		t.Fatal(err)
+	}
+	if st1 != UpgradeTimedOut || st2 != UpgradeSucceeded {
+		t.Fatalf("更早的应仍超时、最近的应改判成功：%s %s", st1, st2)
 	}
 }
 
