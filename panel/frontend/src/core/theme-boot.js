@@ -13,6 +13,27 @@
   var root = document.documentElement
   root.setAttribute('data-theme', theme)
 
+  // 门户首页片段（服务端插在 #root 之前，见 portal/home.ts）：已登录（有门户令牌）、地址带 hash 页面或邀请码时，
+  // 首帧前先藏起来（<html data-home="off">，样式在 portal/home.css），免得已登录用户和直接进登录页的访客闪一下首页；
+  // 真值由 App.tsx 挂载后按登录状态与地址再定。只在门户入口；后台与门户同源，不碰后台。
+  // 地址与令牌分两步读：存储读不了（隐私模式）时地址照样算数
+  if (root.getAttribute('data-app') === 'portal') {
+    var homeOff = false
+    try {
+      // 与 router 的 parseHash 同口径：只看 ? 之前的路径，#/?x=1 仍算空地址
+      var hash = (window.location.hash || '').split('?')[0]
+      homeOff = (hash !== '' && hash !== '#' && hash !== '#/') || /[?&]invite=/.test(window.location.search || '')
+    } catch {
+      // 读不到地址：按没有页面
+    }
+    try {
+      if (!homeOff && storage && storage.getItem('pandora-portal-token')) homeOff = true
+    } catch {
+      // 读不到存储：按未登录，App 挂载后再定
+    }
+    if (homeOff) root.setAttribute('data-home', 'off')
+  }
+
   // 门户的生效主题（后台「外观」里切的那套颜色）：上次从 v1/appearance 拿到的值由
   // portal/appearance.ts 缓存在 pandora-portal-appearance，这里在首帧前写到 <html> 上，
   // 自定义主题的站点不再先画默认色、等接口回来再换色。只在门户入口（<html data-app="portal">）；

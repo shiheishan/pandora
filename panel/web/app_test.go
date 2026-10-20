@@ -29,6 +29,10 @@ func TestEmbeddedAppsHaveEntryForTheirDomain(t *testing.T) {
 			continue
 		}
 		checkBuiltEntry(t, domain, app, index)
+		// 服务端首页片段插在 <div id="root"> 之前（webapp.insertBeforeRoot）；标记写法一变首页会静默消失
+		if domain == "portal" && strings.Count(index, `<div id="root">`) != 1 {
+			t.Fatalf("portal: entry must contain exactly one <div id=\"root\"> for the home fragment")
+		}
 	}
 }
 

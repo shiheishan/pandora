@@ -138,6 +138,16 @@ export const siteSettingsSchema = z.object({
 })
 
 // ---------------------------------------------------------------------------
+// 首页设置（GET/POST v1/settings/home）：用户端根地址给未登录访客看的介绍与常见问题；套餐与价格取自套餐目录，不在这里
+// ---------------------------------------------------------------------------
+export const homeSettingsSchema = z.object({
+  enabled: z.boolean(),
+  intro: z.string(),
+  faq: z.array(z.object({ q: z.string(), a: z.string() })),
+})
+export type HomeSettings = z.output<typeof homeSettingsSchema>
+
+// ---------------------------------------------------------------------------
 // 套餐目录子集（GET v1/plans）：知识库「限定套餐」只要名字与状态
 // ---------------------------------------------------------------------------
 export const planCatalogResponse = z.object({ plans: z.array(z.object({ id: uuid, name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })

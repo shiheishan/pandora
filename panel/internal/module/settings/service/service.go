@@ -76,9 +76,11 @@ type Service struct {
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher
 
-	// siteListener 站点设置提交后清 appearance 的 PageMeta 快照；extrasListener 订阅附加设置提交后清 subscription 拉取快照。
+	// siteListener 站点设置提交后清 appearance 的 PageMeta 快照；extrasListener 订阅附加设置提交后清 subscription 拉取快照；
+	// homeListener 首页设置提交后清 app 层门户首页快照。
 	siteListener   SiteChangeListener
 	extrasListener SubscriptionExtrasListener
+	homeListener   HomeChangeListener
 
 	// signupGen 是本进程保存注册设置的次数（提交后加一），门户入口页 CSP 的缓存按它失效，见 signup_provider.go。
 	signupGen atomic.Uint64
@@ -167,6 +169,9 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.extrasListener == nil {
 		out = append(out, "SubscriptionExtrasListener")
+	}
+	if s.homeListener == nil {
+		out = append(out, "HomeChangeListener")
 	}
 	return out
 }

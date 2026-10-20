@@ -9,6 +9,7 @@
 // 只认两类路径：入口 / 与 Vite 产物目录 /assets/*。前端用 hash 路由，业务路径永远不会打到服务端；
 // 不做 SPA 回退，缺失的资源就该是 404，而不是一张 200 的入口页掩盖构建错配。
 // 入口页可按 WithIndexMeta 改写 <head>（title、description、application-name、icon），只改文字、不加脚本与样式，CSP 不变。
+// 门户入口页可按 WithHome 在 <div id="root"> 前插入服务端渲染的首页片段（html/template 转义，不加脚本与样式，CSP 不变）。
 // 根下其余路径（/v1、/healthz、订阅通配 /:prefix/:token、/pdnd/...）继续归各自的路由，互不抢占：
 // gin 的路由树里静态段 assets 优先于参数段，订阅前缀恰好叫 assets 的链接会被遮住（前缀是随机串，碰不上）。
 package webapp
@@ -128,12 +129,15 @@ type handler struct {
 	etag  string
 	extra func(ctx context.Context) ExtraSources
 	meta  func(ctx context.Context) IndexMeta
+	home  func(ctx context.Context) (Home, bool)
 
-	mu       sync.Mutex
-	lastMeta IndexMeta
-	lastBody []byte
-	lastETag string
-	hasLast  bool
+	mu          sync.Mutex
+	lastMeta    IndexMeta
+	lastHome    Home
+	lastHasHome bool
+	lastBody    []byte
+	lastETag    string
+	hasLast     bool
 }
 
 // Option 调整 Handler。
@@ -147,7 +151,7 @@ func WithExtraSources(f func(ctx context.Context) ExtraSources) Option {
 
 // Handler 只读下发 fsys：
 //
-//	/              → index.html，no-cache + ETag + CSP；可选 WithIndexMeta 改写 <head>
+//	/              → index.html，no-cache + ETag + CSP；可选 WithIndexMeta 改写 <head>；可选 WithHome 插入首页片段
 //	/assets/<文件> → 按扩展名给类型，一年 immutable
 //	其余           → 404；目录、点开头的段、非法路径同样 404
 //
@@ -187,11 +191,17 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, etag := h.index, h.etag
+	var m IndexMeta
 	if h.meta != nil {
-		m := sanitizeMeta(h.meta(r.Context()))
-		if !m.zero() {
-			body, etag = h.rendered(m)
-		}
+		m = sanitizeMeta(h.meta(r.Context()))
+	}
+	var raw Home
+	rawOK := false
+	if h.home != nil {
+		raw, rawOK = h.home(r.Context())
+	}
+	if !m.zero() || rawOK {
+		body, etag = h.rendered(m, raw, rawOK)
 	}
 	csp := indexCSP
 	if h.extra != nil {

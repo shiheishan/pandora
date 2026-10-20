@@ -54,6 +54,7 @@ paths:
   - 手机（≤ 959）：没有侧栏，内容列顶上只有 Logo；底部悬浮标签栏四项 `TAB_PAGES`（套餐 / 选购 / 钱包 / 我的），订单、邀请、消息、工单、帮助、账号安全都从「我的」页进，这些页上「我的」高亮（`tabOwner`）；「我的」上的小红点 = 有未读消息或待支付订单
   - 内容列 720 宽，`WIDE_PAGES` 1040；页标题 h1 在列里（`HIDDEN_TITLE_PAGES` 只给读屏）；标题行右侧插槽 `PageHeadAside`；换页整列重挂载触发 rise 进场
   - `#/me` 只在手机有：`resolvePage(path, { desktop })` 在 `matchMedia('(min-width: 960px)')` 为真时把它落回 `#/subs`（窗口拉宽同样跳回）；`#/overview` 已删，按未知页面落回 `#/subs`
+- 首页与登录入口（10-20）：服务端在入口页 `#root` 前给了首页片段（`home.ts` 的 `hasServerHome`，模板在 `panel/internal/pkg/webapp/home.go`）时，未登录、地址没有页面（`''` / `#` / `#/`）、不是邀请链接或快捷 / 邮件登录 → `#root` 不渲染、露出首页；`#/login`、`#/register`（`entry-links.ts` 的 `LOGIN_PATH`、`REGISTER_PATH`、`authTabFromPath`）进登录页对应页签（`AuthPage` 按页签做 key 重挂）；其余地址未登录照旧是登录页；退出登录（含令牌失效被清）时地址是空地址才 `navigate('/login')`，停在别的页面地址上不动（重新登录后回到原页）。显隐只经 `<html data-home="off">`（`home.ts` 的 `setHomeHidden`，`core/theme-boot.js` 首帧前先按令牌 / hash / 邀请码打一次），样式在全局的 `home.css`。没有片段（vite dev、首页开关关着）时空地址直接是登录页
 - 外来链接不能用两段式路径（public 网关根下有订阅通配）
   - 邀请链接用 `/?invite=CODE`，渲染前就取走
   - 快捷登录链接用 `#/quick-login/<token>`，加载时即消费并抹掉

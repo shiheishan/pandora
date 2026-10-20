@@ -83,6 +83,8 @@ type services struct {
 	support    *supportsvc.Service
 	plugin     *pluginsvc.Service
 	report     *reportsvc.Service
+	// 门户首页片段的内容（入口页用；首页设置提交后经 settings 的监听清缓存）
+	home *portalHome
 	// idemFPKey 是幂等请求指纹的 HMAC 密钥（从主密钥派生）
 	idemFPKey []byte
 	limiter   *ratelimit.Limiter
@@ -341,6 +343,9 @@ func buildServices(r *runtime) (*services, error) {
 	// 后台改了站点设置（站点名等）、订阅附加设置，提交后同步清本进程的入口页快照与订阅拉取快照（serve 单实例，后台的写都在 serve 里）
 	settingsSvc.UseSiteChangeListener(appearanceSvc)
 	settingsSvc.UseSubscriptionExtrasListener(subSvc)
+	// 门户首页片段：站点名等取 appearance 快照，首页设置取 settings、套餐取 catalog；后台保存首页设置后同步清它的缓存
+	homeSnap := newPortalHome(settingsSvc, catalogSvc, appearanceSvc)
+	settingsSvc.UseHomeChangeListener(homeSnap)
 	// 门户建单查购买限制（每人未支付订单数、每人订阅数），每次现查 settings
 	orderSvc.UsePurchaseLimits(settingsSvc)
 	// 站点对外根地址（入口页 canonical、og:url）：全仓只经 settings 的 SiteURL 读
@@ -378,6 +383,7 @@ func buildServices(r *runtime) (*services, error) {
 		support:    supportSvc,
 		plugin:     pluginSvc,
 		report:     reportSvc,
+		home:       homeSnap,
 		idemFPKey:  keys.Derive(crypto.InfoHMACIdempotency, 32),
 		limiter:    limiter,
 		sealer:     sealer,

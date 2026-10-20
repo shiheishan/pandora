@@ -1,6 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
+import { parseHash } from '../core/router'
 import { APPEARANCE_CACHE_KEY, pickThemeTokens, portalBranding, readThemeCache, themeCacheValue, writeThemeCache } from './appearance'
-import { mailLoginTokenFromHash, quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
+import {
+  authTabFromPath,
+  isHomePath,
+  LOGIN_PATH,
+  mailLoginTokenFromHash,
+  quickLoginLink,
+  quickLoginTokenFromHash,
+  quickLoginTokenFromInput,
+  readStoredInvite,
+  REGISTER_PATH,
+  takeInviteFromUrl,
+  INVITE_STORAGE_KEY,
+} from './entry-links'
+import { hasServerHome, setHomeHidden, HOME_ATTR } from './home'
 import { HIDDEN_TITLE_PAGES, PAGES, SIDE_GROUPS, TAB_PAGES, WIDE_PAGES, resolvePage, sideOwner, tabLabel, tabOwner } from './pages'
 import { displayName } from './queries'
 
@@ -111,6 +125,40 @@ describe('mail-login tokens', () => {
     expect(mailLoginTokenFromHash('#/quick-login/x')).toBeNull()
     expect(mailLoginTokenFromHash('#/subs')).toBeNull()
     expect(mailLoginTokenFromHash('')).toBeNull()
+  })
+})
+
+describe('home entry', () => {
+  it('maps hash paths to auth tabs and home path', () => {
+    expect(authTabFromPath(parseHash('#/login').path)).toBe('login')
+    expect(authTabFromPath(parseHash('#/register').path)).toBe('reg')
+    expect(authTabFromPath(parseHash('#/register/').path)).toBe('reg')
+    expect(authTabFromPath(parseHash('#/subs').path)).toBeNull()
+    expect(authTabFromPath(parseHash('#/').path)).toBeNull()
+    expect(authTabFromPath(parseHash('').path)).toBeNull()
+
+    expect(isHomePath(parseHash('').path)).toBe(true)
+    expect(isHomePath(parseHash('#').path)).toBe(true)
+    expect(isHomePath(parseHash('#/').path)).toBe(true)
+    expect(isHomePath(parseHash('#/login').path)).toBe(false)
+    expect(isHomePath(parseHash('#/subs').path)).toBe(false)
+
+    expect(LOGIN_PATH).toBe('/login')
+    expect(REGISTER_PATH).toBe('/register')
+  })
+
+  it('detects server home fragment and toggles data-home', () => {
+    expect(hasServerHome({ getElementById: (id: string) => (id === 'ph-home' ? ({} as HTMLElement) : null) })).toBe(true)
+    expect(hasServerHome({ getElementById: () => null })).toBe(false)
+
+    const root = {
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+    }
+    setHomeHidden(true, root)
+    expect(root.setAttribute).toHaveBeenCalledWith(HOME_ATTR, 'off')
+    setHomeHidden(false, root)
+    expect(root.removeAttribute).toHaveBeenCalledWith(HOME_ATTR)
   })
 })
 

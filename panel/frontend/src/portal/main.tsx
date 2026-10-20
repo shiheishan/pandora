@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { createAppRuntime } from '../shell/runtime'
 import '../styles/index.css'
 import '../styles/display-fonts.css'
+import './home.css'
 import { App } from './App'
 import { takeInviteFromUrl } from './entry-links'
 

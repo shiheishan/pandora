@@ -9,6 +9,7 @@ import { droppedMessage, slotDirty, timezoneOptions } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
 import { siteSettingsSchema, slotSaved, themeActivated, themeDeleted, type Slot, type Theme } from './schemas'
 import { activateNotice, themeSwatches, themeTagline, type ThemeTarget } from './theme'
+import { HomeCard } from './HomeCard'
 import { ThemeEditor } from './ThemeEditor'
 import css from './theme.module.css'
 
@@ -24,6 +25,8 @@ export function ThemeTab() {
       <Card title="站点设置">
         <SiteCard />
       </Card>
+
+      <HomeCard />
 
       <Card
         flush
