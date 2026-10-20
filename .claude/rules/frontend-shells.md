@@ -8,6 +8,9 @@ paths:
 
 ## 后台（src/admin）
 
+- 首屏分包（10-20）：`App.tsx` 不静态 import `Shell`，经 `ShellLoader.tsx` 懒加载（整页边界：块加载失败提示刷新，`shell/chunk-error.ts` 判定；`main.tsx` 有令牌时 `preloadShell()` 预取）
+  - 登录前就会加载的文件（`main.tsx`、`App.tsx`、`LoginPage.tsx`、`ReauthDialog.tsx`、`ShellLoader.tsx`、`shell/runtime.tsx`、`site-name.ts`）直接 import 具体组件文件（`../ui/Toast`、`../ui/Button`），不经 `../ui`、`./kit` 汇总出口，也不 import `screens/**` 与 `site.ts`（它带内容页 schema）；页面照旧从汇总出口 import
+  - 实测登录页首屏 JS 382KB（gzip 116KB）、CSS 28KB（gzip 7.2KB）；改了上述文件的 import 后重量一次（构建产物里从 index.html 递归跟静态 import 求和）
 - reauth 只在后台入口接线：`main.tsx` 建 `ReauthController`，作为 `requestReauth` 传给 `createAppRuntime`
   - 常驻的 `ReauthDialog` 接住任何页面写请求的 403 `reauth_required`，验证通过后 `api.ts` 用原幂等键重放
   - 页面自己不弹「重新验证」，也不做「先弹框后执行」：契约 1.6 规定先请求、按需弹框
