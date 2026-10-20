@@ -1,9 +1,13 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/metrics"
@@ -129,5 +133,80 @@ func TestAsynqRedisKeepsCredentials(t *testing.T) {
 	o := opt.(asynq.RedisClientOpt)
 	if o.Username != "worker" || o.Password != "pw" || o.DB != 3 || o.Addr != "127.0.0.1:6380" {
 		t.Fatalf("%+v", o)
+	}
+}
+
+func TestEngineMethodNotAllowedAndNoTrailingSlashRedirect(t *testing.T) {
+	r := &runtime{cfg: testConfig(t), log: zap.NewNop()}
+	e := newEngine(r, config.HTTPServer{MaxConcurrency: 8, RequestTimeout: time.Second}, func(c *gin.Context) { c.Next() })
+
+	type responseBody struct {
+		Status string `json:"status"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+
+	// 1. GET /healthz → 200，正文 JSON 解出来 status == "ok"
+	{
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /healthz code = %d, want 200", w.Code)
+		}
+		var body responseBody
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if body.Status != "ok" {
+			t.Fatalf("GET /healthz status = %q, want \"ok\"", body.Status)
+		}
+	}
+
+	// 2. POST /healthz → 405，Allow 头等于 "GET"，正文 JSON 的 error.code == "method_not_allowed"，Content-Type 以 application/json 开头
+	{
+		req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("POST /healthz code = %d, want 405", w.Code)
+		}
+		if allow := w.Header().Get("Allow"); allow != "GET" {
+			t.Fatalf("POST /healthz Allow = %q, want \"GET\"", allow)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			t.Fatalf("POST /healthz Content-Type = %q, want prefix \"application/json\"", ct)
+		}
+		var body responseBody
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if body.Error.Code != "method_not_allowed" {
+			t.Fatalf("POST /healthz error.code = %q, want \"method_not_allowed\"", body.Error.Code)
+		}
+	}
+
+	// 3. GET /healthz/ → 404（不是 301/307），error.code == "not_found"，且没有 Location 头
+	{
+		req := httptest.NewRequest(http.MethodGet, "/healthz/", nil)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("GET /healthz/ code = %d, want 404", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "" {
+			t.Fatalf("GET /healthz/ Location = %q, want empty", loc)
+		}
+		var body responseBody
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if body.Error.Code != "not_found" {
+			t.Fatalf("GET /healthz/ error.code = %q, want \"not_found\"", body.Error.Code)
+		}
 	}
 }

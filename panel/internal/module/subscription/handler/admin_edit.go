@@ -28,6 +28,11 @@ type quotaLimitRequest struct {
 	Reason     string `json:"reason"`
 }
 
+// quotaLimitResponse 是改订阅配额上限的响应。
+type quotaLimitResponse struct {
+	OK bool `json:"ok"`
+}
+
 // adminSetPeriodEnd 把一份正在生效的订阅的到期时间直接改成指定时刻。
 func (h *Handler) adminSetPeriodEnd(c *gin.Context) {
 	id, ok := subID(c)
@@ -72,5 +77,5 @@ func (h *Handler) adminSetQuotaLimit(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{"ok": true})
+	httpx.OK(c, quotaLimitResponse{OK: true})
 }

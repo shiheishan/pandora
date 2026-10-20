@@ -15,6 +15,12 @@ type mailLinkStartRequest struct {
 	CaptchaToken string `json:"captcha_token" binding:"max=4096"`
 }
 
+// mailLinkStartResponse 是发登录链接的响应：不论邮箱是否注册都一样，不泄露账号是否存在。
+type mailLinkStartResponse struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
 type mailLinkLoginRequest struct {
 	Token string `json:"token" binding:"required,max=128"`
 }
@@ -33,9 +39,9 @@ func (h *Handler) startMailLink(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{
-		"ok":      true,
-		"message": "如果这个邮箱已注册，登录链接已发出，15 分钟内有效",
+	httpx.OK(c, mailLinkStartResponse{
+		OK:      true,
+		Message: "如果这个邮箱已注册，登录链接已发出，15 分钟内有效",
 	})
 }
 
