@@ -86,6 +86,10 @@ func (s *Service) balanceFor(ctx context.Context, d draft, total decimal.Decimal
 // place 在调用方事务里落单，返回结果与落库后的订单行。
 func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, error) {
 	now := s.clock()
+	lim, err := s.purchaseGate(ctx, d, now)
+	if err != nil {
+		return Created{}, model.Order{}, err
+	}
 
 	var discount decimal.Decimal
 	var couponID *uuid.UUID
@@ -127,6 +131,11 @@ func (s *Service) place(ctx context.Context, d draft) (Created, model.Order, err
 	bal, err := s.balanceFor(ctx, d, total)
 	if err != nil {
 		return Created{}, model.Order{}, err
+	}
+	if d.Manual == nil && bal.Payable.IsPositive() {
+		if err := s.checkUnpaidCap(ctx, d.UserID, lim.MaxUnpaidOrders, now); err != nil {
+			return Created{}, model.Order{}, err
+		}
 	}
 	// 线下已收款而应付为 0：没有东西可收，建单之前就拒（不先履约再整笔回滚）
 	if d.Manual != nil && d.Manual.Offline && !bal.Payable.IsPositive() {

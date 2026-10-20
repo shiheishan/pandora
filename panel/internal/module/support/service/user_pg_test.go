@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -59,7 +60,7 @@ func TestCreateOpenLimitAndClose(t *testing.T) {
 	user := e.mkUser(t, ctx, nil)
 	uctx := asUser(ctx, user)
 
-	for i := 0; i < MaxOpenTickets; i++ {
+	for i := 0; i < settingssvc.DefaultSupportMaxOpenTickets; i++ {
 		_, err := e.svc.Create(uctx, CreateInput{Body: createBody(randHex(4))})
 		if err != nil {
 			t.Fatalf("第 %d 张: %v", i+1, err)
@@ -69,13 +70,39 @@ func TestCreateOpenLimitAndClose(t *testing.T) {
 	mustCode(t, err, errs.Conflict)
 
 	list, err := e.svc.MyTickets(uctx)
-	if err != nil || len(list) != MaxOpenTickets {
-		t.Fatalf("应有 %d 张未结，得到 %d err=%v", MaxOpenTickets, len(list), err)
+	if err != nil || len(list) != settingssvc.DefaultSupportMaxOpenTickets {
+		t.Fatalf("应有 %d 张未结，得到 %d err=%v", settingssvc.DefaultSupportMaxOpenTickets, len(list), err)
 	}
 	if err := e.svc.UserClose(uctx, list[0].ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err = e.svc.Create(uctx, CreateInput{Body: createBody("after-close")})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateOpenLimitFollowsSettings(t *testing.T) {
+	e, ctx := newEnv(t)
+	rules := &fakeRules{rules: settingssvc.SupportRules{AutoCloseHours: 24, MaxOpenTickets: 2}}
+	e.svc.UseSettings(rules)
+	user := e.mkUser(t, ctx, nil)
+	uctx := asUser(ctx, user)
+
+	for i := 0; i < 2; i++ {
+		_, err := e.svc.Create(uctx, CreateInput{Body: createBody(randHex(4))})
+		if err != nil {
+			t.Fatalf("第 %d 张: %v", i+1, err)
+		}
+	}
+	_, err := e.svc.Create(uctx, CreateInput{Body: createBody("third")})
+	mustCode(t, err, errs.Conflict)
+	if !strings.Contains(err.Error(), "2 个进行中的工单") {
+		t.Fatalf("期望文案含 2 个进行中的工单，得到 %v", err)
+	}
+
+	rules.rules.MaxOpenTickets = 3
+	_, err = e.svc.Create(uctx, CreateInput{Body: createBody("third-ok")})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-/* 订阅下发页共用样式。附加设置卡（SubscriptionTab.tsx）用 stack / extrasActions / faint；
+/* 订阅下发页共用样式。附加设置卡（SubscriptionTab.tsx）用 stack / extrasActions / extrasField / faint；
    订阅模板表（SubscriptionTemplates.tsx）用 clients / cell2。 */
 
 .stack {
@@ -11,6 +11,12 @@
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: 1.6;
+}
+
+/* 附加设置卡里开关行下面的数字输入（每小时拉取上限）：与 SettingRow 同样的留白与分隔线 */
+.extrasField {
+  padding: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .extrasActions {

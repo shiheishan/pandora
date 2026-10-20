@@ -19,13 +19,23 @@ describe('mock api · admin subscription', () => {
 
   it('reads subscription extras defaults and saves them; rejects link_base_urls as unknown field', async () => {
     const initial = subscriptionExtrasSchema.parse(await json(await call('GET', '/v1/settings/subscription')))
-    expect(initial).toEqual({ info_nodes: false, protocol_prefix: false })
+    expect(initial).toEqual({ info_nodes: false, protocol_prefix: false, fetch_limit_per_hour: 60 })
 
     const saved = subscriptionExtrasSchema.parse(
       await json(await call('POST', '/v1/settings/subscription', { info_nodes: true, protocol_prefix: true })),
     )
     expect(saved.info_nodes).toBe(true)
     expect(saved.protocol_prefix).toBe(true)
+  })
+
+  it('validates fetch_limit_per_hour like Go (1–10000) and keeps state on 422', async () => {
+    const bad = await call('POST', '/v1/settings/subscription', { fetch_limit_per_hour: 0 })
+    expect(bad.status).toBe(422)
+    expect(await json(bad)).toMatchObject({
+      error: { code: 'validation_failed', fields: { fetch_limit_per_hour: '每小时拉取上限要在 1 到 10000 之间' } },
+    })
+    const ok = subscriptionExtrasSchema.parse(await json(await call('POST', '/v1/settings/subscription', { fetch_limit_per_hour: 120 })))
+    expect(ok.fetch_limit_per_hour).toBe(120)
   })
 
   it('rejects link_base_urls with 400 bad_request', async () => {

@@ -3,7 +3,7 @@ import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
 import type { PlacementChoice } from './placement'
-import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
+import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider, PurchaseLimits } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat }
 
@@ -839,6 +839,34 @@ export function adjustmentView(a: Adjustment) {
 /** 冲销原因的默认值：「冲销：」+ 原因（原因 ≥ 5 字，拼出来必然够长），截到 500 字 */
 export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
   return [...`冲销：${a.reason}`].slice(0, REASON_MAX).join('')
+}
+
+/** 购买限制弹窗的表单：存输入框原文，清空时不悄悄变成 0（= 不限） */
+export type PurchaseLimitsForm = { max_unpaid_orders: string; max_subscriptions: string }
+
+export function purchaseLimitsFormFrom(v: PurchaseLimits): PurchaseLimitsForm {
+  return { max_unpaid_orders: String(v.max_unpaid_orders), max_subscriptions: String(v.max_subscriptions) }
+}
+
+const PURCHASE_LIMIT_RANGE: Record<keyof PurchaseLimitsForm, string> = {
+  max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+  max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
+}
+
+/** GET/POST v1/settings/purchase：范围文案与后端 fields 一致；空的标「必填（0 表示不限）」 */
+export function purchaseLimitErrors(form: PurchaseLimitsForm): Record<string, string> {
+  const out: Fields = {}
+  for (const key of ['max_unpaid_orders', 'max_subscriptions'] as const) {
+    const text = form[key].trim()
+    if (text === '') out[key] = '必填（0 表示不限）'
+    else if (!/^\d+$/.test(text) || Number(text) > 50) out[key] = PURCHASE_LIMIT_RANGE[key]
+  }
+  return out
+}
+
+/** 校验通过后转成请求体（两个键整份提交） */
+export function purchaseLimitsBody(form: PurchaseLimitsForm): PurchaseLimits {
+  return { max_unpaid_orders: Number(form.max_unpaid_orders.trim()), max_subscriptions: Number(form.max_subscriptions.trim()) }
 }
 
 /** 开单成功的提示：按落点说清续了、换了还是新开了，换套餐时带上原订阅剩余价值的去向 */

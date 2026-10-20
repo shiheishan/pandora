@@ -25,10 +25,12 @@ paths:
 - 除「令牌有效、可救回」外一律 `ErrPullDenied` → handler 伪装 404；过期回 200 + `render.RenderExpired`（`service/pull.go`、`handler/subscribe.go`）
 - 凭据可用：`active`，或已吊销但 `grace_until` 仍晚于 now；换链接 `rotateLocked` 吊销时 `grace` 传 nil、立即失效（`service/pull.go`、`service/rotate.go`）
 - 令牌按 `token_hash` 查库后再 `hmac.Equal`；短于 16 字符不查库（`service/pull.go`）
+- 凭据每小时拉取上限是 settings 的 `subscription.fetch_limit_per_hour`（缺省 60、1–10000），拉取经 `SubscriptionDelivery` 每次现读，改了立即生效；后台在订阅附加设置卡改（`GET/POST v1/settings/subscription` 的 `fetch_limit_per_hour`，部分更新）。
+- 每个用户手里还算一份的订阅数 `HeldCountsByUser`（`service/user_caps.go`、`repo/user_caps.go`，一条 SQL：`renewal_closed_at IS NULL`，即 `StateLive` 加 `StateRevivable`；能续回的也算一份是用户 10-20 的产品决定）给 order 查每人订阅数上限用。别和按套餐计数的 `LiveSubscriptionCounts`（`service/report_reads.go`，catalog 用）混了。
 - 成功/过期提示才占凭据每小时限流；未认证失败按来源 IP HMAC 采样落库（`service/pull.go`、`service/fetchlog.go`）
 - `Profile-Update-Interval`：正常 12 小时，过期 1 小时；续费页 `renewalPageURL`（`service/pull.go`）
 - 查询参数：`target`/`flag`/`type` 选格式（`subscribeTarget`）；`types` 按协议过滤、`filter` 按名字关键字过滤（`render.ParseTypes`/`ParseKeywords`，口径照 Xboard）（`handler/subscribe.go`）
-- 后台模板、订阅附加设置（信息节点、协议前缀，settings 的 `subscription.info_nodes` 等）与订阅域名分组（本模块的表）在拉取侧走进程内快照，30 秒过期（`service/pull_extras.go`）；附加设置改动最多 30 秒后生效，本进程保存或恢复模板、保存订阅域名后快照立即作废。重读失败时有旧快照就沿用、打 Warn、5 秒后再试，没有旧快照才让拉取失败
+- 后台模板、订阅附加设置（信息节点、协议前缀，settings 的 `subscription.info_nodes` 等）与订阅域名分组（本模块的表）在拉取侧走进程内快照，30 秒过期（`service/pull_extras.go`）；附加设置由 settings 在提交后经 `SubscriptionExtrasListener` 回调 `SubscriptionExtrasChanged`（`pullExtras.invalidate`：代号加一并清空，失效前开始的重读读完也不写回），本进程保存或恢复模板、保存订阅域名后同样调 `invalidate()`；快照里记着读库前的代号，读时与当前代号比对（`fresh`），所以即使在「比完代号、写回之前」失效、旧内容被写了回去，也会作废重读。30 秒只是兜底。重读失败时有旧快照就沿用、打 Warn、5 秒后再试，没有旧快照才让拉取失败
 - 信息节点的「距下次重置」用 `PullByTokenHash` 里同一行配额顺带取的 `traffic_period_end`（`PullRow.TrafficPeriodEnd`），不另查库；`Subscription-Userinfo` 的总量 = 这一行的上限 + 送的量（`bonus_value`，不限量的行按 0）
 - 订阅域名分组（迁移 00048，三张表 `subscription_domain_groups`、`subscription_domains`、`subscription_domain_group_user_groups`，属本模块；用户 10-14 定，取代 settings 的 `subscription.link_base_urls`）：
   - 选组：用户组分到的组 → 缺省组 → 都没有用 `public_base_url`（`service/domain_set.go` 的 `groupFor`、`domainGroupFor`）；只有缺省组时不查用户组

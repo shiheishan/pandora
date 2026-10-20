@@ -42,6 +42,8 @@ const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
 
+const purchaseLimits = { max_unpaid_orders: 0, max_subscriptions: 0 }
+
 // ---- 支付渠道写入：照 billing/provider_admin.go / dto.go ----
 // 用户 2026-10-07 定：易支付只出支付宝和微信
 const EPAY_METHODS = ['alipay', 'wxpay']
@@ -601,6 +603,29 @@ export const billing: MockModule = {
       paymentSettings.notify_base_url = norm.ok
       const effective = effectiveNotifyBase()
       ctx.send(200, { notify_base_url: paymentSettings.notify_base_url, effective_base: effective, public_base_url: PUBLIC_BASE_URL })
+    },
+
+    'GET /v1/settings/purchase': (ctx) => {
+      ctx.send(200, { ...purchaseLimits })
+    },
+
+    'POST /v1/settings/purchase': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
+      const bad = unknownField(body, ['max_unpaid_orders', 'max_subscriptions'])
+      if (bad) return ctx.send(bad.status, bad.body)
+      const fields: Record<string, string> = {}
+      const u = body.max_unpaid_orders
+      if (u === undefined || u === null || typeof u !== 'number' || !Number.isInteger(u)) fields.max_unpaid_orders = '必填'
+      else if (u < 0 || u > 50) fields.max_unpaid_orders = '未支付订单上限要在 0 到 50 之间（0 表示不限）'
+      const s = body.max_subscriptions
+      if (s === undefined || s === null || typeof s !== 'number' || !Number.isInteger(s)) fields.max_subscriptions = '必填'
+      else if (s < 0 || s > 50) fields.max_subscriptions = '订阅数上限要在 0 到 50 之间（0 表示不限）'
+      if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
+      purchaseLimits.max_unpaid_orders = u as number
+      purchaseLimits.max_subscriptions = s as number
+      ctx.send(200, { ...purchaseLimits })
     },
 
     // 启停：reauth，没有幂等；两个布尔漏传按 false

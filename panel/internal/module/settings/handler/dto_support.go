@@ -11,12 +11,14 @@ type supportRulesResponse struct {
 	WaitForReply   bool `json:"wait_for_reply"`
 	AutoClose      bool `json:"auto_close_enabled"`
 	AutoCloseHours int  `json:"auto_close_hours"`
+	MaxOpenTickets int  `json:"max_open_tickets"`
 }
 
 type setSupportRulesRequest struct {
 	WaitForReply   *bool `json:"wait_for_reply"`
 	AutoClose      *bool `json:"auto_close_enabled"`
 	AutoCloseHours *int  `json:"auto_close_hours"`
+	MaxOpenTickets *int  `json:"max_open_tickets"`
 }
 
 func (h *Handler) getSupportRules(c *gin.Context) {
@@ -30,6 +32,7 @@ func (h *Handler) getSupportRules(c *gin.Context) {
 		WaitForReply:   rules.WaitForReply,
 		AutoClose:      rules.AutoClose,
 		AutoCloseHours: rules.AutoCloseHours,
+		MaxOpenTickets: rules.MaxOpenTickets,
 	})
 }
 
@@ -50,6 +53,9 @@ func (h *Handler) setSupportRules(c *gin.Context) {
 	if req.AutoCloseHours == nil {
 		fields["auto_close_hours"] = "必填"
 	}
+	if req.MaxOpenTickets == nil {
+		fields["max_open_tickets"] = "必填"
+	}
 	if len(fields) > 0 {
 		httpx.Fail(c, errs.Invalid(fields))
 		return
@@ -58,6 +64,7 @@ func (h *Handler) setSupportRules(c *gin.Context) {
 		WaitForReply:   *req.WaitForReply,
 		AutoClose:      *req.AutoClose,
 		AutoCloseHours: *req.AutoCloseHours,
+		MaxOpenTickets: *req.MaxOpenTickets,
 	}
 	if err := h.svc.SetSupportRules(ctx, v); err != nil {
 		httpx.Fail(c, err)
@@ -72,5 +79,6 @@ func (h *Handler) setSupportRules(c *gin.Context) {
 		WaitForReply:   rules.WaitForReply,
 		AutoClose:      rules.AutoClose,
 		AutoCloseHours: rules.AutoCloseHours,
+		MaxOpenTickets: rules.MaxOpenTickets,
 	})
 }

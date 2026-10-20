@@ -7,6 +7,7 @@ import { PageActions } from '../../kit'
 import { ORDERS_PAGE, useOrders, type OrderRow } from './api'
 import { ManualOrder } from './ManualOrder'
 import { OrderPage } from './OrderPage'
+import { PurchaseLimitsDialog } from './PurchaseLimitsDialog'
 import css from './Orders.module.css'
 import { channelLabel, filterStatuses, isOrderFilter, ORDER_FILTERS, ORDER_STATUS_VIEW, orderWhat, type OrderFilter } from './model'
 
@@ -85,12 +86,14 @@ function OrdersList({
   const orders = useOrders({ q: state.q.trim() || undefined, status: filterStatuses(state.filter), user_id: state.userId || undefined, offset: state.offset })
   const total = orders.data?.total ?? 0
   const filtered = state.q !== '' || state.filter !== 'all' || state.userId !== ''
+  const [limitsOpen, setLimitsOpen] = useState(false)
   // 标签上的邮箱取当前结果的第一行；翻到空页或还没回来时退回 uuid 前 8 位
   const userLabel = orders.data?.orders[0]?.user_email ?? `用户 #${state.userId.slice(0, 8)}`
 
   return (
     <div className={css.page}>
       <PageActions>
+        <Button onClick={() => setLimitsOpen(true)}>购买限制</Button>
         <Button
           variant="primary"
           icon={PlusSignIcon}
@@ -165,6 +168,7 @@ function OrdersList({
         entrySubscriptionId={entrySubscription}
         onClose={(createdId) => navigate(path(createdId ?? null), { replace: createdId === undefined, query: query(state) })}
       />
+      <PurchaseLimitsDialog open={limitsOpen} onClose={() => setLimitsOpen(false)} />
     </div>
   )
 }

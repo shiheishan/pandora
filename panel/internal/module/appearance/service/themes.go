@@ -15,6 +15,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/appearance/repo"
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/tx"
 )
 
 // themeCodePattern 与 site_themes.code 的 CHECK 一致。
@@ -121,6 +122,7 @@ func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) error {
 			}
 			t.ID = loaded.ID
 		}
+		tx.AfterCommit(ctx, "appearance:pagemeta", func(context.Context) { s.invalidatePageMeta() })
 		return s.audit.Write(ctx, auditsvc.Event{
 			Action:       ActionThemeSave,
 			ResourceType: "site_theme",
@@ -128,12 +130,7 @@ func (s *Service) SaveTheme(ctx context.Context, in SaveThemeInput) error {
 			Data:         map[string]any{"code": code, "create": in.Create},
 		})
 	})
-	if err != nil {
-		return err
-	}
-	// 主题改了 branding，入口页快照立刻失效
-	s.invalidatePageMeta()
-	return nil
+	return err
 }
 
 // ActivateTheme 切换生效主题。
@@ -159,6 +156,7 @@ func (s *Service) ActivateTheme(ctx context.Context, code string) error {
 		if !ok {
 			return errs.Newf(errs.NotFound, "主题不存在")
 		}
+		tx.AfterCommit(ctx, "appearance:pagemeta", func(context.Context) { s.invalidatePageMeta() })
 		return s.audit.Write(ctx, auditsvc.Event{
 			Action:       ActionThemeActivate,
 			ResourceType: "site_theme",
@@ -166,10 +164,6 @@ func (s *Service) ActivateTheme(ctx context.Context, code string) error {
 			Data:         map[string]any{"code": code},
 		})
 	})
-	if err == nil {
-		// 生效主题换了，入口页快照立刻失效
-		s.invalidatePageMeta()
-	}
 	return err
 }
 

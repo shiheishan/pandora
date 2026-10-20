@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"html"
+	"net/url"
 	"strings"
 	"unicode"
 )
@@ -15,10 +16,15 @@ type IndexMeta struct {
 	Description string // <meta name="description" content="…" />；空则不写
 	AppName     string // <meta name="application-name" content="…" />（前端登录页据此取站点名）；空则不写
 	Icon        string // <link rel="icon" href="…" />；只收 data:image/ 开头的值（入口页 CSP 是 img-src 'self' data:），否则不写
+	Keywords    string // <meta name="keywords" content="…" />；空则不写
+	Robots      string // <meta name="robots" content="…" />；空则不写
+	URL         string // <link rel="canonical" href="…" /> 与 og:url；只收 http(s) 且 Host 非空；否则不写
+	OpenGraph   bool   // 为 true 时写 Open Graph 标签（og:type 总写，其余项有值才写）
 }
 
 func (m IndexMeta) zero() bool {
-	return m.Title == "" && m.Description == "" && m.AppName == "" && m.Icon == ""
+	return m.Title == "" && m.Description == "" && m.AppName == "" && m.Icon == "" &&
+		m.Keywords == "" && m.Robots == "" && m.URL == "" && !m.OpenGraph
 }
 
 // WithIndexMeta 让入口页每次请求时调 f 取站点信息改写 <head>。f 要便宜（入口页每次回源校验），缓存由 f 自己做。
@@ -45,16 +51,32 @@ func sanitizeIcon(s string) string {
 	return s
 }
 
+func sanitizeURL(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
+		return ""
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return s
+}
+
 func sanitizeMeta(m IndexMeta) IndexMeta {
 	return IndexMeta{
 		Title:       sanitizeText(m.Title),
 		Description: sanitizeText(m.Description),
 		AppName:     sanitizeText(m.AppName),
 		Icon:        sanitizeIcon(m.Icon),
+		Keywords:    sanitizeText(m.Keywords),
+		Robots:      sanitizeText(m.Robots),
+		URL:         sanitizeURL(m.URL),
+		OpenGraph:   m.OpenGraph,
 	}
 }
 
-// renderIndex 按站点信息改写入口页 <head>；清洗后四项都空则原样返回 index。
+// renderIndex 按站点信息改写入口页 <head>；清洗后 zero 为真则原样返回 index。
 func renderIndex(index []byte, m IndexMeta) []byte {
 	m = sanitizeMeta(m)
 	if m.zero() {
@@ -84,11 +106,35 @@ func renderIndex(index []byte, m IndexMeta) []byte {
 	if m.Description != "" {
 		tags.WriteString("\n    <meta name=\"description\" content=\"" + html.EscapeString(m.Description) + "\" />")
 	}
+	if m.Keywords != "" {
+		tags.WriteString("\n    <meta name=\"keywords\" content=\"" + html.EscapeString(m.Keywords) + "\" />")
+	}
+	if m.Robots != "" {
+		tags.WriteString("\n    <meta name=\"robots\" content=\"" + html.EscapeString(m.Robots) + "\" />")
+	}
 	if m.AppName != "" {
 		tags.WriteString("\n    <meta name=\"application-name\" content=\"" + html.EscapeString(m.AppName) + "\" />")
 	}
 	if m.Icon != "" {
 		tags.WriteString("\n    <link rel=\"icon\" href=\"" + html.EscapeString(m.Icon) + "\" />")
+	}
+	if m.URL != "" {
+		tags.WriteString("\n    <link rel=\"canonical\" href=\"" + html.EscapeString(m.URL) + "\" />")
+	}
+	if m.OpenGraph {
+		tags.WriteString("\n    <meta property=\"og:type\" content=\"website\" />")
+		if m.AppName != "" {
+			tags.WriteString("\n    <meta property=\"og:site_name\" content=\"" + html.EscapeString(m.AppName) + "\" />")
+		}
+		if m.Title != "" {
+			tags.WriteString("\n    <meta property=\"og:title\" content=\"" + html.EscapeString(m.Title) + "\" />")
+		}
+		if m.Description != "" {
+			tags.WriteString("\n    <meta property=\"og:description\" content=\"" + html.EscapeString(m.Description) + "\" />")
+		}
+		if m.URL != "" {
+			tags.WriteString("\n    <meta property=\"og:url\" content=\"" + html.EscapeString(m.URL) + "\" />")
+		}
 	}
 	if tags.Len() > 0 {
 		out = insertBeforeHeadClose(out, tags.String())

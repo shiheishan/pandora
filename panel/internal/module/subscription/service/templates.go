@@ -195,7 +195,7 @@ func (s *Service) AdminSaveTemplate(ctx context.Context, format, content string)
 		return TemplateDetail{}, err
 	}
 	// 本进程的拉取快照立即作废，下一次拉取就用新模板（不用等 30 秒）
-	s.extras.snap.Store(nil)
+	s.extras.invalidate()
 	return s.AdminTemplate(ctx, format)
 }
 
@@ -240,7 +240,7 @@ func (s *Service) AdminResetTemplate(ctx context.Context, format string) (Templa
 		return TemplateDetail{}, err
 	}
 	// 本进程的拉取快照立即作废，下一次拉取就用新模板（不用等 30 秒）
-	s.extras.snap.Store(nil)
+	s.extras.invalidate()
 	return s.AdminTemplate(ctx, format)
 }
 

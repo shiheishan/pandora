@@ -461,6 +461,7 @@ func (s *Service) AdminSaveDomainConfig(ctx context.Context, in []DomainGroupInp
 	}); err != nil {
 		return DomainConfigView{}, err
 	}
-	s.extras.snap.Store(nil)
+	// 本进程的拉取快照立即作废，下一次拉取就用新的域名分组
+	s.extras.invalidate()
 	return s.AdminDomainConfig(ctx)
 }

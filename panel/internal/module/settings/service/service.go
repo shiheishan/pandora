@@ -76,8 +76,15 @@ type Service struct {
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher
 
+	// siteListener 站点设置提交后清 appearance 的 PageMeta 快照；extrasListener 订阅附加设置提交后清 subscription 拉取快照。
+	siteListener   SiteChangeListener
+	extrasListener SubscriptionExtrasListener
+
 	// signupGen 是本进程保存注册设置的次数（提交后加一），门户入口页 CSP 的缓存按它失效，见 signup_provider.go。
 	signupGen atomic.Uint64
+
+	// publicBaseURL 由 UsePublicBaseURL 注入的配置值，只经 SiteURL 读。
+	publicBaseURL string
 }
 
 // New 构造 settings service。sealer 用于封存 SMTP 口令；rdb 用于开关缓存失效的 pub/sub；
@@ -149,10 +156,17 @@ func (s *Service) writeAudit(ctx context.Context, action, resourceType string, d
 }
 
 // MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// publicBaseURL 是配置值，不算端口。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.rt == nil {
 		out = append(out, "Realtime")
+	}
+	if s.siteListener == nil {
+		out = append(out, "SiteChangeListener")
+	}
+	if s.extrasListener == nil {
+		out = append(out, "SubscriptionExtrasListener")
 	}
 	return out
 }

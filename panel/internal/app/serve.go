@@ -265,6 +265,13 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCaptchaCSP(svc.settings)),
 		webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PagePortal)))
 	webapp.Mount(adminEng, web.AdminApp, webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PageAdmin)))
+	// robots.txt：门户只看收录开关，后台恒为整站 Disallow；正文都固定、不含任何路径前缀
+	robots := appearanceh.Robots(svc.appearance)
+	publicEng.GET("/robots.txt", robots)
+	publicEng.HEAD("/robots.txt", robots)
+	adminRobots := appearanceh.RobotsDenyAll()
+	adminEng.GET("/robots.txt", adminRobots)
+	adminEng.HEAD("/robots.txt", adminRobots)
 	publicV1 := publicEng.Group("/v1")
 	adminV1 := adminEng.Group("/v1")
 	for _, m := range mods {

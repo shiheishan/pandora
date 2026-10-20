@@ -2,8 +2,11 @@ package service
 
 // 设置键与缺省值。缺行即取缺省值；新增一组键就在这里加常量、在对应文件加 X / SetX。
 const (
-	keySiteName     = "site.name"     // string，1–40 字
-	keySiteTimezone = "site.timezone" // string，IANA 时区名
+	keySiteName           = "site.name"            // string，1–40 字
+	keySiteTimezone       = "site.timezone"        // string，IANA 时区名
+	keySiteSEOKeywords    = "site.seo_keywords"    // string，最多 200 字，不含换行
+	keySiteSEODescription = "site.seo_description" // string，最多 160 字，不含换行；空则入口页用主题标语
+	keySiteAllowIndexing  = "site.allow_indexing"  // bool，缺省 DefaultSiteAllowIndexing
 
 	keyRegistrationMode  = "auth.registration_mode"  // string：closed / invite_only / open
 	keyEmailVerification = "auth.email_verification" // bool
@@ -31,6 +34,15 @@ const (
 	defaultMailEncryption = MailEncryptionSSL
 )
 
+// DefaultSiteAllowIndexing 是「允许搜索引擎收录门户首页」的缺省值：关。全仓只在这里定义，入口页与 robots.txt 读不到设置时也用它。
+const DefaultSiteAllowIndexing = false
+
+// 站点 SEO 文字的长度上限（按字符数）。
+const (
+	SiteSEOKeywordsMax    = 200
+	SiteSEODescriptionMax = 160
+)
+
 // 注册方式。
 const (
 	RegistrationClosed     = "closed"
@@ -47,8 +59,11 @@ const (
 
 // Site 是站点级设置（原 tenants 表的站点名、时区）。
 type Site struct {
-	Name     string
-	Timezone string
+	Name           string
+	Timezone       string
+	SEOKeywords    string // 门户入口页 meta keywords
+	SEODescription string // 门户入口页 meta description；空时入口页用主题标语
+	AllowIndexing  bool   // 是否允许搜索引擎收录门户首页
 }
 
 // Registration 是存下来的注册设置。实际生效的策略还要看 auth.registration 开关，见 RegistrationPolicy。

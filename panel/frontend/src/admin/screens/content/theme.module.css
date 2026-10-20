@@ -10,13 +10,21 @@
 /* ---- 站点设置 ---- */
 .siteRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   align-items: flex-end;
 }
 
+.siteSeo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
 .siteSave {
   justify-self: start;
+  align-self: flex-start;
 }
 
 .hint {

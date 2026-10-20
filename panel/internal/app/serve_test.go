@@ -34,11 +34,12 @@ func TestEnginesRegisterModuleRoutes(t *testing.T) {
 		publicEng: {
 			"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/logout", "POST /v1/auth/quick-login",
 			"POST /v1/auth/register/start", "POST /v1/auth/password-reset/start", "GET /v1/site-config",
+			"GET /robots.txt", "HEAD /robots.txt",
 		},
 		adminEng: {
 			"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/reauth", "GET /v1/me", "GET /v1/users",
 			"GET /v1/audit", "GET /v1/switches", "POST /v1/settings/site", "GET /v1/settings/mail",
-			"GET /v1/mail/templates",
+			"GET /v1/mail/templates", "GET /robots.txt", "HEAD /robots.txt",
 		},
 	}
 	for eng, routes := range want {

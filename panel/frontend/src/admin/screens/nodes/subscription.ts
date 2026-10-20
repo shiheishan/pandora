@@ -3,22 +3,43 @@ import { z } from 'zod'
 export const subscriptionExtrasSchema = z.object({
   info_nodes: z.boolean(),
   protocol_prefix: z.boolean(),
+  fetch_limit_per_hour: z.number().int(),
 })
 export type SubscriptionExtras = z.output<typeof subscriptionExtrasSchema>
 
 export interface ExtrasForm {
   infoNodes: boolean
   protocolPrefix: boolean
+  /** 输入框原文，编辑中途可以为空 */
+  fetchLimit: string
 }
 
 export function extrasFormFrom(s: SubscriptionExtras): ExtrasForm {
-  return { infoNodes: s.info_nodes, protocolPrefix: s.protocol_prefix }
+  return {
+    infoNodes: s.info_nodes,
+    protocolPrefix: s.protocol_prefix,
+    fetchLimit: String(s.fetch_limit_per_hour),
+  }
+}
+
+/** 每小时拉取上限：去首尾空白后必须是 1–10000 的正整数，合法回 null */
+export function fetchLimitError(text: string): string | null {
+  const trimmed = text.trim()
+  if (!/^\d+$/.test(trimmed)) return '每小时拉取上限要在 1 到 10000 之间'
+  const n = Number(trimmed)
+  if (n < 1 || n > 10000) return '每小时拉取上限要在 1 到 10000 之间'
+  return null
 }
 
 export function extrasBody(form: ExtrasForm, saved: SubscriptionExtras): { body: Partial<SubscriptionExtras> } {
   const body: Partial<SubscriptionExtras> = {}
   if (form.infoNodes !== saved.info_nodes) body.info_nodes = form.infoNodes
   if (form.protocolPrefix !== saved.protocol_prefix) body.protocol_prefix = form.protocolPrefix
+  // 不合法的不放进 body：调用方提交前先用 fetchLimitError 校验
+  const limit = Number(form.fetchLimit.trim())
+  if (fetchLimitError(form.fetchLimit) === null && limit !== saved.fetch_limit_per_hour) {
+    body.fetch_limit_per_hour = limit
+  }
   return { body }
 }
 

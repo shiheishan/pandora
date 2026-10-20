@@ -32,15 +32,32 @@ func (h *Handler) siteConfig(c *gin.Context) {
 }
 
 // siteResponse 是后台站点设置：站点名是全站唯一的站点名来源（门户标题、入口页 <title>、邮件、订阅配置名都取它）。
+// SEO 三项给门户入口页用。
 type siteResponse struct {
-	Name     string `json:"name"`
-	Timezone string `json:"timezone"`
+	Name           string `json:"name"`
+	Timezone       string `json:"timezone"`
+	SEOKeywords    string `json:"seo_keywords"`
+	SEODescription string `json:"seo_description"`
+	AllowIndexing  bool   `json:"allow_indexing"`
 }
 
 // setSiteRequest 是站点设置的部分更新：缺的字段保持原值。
 type setSiteRequest struct {
-	Name     *string `json:"name"`
-	Timezone *string `json:"timezone"`
+	Name           *string `json:"name"`
+	Timezone       *string `json:"timezone"`
+	SEOKeywords    *string `json:"seo_keywords"`
+	SEODescription *string `json:"seo_description"`
+	AllowIndexing  *bool   `json:"allow_indexing"`
+}
+
+func siteToResponse(s service.Site) siteResponse {
+	return siteResponse{
+		Name:           s.Name,
+		Timezone:       s.Timezone,
+		SEOKeywords:    s.SEOKeywords,
+		SEODescription: s.SEODescription,
+		AllowIndexing:  s.AllowIndexing,
+	}
 }
 
 func (h *Handler) getSite(c *gin.Context) {
@@ -50,7 +67,7 @@ func (h *Handler) getSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteResponse{Name: site.Name, Timezone: site.Timezone})
+	httpx.OK(c, siteToResponse(site))
 }
 
 func (h *Handler) setSite(c *gin.Context) {
@@ -60,7 +77,13 @@ func (h *Handler) setSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	if err := h.svc.SetSite(ctx, service.SiteUpdate{Name: req.Name, Timezone: req.Timezone}); err != nil {
+	if err := h.svc.SetSite(ctx, service.SiteUpdate{
+		Name:           req.Name,
+		Timezone:       req.Timezone,
+		SEOKeywords:    req.SEOKeywords,
+		SEODescription: req.SEODescription,
+		AllowIndexing:  req.AllowIndexing,
+	}); err != nil {
 		httpx.Fail(c, err)
 		return
 	}
@@ -70,7 +93,7 @@ func (h *Handler) setSite(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, siteResponse{Name: site.Name, Timezone: site.Timezone})
+	httpx.OK(c, siteToResponse(site))
 }
 
 type switchItem struct {

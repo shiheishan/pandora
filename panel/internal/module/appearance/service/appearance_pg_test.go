@@ -21,11 +21,21 @@ import (
 	"github.com/google/uuid"
 )
 
-type apFakeSite struct{ name string }
+type apFakeSite struct {
+	name     string
+	keywords string
+	allow    bool
+	url      string
+}
 
 func (f apFakeSite) Site(context.Context) (settingsvc.Site, error) {
-	return settingsvc.Site{Name: f.name, Timezone: "UTC"}, nil
+	return settingsvc.Site{
+		Name: f.name, Timezone: "UTC",
+		SEOKeywords: f.keywords, AllowIndexing: f.allow,
+	}, nil
 }
+
+func (f apFakeSite) SiteURL(context.Context) string { return f.url }
 
 type apEnv struct {
 	row   func(ctx context.Context, q string, args ...any) *sql.Row
@@ -320,13 +330,18 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 }
 
 func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
-	e := newApEnvWithSite(t, apFakeSite{name: "夜海加速"})
+	e := newApEnvWithSite(t, apFakeSite{
+		name: "夜海加速", keywords: "加速", allow: true, url: "https://panel.example.test/",
+	})
 	ctx := e.txCtx()
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
 	meta := e.svc.PageMeta(ctx)
 	if meta.SiteName != "夜海加速" || meta.Tagline != "" || meta.Logo != "" {
 		t.Fatalf("内置主题初始 PageMeta 期望 夜海加速//空，得到 %+v", meta)
+	}
+	if meta.SEOKeywords != "加速" || !meta.AllowIndexing || meta.SiteURL != "https://panel.example.test/" {
+		t.Fatalf("SEO 与 SiteURL 期望 keywords=加速 allow=true url=https://panel.example.test/，得到 %+v", meta)
 	}
 
 	logo := "data:image/png;base64,iVBORw0KGgo="
@@ -341,6 +356,8 @@ func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// TxCtx 整例回滚，提交后钩子（AfterCommit 里的快照失效）不执行：这里手动失效，模拟提交后的效果
+	e.svc.invalidatePageMeta()
 	metaAfter := e.svc.PageMeta(ctx)
 	if metaAfter.Tagline != "一路畅通" || metaAfter.Logo != logo {
 		t.Fatalf("激活后 PageMeta 期望 一路畅通 与 logo，得到 %+v", metaAfter)

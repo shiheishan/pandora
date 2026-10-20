@@ -294,3 +294,23 @@ func TestSecurityHeadersHSTSOnlyWhenAsked(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurityHeadersRobotsTagOnlyOnV1(t *testing.T) {
+	e := gin.New()
+	e.Use(SecurityHeaders(false))
+	e.Any("/*path", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	for _, path := range []string{"/v1/x", "/v1"} {
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := w.Header().Get("X-Robots-Tag"); got != robotsNoIndex {
+			t.Fatalf("%s X-Robots-Tag = %q，要 %q", path, got, robotsNoIndex)
+		}
+	}
+	for _, path := range []string{"/", "/assets/a.js", "/v1x"} {
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := w.Header().Get("X-Robots-Tag"); got != "" {
+			t.Fatalf("%s 不该带 X-Robots-Tag，得到 %q", path, got)
+		}
+	}
+}

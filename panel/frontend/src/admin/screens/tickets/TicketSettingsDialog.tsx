@@ -12,6 +12,7 @@ const supportSchema = z.object({
   wait_for_reply: z.boolean(),
   auto_close_enabled: z.boolean(),
   auto_close_hours: z.number().int(),
+  max_open_tickets: z.number().int(),
 })
 
 type Support = z.output<typeof supportSchema>
@@ -49,6 +50,8 @@ function TicketSettingsForm({ onClose }: { onClose: () => void }) {
     const local: Record<string, string> = {}
     const h = form.auto_close_hours
     if (!Number.isInteger(h) || h < 1 || h > 720) local.auto_close_hours = '自动关闭时长要在 1 到 720 小时之间'
+    const m = form.max_open_tickets
+    if (!Number.isInteger(m) || m < 1 || m > 50) local.max_open_tickets = '同时打开的工单上限要在 1 到 50 之间'
     if (Object.keys(local).length) return setErrors(local)
     setErrors({})
     save.mutate(form)
@@ -93,6 +96,18 @@ function TicketSettingsForm({ onClose }: { onClose: () => void }) {
             onChange={(e) => {
               const n = Number.parseInt(e.target.value, 10)
               setDraft({ ...form, auto_close_hours: Number.isNaN(n) ? 0 : n })
+            }}
+          />
+          <Input
+            label="每人同时打开的工单上限"
+            hint="用户同时未解决、未关闭的工单最多几张，到了上限要先处理完旧的才能再提交；1 到 50，缺省 5"
+            inputMode="numeric"
+            value={String(form.max_open_tickets)}
+            error={errors.max_open_tickets}
+            disabled={save.isPending}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10)
+              setDraft({ ...form, max_open_tickets: Number.isNaN(n) ? 0 : n })
             }}
           />
         </div>

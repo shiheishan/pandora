@@ -1,9 +1,16 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, QueryView, useToast } from '../../../ui'
+import { Button, Card, Input, QueryView, useToast } from '../../../ui'
 import { SettingRow } from '../../kit'
-import { extrasBody, extrasFormFrom, subscriptionExtrasSchema, type ExtrasForm, type SubscriptionExtras } from './subscription'
+import {
+  extrasBody,
+  extrasFormFrom,
+  fetchLimitError,
+  subscriptionExtrasSchema,
+  type ExtrasForm,
+  type SubscriptionExtras,
+} from './subscription'
 import { useFailure, useInvalidateSubscription, useSubscriptionExtras } from './subscriptionQueries'
 import { SubscriptionDomains } from './SubscriptionDomains'
 import { SubscriptionTemplates } from './SubscriptionTemplates'
@@ -34,6 +41,7 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
   const fail = useFailure()
   const invalidate = useInvalidateSubscription()
   const [draft, setDraft] = useState<ExtrasForm | null>(null)
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const form = draft ?? extrasFormFrom(saved)
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(extrasFormFrom(saved))
   const edit = (patch: Partial<ExtrasForm>) => setDraft({ ...form, ...patch })
@@ -41,14 +49,19 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
   const save = useMutation({
     mutationFn: (body: object) => api.post('v1/settings/subscription', subscriptionExtrasSchema, { body }),
     onSuccess: () => {
-      toast('订阅附加设置已保存，最多 30 秒后在订阅里生效')
+      toast('订阅附加设置已保存，下一次拉取订阅就生效')
       void invalidate().then(() => setDraft(null))
     },
-    // 只剩两个开关，没有可标红的字段：服务端校验失败一律弹提示
-    onError: (e) => fail(e),
+    onError: (e) => fail(e, setErrors),
   })
 
   const submit = () => {
+    const msg = fetchLimitError(form.fetchLimit)
+    if (msg) {
+      setErrors({ fetch_limit_per_hour: msg })
+      return
+    }
+    setErrors({})
     const { body } = extrasBody(form, saved)
     if (Object.keys(body).length === 0) return
     save.mutate(body)
@@ -84,6 +97,17 @@ function ExtrasFormView({ saved }: { saved: SubscriptionExtras }) {
         disabled={disabled}
         onChange={(v) => edit({ protocolPrefix: v })}
       />
+      <div className={css.extrasField}>
+        <Input
+          label="每条订阅链接每小时最多拉取几次"
+          hint="客户端自动更新与手动刷新都算；超过的这一小时内回 429，下一个小时恢复。1 到 10000，缺省 60"
+          inputMode="numeric"
+          value={form.fetchLimit}
+          error={errors.fetch_limit_per_hour}
+          disabled={disabled}
+          onChange={(e) => edit({ fetchLimit: e.target.value })}
+        />
+      </div>
     </Card>
   )
 }

@@ -27,7 +27,7 @@ const decoyPage = `<!doctype html>
 <body><h1>Not Found</h1><p>The requested URL was not found on this server.</p></body></html>
 `
 
-// writeDecoy 回伪装 404，不加自定义头。
+// writeDecoy 回伪装 404：除调用方已设的 X-Robots-Tag 外不加自定义头。
 func writeDecoy(c *gin.Context) {
 	c.Data(http.StatusNotFound, "text/html; charset=utf-8", []byte(decoyPage))
 }
@@ -56,6 +56,8 @@ func subscribeTarget(c *gin.Context) string {
 
 // subscribe 是公开订阅拉取 GET /:prefix/:token。
 func (h *Handler) subscribe(c *gin.Context) {
+	// 订阅正文与伪装 404 都不该被收录；所有两段路径都进这里，所以带不带这个头分不出真假路径。
+	c.Header("X-Robots-Tag", "noindex, nofollow")
 	ctx := c.Request.Context()
 	res, err := h.svc.Pull(ctx, service.PullRequest{
 		Host:   c.Request.Host,

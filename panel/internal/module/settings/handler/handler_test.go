@@ -47,6 +47,15 @@ func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error 
 	if u.Timezone != nil {
 		v.Timezone = *u.Timezone
 	}
+	if u.SEOKeywords != nil {
+		v.SEOKeywords = *u.SEOKeywords
+	}
+	if u.SEODescription != nil {
+		v.SEODescription = *u.SEODescription
+	}
+	if u.AllowIndexing != nil {
+		v.AllowIndexing = *u.AllowIndexing
+	}
 	f.setSiteVal = v
 	f.site = v
 	return nil
@@ -261,6 +270,17 @@ func TestSetSite(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "bad_request" {
 		t.Fatalf("status %d code %s", rec.Code, errCode(t, rec))
 	}
+
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"seo_keywords":"加速, 节点","allow_indexing":true}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seo post status %d body %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil {
+		t.Fatal(err)
+	}
+	if sr.SEOKeywords != "加速, 节点" || !sr.AllowIndexing || sr.Name != "夜海加速" {
+		t.Fatalf("seo response %+v", sr)
+	}
 }
 
 func TestListSwitchesJSON(t *testing.T) {
@@ -422,7 +442,7 @@ func TestSupportRules(t *testing.T) {
 		"X-Test-Reauth": "1",
 	}
 
-	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48}`, hdrs)
+	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48,"max_open_tickets":8}`, hdrs)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("post status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -435,7 +455,7 @@ func TestSupportRules(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 {
+	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 || out.MaxOpenTickets != 8 {
 		t.Fatalf("rules %+v", out)
 	}
 
