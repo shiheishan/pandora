@@ -24,15 +24,21 @@ export const MOCK_ACCOUNTS = {
 } as const
 
 const REAUTH_WINDOW_MS = 15 * 60 * 1000
+/** 与 Go auth/service/store.go 的 refreshGrace 一致 */
+const REFRESH_GRACE_MS = 30 * 1000
 /** access 令牌有效期（秒），与架构 8.3 一致 */
 const ACCESS_EXPIRES_IN = 15 * 60
 const TTL_SECONDS = 2592000
 
 const RT_COOKIE: Record<MockApp, string> = { portal: 'pandora_rt', admin: 'pandora_admin_rt' }
 
-interface RefreshRecord {
+/** 一条登录会话的 refresh 链：照 Go 记当前一枚、上一枚与轮换时间 */
+interface RefreshFamily {
   userId: string
   app: MockApp
+  cur: string
+  prev: string | null
+  rotatedAt: number
 }
 
 function parseCookieHeader(header: string | undefined): Record<string, string> {
@@ -167,19 +173,25 @@ export function mockApi(app: MockApp): Plugin {
   const registrations = new Map<string, { email: string; code: string }>()
   const resets = new Map<string, { code: string; attempts: number }>()
   const replays = new Map<string, Replay>()
-  const refreshTokens = new Map<string, RefreshRecord>()
+  const refreshFamilies = new Set<RefreshFamily>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
 
-  const mintRefresh = (userId: string) => {
-    const value = randomUUID()
-    refreshTokens.set(value, { userId, app })
-    return value
+  const findFamily = (value: string): { family: RefreshFamily; which: 'cur' | 'prev' } | null => {
+    for (const family of refreshFamilies) {
+      if (family.cur === value) return { family, which: 'cur' }
+      if (family.prev === value) return { family, which: 'prev' }
+    }
+    return null
   }
-  const revokeRefreshValue = (value: string) => {
-    refreshTokens.delete(value)
+  const dropFamiliesOf = (userId: string) => {
+    for (const f of [...refreshFamilies]) {
+      if (f.userId === userId) refreshFamilies.delete(f)
+    }
   }
   const bindRefresh = (res: ServerResponse, userId: string) => {
-    const value = mintRefresh(userId)
+    const value = randomUUID()
+    const family: RefreshFamily = { userId, app, cur: value, prev: null, rotatedAt: Date.now() }
+    refreshFamilies.add(family)
     setRefreshCookie(res, app, value)
     return value
   }
@@ -231,17 +243,35 @@ export function mockApi(app: MockApp): Plugin {
     if (route === 'POST /v1/auth/refresh') {
       const cookies = parseCookieHeader(req.headers.cookie)
       const rt = cookies[RT_COOKIE[app]]
-      const rec = rt ? refreshTokens.get(rt) : undefined
-      if (!rt || !rec || rec.app !== app) return fail(res, 401, 'unauthorized', '需要登录')
-      const refreshedUser = userById(rec.userId)
-      if (!refreshedUser) {
-        revokeRefreshValue(rt)
+      if (!rt) return fail(res, 401, 'unauthorized', '需要登录')
+      const found = findFamily(rt)
+      if (!found || found.family.app !== app) {
+        clearRefreshCookie(res, app)
         return fail(res, 401, 'unauthorized', '需要登录')
       }
-      revokeRefreshValue(rt)
-      const access = issue(refreshedUser.userId, req)
-      bindRefresh(res, refreshedUser.userId)
-      return send(res, 200, { access_token: access, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
+      const { family, which } = found
+      const refreshedUser = userById(family.userId)
+      if (!refreshedUser) {
+        refreshFamilies.delete(family)
+        clearRefreshCookie(res, app)
+        return fail(res, 401, 'unauthorized', '需要登录')
+      }
+      const okBody = (access: string) => ({ access_token: access, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN })
+      if (which === 'cur') {
+        family.prev = family.cur
+        family.cur = randomUUID()
+        family.rotatedAt = Date.now()
+        setRefreshCookie(res, app, family.cur)
+        return send(res, 200, okBody(issue(refreshedUser.userId, req)))
+      }
+      // which === 'prev'
+      if (Date.now() - family.rotatedAt <= REFRESH_GRACE_MS) {
+        return send(res, 200, okBody(issue(refreshedUser.userId, req)))
+      }
+      // 照 Go 判为重放、吊销整条会话；假后端的 access 不挂会话，已发的 access 照旧到期，这点与 Go 不同、不影响前端流程
+      refreshFamilies.delete(family)
+      clearRefreshCookie(res, app)
+      return fail(res, 401, 'unauthorized', '需要登录')
     }
     if (app === 'portal' && route === 'GET /v1/site-config') {
       return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
@@ -327,6 +357,7 @@ export function mockApi(app: MockApp): Plugin {
       user.password = password
       // 用户定：重置后吊销该账号的全部登录
       for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
+      dropFamiliesOf(user.userId)
       return send(res, 200, { ok: true })
     }
     if (app === 'portal' && route === 'POST /v1/auth/quick-login') {
@@ -368,6 +399,11 @@ export function mockApi(app: MockApp): Plugin {
       sessions.forEach((s) => (s.rat = 0))
       return send(res, 204)
     }
+    // 只有假后端有：把所有会话的上一次轮换拨到宽限之外，用来测「旧 cookie 超过 30 秒再用 = 重放」
+    if (route === 'POST /__mock/expire-refresh-grace') {
+      refreshFamilies.forEach((f) => (f.rotatedAt = 0))
+      return send(res, 204)
+    }
     // 只有假后端有：让测试与演示拿到刚发的登录链接
     if (app === 'portal' && route === 'GET /__mock/mail-link') {
       return send(res, 200, { token: lastMailLink() })
@@ -390,7 +426,10 @@ export function mockApi(app: MockApp): Plugin {
       if (current) sessions.delete(current.token)
       const cookies = parseCookieHeader(req.headers.cookie)
       const rt = cookies[RT_COOKIE[app]]
-      if (rt) revokeRefreshValue(rt)
+      if (rt) {
+        const found = findFamily(rt)
+        if (found) refreshFamilies.delete(found.family)
+      }
       clearRefreshCookie(res, app)
       return send(res, 204)
     }
@@ -426,6 +465,7 @@ export function mockApi(app: MockApp): Plugin {
         if (newPw.length < 12) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 12 个字符' })
         user.password = newPw
         for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
+        dropFamiliesOf(user.userId)
         return send(res, 200, { ok: true, reauthenticate: true })
       }
     } else if (route === 'GET /v1/me') {

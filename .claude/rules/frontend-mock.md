@@ -52,4 +52,5 @@ paths:
 - SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE），后台点事件能打开那一条；守卫 `tests/mock-admin-events.test.ts`
 - 状态都在内存里，vite 重启即复原
   - `POST /__mock/expire-reauth` 让所有会话的 rat 立即过期，用来走 reauth 流程
+  - refresh 照 Go 记每条会话的当前、上一枚 cookie 与轮换时间（`RefreshFamily`）：上一枚 30 秒宽限内还能换 access、不轮换、不发 Set-Cookie；超过宽限再用判为重放、删整条；对不上或被拒的 401 清 cookie（没带 cookie 的 401 不清）。`POST /__mock/expire-refresh-grace` 把所有会话的轮换时间拨到宽限之外，用来测重放（守卫 `tests/mock-api.test.ts` 的 refresh cookie 那组）
   - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`
