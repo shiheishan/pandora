@@ -1440,11 +1440,11 @@ sudo cat /var/lib/pandora-native/upgrade/result 2>/dev/null   # 失败或回退�
 | `manifest_invalid` | 清单坏了或没有这台机器的架构 | 发布包是不是完整 |
 | `serial_not_newer` | 目标版本不比节点上的新（含 dev 构建，build_serial 为 0） | 只升不降，属正常拒绝 |
 | `busy` | 上一次升级还没走完 | 等它结束，或看助手日志 |
-| `apply_failed` | 替换二进制或重启失败，已保持或装回旧版 | 助手日志里的具体原因（磁盘满、权限） |
+| `apply_failed` | 替换二进制、写确认标记或重启失败，已保持或装回旧版 | 助手日志里的具体原因（磁盘满、权限） |
 | `confirm_timeout` | 新版 180 秒内没连上面板，已装回旧版 | 新版起来后的 `journalctl -u pandora-native`：配置读不了、证书、网络 |
 | `rollback_failed` | 要装回旧版但 `.prev` 不可用或恢复失败 | **要人工处理**，见下文「手动回退」 |
 
-后台的 `timed_out`（面板 13 分钟内没等到结局）多半是节点在升级途中失联：上节点机看助手日志与 `result`。
+后台的 `timed_out`（面板 13 分钟内没等到结局）多半是节点在升级途中失联：上节点机看助手日志（`journalctl -u pandora-native-upgrade`）与 `result`。另有两种情况结局也到不了面板，以节点上的助手日志为准：会话中途报出的结局在断线时丢了（结局文件报出就删）；助手刚把暂存件拷走、还没记下这次升级时机器重启（现有安装没动）。
 
 ### 17.1 生成签名密钥（首次）
 
@@ -1456,7 +1456,7 @@ go run ./release/signmanifest -gen /tmp/pdnd-signing   # 写出 /tmp/pdnd-signin
 ```
 
 1. **【写】** 把 `.key` 的内容存进密码管理器（注明 key_id 与生成日期）。
-2. **【写】** GitHub 仓库 › Settings › Environments 新建 `release-signing`，限定只允许 `v*` 标签部署，加 secret `PDND_SIGNING_KEY`，值是 `.key` 文件的那一行。
+2. **【写】** GitHub 仓库 › Settings › Environments 新建 `release-signing`：Deployment branches and tags 限定只允许 `v*` 标签；Required reviewers 勾上维护者本人（否则任何能推 `v*` 标签的人都能拿私钥签名）；加 secret `PDND_SIGNING_KEY`，值是 `.key` 文件的那一行。
 3. **【写】** 把 `.pub` 放进 `pdnd/upgrade/keys/`（文件名如 `release-<key_id>.pub`），提交合入：从这一版起编出的 pdnd 才认这把钥。
 4. 删掉本机的 `.key`：`rm -P /tmp/pdnd-signing.key`（Linux 用 `shred -u`）。
 
@@ -1491,12 +1491,13 @@ sha256sum /usr/local/bin/pandora-native /usr/local/bin/pandora-native.prev  # �
    systemctl reset-failed pandora-native; systemctl restart pandora-native
    ```
 
-   没有 `.prev`（或它也坏了）：在后台给这台服务器重新签发令牌，在节点机上重跑接入命令，装的是面板当前发布包里的版本。
+   没有 `.prev`（或它也坏了）：在后台给这台服务器重新签发令牌，在节点机上重跑接入命令，装的是面板当前发布包里的版本。接入命令会先停助手、清掉进行中的升级状态（`result` 留着），助手不会再把 `.prev` 装回来盖掉它。
 2. **【写】** 清掉半截的升级状态，再把助手打开：
 
    ```bash
    rm -f /var/lib/pandora-native-upgrade/*
    rm -f /var/lib/pandora-native/upgrade/{request,next,next.tmp,manifest.json,manifest.json.sig,applying,healthy}
+   systemctl reset-failed pandora-native-upgrade.path pandora-native-upgrade.service   # 撞过触发上限的 path 单元不清掉就起不来
    systemctl start pandora-native-upgrade.path
    ```
 

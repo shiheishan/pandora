@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -331,5 +332,29 @@ func TestSystemctlRestart(t *testing.T) {
 	}
 	if err := (Systemctl{Bin: scriptFail}).Restart(t.Context(), unit); err == nil {
 		t.Fatal("restart 退出 1 应返回错误")
+	}
+}
+
+// 暂存件是硬链接（protected_hardlinks=0 时 pandora 能链进 root 才能读的文件）：一律拒绝。
+func TestOpenStateFileRejectsHardlink(t *testing.T) {
+	parent := t.TempDir()
+	upgrade := filepath.Join(parent, StateSubdir)
+	if err := os.MkdirAll(upgrade, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "secret")
+	if err := os.WriteFile(outside, []byte("root only"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(outside, filepath.Join(upgrade, FileRequest)); err != nil {
+		t.Skipf("不支持硬链接: %v", err)
+	}
+	state, err := openStateDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if _, err := readState(state, FileRequest, MaxSmallFileBytes); err == nil || !strings.Contains(err.Error(), "硬链接") {
+		t.Fatalf("硬链接应被拒: %v", err)
 	}
 }

@@ -26,7 +26,7 @@ func (h *Helper) resume(ctx context.Context, rec workRecord) error {
 			if err := h.saveRecord(rec); err != nil {
 				h.log().Warn("保存续做记录失败", "job_id", rec.JobID, "err", err)
 			}
-			return h.confirm(ctx, state, rec)
+			return h.confirm(ctx, state, rec, true)
 		}
 		if cur == rec.PrevSHA256 {
 			h.finish(state, &rec, &Result{
@@ -56,7 +56,7 @@ func (h *Helper) resume(ctx context.Context, rec workRecord) error {
 		if err := h.saveRecord(rec); err != nil {
 			h.log().Warn("保存续做记录失败", "job_id", rec.JobID, "err", err)
 		}
-		return h.confirm(ctx, state, rec)
+		return h.confirm(ctx, state, rec, true)
 
 	case stageRollingBack:
 		phase, code, detail := rec.ResultPhase, rec.ResultCode, rec.ResultDetail

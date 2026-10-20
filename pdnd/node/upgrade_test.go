@@ -85,7 +85,7 @@ func (f *fakeUpgrader) stageCalls() int {
 func welcomeUpgradeV1(ts *testServer, hello *nodev1.UpgradeReport) {
 	ts.handleEvent(panel.Event{
 		Kind:         panel.EventWelcome,
-		Welcome:      &nodev1.Welcome{SessionId: "s", Features: []string{upgrade.Feature}},
+		Welcome:      &nodev1.Welcome{SessionId: "s", Features: []string{panel.FeatureUpgrade}},
 		HelloUpgrade: hello,
 	})
 }

@@ -394,6 +394,19 @@ pandora_validate() {
   runuser -u pandora -- "${INSTALL_DIR}/${SERVICE}.new" validate-install --config "${CONFIG_DIR}/config.json.new" --unit "${UNIT_DIR}/${SERVICE}.service.new" --identity-dir "$IDENTITY_DIR"
 }
 
+# 重装时清掉进行中的在线升级：否则助手续做时看到「当前摘要不是目标」会把 .prev 装回来，盖掉这次装上的版本。
+# 暂存目录归 pandora，按惯例以 pandora 身份删（root 不在 pandora 可写的目录里动文件）；result 留着照常上报。
+pandora_reset_upgrade() {
+  systemctl stop "${UPGRADE_UNIT}.path" "${UPGRADE_UNIT}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "${UPGRADE_UNIT}.path" "${UPGRADE_UNIT}.service" >/dev/null 2>&1 || true
+  rm -rf /var/lib/pandora-native-upgrade
+  if [[ -d "${STATE_DIR}/upgrade" ]]; then
+    runuser -u pandora -- rm -f "${STATE_DIR}/upgrade/request" "${STATE_DIR}/upgrade/next" "${STATE_DIR}/upgrade/next.tmp" \
+      "${STATE_DIR}/upgrade/manifest.json" "${STATE_DIR}/upgrade/manifest.json.sig" \
+      "${STATE_DIR}/upgrade/applying" "${STATE_DIR}/upgrade/healthy" || true
+  fi
+}
+
 # 全部校验通过后才 mv 换上；此前任一步失败，机器上原有的二进制、配置、unit 均未改动。
 pandora_commit_files() {
   mv -f "${INSTALL_DIR}/${SERVICE}.new" "${INSTALL_DIR}/${SERVICE}"
@@ -459,6 +472,7 @@ main() {
   pandora_enroll
   pandora_prepare_files
   pandora_validate
+  pandora_reset_upgrade
   pandora_commit_files
   say "调整系统参数（conntrack、监听队列、端口范围、收发缓冲）"
   pandora_tune_sysctl || echo "==> 系统参数调整失败，不影响安装，可稍后手动处理" >&2

@@ -8,6 +8,7 @@ import (
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
+	"github.com/aegispanel/nodeagent/panel"
 	"github.com/aegispanel/nodeagent/upgrade"
 )
 
@@ -26,7 +27,7 @@ type upgradeOutcome struct {
 }
 
 func (s *Server) onWelcomeUpgrade(w *nodev1.Welcome, sent *nodev1.UpgradeReport) {
-	s.upgradeNegotiated = s.upgrader != nil && slices.Contains(w.GetFeatures(), upgrade.Feature)
+	s.upgradeNegotiated = s.upgrader != nil && slices.Contains(w.GetFeatures(), panel.FeatureUpgrade)
 	if s.upgrader == nil {
 		return
 	}

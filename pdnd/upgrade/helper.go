@@ -212,8 +212,14 @@ func (h *Helper) take(ctx context.Context, state *os.Root) error {
 			copyErrs[name] = err
 		}
 	}
-	for _, name := range []string{FileRequest, FileNext, FileManifest, FileSignature} {
+	for _, name := range []string{FileNext, FileManifest, FileSignature} {
 		_ = removeState(state, name)
+	}
+	// request 删不掉（被换成非空目录等）时 path 单元会立即再触发：报错退出，让 journal 与单元状态看得出来
+	if err := removeState(state, FileRequest); err != nil {
+		h.log().Error("删除暂存 request 失败", "err", err)
+		h.removeWorkArtifacts()
+		return fmt.Errorf("删除暂存 request: %w", err)
 	}
 
 	reqData, err := os.ReadFile(h.workFile(FileRequest))
@@ -316,18 +322,15 @@ func (h *Helper) install(ctx context.Context, state *os.Root, req Request, art A
 	if err := h.saveRecord(rec); err != nil {
 		h.log().Warn("更新工作区 applying 失败", "job_id", req.JobID, "err", err)
 	}
-	return h.confirm(ctx, state, rec)
+	return h.confirm(ctx, state, rec, false)
 }
 
-func (h *Helper) confirm(ctx context.Context, state *os.Root, rec workRecord) error {
-	if state != nil {
-		marker, err := json.Marshal(Marker{JobID: rec.JobID, SHA256: rec.TargetSHA256})
-		if err == nil {
-			if err := writeState(state, FileApplying, marker); err != nil {
-				h.log().Warn("写入暂存 applying 失败，新进程可能无法写 healthy", "job_id", rec.JobID, "err", err)
-			}
-		}
-		_ = removeState(state, FileHealthy)
+// confirm 写好确认标记后重启并等 healthy。running 表示新版可能已在运行（续做时），
+// 写不了标记要回退时据此决定装回旧版后要不要重启。
+func (h *Helper) confirm(ctx context.Context, state *os.Root, rec workRecord, running bool) error {
+	// 新进程只认暂存 applying 才会写 healthy：写不了就必然超时回退，而面板已在新 Hello 上记成功。所以不重启，直接装回旧版。
+	if err := h.prepareMarker(state, rec); err != nil {
+		return h.rollbackWith(ctx, state, rec, PhaseFailed, ReasonApplyFailed, fmt.Sprintf("写不了确认标记：%v", err), running)
 	}
 
 	if err := h.Service.Restart(ctx, h.unit()); err != nil {
@@ -349,6 +352,21 @@ func (h *Helper) confirm(ctx context.Context, state *os.Root, rec workRecord) er
 	sec := int(ClampConfirm(rec.ConfirmWithinSec).Seconds())
 	return h.rollback(ctx, state, rec, PhaseRolledBack, ReasonConfirmTimeout,
 		fmt.Sprintf("新进程 %d 秒内没连上面板，已装回旧版", sec))
+}
+
+// prepareMarker 写暂存 applying 并删掉旧的 healthy；暂存目录打不开时同样算失败。
+func (h *Helper) prepareMarker(state *os.Root, rec workRecord) error {
+	if state == nil {
+		return errors.New("暂存目录不可用")
+	}
+	marker, err := json.Marshal(Marker{JobID: rec.JobID, SHA256: rec.TargetSHA256})
+	if err != nil {
+		return err
+	}
+	if err := writeState(state, FileApplying, marker); err != nil {
+		return err
+	}
+	return removeState(state, FileHealthy)
 }
 
 func (h *Helper) healthyOK(state *os.Root, rec workRecord) bool {
@@ -373,6 +391,11 @@ func (h *Helper) success(state *os.Root, rec workRecord) error {
 }
 
 func (h *Helper) rollback(ctx context.Context, state *os.Root, rec workRecord, phase, code, detail string) error {
+	return h.rollbackWith(ctx, state, rec, phase, code, detail, true)
+}
+
+// rollbackWith：restart 为 false 时只装回 .prev、不重启（新版还没被重启拉起，跑着的仍是旧进程）。
+func (h *Helper) rollbackWith(ctx context.Context, state *os.Root, rec workRecord, phase, code, detail string, restart bool) error {
 	rec.Stage = stageRollingBack
 	rec.ResultPhase = phase
 	rec.ResultCode = code
@@ -404,6 +427,10 @@ func (h *Helper) rollback(ctx context.Context, state *os.Root, rec workRecord, p
 		}
 	}
 
+	if !restart {
+		h.finish(state, &rec, &Result{JobID: rec.JobID, Phase: phase, ReasonCode: code, Detail: detail})
+		return nil
+	}
 	if err := h.Service.Restart(ctx, h.unit()); err != nil {
 		h.finish(state, &rec, &Result{
 			JobID:      rec.JobID,
@@ -436,4 +463,8 @@ func (h *Helper) finish(state *os.Root, rec *workRecord, res *Result) {
 		_ = os.Remove(h.workFile(name))
 	}
 	_ = os.Remove(h.workApplyingPath())
+	// 提前结束的路径可能留下半截的 .new / .tmp；.prev 留着给下次回退
+	for _, p := range []string{h.newPath(), h.newPath() + ".tmp", h.prevPath() + ".tmp"} {
+		_ = os.Remove(p)
+	}
 }

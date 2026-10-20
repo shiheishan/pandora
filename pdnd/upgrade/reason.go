@@ -32,9 +32,6 @@ const (
 	PhaseRolledBack = "ROLLED_BACK"
 )
 
-// Feature 是 Hello.features / Welcome.features 里的能力名。
-const Feature = "upgrade_v1"
-
 // 固定路径：助手只认这些，不信 request 里的任何路径。
 const (
 	DefaultStateParent = "/var/lib/pandora-native"         // pandora 属主（systemd StateDirectory）

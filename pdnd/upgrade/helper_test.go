@@ -544,3 +544,29 @@ func TestHelper_StateDirSymlink(t *testing.T) {
 		}
 	}
 }
+
+// 暂存 applying 写不了：新进程不会写 healthy，重启只会白断一次再回退。应不重启、直接装回旧版，结局 apply_failed。
+func TestHelper_MarkerWriteFailsRollsBackWithoutRestart(t *testing.T) {
+	e := newHelperEnv(t)
+	e.stage()
+	// .applying.tmp 是非空目录：writeState 删不掉，O_EXCL 建不了
+	blocker := filepath.Join(e.parent, StateSubdir, "."+FileApplying+".tmp")
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.helper.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if e.fake.restarts != 0 {
+		t.Fatalf("restarts %d, want 0", e.fake.restarts)
+	}
+	e.assertBinWant(helperOldBin)
+	res, err := e.readResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.JobID != e.jobID || res.Phase != PhaseFailed || res.ReasonCode != ReasonApplyFailed || !strings.Contains(res.Detail, "确认标记") {
+		t.Fatalf("result %+v", res)
+	}
+	e.assertWorkEmpty()
+}

@@ -26,7 +26,7 @@ const RenewBefore = 10 * 24 * time.Hour
 // FeatureUsersDelta 是 Hello 里声明「能收名单增量」的能力名。
 const FeatureUsersDelta = "users_delta"
 
-// FeatureUpgrade 是 Hello 里声明「能在线升级」的能力名，与 pdnd/upgrade.Feature 同值。
+// FeatureUpgrade 是 Hello / Welcome 里「能在线升级」的能力名。
 const FeatureUpgrade = "upgrade_v1"
 
 // 身份目录里的文件。

@@ -165,6 +165,14 @@ if [ -n "${PDND_SIGNATURE_DIR:-}" ]; then
     echo "serial 为 0 的清单签了也没有节点会接受" >&2
     exit 1
   fi
+  # 下面会清空 $OUT/pdnd-dist 重新构建：签名放在里面会先被删掉，再报成「没能复现构建」
+  sig_dir="$(cd "$PDND_SIGNATURE_DIR" && pwd -P)"
+  case "$sig_dir/" in
+    "$OUT/pdnd-dist/"*)
+      echo "PDND_SIGNATURE_DIR 不能在 \$OUT/pdnd-dist 里（构建会清空它），先把两份文件拷到别处: ${PDND_SIGNATURE_DIR}" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 # 节点端两架构只构建一份，两个发布包放同样的字节。

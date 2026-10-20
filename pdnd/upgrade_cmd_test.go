@@ -91,9 +91,6 @@ func TestNewUpgraderAndFeatures(t *testing.T) {
 	if got := sessionFeatures(up); !slices.Equal(got, []string{panel.FeatureUsersDelta, panel.FeatureUpgrade}) {
 		t.Fatalf("features = %v", got)
 	}
-	if panel.FeatureUpgrade != upgrade.Feature {
-		t.Fatalf("能力名不一致: %q vs %q", panel.FeatureUpgrade, upgrade.Feature)
-	}
 }
 
 func TestConfigUpgradeRejectsUnknownField(t *testing.T) {

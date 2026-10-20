@@ -256,6 +256,15 @@ if run_build "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$signed" PANDORA_BUILD_SERIAL
 fi
 grep -q serial "$T/stderr" || fail "serial 0 message missing: $(cat "$T/stderr")"
 
+# 签名就地放在 $OUT/pdnd-dist 里：构建会先清空它，必须一开始就拒绝，不能报成「没能复现」
+run_build PANDORA_PDND_ONLY=1 || { cat "$T/stderr" >&2; fail 'pdnd-only build failed'; }
+printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$T/out/pdnd-dist/pdnd-manifest.json.sig"
+if run_build --keep-out "${GEOIP_ENV[@]}" PDND_SIGNATURE_DIR="$T/out/pdnd-dist"; then
+  fail 'PDND_SIGNATURE_DIR inside $OUT/pdnd-dist was accepted'
+fi
+grep -q '不能在' "$T/stderr" || fail "in-place signature message missing: $(cat "$T/stderr")"
+[ -f "$T/out/pdnd-dist/pdnd-manifest.json.sig" ] || fail 'in-place signature was deleted'
+
 if run_build "${GEOIP_ENV[@]}" PANDORA_BUILD_SERIAL=abc; then
   fail 'non-numeric BUILD_SERIAL was accepted'
 fi

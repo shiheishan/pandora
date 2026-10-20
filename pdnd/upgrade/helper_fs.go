@@ -56,6 +56,11 @@ func openStateFile(state *os.Root, name string, max int64) (*os.File, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("%s: 打开后与 Lstat 不一致或非普通文件", name)
 	}
+	// 硬链接：fs.protected_hardlinks=0 的机器上 pandora 能把 root 才能读的文件链进暂存目录，只认链接数为 1 的
+	if sys, ok := st.Sys().(*syscall.Stat_t); !ok || sys.Nlink != 1 {
+		_ = f.Close()
+		return nil, fmt.Errorf("%s: 有多个硬链接", name)
+	}
 	return f, nil
 }
 
