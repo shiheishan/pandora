@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
@@ -302,8 +304,10 @@ func TestPullNotesSuccessByRegion(t *testing.T) {
 		t.Fatalf("第二次拉取: %v", err)
 	}
 
+	// 同一凭据去重只记一次：全国 1.05，福建电信再加省、省|运营商两级偏移各 0.05
 	fj := domainRegion{Province: "福建", ISP: ispTelecom}
-	waitScoreIn(t, de.svc.scores, "https://sub-a.example.test", fj, cur, 1.05)
+	waitScore(t, de.svc.scores, "https://sub-a.example.test", cur, 1.05)
+	waitScoreIn(t, de.svc.scores, "https://sub-a.example.test", fj, cur, 1.15)
 
 	key := domainScoreKeyFor("https://sub-a.example.test")
 	if !rdb.HExists(ctx, key, "福建|电信").Val() {
@@ -317,6 +321,96 @@ func TestPullNotesSuccessByRegion(t *testing.T) {
 	}
 	if geo.calls.Load() != 1 {
 		t.Fatalf("同一凭据×域名每小时只查一次归属地，calls=%d", geo.calls.Load())
+	}
+}
+
+// linkScoresSetup 准备一份订阅、缺省组里两个域名（基础权重 wa、wb）与已注入的域名分数 Redis。
+func linkScoresSetup(t *testing.T, wa, wb int) (*deliveryEnv, context.Context, uuid.UUID, *miniredis.Miniredis, *redis.Client) {
+	t.Helper()
+	de, ctx, user, _ := rotateSetup(t)
+	_, err := de.svc.AdminSaveDomainConfig(adminCtx(ctx, uuid.New()), []DomainGroupInput{{
+		Name: "缺省-" + uuid.NewString()[:8], IsDefault: true,
+		Domains: []Domain{
+			{BaseURL: "https://sub-a.example.test", Weight: wa},
+			{BaseURL: "https://sub-b.example.test", Weight: wb},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	mr, rdb := testkit.Redis(t)
+	de.svc.UseDomainScores(rdb)
+	return de, ctx, user, mr, rdb
+}
+
+// countLinkHosts 调 n 次 MyLinks，数链接落在 sub-a、sub-b 的次数。
+func countLinkHosts(t *testing.T, de *deliveryEnv, ctx context.Context, n int) (a, b int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		links, err := de.svc.MyLinks(ctx)
+		if err != nil || len(links) != 1 {
+			t.Fatalf("链接列表: %v %d", err, len(links))
+		}
+		switch u := links[0].URL; {
+		case strings.HasPrefix(u, "https://sub-a.example.test/"):
+			a++
+		case strings.HasPrefix(u, "https://sub-b.example.test/"):
+			b++
+		default:
+			t.Fatalf("链接不在组里: %s", u)
+		}
+	}
+	return a, b
+}
+
+// MyLinks（linkBase）按请求 IP 的地区读细分级：全国分 A 0.1、B 3；福建电信的偏移把 A 顶到 3、把 B 压到 0.1。
+// 同一用户从福建电信 IP 来时多半拿到 A，从判不出地区的 IP 来时多半拿到 B（各 20 次，单次约 97%，阈值 14 次，误报概率可忽略）。
+func TestLinkBaseReadsVisitorRegionPG(t *testing.T) {
+	de, ctx, user, _, rdb := linkScoresSetup(t, 1, 1)
+	fjIP, otherIP := "198.51.100.7", "203.0.113.9"
+	geo := &fakeGeo{locs: map[string]geoip.Location{
+		fjIP: {Country: "中国", Region: "福建", ISP: "电信", Kind: geoip.KindResidential},
+	}}
+	de.svc.geo = geo
+	now := de.svc.clock()
+	if err := de.svc.scores.Apply(ctx, map[string]map[string]float64{
+		"https://sub-a.example.test": {domainScoreFieldAll: -5, "福建": 2.9, "福建|电信": 2.9},
+		"https://sub-b.example.test": {domainScoreFieldAll: 5, "福建": -2.9, "福建|电信": -2.9},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if rdb.Exists(ctx, domainScoreKeyFor("https://sub-a.example.test")).Val() != 1 {
+		t.Fatal("分数应已写入")
+	}
+
+	a, _ := countLinkHosts(t, de, userCtx(pullCtx(ctx, fjIP, "Mozilla/5.0"), user), 20)
+	if a < 14 {
+		t.Fatalf("福建电信访客 20 次里只有 %d 次拿到 A，应按细分级读分", a)
+	}
+	if geo.calls.Load() == 0 {
+		t.Fatal("生成链接应按请求 IP 查归属地")
+	}
+	_, b := countLinkHosts(t, de, userCtx(pullCtx(ctx, otherIP, "Mozilla/5.0"), user), 20)
+	if b < 14 {
+		t.Fatalf("判不出地区的访客 20 次里只有 %d 次拿到 B，应只读全国分", b)
+	}
+}
+
+// 分数 Redis 读失败时 linkBase 按基础权重选、不报错：A 权重 1 分数 3，B 权重 30 分数 0.1，有分数时两边约各半；
+// 读失败后按基础权重 B 约 97%（20 次，阈值 14 次）。
+func TestLinkBaseRedisDownUsesBaseWeightsPG(t *testing.T) {
+	de, ctx, user, mr, _ := linkScoresSetup(t, 1, 30)
+	if err := de.svc.scores.Apply(ctx, map[string]map[string]float64{
+		"https://sub-a.example.test": {domainScoreFieldAll: 5},
+		"https://sub-b.example.test": {domainScoreFieldAll: -5},
+	}, de.svc.clock()); err != nil {
+		t.Fatal(err)
+	}
+	mr.SetError("ERR 测试注入的故障")
+	_, b := countLinkHosts(t, de, userCtx(pullCtx(ctx, "198.51.100.7", "Mozilla/5.0"), user), 20)
+	if b < 14 {
+		t.Fatalf("Redis 读失败时 20 次里只有 %d 次拿到 B，应按基础权重", b)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
@@ -35,16 +36,10 @@ func setupProbe(t *testing.T) (*deliveryEnv, context.Context, uuid.UUID, *redis.
 	return de, ctx, user, rdb
 }
 
-// seedProbeReporters 往 base 当前小时桶的成功上报人集合里预先放几个别的账号（PG 用例只有一个真实账号，用它凑人数）。
+// seedProbeReporters 往 base 全国一级当前小时桶的成功上报人集合里预先放几个别的账号（PG 用例只有一个真实账号，用它凑人数）。
 func seedProbeReporters(t *testing.T, rdb *redis.Client, base string, now time.Time, accts ...string) {
 	t.Helper()
-	members := make([]any, len(accts))
-	for i, a := range accts {
-		members[i] = a
-	}
-	if err := rdb.SAdd(context.Background(), probeLevelName(probeOKKeyPrefix, base, domainScoreFieldAll, probeHourBucket(now)), members...).Err(); err != nil {
-		t.Fatal(err)
-	}
+	seedProbeLevel(t, rdb, base, domainScoreFieldAll, now, accts...)
 }
 
 func assertUnauthorized(t *testing.T, err error) {
@@ -333,4 +328,44 @@ func TestProbeReportSuccessNeedsThreeAccountsPG(t *testing.T) {
 		t.Fatal("只有 2 个账号报成功，a 不该加分")
 	}
 	waitScore(t, de.svc.scores, b, base, 1.1)
+}
+
+// 上报按请求 IP（reqmeta）的归属地归到上报者地区，一次上报写全国、省、省|运营商三级；
+// 各级人数分开数（全国 3 个、细分级 5 个，本账号补齐最后一个）。
+func TestProbeReportWritesRegionLevelsPG(t *testing.T) {
+	de, ctx, user, rdb := setupProbe(t)
+	ip := "198.51.100.7"
+	geo := &fakeGeo{locs: map[string]geoip.Location{
+		ip: {Country: "中国", Region: "福建", ISP: "电信", Kind: geoip.KindResidential},
+	}}
+	de.svc.geo = geo
+
+	origNow := de.svc.now
+	base := probeTestNow
+	de.svc.now = func() time.Time { return base }
+	t.Cleanup(func() { de.svc.now = origNow })
+
+	uctx := userCtx(pullCtx(ctx, ip, "Mozilla/5.0"), user)
+	ticket, err := de.svc.IssueProbeTicket(uctx)
+	if err != nil || ticket == "" {
+		t.Fatalf("签发: %v %q", err, ticket)
+	}
+	a := "https://sub-a.example.test"
+	seedProbeLevel(t, rdb, a, domainScoreFieldAll, base, "other-1", "other-2")
+	seedProbeLevel(t, rdb, a, "福建", base, "other-1", "other-2", "other-3", "other-4")
+	seedProbeLevel(t, rdb, a, "福建|电信", base, "other-1", "other-2", "other-3", "other-4")
+	if err := de.svc.ReportProbeResults(uctx, ticket, []ProbeResult{{BaseURL: a, OK: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if geo.calls.Load() == 0 {
+		t.Fatal("上报应按请求 IP 查归属地")
+	}
+	for _, field := range []string{domainScoreFieldAll, "福建", "福建|电信"} {
+		if !rdb.HExists(ctx, domainScoreKeyFor(a), field).Val() {
+			t.Fatalf("应写 field %q", field)
+		}
+	}
+	waitScore(t, de.svc.scores, a, base, 1.1)
+	waitScoreIn(t, de.svc.scores, a, domainRegion{Province: "福建", ISP: ispTelecom}, base, 1.3)
+	waitScoreIn(t, de.svc.scores, a, domainRegion{Province: "广东", ISP: ispTelecom}, base, 1.1)
 }
