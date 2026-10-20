@@ -38,6 +38,9 @@ func TestAdminRoutesRequireLogin(t *testing.T) {
 		"HEAD /":                 true,
 		"GET /assets/*filepath":  true,
 		"HEAD /assets/*filepath": true,
+		// robots.txt 正文固定（恒为整站 Disallow），不含任何数据
+		"GET /robots.txt":  true,
+		"HEAD /robots.txt": true,
 	}
 	checked := 0
 	for _, ri := range adminEng.Routes() {

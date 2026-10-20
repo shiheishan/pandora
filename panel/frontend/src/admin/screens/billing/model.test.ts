@@ -48,6 +48,8 @@ import {
   previewParams,
   priceChoices,
   purchaseLimitErrors,
+  purchaseLimitsBody,
+  purchaseLimitsFormFrom,
   providerBody,
   providerFormFrom,
   providerKind,
@@ -232,17 +234,21 @@ describe('orders', () => {
 })
 
 describe('write forms', () => {
-  it('validates purchase limits like the backend', () => {
-    expect(purchaseLimitErrors({ max_unpaid_orders: 0, max_subscriptions: 0 })).toEqual({})
-    expect(purchaseLimitErrors({ max_unpaid_orders: 50, max_subscriptions: 50 })).toEqual({})
-    expect(purchaseLimitErrors({ max_unpaid_orders: -1, max_subscriptions: 0 })).toEqual({
-      max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+  it('validates purchase limits like the backend and never turns an empty box into 0', () => {
+    expect(purchaseLimitsFormFrom({ max_unpaid_orders: 3, max_subscriptions: 0 })).toEqual({ max_unpaid_orders: '3', max_subscriptions: '0' })
+    expect(purchaseLimitErrors({ max_unpaid_orders: '0', max_subscriptions: ' 50 ' })).toEqual({})
+    expect(purchaseLimitsBody({ max_unpaid_orders: '0', max_subscriptions: ' 50 ' })).toEqual({ max_unpaid_orders: 0, max_subscriptions: 50 })
+    expect(purchaseLimitErrors({ max_unpaid_orders: '', max_subscriptions: '  ' })).toEqual({
+      max_unpaid_orders: '必填（0 表示不限）',
+      max_subscriptions: '必填（0 表示不限）',
     })
-    expect(purchaseLimitErrors({ max_unpaid_orders: 0, max_subscriptions: 51 })).toEqual({
+    expect(purchaseLimitErrors({ max_unpaid_orders: '-1', max_subscriptions: '51' })).toEqual({
+      max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
       max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
     })
-    expect(purchaseLimitErrors({ max_unpaid_orders: 1.5, max_subscriptions: 0 })).toEqual({
+    expect(purchaseLimitErrors({ max_unpaid_orders: '1.5', max_subscriptions: 'abc' })).toEqual({
       max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+      max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
     })
   })
 

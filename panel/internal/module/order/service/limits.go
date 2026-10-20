@@ -42,7 +42,9 @@ func (s *Service) purchaseGate(ctx context.Context, d draft, now time.Time) (set
 	return lim, nil
 }
 
-// checkSubscriptionCap 检查每人订阅数上限（生效订阅 + 待付新购单）。
+// checkSubscriptionCap 检查每人订阅数上限：手里的订阅（生效的加过期但还能续回的，用户 10-20 定）+ 全部待付新购单。
+// 待付新购单不看付款期限（PendingCounts.New）：过了期限、超时任务还没扫到的单，渠道迟到回调照样会结算出一份订阅，
+// 这里偏严算进去，扫掉之后自然放开。
 func (s *Service) checkSubscriptionCap(ctx context.Context, userID uuid.UUID, max int, now time.Time) error {
 	// 先数订单再数订阅：并发结算会在同一事务里把待付新购单改成已付并开出订阅，
 	// READ COMMITTED 下两条语句看到的是不同时刻；先订单后订阅最多多算一份（偏严、拒掉），
@@ -51,19 +53,19 @@ func (s *Service) checkSubscriptionCap(ctx context.Context, userID uuid.UUID, ma
 	if err != nil {
 		return err
 	}
-	liveMap, err := s.subs.LiveCountsByUser(ctx, []uuid.UUID{userID}, now)
+	heldMap, err := s.subs.HeldCountsByUser(ctx, []uuid.UUID{userID})
 	if err != nil {
 		return err
 	}
-	live := liveMap[userID]
-	have := live + pending.New
+	have := heldMap[userID] + pending.New
 	if have >= max {
 		return errTooManySubscriptions(max, have)
 	}
 	return nil
 }
 
-// checkUnpaidCap 检查每人同时未支付订单上限（本单已建好、仍须付钱时调用）。
+// checkUnpaidCap 检查每人同时未支付订单上限（本单算好应付、插单之前调用，计数里不含本单，所以用 >=）。
+// 只数没过付款期限的（PendingCounts.All）：过了期限的单用户已付不了，不该再占他的下单名额。
 func (s *Service) checkUnpaidCap(ctx context.Context, userID uuid.UUID, max int, now time.Time) error {
 	if max <= 0 {
 		return nil
@@ -83,5 +85,5 @@ func errTooManyUnpaid(n int) error {
 }
 
 func errTooManySubscriptions(max, have int) error {
-	return errs.Newf(errs.Conflict, fmt.Sprintf("每人最多 %d 份订阅，你已经有 %d 份（含还没付款的新开订单）；可以给已有的续费或换套餐", max, have))
+	return errs.Newf(errs.Conflict, fmt.Sprintf("每人最多 %d 份订阅（含已过期但还能续回的），你已经有 %d 份（含还没付款的新开订单）；可以给已有的续费或换套餐", max, have))
 }

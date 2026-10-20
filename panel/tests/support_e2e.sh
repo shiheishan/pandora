@@ -244,7 +244,7 @@ NB=$(curl -s "$ADM/v1/tickets?breached=1" -H "$AH" | jqr "['total']")
 [ -n "$NB" ] && ok "breached=1 过滤器可用（total=$NB）" || bad "过滤器异常" ""
 
 #-------------------------------------------------------------------------------
-sec "8. 未结工单上限（MaxOpenTickets=5）"
+sec "8. 未结工单上限（工单设置 max_open_tickets，缺省 5）"
 
 for i in 1 2 3; do
   curl -s -X POST "$PUB/v1/support/tickets" -H "$UH" -H "$(idem create-limit-$i)" -H 'Content-Type: application/json' \

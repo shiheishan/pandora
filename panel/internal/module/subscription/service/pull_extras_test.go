@@ -338,3 +338,32 @@ func TestSubscribeURLFor(t *testing.T) {
 		t.Fatalf("只有非缺省组用户分到未登记组: got %q want %q", got, wantNil)
 	}
 }
+
+type countingExtras struct{ calls int }
+
+func (f *countingExtras) SubscriptionExtras(context.Context) (settingssvc.SubscriptionExtras, error) {
+	f.calls++
+	return settingssvc.SubscriptionExtras{ProtocolPrefix: true}, nil
+}
+
+// 在「比完代号、写回之前」失效时旧快照可能被写回：它带的是旧代号，读时作废并重读。
+func TestPullExtrasStaleGenWriteBackIgnored(t *testing.T) {
+	ctx := context.Background()
+	var p pullExtras
+	t0 := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	old := &extrasSnapshot{loadedAt: t0, gen: p.gen.Load()}
+	p.invalidate()
+	p.snap.Store(old) // 模拟失效之后才写回的那趟旧重读
+
+	src := &countingExtras{}
+	snap, err := p.get(ctx, src, nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.calls != 1 || !snap.settings.ProtocolPrefix {
+		t.Fatalf("带旧代号的快照应作废并重读：calls=%d snap=%+v", src.calls, snap)
+	}
+	if again, _ := p.get(ctx, src, nil, t0); again != snap || src.calls != 1 {
+		t.Fatalf("重读后的快照应被缓存：calls=%d", src.calls)
+	}
+}

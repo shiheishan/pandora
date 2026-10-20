@@ -52,3 +52,23 @@ func TestRobots(t *testing.T) {
 		}
 	}
 }
+
+func TestRobotsDenyAll(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/robots.txt", RobotsDenyAll())
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/robots.txt", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "User-agent: *\nDisallow: /\n" {
+		t.Fatalf("后台 robots.txt: %d %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("content-type %q", ct)
+	}
+}
+
+func TestRobotsAllowHomeBody(t *testing.T) {
+	if robotsAllowHome != "User-agent: *\nAllow: /$\nAllow: /assets/\nDisallow: /\n" {
+		t.Fatalf("允许收录时的正文变了: %q", robotsAllowHome)
+	}
+}

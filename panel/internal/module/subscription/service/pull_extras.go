@@ -41,6 +41,7 @@ type extrasSnapshot struct {
 	templates map[render.Format]string
 	domains   domainSet // 订阅域名分组（只读）
 	loadedAt  time.Time
+	gen       uint64 // 开始读库前的失效代号；与 pullExtras.gen 不等即已作废（读时比对）
 }
 
 // template 返回 f 的自定义模板；没有返回空串（用内置）。
@@ -58,7 +59,8 @@ type pullExtras struct {
 	snap atomic.Pointer[extrasSnapshot]
 }
 
-// invalidate 让快照立刻失效；失效之前开始、之后才读完的那趟重读不会把旧内容写回。
+// invalidate 让快照立刻失效；失效之前开始、之后才读完的那趟重读不会把旧内容写回，
+// 即使在「比完代号、写回之前」这一刻失效、旧内容被写了回去，它带的是旧代号，读时比对作废（fresh）。
 func (p *pullExtras) invalidate() {
 	p.gen.Add(1)
 	p.snap.Store(nil)
@@ -67,17 +69,22 @@ func (p *pullExtras) invalidate() {
 // SubscriptionExtrasChanged 实现 settings 的 SubscriptionExtrasListener：订阅附加设置提交后让拉取快照立刻失效。
 func (s *Service) SubscriptionExtrasChanged() { s.extras.invalidate() }
 
+// fresh 判断快照能不能直接用：代号没变、没过期（时钟回拨也算不新鲜）。
+func (p *pullExtras) fresh(snap *extrasSnapshot, now time.Time) bool {
+	return snap != nil && snap.gen == p.gen.Load() && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL
+}
+
 // get 返回未过期的快照，过期或没有时重读（并发的重读经 mu 合成一次：拿到锁后再看一次是否已被别人刷新）。
 // src 为 nil 时附加设置取零值（全部关闭），tr 为 nil 时分组为空。读失败时：有旧快照就沿用它、打一条 Warn，
 // extrasRetry 之后再试；没有旧快照才返回错误（不缓存）。
-// 判断新鲜：snap 非 nil 且 !now.Before(snap.loadedAt) 且 now.Sub(snap.loadedAt) < extrasTTL（时钟回拨也重读）。
+// 判断新鲜见 fresh。
 func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo, now time.Time) (*extrasSnapshot, error) {
-	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
+	if snap := p.snap.Load(); p.fresh(snap, now) {
 		return snap, nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
+	if snap := p.snap.Load(); p.fresh(snap, now) {
 		return snap, nil
 	}
 	g := p.gen.Load()
@@ -91,6 +98,7 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 		// 旧快照的内容发布后只读，浅拷贝共用即可；把加载时刻挪到「extrasRetry 后过期」
 		stale := *old
 		stale.loadedAt = now.Add(extrasRetry - extrasTTL)
+		stale.gen = g
 		if p.gen.Load() == g {
 			p.snap.Store(&stale)
 		}
@@ -105,6 +113,7 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 		templates: templates,
 		domains:   newDomainSet(groups),
 		loadedAt:  now,
+		gen:       g,
 	}
 	if p.gen.Load() == g {
 		p.snap.Store(snap)

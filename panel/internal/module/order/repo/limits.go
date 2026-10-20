@@ -16,10 +16,10 @@ func (r *Repo) LockUserPurchases(ctx context.Context, userID uuid.UUID) error {
 	).Error)
 }
 
-// PendingCounts 是一个用户还没付款、也没过付款期限的订单数：All 是全部种类，New 是其中的新购单。走 orders_user_idx。
+// PendingCounts 是一个用户待付（pending_payment）的订单数，两项口径不同。走 orders_user_idx。
 type PendingCounts struct {
-	All int
-	New int
+	All int // 全部种类、且没过付款期限的：未支付订单上限用
+	New int // 新购单，不看付款期限：订阅数上限用（过期未扫的单迟到回调仍会结算出一份订阅）
 }
 
 type pendingCountsRow struct {
@@ -27,14 +27,14 @@ type pendingCountsRow struct {
 	NewPending int `gorm:"column:new_pending"`
 }
 
-// PendingCounts 数 userID 在 now 时刻还没付款、也没过付款期限的订单（status='pending_payment' 且 expires_at > now）。
+// PendingCounts 数 userID 的待付订单：All 只数 expires_at > now 的，New 数全部待付新购单（不看 expires_at）。
 func (r *Repo) PendingCounts(ctx context.Context, userID uuid.UUID, now time.Time) (PendingCounts, error) {
 	var row pendingCountsRow
 	err := r.d.Conn(ctx).Raw(`
-SELECT count(*) AS all_pending, count(*) FILTER (WHERE kind = 'new') AS new_pending
+SELECT count(*) FILTER (WHERE expires_at > ?) AS all_pending, count(*) FILTER (WHERE kind = 'new') AS new_pending
   FROM orders
- WHERE user_id = ? AND status = 'pending_payment' AND expires_at > ?`,
-		userID, now,
+ WHERE user_id = ? AND status = 'pending_payment'`,
+		now, userID,
 	).Scan(&row).Error
 	if err != nil {
 		return PendingCounts{}, mapErr(err)

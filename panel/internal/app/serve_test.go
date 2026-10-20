@@ -39,7 +39,7 @@ func TestEnginesRegisterModuleRoutes(t *testing.T) {
 		adminEng: {
 			"POST /v1/auth/login", "POST /v1/auth/refresh", "POST /v1/auth/reauth", "GET /v1/me", "GET /v1/users",
 			"GET /v1/audit", "GET /v1/switches", "POST /v1/settings/site", "GET /v1/settings/mail",
-			"GET /v1/mail/templates",
+			"GET /v1/mail/templates", "GET /robots.txt", "HEAD /robots.txt",
 		},
 	}
 	for eng, routes := range want {

@@ -92,7 +92,7 @@ function DomainsFlatView({ saved, userGroups }: { saved: DomainConfig; userGroup
     setAlert(undefined)
     save.mutate(out.body, {
       onSuccess: () => {
-        toast(`已添加 ${out.host}，最多 30 秒后在新生成的链接里生效`)
+        toast(`已添加 ${out.host}，立即生效，之后新生成的订阅链接会用到它`)
         setInput('')
       },
       onError: onSaveError,

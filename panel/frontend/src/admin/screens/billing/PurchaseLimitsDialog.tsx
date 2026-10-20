@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, useToast } from '../../../ui'
 import { useFailure } from '../../actions'
-import { purchaseLimitErrors } from './model'
+import { purchaseLimitErrors, purchaseLimitsBody, purchaseLimitsFormFrom, type PurchaseLimitsForm } from './model'
 import billingCss from './Billing.module.css'
 import css from './Orders.module.css'
 import { purchaseLimitsSchema, type PurchaseLimits } from './schemas'
@@ -24,7 +24,8 @@ function PurchaseLimitsForm({ onClose }: { onClose: () => void }) {
     queryKey: PURCHASE_LIMITS_KEY,
     queryFn: ({ signal }) => api.get('v1/settings/purchase', purchaseLimitsSchema, { signal }),
   })
-  const [draft, setDraft] = useState<PurchaseLimits | null>(null)
+  // 存输入框原文：清空时不会悄悄变成 0（= 不限），保存前校验再转数字
+  const [draft, setDraft] = useState<PurchaseLimitsForm | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const save = useMutation({
@@ -37,13 +38,13 @@ function PurchaseLimitsForm({ onClose }: { onClose: () => void }) {
     onError: (e) => fail(e, (f) => setErrors(f)),
   })
 
-  const form = draft ?? q.data ?? null
+  const form = draft ?? (q.data ? purchaseLimitsFormFrom(q.data) : null)
   const submit = () => {
     if (!form) return
     const local = purchaseLimitErrors(form)
     if (Object.keys(local).length) return setErrors(local)
     setErrors({})
-    save.mutate(form)
+    save.mutate(purchaseLimitsBody(form))
   }
 
   return (
@@ -67,24 +68,24 @@ function PurchaseLimitsForm({ onClose }: { onClose: () => void }) {
             label="每人同时未支付的订单最多几笔"
             hint="到了上限用户要先付款或等旧单过期才能再下单；已过付款期限的单不算。0 表示不限"
             inputMode="numeric"
-            value={String(form.max_unpaid_orders)}
+            value={form.max_unpaid_orders}
             error={errors.max_unpaid_orders}
             disabled={save.isPending}
             onChange={(e) => {
-              const n = Number.parseInt(e.target.value, 10)
-              setDraft({ ...form, max_unpaid_orders: Number.isNaN(n) ? 0 : n })
+              setDraft({ ...form, max_unpaid_orders: e.target.value })
+              if (errors.max_unpaid_orders) setErrors((prev) => ({ ...prev, max_unpaid_orders: '' }))
             }}
           />
           <Input
             label="每人最多几份订阅"
-            hint="生效中的订阅加上还没付款的新开订单；只在新开一份时检查，续费、叠加、换套餐、流量重置不受影响。0 表示不限"
+            hint="生效中的、过期但还能续回的订阅，加上还没付款的新开订单；只在新开一份时检查，续费、叠加、换套餐、流量重置不受影响。0 表示不限"
             inputMode="numeric"
-            value={String(form.max_subscriptions)}
+            value={form.max_subscriptions}
             error={errors.max_subscriptions}
             disabled={save.isPending}
             onChange={(e) => {
-              const n = Number.parseInt(e.target.value, 10)
-              setDraft({ ...form, max_subscriptions: Number.isNaN(n) ? 0 : n })
+              setDraft({ ...form, max_subscriptions: e.target.value })
+              if (errors.max_subscriptions) setErrors((prev) => ({ ...prev, max_subscriptions: '' }))
             }}
           />
           <p className={css.small}>只管用户在用户端自己下单；后台人工开单、礼品卡兑换不受限。改了立即生效。</p>

@@ -16,7 +16,7 @@ paths:
   - 门户：描述 = 站点设置 `site.seo_description`，空则标语，再空用站点名；`site.seo_keywords` 非空才写 keywords；Open Graph 与 canonical 指向 settings 的 `SiteURL`（全仓读站点对外根地址只经这一个函数，以后「主域名」进设置时只改它）；`site.allow_indexing` 关着（缺省，`settingsvc.DefaultSiteAllowIndexing` 是唯一定义）时写 `robots noindex, nofollow`。
   - 后台：描述照旧（标语或站点名），恒写 `noindex, nofollow`，不写 keywords、canonical、Open Graph。
   - SEO 三项与 `SiteURL` 都在 `PageMeta` 快照里（站点设置提交后同样立即失效）；快照兜底值的收录开关取 `DefaultSiteAllowIndexing`。
-- 门户 `/robots.txt`（`handler/robots.go` 的 `Robots`，`serve.go` 只挂在 public 引擎）：允许收录时 `Allow: /$` + `Disallow: /`（只放行首页），否则整站 `Disallow: /`。正文固定，不写后台前缀、订阅前缀或任何别的路径（robots.txt 公开，写进去等于公布）；不做 sitemap、不做首页。
+- `/robots.txt`（`handler/robots.go`）：门户 `Robots` 允许收录时 `Allow: /$` + `Allow: /assets/` + `Disallow: /`（放行首页与静态资源：不放行 `/assets/` 搜索引擎拿不到样式和脚本、会判页面不可用），否则整站 `Disallow: /`；后台引擎挂 `RobotsDenyAll`，恒为整站 `Disallow: /`、不读设置。正文固定，不写后台前缀、订阅前缀或任何别的路径（robots.txt 公开，写进去等于公布）；不做 sitemap、不做首页。
 - 同一时刻只有一套主题生效（部分唯一索引 `site_themes_one_active` 兜底）。内置主题不能原地改，只能另存为（`Create` 为 true，撞已有 code 回 409，不覆盖别人的主题）；内置主题与生效中的主题都删不掉（`DeleteTheme`）。
 - 主题没有自定义 CSS（10-14 删掉，门户 CSP 也不允许注入 `<style>`）：请求带 `custom_css` 按未知字段回 400，保存主题成功只回 `{saved:true}`；要做得先有 CSS 净化方案并过安全评审。
 - 插槽 HTML 经 `SanitizeHTML` 净化后才落库，被丢掉的内容回给管理员；全局只放行 `class` 和 `title`，不放 `style`（能做透明层盖住支付按钮）。插槽位 `SlotCatalog` 写在代码里，与前端挂载点、迁移里 `slot_key` 的 CHECK 三处同步改。
