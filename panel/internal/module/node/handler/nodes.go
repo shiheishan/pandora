@@ -79,7 +79,8 @@ func (h *Handler) createNode(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	serverID, err := nodeParseRequiredID("server_id", req.ServerID)
+	// server_id 可以缺省或空串：节点先建好，之后再用 bind 绑定服务器。
+	serverID, err := nodeParseOptionalID("server_id", req.ServerID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -210,13 +211,14 @@ func (h *Handler) copyNode(c *gin.Context) {
 	httpx.Created(c, adminNodeFrom(n))
 }
 
-func (h *Handler) moveNode(c *gin.Context) {
+// bindNode 把节点绑定（或改绑）到服务器；server_port 不给就沿用节点已有端口。
+func (h *Handler) bindNode(c *gin.Context) {
 	id, err := inventoryPathID(c)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	var req nodeMoveRequest
+	var req nodeBindRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
@@ -226,8 +228,30 @@ func (h *Handler) moveNode(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	n, err := h.svc.MoveNode(c.Request.Context(), id, service.NodeMoveInput{
-		RowVersion: req.RowVersion, ServerID: serverID, Reason: req.Reason,
+	n, err := h.svc.BindNode(c.Request.Context(), id, service.NodeBindInput{
+		RowVersion: req.RowVersion, ServerID: serverID, ServerPort: req.ServerPort, Reason: req.Reason,
+	})
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, adminNodeFrom(n))
+}
+
+// unbindNode 解绑节点与服务器的关系，节点回到未绑定状态。
+func (h *Handler) unbindNode(c *gin.Context) {
+	id, err := inventoryPathID(c)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	var req nodeUnbindRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	n, err := h.svc.UnbindNode(c.Request.Context(), id, service.NodeUnbindInput{
+		RowVersion: req.RowVersion, Reason: req.Reason,
 	})
 	if err != nil {
 		httpx.Fail(c, err)
