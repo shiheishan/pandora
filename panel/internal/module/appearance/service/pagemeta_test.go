@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	settingsvc "github.com/aegispanel/aegis/internal/module/settings/service"
 )
 
 func TestPageMetaCache_get_firstCallAndTTL(t *testing.T) {
@@ -78,8 +80,9 @@ func TestPageMetaCache_get_loadFailure(t *testing.T) {
 	got := c.get(ctx, 0, base, func(context.Context) (PageMeta, error) {
 		return PageMeta{}, boom
 	}, logErr)
-	if got.SiteName != DefaultSiteName || got.Tagline != "" {
-		t.Fatalf("从未成功 got=%+v", got)
+	wantFallback := fallbackPageMeta()
+	if got != wantFallback {
+		t.Fatalf("从未成功 got=%+v want=%+v", got, wantFallback)
 	}
 	if logCalls.Load() != 1 {
 		t.Fatalf("logErr 应被调用")
@@ -111,6 +114,18 @@ func TestPageMetaCache_get_loadFailure(t *testing.T) {
 	}, logErr)
 	if got2 != okVal {
 		t.Fatalf("失败后应沿用上次成功 got=%+v want=%+v", got2, okVal)
+	}
+}
+
+func TestPageMetaCache_get_neverSucceededFailureUsesDefaultAllowIndexing(t *testing.T) {
+	c := &pageMetaCache{}
+	ctx := context.Background()
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	got := c.get(ctx, 0, base, func(context.Context) (PageMeta, error) {
+		return PageMeta{}, errors.New("fail")
+	}, func(error) {})
+	if got.AllowIndexing != settingsvc.DefaultSiteAllowIndexing {
+		t.Fatalf("AllowIndexing=%v want %v", got.AllowIndexing, settingsvc.DefaultSiteAllowIndexing)
 	}
 }
 

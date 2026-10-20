@@ -557,6 +557,12 @@ function sanitize(input: string): { clean: string; dropped: string[] | null } {
 let siteTimezone = 'Asia/Shanghai'
 // 系统设置的站点名（真后端 site.name）：后台假后端启动时经 shareAppearance 写给门户，改了立刻再写
 let siteName = 'Pandora'
+let siteSeoKeywords = ''
+let siteSeoDescription = ''
+let siteAllowIndexing = false
+// 站点 SEO 文字不许含控制字符（同 Go 的 unicode.IsControl）
+// eslint-disable-next-line no-control-regex
+const SEO_CONTROL = /[\u0000-\u001f\u007f-\u009f]/
 const validTimezone = (name: string) => {
   if (!name || name === 'Local' || name.length > 64) return false
   try {
@@ -661,16 +667,31 @@ export const content: MockModule = {
     },
 
     'GET /v1/settings/site': (ctx) => {
-      ctx.send(200, { name: siteName, timezone: siteTimezone })
+      ctx.send(200, {
+        name: siteName,
+        timezone: siteTimezone,
+        seo_keywords: siteSeoKeywords,
+        seo_description: siteSeoDescription,
+        allow_indexing: siteAllowIndexing,
+      })
     },
     'POST /v1/settings/site': async (ctx) => {
       if (!ctx.requireReauth()) return
-      const decoded = await decode(ctx, { name: 'string', timezone: 'string' })
+      const decoded = await decode(ctx, {
+        name: 'string',
+        timezone: 'string',
+        seo_keywords: 'string',
+        seo_description: 'string',
+        allow_indexing: 'boolean',
+      })
       if (!decoded.ok) return reply(ctx, decoded.result)
       const body = decoded.body
       const fields: Record<string, string> = {}
       let nextName = siteName
       let nextTimezone = siteTimezone
+      let nextSeoKeywords = siteSeoKeywords
+      let nextSeoDescription = siteSeoDescription
+      let nextAllowIndexing = siteAllowIndexing
 
       if ('name' in body && body.name !== null) {
         const name = str(body.name).trim()
@@ -685,6 +706,24 @@ export const content: MockModule = {
         else nextTimezone = tz
       }
 
+      if ('seo_keywords' in body && body.seo_keywords !== null) {
+        const kw = str(body.seo_keywords).trim()
+        if (runes(kw) > 200) fields.seo_keywords = '关键词最多 200 个字'
+        else if (SEO_CONTROL.test(kw)) fields.seo_keywords = '关键词不能包含换行或控制字符'
+        else nextSeoKeywords = kw
+      }
+
+      if ('seo_description' in body && body.seo_description !== null) {
+        const desc = str(body.seo_description).trim()
+        if (runes(desc) > 160) fields.seo_description = '站点描述最多 160 个字'
+        else if (SEO_CONTROL.test(desc)) fields.seo_description = '站点描述不能包含换行或控制字符'
+        else nextSeoDescription = desc
+      }
+
+      if ('allow_indexing' in body && body.allow_indexing !== null) {
+        nextAllowIndexing = body.allow_indexing === true
+      }
+
       if (Object.keys(fields).length > 0) return reply(ctx, invalid(fields))
 
       if (nextName !== siteName) {
@@ -692,8 +731,17 @@ export const content: MockModule = {
         shareSiteName(siteName)
       }
       siteTimezone = nextTimezone
+      siteSeoKeywords = nextSeoKeywords
+      siteSeoDescription = nextSeoDescription
+      siteAllowIndexing = nextAllowIndexing
 
-      ctx.send(200, { name: siteName, timezone: siteTimezone })
+      ctx.send(200, {
+        name: siteName,
+        timezone: siteTimezone,
+        seo_keywords: siteSeoKeywords,
+        seo_description: siteSeoDescription,
+        allow_indexing: siteAllowIndexing,
+      })
     },
   },
 }

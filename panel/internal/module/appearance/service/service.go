@@ -30,9 +30,10 @@ type auditWriter interface {
 	Write(ctx context.Context, e auditsvc.Event) error
 }
 
-// SiteSettings 是 settings service 的只读面：插槽的更新时间按站点时区显示，站点名也从这里取（PageMeta）。*settingsvc.Service 直接满足。
+// SiteSettings 是 settings service 的只读面：插槽的更新时间按站点时区显示，站点名也从这里取（PageMeta），站点对外根地址也从这里取（入口页 canonical）。*settingsvc.Service 直接满足。
 type SiteSettings interface {
 	Site(ctx context.Context) (settingsvc.Site, error)
+	SiteURL(ctx context.Context) string
 }
 
 // Service 是 appearance 模块对外的业务入口。

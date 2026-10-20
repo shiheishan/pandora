@@ -265,6 +265,10 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCaptchaCSP(svc.settings)),
 		webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PagePortal)))
 	webapp.Mount(adminEng, web.AdminApp, webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PageAdmin)))
+	// 门户的 robots.txt：只看收录开关，正文固定、不含任何路径前缀（后台在另一个引擎上，不挂）
+	robots := appearanceh.Robots(svc.appearance)
+	publicEng.GET("/robots.txt", robots)
+	publicEng.HEAD("/robots.txt", robots)
 	publicV1 := publicEng.Group("/v1")
 	adminV1 := adminEng.Group("/v1")
 	for _, m := range mods {

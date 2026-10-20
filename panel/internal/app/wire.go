@@ -341,6 +341,8 @@ func buildServices(r *runtime) (*services, error) {
 	settingsSvc.UseSubscriptionExtrasListener(subSvc)
 	// 门户建单查购买限制（每人未支付订单数、每人订阅数），每次现查 settings
 	orderSvc.UsePurchaseLimits(settingsSvc)
+	// 站点对外根地址（入口页 canonical、og:url）：全仓只经 settings 的 SiteURL 读
+	settingsSvc.UsePublicBaseURL(cfg.PublicBaseURL)
 
 	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
 	if err := checkPorts([]portCheck{

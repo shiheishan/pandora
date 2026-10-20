@@ -73,6 +73,82 @@ func TestRenderIndexIconRejected(t *testing.T) {
 	}
 }
 
+func TestRenderIndexSEOFull(t *testing.T) {
+	m := IndexMeta{
+		Title:       "站点名",
+		Description: "描述",
+		AppName:     "站点名",
+		Icon:        "data:image/png;base64,AAAA",
+		Keywords:    "k1, k2",
+		Robots:      "noindex, nofollow",
+		URL:         "https://panel.example.test/",
+		OpenGraph:   true,
+	}
+	out := string(renderIndex([]byte(sampleIndex), m))
+	order := []string{
+		`<meta name="description"`,
+		`<meta name="keywords"`,
+		`<meta name="robots"`,
+		`<meta name="application-name"`,
+		`<link rel="icon"`,
+		`<link rel="canonical"`,
+		`<meta property="og:type"`,
+		`<meta property="og:site_name"`,
+		`<meta property="og:title"`,
+		`<meta property="og:description"`,
+		`<meta property="og:url"`,
+	}
+	pos := -1
+	for _, frag := range order {
+		i := strings.Index(out, frag)
+		if i < 0 {
+			t.Fatalf("missing %q in:\n%s", frag, out)
+		}
+		if i <= pos {
+			t.Fatalf("tag order wrong at %q", frag)
+		}
+		pos = i
+	}
+	if !strings.Contains(out, `href="https://panel.example.test/"`) {
+		t.Fatalf("canonical/og url missing: %s", out)
+	}
+}
+
+func TestRenderIndexSEOEscape(t *testing.T) {
+	out := string(renderIndex([]byte(sampleIndex), IndexMeta{
+		Keywords: `a"b<c`,
+		Title:    "t",
+	}))
+	if !strings.Contains(out, `content="a&#34;b&lt;c"`) {
+		t.Fatalf("keywords must escape: %s", out)
+	}
+}
+
+func TestRenderIndexSEOInvalidURL(t *testing.T) {
+	for _, u := range []string{"javascript:alert(1)", "ftp://x.example.test/"} {
+		out := string(renderIndex([]byte(sampleIndex), IndexMeta{
+			URL:       u,
+			OpenGraph: true,
+			Title:     "t",
+		}))
+		if strings.Contains(out, `rel="canonical"`) || strings.Contains(out, `property="og:url"`) {
+			t.Fatalf("url %q must not produce canonical or og:url: %s", u, out)
+		}
+	}
+}
+
+func TestRenderIndexRobotsOnly(t *testing.T) {
+	out := string(renderIndex([]byte(sampleIndex), IndexMeta{Robots: "noindex, nofollow"}))
+	if !strings.Contains(out, `<meta name="robots" content="noindex, nofollow" />`) {
+		t.Fatalf("missing robots: %s", out)
+	}
+	for _, bad := range []string{`name="description"`, `name="keywords"`, `rel="canonical"`, `property="og:`} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("must not add %q: %s", bad, out)
+		}
+	}
+}
+
 func TestRenderIndexControlCharsInTitle(t *testing.T) {
 	out := string(renderIndex([]byte(sampleIndex), IndexMeta{Title: "a\x00b\nc"}))
 	if !strings.Contains(out, "<title>abc</title>") {
