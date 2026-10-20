@@ -216,7 +216,7 @@ func (s *Service) ProbeFrameDomains(ctx context.Context, ticket string) ([]strin
 }
 
 // ReportProbeResults 验票后记探测结果：只认票据所绑组里的域名（先 NormalizeBaseURL，失败或不在组里的静默忽略，同一域名只取第一条），
-// 按 BaseURL 字典序交给 scores.ApplyProbe（票据一次性、账号×域名 30 分钟一次、成功与失败都要同一小时 3 个不同账号、每小时净变动 ±0.5）。
+// 按 BaseURL 字典序交给 scores.ApplyProbe（票据一次性、账号×域名 30 分钟一次、成功与失败都要同一小时够数的不同账号：全国一级 3 个、省与省|运营商 5 个；每级每小时净变动 ±0.5）。
 // 按上报请求的 IP 归到上报者的地区，三级分开数人数、分开封顶。
 // Redis 写失败只打 Warn、不报错（分数只是调权重的参考）。
 func (s *Service) ReportProbeResults(ctx context.Context, ticket string, results []ProbeResult) error {
