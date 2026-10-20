@@ -258,6 +258,12 @@ export interface ApiClient {
   reauth(password: string, signal?: AbortSignal): Promise<void>
   /** 以 Bearer 打开一个 text/event-stream 响应，非 2xx 抛 ApiError（401 照常清令牌）。 */
   openStream(path: string, signal?: AbortSignal): Promise<Response>
+  /**
+   * 凭 refresh cookie 换一枚新的 access（开机恢复登录、其它标签页登录后本页跟上时由 runtime 调）：
+   * 成功写进 TokenStore 并返回 true；被拒（429 以外的 4xx：cookie 无效、过期或被吊销）返回 false、不动令牌；
+   * 429、5xx 与断网抛 ApiError（断网是 network_error），调用方按「暂时连不上」处理。与 401 后的刷新共用同一次单飞与跨标签页锁。
+   */
+  refreshSession(): Promise<boolean>
 }
 
 /** 无响应体（204）的接口用它作 schema。 */
@@ -315,16 +321,23 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   let pendingRefresh: Promise<boolean> | null = null
 
   async function refreshSessionCore(usedToken: string | null): Promise<boolean> {
+    // 令牌只在内存，这里只看得到本页：拿到锁时本页令牌已被本页别的请求换过（另一个请求刚刷新完或刚重新验证），就不再刷新。
+    // 跨标签页的串行靠 navigator.locks；两页先后用同一枚 cookie，由服务端 30 秒宽限兜住（上一代 cookie 30 秒内还能换 access，不轮换）。
     const current = tokens.get()
     if (usedToken !== null && current !== null && current !== usedToken) {
       return true
     }
-    const res = await doFetch(resolveApiUrl('v1/auth/refresh', baseUrl()), {
-      method: 'POST',
-      headers: new Headers({ Accept: 'application/json' }),
-      credentials: 'same-origin',
-      cache: 'no-store',
-    })
+    let res: Response
+    try {
+      res = await doFetch(resolveApiUrl('v1/auth/refresh', baseUrl()), {
+        method: 'POST',
+        headers: new Headers({ Accept: 'application/json' }),
+        credentials: 'same-origin',
+        cache: 'no-store',
+      })
+    } catch (cause) {
+      throw new ApiError({ status: 0, code: 'network_error', message: '网络连接失败，请检查网络后重试', cause })
+    }
     if (res.ok) {
       const data = await parse(res, tokenResponseSchema)
       tokens.set(data.access_token)
@@ -469,6 +482,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       tokens.set(res.access_token)
     },
     openStream: (path, signal) => exchange(path, { method: 'GET', signal }, 'text/event-stream'),
+    refreshSession: () => refreshSession(null),
   }
   return client
 }

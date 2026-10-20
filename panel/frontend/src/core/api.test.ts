@@ -489,7 +489,7 @@ describe('access token refresh on 401', () => {
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
 
-  it('skips refresh when another tab already rotated the token inside the lock', async () => {
+  it('skips refresh when this page already swapped the token while waiting for the lock', async () => {
     const tokens = createTokenStore('admin', { storage: null, events: null })
     tokens.set('tok-1')
     const fake = fakeFetch([
@@ -553,6 +553,41 @@ describe('access token refresh on 401', () => {
     await rejection(env.client.post('v1/auth/login', ok, { auth: false, body: { email: 'a@b.c', password: 'x' } }))
     expect(env.calls).toHaveLength(1)
     expect(env.tokens.get()).toBe('tok-1')
+  })
+})
+
+describe('refreshSession', () => {
+  it('returns true and stores the new token', async () => {
+    const { client, tokens, calls } = setup([refreshOk('tok-new')], {}, null)
+    const success = await client.refreshSession()
+    expect(success).toBe(true)
+    expect(tokens.get()).toBe('tok-new')
+    expect(calls[0]!.credentials).toBe('same-origin')
+    expect(calls[0]!.authorization).toBeNull()
+  })
+
+  it('returns false on a rejected cookie and keeps no token', async () => {
+    const { client, tokens } = setup([envelope(401, 'unauthorized')], {}, null)
+    const success = await client.refreshSession()
+    expect(success).toBe(false)
+    expect(tokens.get()).toBeNull()
+  })
+
+  it('throws rate_limited on 429 and service_unavailable on 503', async () => {
+    const env429 = setup([envelope(429, 'rate_limited')], {}, null)
+    const err429 = await rejection(env429.client.refreshSession())
+    expect(err429.code).toBe('rate_limited')
+
+    const env503 = setup([envelope(503, 'service_unavailable')], {}, null)
+    const err503 = await rejection(env503.client.refreshSession())
+    expect(err503.code).toBe('service_unavailable')
+  })
+
+  it('turns a failed fetch into network_error', async () => {
+    const { client } = setup([new TypeError('Failed to fetch')], {}, null)
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(err.status).toBe(0)
   })
 })
 

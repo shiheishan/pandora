@@ -13,10 +13,10 @@
   var root = document.documentElement
   root.setAttribute('data-theme', theme)
 
-  // 门户首页片段（服务端插在 #root 之前，见 portal/home.ts）：已登录（有门户令牌）、地址带 hash 页面或邀请码时，
+  // 门户首页片段（服务端插在 #root 之前，见 portal/home.ts）：有门户登录标志（pandora-portal-session，不含秘密；令牌只在内存）、地址带 hash 页面或邀请码时，
   // 首帧前先藏起来（<html data-home="off">，样式在 portal/home.css），免得已登录用户和直接进登录页的访客闪一下首页；
   // 真值由 App.tsx 挂载后按登录状态与地址再定。只在门户入口；后台与门户同源，不碰后台。
-  // 地址与令牌分两步读：存储读不了（隐私模式）时地址照样算数
+  // 地址与登录标志分两步读：存储读不了（隐私模式）时地址照样算数
   if (root.getAttribute('data-app') === 'portal') {
     var homeOff = false
     try {
@@ -27,7 +27,7 @@
       // 读不到地址：按没有页面
     }
     try {
-      if (!homeOff && storage && storage.getItem('pandora-portal-token')) homeOff = true
+      if (!homeOff && storage && storage.getItem('pandora-portal-session') === '1') homeOff = true
     } catch {
       // 读不到存储：按未登录，App 挂载后再定
     }
