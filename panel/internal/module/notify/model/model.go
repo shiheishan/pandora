@@ -65,12 +65,12 @@ type InboxItem struct {
 // TableName 固定表名。
 func (InboxItem) TableName() string { return "notification_inbox" }
 
-// Event 对应 notification_events 的一行（通知去重键）。
+// Event 对应 notification_events 的一行（通知去重键）。UserID 为空表示这件事不关某个用户（如数据巡检告警，迁移 00059 起可空）。
 type Event struct {
-	DedupeKey    string    `gorm:"column:dedupe_key;primaryKey"`
-	UserID       uuid.UUID `gorm:"column:user_id;type:uuid"`
-	TemplateCode string    `gorm:"column:template_code"`
-	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
+	DedupeKey    string     `gorm:"column:dedupe_key;primaryKey"`
+	UserID       *uuid.UUID `gorm:"column:user_id;type:uuid"`
+	TemplateCode string     `gorm:"column:template_code"`
+	CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTime"`
 }
 
 // TableName 固定表名。

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
+	"github.com/aegispanel/aegis/internal/module/report/model"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 )
 
@@ -142,7 +144,10 @@ func TestTasksMapping(t *testing.T) {
 		Failed:        7,
 		OldestReadyAt: &oneMinAgo,
 	}
-	e.ports.drift = 1
+	// 待办里的巡检读表：只给登记着的检查、按检查顺序；不认识的旧代号不给
+	e.store.integrity[CheckOrderPaidUnfulfilled] = model.IntegrityCheck{Code: CheckOrderPaidUnfulfilled, Count: 0, Sample: "[]", CheckedAt: testNow}
+	e.store.integrity[CheckLedgerDrift] = model.IntegrityCheck{Code: CheckLedgerDrift, Count: 1, Sample: `["x"]`, CheckedAt: testNow}
+	e.store.integrity["retired_check"] = model.IntegrityCheck{Code: "retired_check", Count: 9, Sample: "[]", CheckedAt: testNow}
 
 	tasks, err := e.svc.Tasks(ctx)
 	if err != nil {
@@ -172,8 +177,12 @@ func TestTasksMapping(t *testing.T) {
 		tasks.NotificationsBacklog.BacklogState != "clear" {
 		t.Fatalf("NotificationsBacklog=%+v", tasks.NotificationsBacklog)
 	}
-	if tasks.LedgerDrift != 1 {
-		t.Fatalf("LedgerDrift=%d", tasks.LedgerDrift)
+	want := []IntegrityItem{
+		{Code: CheckLedgerDrift, Count: 1, CheckedAt: testNow},
+		{Code: CheckOrderPaidUnfulfilled, Count: 0, CheckedAt: testNow},
+	}
+	if !slices.Equal(tasks.Integrity, want) {
+		t.Fatalf("Integrity=%+v want %+v", tasks.Integrity, want)
 	}
 }
 

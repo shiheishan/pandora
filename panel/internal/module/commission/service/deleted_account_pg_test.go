@@ -144,8 +144,8 @@ func TestVoidForDeletedUser(t *testing.T) {
 			Scan(&n, &sum); err != nil || n != 1 || !sum.Equal(dec2("30.00")) {
 			t.Fatalf("作废记录 %d 条 %s %v", n, sum, err)
 		}
-		if n, err := e.ledger.DriftAccounts(ctx); err != nil || n != 0 {
-			t.Fatalf("科目缓存与分录漂移 %d %v", n, err)
+		if r, err := e.ledger.CheckDrift(ctx); err != nil || r.Count != 0 {
+			t.Fatalf("科目缓存与分录漂移 %d %v %v", r.Count, r.Sample, err)
 		}
 	}
 	assertCleared()

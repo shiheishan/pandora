@@ -1,4 +1,4 @@
-// Package model 是 report 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00032_report.sql。
+// Package model 是 report 模块的 GORM 结构体：只有字段和标签，表结构见迁移 00032_report.sql 与 00059_report_integrity.sql。
 package model
 
 import (
@@ -38,3 +38,19 @@ type ActivityDaily struct {
 
 // TableName 固定表名。
 func (ActivityDaily) TableName() string { return "activity_daily" }
+
+// IntegrityCheck 是 integrity_checks 的一行：一项数据巡检的最新结果（迁移 00059_report_integrity.sql）。
+type IntegrityCheck struct {
+	Code  string `gorm:"column:code;primaryKey"`
+	Count int64  `gorm:"column:count"`
+	// Sample 是样例 id 的 JSON 数组文本（最多 5 个，新的在前；没有违例时为 []）
+	Sample    string    `gorm:"column:sample;type:jsonb"`
+	CheckedAt time.Time `gorm:"column:checked_at"`
+	// FailingSince 是这一段违例从哪次巡检开始；Count 为 0 时为空
+	FailingSince *time.Time `gorm:"column:failing_since"`
+	// AlertedCount 是这一段里上次告警时的违例数；Count 为 0 时为 0
+	AlertedCount int64 `gorm:"column:alerted_count"`
+}
+
+// TableName 固定表名。
+func (IntegrityCheck) TableName() string { return "integrity_checks" }

@@ -215,7 +215,7 @@ type Tasks struct {
 	NodesOffline         NodesOfflineTask
 	OrdersPendingStale   OrdersPendingStaleTask
 	NotificationsBacklog NotificationsBacklogTask
-	LedgerDrift          int64
+	Integrity            []IntegrityItem // 数据巡检各项最近一次的结果，按检查顺序；没跑过的不在里面
 }
 
 // TicketsOpenTask 是待客服处理的工单。

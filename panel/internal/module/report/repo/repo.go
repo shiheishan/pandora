@@ -1,4 +1,4 @@
-// Package repo 是 report 模块唯一使用 GORM 的数据访问层：营收报表调整、行为趋势按天汇总、数据库探测。
+// Package repo 是 report 模块唯一使用 GORM 的数据访问层：营收报表调整、行为趋势按天汇总、数据巡检结果、数据库探测。
 package repo
 
 import (

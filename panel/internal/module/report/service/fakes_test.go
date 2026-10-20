@@ -21,6 +21,7 @@ import (
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
+	"github.com/aegispanel/aegis/internal/pkg/integrity"
 )
 
 // 本文件是 service 单测共用的假实现：fakeStore（本模块 repo）、fakeTx、fakeAudit、fakePorts（全部属主模块端口）。
@@ -43,11 +44,16 @@ type fakeStore struct {
 	purgeCalls  []string
 	purgeLeft   int // PurgeActivity 还能删的行数（每次至多 batch）
 	dbStats     repo.DatabaseStatsRow
+	integrity   map[string]model.IntegrityCheck // integrity_checks，按代号
 	errFor      map[string]error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{activity: map[string]model.ActivityDaily{}, errFor: map[string]error{}}
+	return &fakeStore{
+		activity:  map[string]model.ActivityDaily{},
+		integrity: map[string]model.IntegrityCheck{},
+		errFor:    map[string]error{},
+	}
 }
 
 func (f *fakeStore) err(name string) error { return f.errFor[name] }
@@ -238,7 +244,7 @@ type fakePorts struct {
 	revenueDays  []ledgersvc.RevenueDay
 	revenueTotal ledgersvc.RevenueTotal
 	revenueCalls [][2]time.Time
-	drift        int64
+	drift        int64 // CheckDrift 的计数（checks 里登记了 CheckDrift 时以 checks 为准）
 
 	orderCounts  ordersvc.ReportOrderCounts
 	pendingStale int64
@@ -252,16 +258,28 @@ type fakePorts struct {
 	activityCalls [][2]time.Time
 	actions       []auditsvc.ActivityActions
 
+	// 数据巡检：checks 按方法名给各属主检查的结果（没登记回 0 违例）；refs 按方法名给跨模块检查的「记录 → 订单」；
+	// unsettled 是 UnsettledAmong 认为没付的订单；alerts 记下收到的告警，noGroup 为真时模拟没配管理员群组
+	checks         map[string]integrity.Result
+	refs           map[string][]integrity.OrderRef
+	unsettled      map[uuid.UUID]bool
+	unsettledCalls [][]uuid.UUID
+	alerts         []notifysvc.IntegrityAlert
+	noGroup        bool
+
 	errFor map[string]error
 }
 
 func newFakePorts() *fakePorts {
 	return &fakePorts{
-		tz:       "Asia/Shanghai",
-		emails:   map[uuid.UUID]string{},
-		owners:   map[uuid.UUID]uuid.UUID{},
-		channels: map[string]notifysvc.ChannelDeliveryCounts{},
-		errFor:   map[string]error{},
+		tz:        "Asia/Shanghai",
+		emails:    map[uuid.UUID]string{},
+		owners:    map[uuid.UUID]uuid.UUID{},
+		channels:  map[string]notifysvc.ChannelDeliveryCounts{},
+		checks:    map[string]integrity.Result{},
+		refs:      map[string][]integrity.OrderRef{},
+		unsettled: map[uuid.UUID]bool{},
+		errFor:    map[string]error{},
 	}
 }
 
@@ -345,8 +363,11 @@ func (f *fakePorts) RevenueTotals(context.Context) (ledgersvc.RevenueTotal, erro
 	return f.revenueTotal, f.err("RevenueTotals")
 }
 
-func (f *fakePorts) DriftAccounts(context.Context) (int64, error) {
-	return f.drift, f.err("DriftAccounts")
+func (f *fakePorts) CheckDrift(context.Context) (integrity.Result, error) {
+	if r, ok := f.checks["CheckDrift"]; ok {
+		return r, f.err("CheckDrift")
+	}
+	return integrity.Result{Count: f.drift, Sample: []string{}}, f.err("CheckDrift")
 }
 
 func (f *fakePorts) ReportOrderCounts(context.Context, time.Time, time.Time) (ordersvc.ReportOrderCounts, error) {
@@ -410,7 +431,7 @@ func newTestEnv() *testEnv {
 	rd := &fakeRedis{}
 	deps := Deps{
 		Settings: p, Users: p, Subscriptions: p, Nodes: p, Ledger: p, Orders: p, Payments: p,
-		Commissions: p, Tickets: p, Notices: p, Activity: p, Redis: rd,
+		Commissions: p, Giftcards: p, Tickets: p, Notices: p, Activity: p, Redis: rd,
 	}
 	svc := newService(st, tx, au, deps, Options{})
 	svc.now = func() time.Time { return testNow }
