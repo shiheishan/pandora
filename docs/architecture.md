@@ -301,7 +301,7 @@ identity, auth ─► settings, audit
 
 | 项 | 做法 |
 |---|---|
-| 形态 | `<sid>.<代数>.<32 字节 base64url>`：第 g 代的值 = `HMAC(主密钥派生 InfoHMACRefresh, sid ‖ 0 ‖ 种子 ‖ 0 ‖ g)`，种子是会话建立时的 32 字节随机值（Redis 的 `rt_seed`），登录时是第 0 代。只有主密钥、或只有 Redis，都算不出任何一代；Redis 只存种子与当前、上一代的 SHA-256，比较用常量时间 |
+| 形态 | `<sid>.<代数>.<32 字节 base64url>`：第 g 代的值 = `HMAC(主密钥派生 InfoHMACRefresh, sid ‖ 0 ‖ 种子 ‖ 0 ‖ g)`，种子是会话建立时的 32 字节随机值（Redis 的 `rt_seed`），登录时是第 0 代。只有主密钥、或只有 Redis，都算不出任何一代；Redis 存种子的明文（单有它算不出任何一代）与当前、上一代的 SHA-256，比较用常量时间 |
 | 存放 | HttpOnly、Secure、SameSite=Strict 的 cookie，Path=`/v1/auth`；public 叫 `pandora_rt`，admin 叫 `pandora_admin_rt`（admin 经 nginx 的 `proxy_cookie_path` 改成带后台前缀的路径） |
 | 轮换 | `POST /v1/auth/refresh` 拿当前代来就换成下一代：`rt_prev ← rt_cur`、`rt_cur ← 第 g+1 代`，Lua 原子 CAS |
 | 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新，或轮换的响应没送到浏览器：关页、F5、断网、前端超时放弃）：不改任何状态，发新的 access，并把当前那一枚 cookie 原样再发一遍（由上一代的代数重算出来，Redis 里不存明文）。偷到上一枚的人在宽限内拿到的是与合法用户同一枚 |

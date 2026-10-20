@@ -109,3 +109,30 @@ func TestLogoutWithOlderGenerationRevokes(t *testing.T) {
 		t.Fatalf("旧代退出后攻击者的 access 应失效: %v", err)
 	}
 }
+
+// 没有种子的会话（不该出现，防御）：refresh 与 logout 都不认它的任何值，只回 401 / 当作找不到，会话还在、不写审计。
+func TestRefreshEmptySeedNeverAuthentic(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("noseed@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "noseed@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	sid, _, _, _ := parseRefresh(tok.Refresh)
+	if err := h.RDB.HDel(ctx, sessKey(sid), "rt_seed").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("没有种子时 refresh 应 401: %v", err)
+	}
+	if err := h.S.Logout(ctx, authn.AudiencePublic, tok.Refresh); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if _, err := h.S.Authenticate(ctx, authn.AudiencePublic, tok.AccessToken); err != nil {
+		t.Fatalf("会话应还在: %v", err)
+	}
+	if n := countAudit(h, "session.refresh_reuse") + countAudit(h, "user.logout"); n != 0 {
+		t.Fatalf("不应写审计: %d", n)
+	}
+}
