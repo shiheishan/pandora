@@ -96,6 +96,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 按目录生效的约定在 `.claude/rules/`，文件头的 `paths:` 写着管哪些目录。它只在用 Read / Edit / Write 碰到匹配文件时自动加载；用 Bash（cat、sed、grep）读文件或只看 `git diff` 时不会加载。所以要改或审某个目录的代码，先用 Read 打开那里的一个文件，或直接读对应的规则文件；给子 Agent 写任务说明、审查简报时，把相关规则文件的路径写进去。改了对应代码，同步改写这些规则。
 - 验证、推送后等 CI：verify skill。
 - 性能改动：perf-gate skill；合入前独立审查：pre-merge-review skill；发版：release skill。
+- 后台加设置项：add-setting skill；数据巡检报警后修数据：data-repair skill；网站测试默认用 ego-browser（flow-walk、ux-review 里写了用法，内置浏览器只作备用）。
 - skill 用 `~/ai/skills/bin/skills` 管理：项目自己的 skill 在 `.agents/skills/`（`.claude/skills` 是指向它的链接）；共享的 composer-dispatch、skill-creator 是本机链接，不入库。新做或改 skill 用 skill-creator。
 
 ## 仓库约定
