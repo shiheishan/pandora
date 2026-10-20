@@ -192,9 +192,16 @@ type taskNotificationsBacklog struct {
 	BacklogState string `json:"backlog_state"`
 }
 
-type taskLedgerDrift struct {
-	Kind  string `json:"kind"`
-	Count int64  `json:"count"`
+// taskIntegrity 是数据巡检：每项检查最近一次的违例数与检查时刻（没跑过的检查不在 checks 里）。
+type taskIntegrity struct {
+	Kind   string               `json:"kind"`
+	Checks []taskIntegrityCheck `json:"checks"`
+}
+
+type taskIntegrityCheck struct {
+	Code      string    `json:"code"`
+	Count     int64     `json:"count"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 type systemStatusResponse struct {
@@ -433,6 +440,10 @@ func tasksFrom(t service.Tasks) (tasksResponse, error) {
 	for i, n := range t.NodesOffline.Sample {
 		sample[i] = taskNodeSample{ID: n.ID.String(), Name: n.Name}
 	}
+	checks := make([]taskIntegrityCheck, len(t.Integrity))
+	for i, c := range t.Integrity {
+		checks[i] = taskIntegrityCheck{Code: c.Code, Count: c.Count, CheckedAt: c.CheckedAt}
+	}
 	items := []any{
 		taskTicketsOpen{
 			Kind: "tickets_open", Count: t.TicketsOpen.Count, HighPriority: t.TicketsOpen.HighPriority,
@@ -451,7 +462,7 @@ func tasksFrom(t service.Tasks) (tasksResponse, error) {
 			Kind: "notifications_backlog", Queued: t.NotificationsBacklog.Queued,
 			FailedTotal: t.NotificationsBacklog.FailedTotal, BacklogState: t.NotificationsBacklog.BacklogState,
 		},
-		taskLedgerDrift{Kind: "ledger_drift", Count: t.LedgerDrift},
+		taskIntegrity{Kind: "integrity", Checks: checks},
 	}
 	return tasksResponse{AsOf: t.AsOf, Items: items}, nil
 }

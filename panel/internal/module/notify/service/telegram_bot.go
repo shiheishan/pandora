@@ -374,7 +374,7 @@ func (s *Service) handleAdminReply(ctx context.Context, cfg settingssvc.Telegram
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		ins, err := s.store.InsertEvent(ctx, &model.Event{
 			DedupeKey:    fmt.Sprintf("tg-admin-reply:%d:%d", msg.Chat.ID, msg.MessageID),
-			UserID:       b.UserID,
+			UserID:       &b.UserID,
 			TemplateCode: tgAdminReplyEvent,
 		})
 		if err != nil {

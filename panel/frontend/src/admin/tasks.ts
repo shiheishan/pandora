@@ -21,7 +21,11 @@ const taskItemSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('orders_pending_stale'), count, threshold_seconds: count }),
   z.object({ kind: z.literal('notifications_backlog'), queued: count, failed_total: count, backlog_state: z.enum(['clear', 'backlogged']) }),
-  z.object({ kind: z.literal('ledger_drift'), count }),
+  // 数据巡检：每项检查最近一次的违例数（code 是后端的检查代号，中文名见 dash/model 的 INTEGRITY_CHECKS）
+  z.object({
+    kind: z.literal('integrity'),
+    checks: z.array(z.object({ code: z.string().min(1), count, checked_at: z.string() })),
+  }),
 ])
 export const tasksSchema = z.object({ as_of: z.string(), items: z.array(taskItemSchema) })
 export type TaskItem = z.output<typeof taskItemSchema>
@@ -38,8 +42,11 @@ export function useDashboardTasks() {
   })
 }
 
-/** 某类条目的计数；条目不在或该类没有 count（通知积压）时为 0 */
-export function taskCount(items: readonly TaskItem[] | undefined, kind: Exclude<TaskItem['kind'], 'notifications_backlog'>): number {
+/** 某类条目的计数；条目不在时为 0（通知积压、数据巡检没有单一 count，不走这里） */
+export function taskCount(
+  items: readonly TaskItem[] | undefined,
+  kind: Exclude<TaskItem['kind'], 'notifications_backlog' | 'integrity'>,
+): number {
   const item = items?.find((i) => i.kind === kind)
   return item && 'count' in item ? item.count : 0
 }

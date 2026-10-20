@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	ordersvc "github.com/aegispanel/aegis/internal/module/order/service"
@@ -32,5 +33,14 @@ func TestPaidAmount(t *testing.T) {
 	}
 	if got := paidAmount(ordersvc.PaidNotice{Total: decimal.RequireFromString("29.9")}); got != "29.90 元" {
 		t.Fatalf("paidAmount = %q, want 29.90 元", got)
+	}
+}
+
+// 只有巡检告警可以不关某个用户；别的管理员提醒缺用户 id 直接报错，不写库（store 为 nil，碰到就会 panic）。
+func TestWriteAdminNoticeRejectsMissingUser(t *testing.T) {
+	s := &Service{}
+	_, err := s.writeAdminNotice(context.Background(), 1, adminNotice{Key: "k", Code: TemplateAdminTicketOpened})
+	if err == nil {
+		t.Fatal("缺用户 id 的管理员提醒应报错")
 	}
 }

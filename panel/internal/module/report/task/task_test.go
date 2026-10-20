@@ -14,6 +14,13 @@ type fakeService struct {
 	purgeCounts  []int
 	purgeCalls   []int
 	purgeIdx     int
+	integrityRun int
+	integrityErr error
+}
+
+func (f *fakeService) RunIntegrity(context.Context) error {
+	f.integrityRun++
+	return f.integrityErr
 }
 
 func (f *fakeService) RefreshActivity(context.Context) error {
@@ -34,11 +41,11 @@ func (f *fakeService) PurgeActivity(_ context.Context, batch int) (int, error) {
 	return n, nil
 }
 
-func TestPeriodicTwoJobs(t *testing.T) {
+func TestPeriodicJobs(t *testing.T) {
 	m := New(&fakeService{})
 	ps := m.Periodic()
-	if len(ps) != 2 {
-		t.Fatalf("periodic: got %d want 2", len(ps))
+	if len(ps) != 3 {
+		t.Fatalf("periodic: got %d want 3", len(ps))
 	}
 	want := []struct {
 		typ      string
@@ -46,6 +53,7 @@ func TestPeriodicTwoJobs(t *testing.T) {
 	}{
 		{TypeActivity, "*/10 * * * *"},
 		{TypeRetention, "57 3 * * *"},
+		{TypeIntegrity, "19,49 * * * *"},
 	}
 	for i, w := range want {
 		if ps[i].Type != w.typ {
@@ -135,5 +143,18 @@ func TestRetentionCanceledContext(t *testing.T) {
 	}
 	if len(fs.purgeCalls) != 0 {
 		t.Fatalf("purge calls: got %d want 0", len(fs.purgeCalls))
+	}
+}
+
+func TestIntegrityRunsAndWrapsError(t *testing.T) {
+	fs := &fakeService{}
+	m := New(fs)
+	if err := m.integrity(context.Background(), asynq.NewTask(TypeIntegrity, nil)); err != nil || fs.integrityRun != 1 {
+		t.Fatalf("integrity: err=%v runs=%d", err, fs.integrityRun)
+	}
+	sentinel := errors.New("check failed")
+	fs.integrityErr = sentinel
+	if err := m.integrity(context.Background(), asynq.NewTask(TypeIntegrity, nil)); !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is: got %v want %v", err, sentinel)
 	}
 }

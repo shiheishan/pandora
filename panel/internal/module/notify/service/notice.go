@@ -168,7 +168,7 @@ func (s *Service) writeNotice(ctx context.Context, env noticeEnv, userID uuid.UU
 
 	inserted, err := s.store.InsertEvent(ctx, &model.Event{
 		DedupeKey:    dedupeKey,
-		UserID:       userID,
+		UserID:       &userID,
 		TemplateCode: code,
 	})
 	if err != nil {

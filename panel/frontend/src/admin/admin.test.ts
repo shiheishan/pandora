@@ -196,6 +196,15 @@ describe('dashboard/tasks', () => {
     expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'tickets_open', count: 7 }] }).success).toBe(false)
   })
 
+  it('数据巡检条目：每项 code / count / checked_at，旧的 ledger_drift 不再认', () => {
+    const integrity = { kind: 'integrity', checks: [{ code: 'ledger_drift', count: 2, checked_at: '2026-10-20T08:00:00Z' }] }
+    expect(tasksSchema.safeParse({ ...payload, items: [integrity] }).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [] }] }).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [{ code: 'ledger_drift', count: -1, checked_at: 'x' }] }] }).success).toBe(false)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [{ code: 'ledger_drift', count: 1 }] }] }).success).toBe(false)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'ledger_drift', count: 0 }] }).success).toBe(false)
+  })
+
   it('徽标取数：条目缺失（无权限）为 0', () => {
     const items = tasksSchema.parse(payload).items
     expect(taskCount(items, 'tickets_open')).toBe(7)

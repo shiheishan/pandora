@@ -321,11 +321,12 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc.UsePluginEvents(pluginSvc)
 	giftcardSvc.UsePluginEvents(pluginSvc)
 	notifySvc.UsePluginEvents(pluginSvc)
-	// 看板与营收报表：数字一律经各属主模块的聚合读；report 只拥有报表调整与按天行为汇总两张表
+	// 看板、营收报表与数据巡检：数字一律经各属主模块的聚合读与只读检查；report 只拥有报表调整、按天行为汇总、巡检结果三张表，
+	// 巡检告警经 notify 发到管理员群组
 	reportSvc := reportsvc.New(reportrepo.New(r.db), txm, auditSvc, reportsvc.Deps{
 		Settings: settingsSvc, Users: identitySvc, Subscriptions: subSvc, Nodes: nodeSvc, Ledger: ledgerSvc,
-		Orders: orderSvc, Payments: paymentSvc, Commissions: commissionSvc, Tickets: supportSvc, Notices: notifySvc,
-		Activity: auditSvc, Redis: reportRedis{c: r.redis},
+		Orders: orderSvc, Payments: paymentSvc, Commissions: commissionSvc, Giftcards: giftcardSvc, Tickets: supportSvc,
+		Notices: notifySvc, Activity: auditSvc, Redis: reportRedis{c: r.redis},
 	}, reportsvc.Options{BackupDir: cfg.Backup.Dir})
 	reportSvc.UseCache(r.redis)
 

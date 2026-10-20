@@ -8,7 +8,7 @@ paths:
 
 ## report 边界与读数
 
-- `panel/internal/module/report/service/service.go` 包注释：`report` 只拥有 `revenue_report_adjustments`、`activity_daily`；看板其余数字一律经 `Deps` 里各属主 `service` 的聚合读，**不读别人的表**。
+- `panel/internal/module/report/service/service.go` 包注释：`report` 只拥有 `revenue_report_adjustments`、`activity_daily`、`integrity_checks`；看板其余数字一律经 `Deps` 里各属主 `service` 的聚合读，**不读别人的表**。
 - 切日、营收按日、行为趋势一律用 `Service.location` → `settings` 的 `site.timezone`（`time.LoadLocation`）；解析失败回 500，**不悄悄退回 UTC**（`service.go` 的 `location`）。
 - 站点时区写入校验在 `panel/internal/module/settings/service/site.go` 的 `validTimezone`：拒空串、`Local`、无法 `LoadLocation` 的名字。
 - 看板节点/用户流量排行：`Service.NodeTraffic` / `UserTraffic` 只调 `deps.Nodes.TrafficByNode`、`TrafficBySubscription`（小时汇总表，属主 `node`），不在请求里解析原始上报 payload（`service/traffic.go`）。
@@ -21,6 +21,16 @@ paths:
 - **写路径**：`RefreshActivity` 补历史未定稿日（大前天及更早从新到旧最多 7 天）+ 重算前天、昨天与今天；已定稿跳过。
 - 定时：`panel/internal/module/report/task/task.go`——`report:activity_daily` 每 10 分钟；`retention:activity_daily` 每天删 `ActivityRetentionDays`（400）以前，`PurgeActivity` 分批。
 - 动作名：`activityActions` 用 `identitysvc.ActionRegistered`、`ordersvc.ActionOrderCreated`，登录成功用本包常量 `LoginAction`（`"user.login"`，与 auth 写入一致）（`service/activity.go`）。
+
+## 数据巡检（integrity_checks，2026-10-20）
+
+- 定时 `report:integrity`（`task/task.go`，cron `19,49 * * * *`，避开 `commission:settle` 的第 7 分；low 队列、不重试、5 分钟超时、Unique 29 分钟）调 `service/integrity.go` 的 `RunIntegrity`。
+- 检查本身是各属主 `service` 的只读方法、SQL 在属主 `repo/integrity.go`，返回 `internal/pkg/integrity` 的 `Result`（违例数 + 至多 5 个样例 id，新的在前）；report 只经 `Deps` 调，不读别人的表。九项与属主：`ledger_drift`、`ledger_hold_mismatch`（ledger）；`order_paid_unfulfilled`、`order_reservation_mismatch`（order）；`payment_unsettled`（payment 给近 7 天没进挂账的收款 → order 的 `UnsettledAmong` 核状态）；`commission_unpaid_order`（commission 给近 7 天没作废的条目 → 同上）；`giftcard_redemption_mismatch`（giftcard）；`subscription_expire_overdue`、`subscription_close_overdue`（subscription，宽限 `IntegrityGrace` 10 分钟）。跨模块的两项回看 `IntegrityWindow`（7 天），订单 id 去重后每批 `unsettledChunk`（5000）个交给 order。
+- 每项一个短事务：`LockIntegrityCheck`（FOR UPDATE）→ 决定 → 发告警 → `SaveIntegrityCheck`（upsert），告警的去重键与投递随同一事务提交。某项检查失败只记日志、跳过这一项（表里保留上次结果），其余照跑，最后 `errors.Join`；单条检查语句受应用账号 15 秒 statement_timeout 限制。失败不另发告警，靠 `checked_at` 落后：后台「要处理」在某项 2 小时没更新时标红（`screens-admin-dash.md`）。
+- 告警规则：违例数 > 0 且大于这一段的 `alerted_count` 才经 notify 的 `NotifyAdminsIntegrity` 发（0→非 0 发、变多再发、不变或变少不发）；回到 0 清 `failing_since` 与 `alerted_count`、不发；notify 回 false（没配管理员群组）时不记 `alerted_count`，配好后下一轮照发。去重键 `integrity:<code>:<failing_since 秒>:<count>`，前后两段违例不会撞键。
+- 表的形状由库约束钉住（迁移 00059）：代号格式、`(count = 0) = (failing_since IS NULL)`、0 时 `alerted_count = 0` 且样例为空、样例最多 5 个且不多于违例数、`failing_since <= checked_at`。
+- 总览待办（`tasks.go`）的 `integrity` 条目只读这张表，只给 `integrityChecks()` 里还登记着的代号、按登记顺序；没跑过的检查不给。巡检告警的通知事件 `user_id` 为空，`writeAdminNotice` 只许 `admin.integrity_alert` 这样传，别的管理员提醒缺用户 id 报 Internal。后台概览的 `ledger_drift_accounts` 仍现算（`Ledger.CheckDrift`）。
+- 加或改一项检查：属主 repo/service 写只读方法与 PG 用例（造一条违例计数 +1、样例里有它，正常数据不加），`integrityChecks()` 登记代号与中文名，前端 `screens/dash/model.ts` 的 `INTEGRITY_CHECKS` 同步，运维手册 `panel/deploy/RUNBOOK.md` 第 16 章补一节（是什么、只读确认、处理、修好之后）。代号一改等于换一项新检查。
 
 ## 营收报表调整
 

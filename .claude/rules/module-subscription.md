@@ -91,3 +91,6 @@ paths:
 ## 锁序
 - 给 order/giftcard 的写方法在 `s.tx.Do` 内自己 `lockOwned`（FOR NO KEY UPDATE）；调用方先锁订单再调 subscription（`service/service.go` 包注释）
 - 用户行与订阅行同在一个事务里时，一律先用户行、后订阅行：identity 先 `LockUser`（FOR NO KEY UPDATE）再调 `CloseUserSubscriptions`（注销）、`GrantSignupTrial`（注册）；subscription 自己从不显式锁 users 行（后台写入口经 `IsDeleted` 加的共享锁也排在锁订阅行之前），同一用户的多份订阅按 id 升序 `lockOwned`（`close.go`）。
+
+## 数据巡检（2026-10-20）
+- `service/integrity.go` / `repo/integrity.go`：`CheckExpireOverdue`（到期早于 now − `IntegrityGrace`（10 分钟）仍 active，走 `subscriptions_active_end_idx`）与 `CheckCloseOverdue`（expired、`renewal_closed_at` 为空、到期早于 now − `RenewalWindow` − 宽限，走 `subscriptions_expired_open_idx`），由 report:integrity 每 30 分钟调（规则见 `module-report-audit.md`「数据巡检」）。改到期扫描 `subscription:expire` 的节奏或单轮上限时，同步宽限与运维手册第 16 章。

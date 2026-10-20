@@ -53,25 +53,3 @@ func (r *Repo) RevenueTotals(ctx context.Context) (RevenueTotalRow, error) {
 	}
 	return out, nil
 }
-
-// DriftAccounts 统计余额缓存与分录合计不一致的科目个数。
-func (r *Repo) DriftAccounts(ctx context.Context, debitNormalTypes []string) (int64, error) {
-	if len(debitNormalTypes) == 0 {
-		debitNormalTypes = []string{""}
-	}
-	var n int64
-	err := r.d.Conn(ctx).Raw(`
-		SELECT count(*)
-		  FROM ledger_accounts a
-		  LEFT JOIN (
-		        SELECT account_id,
-		               coalesce(sum(amount) FILTER (WHERE direction = 'debit'), 0) AS d,
-		               coalesce(sum(amount) FILTER (WHERE direction = 'credit'), 0) AS c
-		          FROM ledger_entries GROUP BY account_id) s ON s.account_id = a.id
-		 WHERE a.balance <> CASE WHEN a.account_type IN ? THEN coalesce(s.d, 0) - coalesce(s.c, 0)
-		                         ELSE coalesce(s.c, 0) - coalesce(s.d, 0) END`, debitNormalTypes).Scan(&n).Error
-	if err != nil {
-		return 0, mapErr(err)
-	}
-	return n, nil
-}

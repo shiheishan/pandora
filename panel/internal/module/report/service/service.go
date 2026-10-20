@@ -1,8 +1,8 @@
 // Package service 是 report 模块的业务层：后台看板（概览、营收按日、流量排行、通知积压、需要处理、系统状态、行为趋势）、
-// 营收报表调整与冲正、行为趋势的按天汇总。
+// 营收报表调整与冲正、行为趋势的按天汇总、数据巡检与告警（integrity.go）。
 //
-// report 只拥有两张表（revenue_report_adjustments、activity_daily）；其余数字一律经属主模块 service 的聚合读（端口见下），
-// 不读别人的表。切日一律按站点时区（settings 的 site.timezone）。
+// report 只拥有三张表（revenue_report_adjustments、activity_daily、integrity_checks）；其余数字一律经属主模块 service 的
+// 聚合读与只读检查（端口见下），不读别人的表。切日一律按站点时区（settings 的 site.timezone）。
 //
 // 营收口径：实际收入 = 平台收入科目（platform_revenue）全部分录的净额（贷 − 借）；
 // 报表调整来自本模块的只追加表，只影响展示值（displayed = actual + adjustment），不回写账本。
@@ -29,6 +29,7 @@ import (
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/integrity"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
 	"github.com/redis/go-redis/v9"
 )
@@ -65,6 +66,12 @@ type store interface {
 	ActivityRows(ctx context.Context, tz, fromDay, toDay string) ([]model.ActivityDaily, error)
 	// PurgeActivity 删日子早于 beforeDay 的汇总行，一次至多 batch 行，返回删除行数。
 	PurgeActivity(ctx context.Context, beforeDay string, batch int) (int, error)
+	// LockIntegrityCheck 按代号读一项巡检结果并加行锁；还没有行回 false。
+	LockIntegrityCheck(ctx context.Context, code string) (model.IntegrityCheck, bool, error)
+	// SaveIntegrityCheck 按代号覆盖写一项巡检结果。
+	SaveIntegrityCheck(ctx context.Context, c model.IntegrityCheck) error
+	// IntegrityChecks 读全部巡检结果。
+	IntegrityChecks(ctx context.Context) ([]model.IntegrityCheck, error)
 	// Ping 做一次 SELECT 1 往返。
 	Ping(ctx context.Context) error
 	// DatabaseStats 一条语句读库大小、当前连接数与连接上限。
@@ -90,6 +97,8 @@ type Subscriptions interface {
 	ReportSubscriptionCounts(ctx context.Context, now, expiringBefore, createdSince time.Time) (subsvc.ReportSubscriptionCounts, error)
 	OwnersBySubscription(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]uuid.UUID, error)
 	ActiveUsersByDay(ctx context.Context, from, to time.Time) ([]subsvc.ActiveUsersDay, error)
+	CheckExpireOverdue(ctx context.Context, now time.Time) (integrity.Result, error)
+	CheckCloseOverdue(ctx context.Context, now time.Time) (integrity.Result, error)
 }
 
 // Nodes 是 node 的聚合读；*nodesvc.Service 直接满足。
@@ -106,23 +115,34 @@ type Nodes interface {
 type Ledger interface {
 	RevenueByDay(ctx context.Context, from, to time.Time) ([]ledgersvc.RevenueDay, error)
 	RevenueTotals(ctx context.Context) (ledgersvc.RevenueTotal, error)
-	DriftAccounts(ctx context.Context) (int64, error)
+	CheckDrift(ctx context.Context) (integrity.Result, error)
+	CheckHolds(ctx context.Context) (integrity.Result, error)
 }
 
 // Orders 是 order 的聚合读；*ordersvc.Service 直接满足。
 type Orders interface {
 	ReportOrderCounts(ctx context.Context, since, staleBefore time.Time) (ordersvc.ReportOrderCounts, error)
 	PendingStaleCount(ctx context.Context, staleBefore time.Time) (int64, error)
+	CheckPaidUnfulfilled(ctx context.Context) (integrity.Result, error)
+	CheckReservations(ctx context.Context) (integrity.Result, error)
+	UnsettledAmong(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 }
 
 // Payments 是 payment 的聚合读；*paymentsvc.Service 直接满足。
 type Payments interface {
 	StuckCallbackCount(ctx context.Context, receivedBefore time.Time) (int64, error)
+	SettledPaymentsSince(ctx context.Context, since time.Time) ([]integrity.OrderRef, error)
 }
 
 // Commissions 是 commission 的聚合读；*commissionsvc.Service 直接满足。
 type Commissions interface {
 	PendingWithdrawalSums(ctx context.Context) (commissionsvc.PendingWithdrawalSum, error)
+	EntriesSince(ctx context.Context, since time.Time) ([]integrity.OrderRef, error)
+}
+
+// Giftcards 是 giftcard 的只读检查；*giftcardsvc.Service 直接满足。
+type Giftcards interface {
+	CheckRedemptions(ctx context.Context) (integrity.Result, error)
 }
 
 // Tickets 是 support 的聚合读；*supportsvc.Service 直接满足。
@@ -130,10 +150,11 @@ type Tickets interface {
 	OpenTicketStats(ctx context.Context, now time.Time) (supportsvc.OpenTicketStats, error)
 }
 
-// Notices 是 notify 的聚合读；*notifysvc.Service 直接满足。
+// Notices 是 notify 的聚合读与管理员群组巡检告警；*notifysvc.Service 直接满足。
 type Notices interface {
 	DeliveryBacklog(ctx context.Context, now time.Time) (notifysvc.DeliveryBacklog, error)
 	DeliveryCountsByChannel(ctx context.Context) (map[string]notifysvc.ChannelDeliveryCounts, error)
+	NotifyAdminsIntegrity(ctx context.Context, in notifysvc.IntegrityAlert) (bool, error)
 }
 
 // Activity 是 audit 的按天行为统计；*auditsvc.Service 直接满足。
@@ -162,6 +183,7 @@ type Deps struct {
 	Orders        Orders
 	Payments      Payments
 	Commissions   Commissions
+	Giftcards     Giftcards
 	Tickets       Tickets
 	Notices       Notices
 	Activity      Activity
@@ -220,6 +242,7 @@ func (s *Service) MissingPorts() []string {
 		{"Orders", d.Orders != nil},
 		{"Payments", d.Payments != nil},
 		{"Commissions", d.Commissions != nil},
+		{"Giftcards", d.Giftcards != nil},
 		{"Tickets", d.Tickets != nil},
 		{"Notices", d.Notices != nil},
 		{"Activity", d.Activity != nil},

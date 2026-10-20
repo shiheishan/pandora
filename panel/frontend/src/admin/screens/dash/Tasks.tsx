@@ -9,7 +9,7 @@ import { CardError, PanelSkeleton, Section, targetHref } from './parts'
 
 export function Tasks() {
   const { data, isPending, isError, error, refetch } = useDashboardTasks()
-  const board = todoBoard(data?.items)
+  const board = todoBoard(data?.items, data?.as_of)
   const gridClass = board.cards.length === 4 ? css.todo4 : css.todo3
 
   return (

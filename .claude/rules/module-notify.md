@@ -30,3 +30,4 @@ paths:
   - 工单提醒由 support 在建单、用户回复的事务里经 `AdminTicketNotifier` → `NotifyAdminsTicket` 写，附提单人的套餐、剩余流量、到期、余额（经 `SubscriptionSummaries`、`Balances` 批量读这一个人），邮箱打码，正文截到 `adminTicketBodyMax`。这些上下文读失败只记 Warn、写「—」，不拖垮建单与回复；只有写去重键与投递失败才随调用方事务回滚。
   - Bot API 回包最多读 64 KiB（`tgResponseMax`：sendMessage 成功时整条消息按 `\uXXXX` 转义回来，4096 字的中文约 24 KB）；2xx 却解析不了或缺 message_id 记永久失败，不重发，免得群里重复。
   - 派发把工单提醒发出去后，按 Telegram 回的 message_id 写 `telegram_ticket_messages`（payload 里的 `ticket_id`）；映射保留 `TicketMessageRetentionDays`，由 `retention:notify` 清理。
+- 数据巡检告警（模板 `admin.integrity_alert`，迁移 00059 种子与 `registry.go` 逐字一致）：report 的 `RunIntegrity` 在自己的事务里调 `NotifyAdminsIntegrity`，变量只有 `check`（中文名）、`code`、`count`，不带样例与业务数据；没有后台开关，`adminChat` 不可发时什么都不写、回 false（report 据此不记告警时的数）。去重键 `integrity:<code>:<这一段违例起点的秒>:<count>`，撞键也回 true。这条去重键不关某个用户：`notification_events.user_id` 自 00059 起可空（`model.Event.UserID` 是指针，`adminNotice.AboutID` 为 `uuid.Nil` 时写空）。

@@ -49,18 +49,3 @@ func (s *Service) RevenueTotals(ctx context.Context) (RevenueTotal, error) {
 		Debit:  row.Debit,
 	}, nil
 }
-
-// DriftAccounts 数余额缓存与分录合计对不上的科目个数（应为 0；非 0 说明账本缓存坏了，看板标红）。
-func (s *Service) DriftAccounts(ctx context.Context) (int64, error) {
-	var debitNormal []string
-	for _, t := range []AccountType{
-		UserBalance, UserBalanceHold, UserCommissionPending, UserCommissionAvailable,
-		ChannelCash, PlatformRevenue, PlatformFeeExpense, PlatformPromoExpense,
-		Suspense, LatePaymentSuspense,
-	} {
-		if t.DebitNormal() {
-			debitNormal = append(debitNormal, string(t))
-		}
-	}
-	return s.repo.DriftAccounts(ctx, debitNormal)
-}

@@ -75,3 +75,8 @@ paths:
 - 优惠券（promo）：
   - 流量重置单不收券（用户 10-14 定）：rejection `ErrCouponNotForReset`「流量重置不能使用优惠码」由 order 对重置单直接回，promo 的 `apply` 不认订单种类。
   - 券试算 `Preview` 经 `CatalogReader.PriceSubtotal` 一次拿金额（一个价格档只查一次 catalog）。
+- 数据巡检的只读检查（report:integrity 每 30 分钟调，规则见 `module-report-audit.md`「数据巡检」）：SQL 在各自的 `repo/integrity.go`，service 包一层 `integrity.FromRows`，返回违例数 + 至多 5 个样例 id（新的在前）。
+  - ledger（`service/integrity.go`）：`CheckDrift`（科目余额缓存 ≠ 全部分录合计，全表按科目聚合一遍；后台概览的 `ledger_drift_accounts` 也取它）、`CheckHolds`（`user_balance_hold` 科目余额 ≠ 该用户 `held` 冻结行合计，样例是用户 id）。
+  - order：`CheckPaidUnfulfilled`（提交后还停在 `paid`）、`CheckReservations`（held 预留挂在非待付单上，或待付单的预留不是 held）、`UnsettledAmong`（给 payment / commission 那两项核订单状态，数组以文本字面量传）。
+  - commission：`EntriesSince`（近窗口没作废的条目 → 订单；作废是运维手册里这项的修法，作废后不再算）。
+  - 改结算、预留、冻结、计提的写路径时，对照这几项看会不会造出合法的中间态被误报；`repo/integrity.go` 的条件改了，同步运维手册 `panel/deploy/RUNBOOK.md` 第 16 章对应小节的确认 SQL。

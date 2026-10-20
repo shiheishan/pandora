@@ -22,3 +22,4 @@ paths:
   - 通用卡的落点排除不适用的订阅：含加时长的排除永久的一次性订阅，含加流量的排除不限流量的订阅。盲盒抽中什么说不准，不排除；
     发放时落到永久那份就跳过加时长、落到不限流量那份就跳过流量（回执与审计 `skipped_expire_days` / `skipped_traffic_bytes` 写明），其余奖励照发。
   - 兑换流水 `gift_card_redemptions` 记录落地订阅 ID 及兑换快照。
+- 数据巡检（report:integrity，见 `module-report-audit.md`「数据巡检」）：`service/integrity.go` 的 `CheckRedemptions` 找码与兑换流水对不上的卡（码 used 却没有流水，或有流水而码不是 used、`used_by` 不是兑换人），样例是码 id。兑换流水只追加、以它为准；运维手册第 16 章给按流水改回码、或无发放时把码放回未使用的 SQL。
