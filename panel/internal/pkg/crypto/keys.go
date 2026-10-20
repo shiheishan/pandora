@@ -27,6 +27,8 @@ const (
 	InfoSS2022ServerPSK = "pandora/ss2022/server-psk/v1"
 	// InfoHMACSubProbe 是订阅域名探测票据的签名（绑账号与所在域名组版本，5 分钟有效）
 	InfoHMACSubProbe = "pandora/hmac/sub-probe/v1"
+	// InfoHMACRefresh 派生每一代 refresh 随机串（auth 的 refreshSecret）：宽限内能重算出当前那一枚，旧代再出现认得出真伪
+	InfoHMACRefresh = "pandora/hmac/refresh/v1"
 )
 
 const minMasterLen = 32

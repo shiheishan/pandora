@@ -148,7 +148,7 @@ description: pandora 的产品验证：像用户一样用浏览器（默认 ego-
 | 换新链接 | `/#/subs` | 卡片底部「换新链接」，弹层「换一个新链接？」确认；见 `paths.ts` 的 C8b | 进完成页「已换新链接」，新链接与「添加到 App」在最上面，尾号变了；每份 10 分钟内只能换一次，再换时按钮置灰写剩余冷却（限频是后端 429，只在测试机上核对，假后端不模拟） |
 | 钱包余额 | `/#/wallet` | 看账户余额；选充值金额，走支付；回来看余额明细 | 金额与概览、结账页的可用余额一致；充值成功后余额增加，明细多一行 |
 | 订单 | `/#/orders` | 看待支付单；取消订单并确认 | 取消见 `paths.ts` 的 A0、C5b；已取消的单不能再支付 |
-| 退出 | `/#/account` | 点退出登录 | 回登录页；刷新 cookie `pandora_rt` 被清（`page.cdp("Network.getCookies", { urls: [origin + "/v1/auth/refresh"] })` 里没有它，只看名字不抄值）；`reload` 后仍是未登录 |
+| 退出 | `/#/account` | 点退出登录 | 回登录页；`localStorage` 里门户登录标志 `pandora-portal-session` 被删掉；刷新 cookie `pandora_rt` 被清（`page.cdp("Network.getCookies", { urls: [origin + "/v1/auth/refresh"] })` 里没有它，只看名字不抄值）；`reload` 后仍是未登录 |
 
 上表没有逐行对照当前页面复核过；对不上的先改上表，再走流程。叫法以 `tests/mock-portal-wording.test.ts` 的禁用词为准。还没有现成页面的流程不写进来。
 
@@ -174,10 +174,12 @@ description: pandora 的产品验证：像用户一样用浏览器（默认 ego-
 
 ## 坑
 
-- **登录态**（安全加固合入后的口径）：访问令牌只在页面内存里；刷新靠 HttpOnly cookie（门户 `pandora_rt`、后台 `pandora_admin_rt`，`Path=/v1/auth`）；本地只存一个「登录过」标志（键名以 `panel/frontend/src/core/token.ts` 为准）。
+- **登录态**（安全加固合入后的口径）：访问令牌只在页面内存里；刷新靠 HttpOnly cookie（门户 `pandora_rt`、后台 `pandora_admin_rt`，`Path=/v1/auth`）；本地只存不含秘密的「登录过」标志：门户 `pandora-portal-session`、后台 `pandora-admin-session`，值是 `"1"`（`panel/frontend/src/core/token.ts`、`shell/session.ts`）；`localStorage` 里出现任何 `*-token` 键都是缺陷。
   - 刷新页面、新开标签会自动用 cookie 换新令牌恢复登录，这是设计行为；令牌不在 `localStorage` 里，别去那里找。
   - 验退出、验登录态保持：看 `reload` 后的页面，加上 `Network.getCookies` 里那个 cookie 在不在。HttpOnly 的 `document.cookie` 读不到。不把 cookie 值、令牌贴进记录。
   - cookie **按主机名、不按端口**区分，而且 ego 的所有 TaskSpace 共用用户资料的 cookie 罐（10-20 实测）。同一主机上的两个门户实例会互相覆盖 `pandora_rt`；本 skill 只起一个门户、一个后台（cookie 名不同），不受影响，多实例的隔离办法见 ux-review。
+  - 刷新后先有一瞬空白（开机恢复登录），再进外框；接口 429、5xx 或断网时显示「暂时连不上服务器，还没确认你的登录状态」和「重试」，不会掉回登录页。
+  - 一个标签页退出，同入口的其它标签页跟着回登录页（BroadcastChannel）；一个标签页登录，其它停在登录页的标签页自己恢复登录。
   - vite 重启后假后端的刷新记录全丢，页面会掉线，重新登录即可。
 - **SSE 让网络永远不空闲**：页面开着实时事件长连接，`goto` / `reload` 不要用 `waitUntil: "networkidle"`（默认 `load` 就好），之后等某个文字出现（`waitForSelector("text=…")`）。只差 `#路由` 的 `goto` 是同文档跳转，不重新加载、渲染晚 1 到 2 秒：要验「刷新后还在」就显式 `reload`。
 - **假后端状态在内存**：vite 重启即复原，每次验收从干净状态开始比较稳；写操作做完想重来就重启（`mock-up.sh down` 再 `up`）。
