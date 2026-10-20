@@ -29,6 +29,12 @@ const (
 	RateLimited       Code = "rate_limited"
 	Internal          Code = "internal_error"
 	Unavailable       Code = "service_unavailable"
+	// MethodNotAllowed 是路由存在但方法不对（405，引擎的 NoMethod）。
+	MethodNotAllowed Code = "method_not_allowed"
+	// PayloadTooLarge 是 JSON 请求体超过 httpx.MaxBodyBytes 或幂等中间件的上限（413）。
+	PayloadTooLarge Code = "payload_too_large"
+	// Timeout 是请求 ctx 到期（httpx.Timeout）后 handler 报错（504，由 httpx.Errors 改写）。
+	Timeout Code = "timeout"
 )
 
 type spec struct {
@@ -52,6 +58,9 @@ var specs = map[Code]spec{
 	RateLimited:       {http.StatusTooManyRequests, "操作太频繁，请稍后再试"},
 	Internal:          {http.StatusInternalServerError, "服务暂时不可用，请稍后重试"},
 	Unavailable:       {http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试"},
+	MethodNotAllowed:  {http.StatusMethodNotAllowed, "请求方法不被允许"},
+	PayloadTooLarge:   {http.StatusRequestEntityTooLarge, "请求内容过大"},
+	Timeout:           {http.StatusGatewayTimeout, "请求超时，请稍后再试"},
 }
 
 // Codes 返回全部对外错误码，供对齐测试使用。

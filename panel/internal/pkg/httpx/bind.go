@@ -49,15 +49,24 @@ func BindJSON(c *gin.Context, dst any) error {
 	dec := json.NewDecoder(c.Request.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		return errs.Newf(errs.BadRequest, "请求体不是合法的 JSON")
+		return decodeError(err)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errs.Newf(errs.BadRequest, "请求体不是合法的 JSON")
+		return decodeError(err)
 	}
 	if err := binding.Validator.ValidateStruct(dst); err != nil {
 		return validationToErrs(err)
 	}
 	return nil
+}
+
+// decodeError 把解码错误转成对外错误：超过 MaxBodyBytes（http.MaxBytesReader 报 *http.MaxBytesError）回 413，其余 400。
+func decodeError(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return errs.New(errs.PayloadTooLarge)
+	}
+	return errs.Newf(errs.BadRequest, "请求体不是合法的 JSON")
 }
 
 // BindQuery 绑定并校验查询参数。

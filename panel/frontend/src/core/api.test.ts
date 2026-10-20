@@ -160,6 +160,23 @@ describe('responses and error envelope', () => {
     expect(error).toMatchObject({ status: 502, code: 'service_unavailable' })
   })
 
+  it.each([
+    [405, 'method_not_allowed', '请求方法不被允许'],
+    [413, 'payload_too_large', '请求内容过大'],
+    [503, 'service_unavailable', '服务暂时不可用，请稍后重试'],
+    [504, 'timeout', '请求超时，请稍后再试'],
+  ] as const)('an HTML %i without an envelope maps to %s', async (status, code, message) => {
+    const { client } = setup([new Response(`<html>${status}</html>`, { status })])
+    const error = await rejection(client.get('v1/overview', ok))
+    expect(error).toMatchObject({ status, code, message })
+  })
+
+  it('the edge JSON envelope for 504 keeps its code and request_id', async () => {
+    const { client } = setup([envelope(504, 'timeout', '请求超时，请稍后再试', { request_id: 'edge-1' })])
+    const error = await rejection(client.get('v1/overview', ok))
+    expect(error).toMatchObject({ status: 504, code: 'timeout', requestId: 'edge-1' })
+  })
+
   it('an unknown code keeps the server message and falls back to the status code', async () => {
     const { client } = setup([envelope(409, 'brand_new_code', '已被他人修改')])
     const error = await rejection(client.get('v1/overview', ok))

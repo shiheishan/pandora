@@ -135,7 +135,7 @@ func SecurityHeaders(hsts bool) gin.HandlerFunc {
 	}
 }
 
-// Timeout 给请求 ctx 设期限；exempt 返回 true 的请求（如 SSE）不设。
+// Timeout 给请求 ctx 设期限；exempt 返回 true 的请求（如 SSE）不设。到期后 handler 报的 DeadlineExceeded 由 Errors 映射成 504 timeout。
 func Timeout(d time.Duration, exempt func(*gin.Context) bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if exempt != nil && exempt(c) {
@@ -178,6 +178,12 @@ func Errors() gin.HandlerFunc {
 		}
 		raw := c.Errors.Last().Err
 		e := errs.As(raw)
+		// 请求 ctx 已到期（Timeout 设的期限）且错误链里有 DeadlineExceeded：回 504 timeout，而不是 500。
+		// 只看请求 ctx 自己到期：handler 内部另设的短期限（如 readyz 的 2 秒 ping）到期不算请求超时。
+		if e.Status() >= 500 && errors.Is(raw, context.DeadlineExceeded) &&
+			errors.Is(c.Request.Context().Err(), context.DeadlineExceeded) {
+			e = errs.Wrap(errs.Timeout, raw)
+		}
 		l := plog.From(c.Request.Context())
 		if e.Status() >= 500 {
 			l.Error("request failed", zap.String("route", route(c)), zap.String("code", string(e.Code)), zap.Error(raw))

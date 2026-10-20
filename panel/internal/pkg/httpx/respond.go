@@ -73,3 +73,9 @@ func NoContent(c *gin.Context) {
 func NoRoute(c *gin.Context) {
 	Fail(c, errs.New(errs.NotFound))
 }
+
+// NoMethod 处理路由存在但方法不对的请求（引擎要开 HandleMethodNotAllowed）：回 405 信封。
+// gin 调用前已写好 Allow 头，这里不动它。
+func NoMethod(c *gin.Context) {
+	Fail(c, errs.New(errs.MethodNotAllowed))
+}
