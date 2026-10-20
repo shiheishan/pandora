@@ -6,7 +6,10 @@
 #   mock-multi.sh down                   只停自己起的实例
 #   mock-multi.sh status
 # 端口写死并加 --strictPort，被占就报错、不换端口、不抢。不碰 5181/5182（flow-walk）与 8766（原型）。
-# 起完要在内置浏览器里逐个端口登录一次（账号见 dev/mock-api.ts 的 MOCK_ACCOUNTS）。
+# 每个测试员用自己的主机名 t<N>.localhost：登录态在刷新 cookie pandora_rt 里，cookie 按主机名不按端口区分，
+# 浏览器的各工作空间又共用同一个 cookie 罐，几个实例同在 localhost 上会互相顶掉登录。
+# Chrome 把 *.localhost 解析到本机回环，vite 默认放行 .localhost 主机名。
+# 起完要在浏览器里逐个地址登录一次（账号见 dev/mock-api.ts 的 MOCK_ACCOUNTS）。
 set -euo pipefail
 
 BASE_PORT=5191
@@ -41,10 +44,11 @@ case "${1:-}" in
       if (( ready == n )); then
         for ((i = 0; i < n; i++)); do
           p=$((BASE_PORT + i))
-          echo "测试员 $((i + 1))  http://127.0.0.1:$p/   原型场景入口 http://127.0.0.1:$p/v1/__mock/proto?s=<proto-场景>"
+          h="t$((i + 1)).localhost"
+          echo "测试员 $((i + 1))  http://$h:$p/   原型场景入口 http://$h:$p/v1/__mock/proto?s=<proto-场景>"
         done
         echo "前端目录 $dir（$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo 非 git)）；日志在 $STATE/*.log"
-        echo "下一步：内置浏览器里逐个端口用 MOCK_ACCOUNTS.portal 登录一次；测注册登录的端口不登录"
+        echo "下一步：浏览器里逐个地址用 MOCK_ACCOUNTS.portal 登录一次；测注册登录的地址不登录；别改用 127.0.0.1 或 localhost（会共用 cookie）"
         exit 0
       fi
       sleep 1
