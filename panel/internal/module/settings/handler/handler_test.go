@@ -422,7 +422,7 @@ func TestSupportRules(t *testing.T) {
 		"X-Test-Reauth": "1",
 	}
 
-	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48}`, hdrs)
+	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48,"max_open_tickets":8}`, hdrs)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("post status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -435,7 +435,7 @@ func TestSupportRules(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 {
+	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 || out.MaxOpenTickets != 8 {
 		t.Fatalf("rules %+v", out)
 	}
 

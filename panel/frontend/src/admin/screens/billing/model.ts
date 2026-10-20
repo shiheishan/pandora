@@ -3,7 +3,7 @@ import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
 import type { PlacementChoice } from './placement'
-import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
+import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider, PurchaseLimits } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat }
 
@@ -839,6 +839,16 @@ export function adjustmentView(a: Adjustment) {
 /** 冲销原因的默认值：「冲销：」+ 原因（原因 ≥ 5 字，拼出来必然够长），截到 500 字 */
 export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
   return [...`冲销：${a.reason}`].slice(0, REASON_MAX).join('')
+}
+
+/** GET/POST v1/settings/purchase：与后端 fields 文案一致 */
+export function purchaseLimitErrors(v: PurchaseLimits): Record<string, string> {
+  const out: Fields = {}
+  const u = v.max_unpaid_orders
+  if (!Number.isInteger(u) || u < 0 || u > 50) out.max_unpaid_orders = '未支付订单上限要在 0 到 50 之间（0 表示不限）'
+  const s = v.max_subscriptions
+  if (!Number.isInteger(s) || s < 0 || s > 50) out.max_subscriptions = '订阅数上限要在 0 到 50 之间（0 表示不限）'
+  return out
 }
 
 /** 开单成功的提示：按落点说清续了、换了还是新开了，换套餐时带上原订阅剩余价值的去向 */

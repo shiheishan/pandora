@@ -18,4 +18,4 @@ paths:
 - 列表的等待时长 = now − `last_reply_at`（「等 1 小时 30 分」），等待用户的写「已回复」，已结束的写「已结束」；「SLA 超时」看 `sla_breached` 且工单未结束（`model.ts` 的 `waitLabel`）。
 - 「回复并解决」是先 reply 再 status 两把幂等键：第二步失败重试时不重发回复（`Composer.tsx` 记住本次意图的回复已送达）。
 - 升级到 L2 只改状态与优先级、不发通知（D-B-6 已决），确认框保留，文案不承诺「通知二线值班」。关闭工单先弹对话框填说明（选填）。
-- 「工单设置」对话框（`TicketSettingsDialog.tsx`）读写 `/v1/settings/support`，三个键整份提交；关闭原因多了 `auto_closed`（「自动关闭」）。
+- 「工单设置」对话框（`TicketSettingsDialog.tsx`）读写 `/v1/settings/support`，四个键整份提交（等待回复、自动关闭开关与时长、每人同时打开的工单上限 `max_open_tickets` 1–50）；关闭原因多了 `auto_closed`（「自动关闭」）。

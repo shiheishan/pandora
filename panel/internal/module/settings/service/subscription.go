@@ -54,12 +54,9 @@ func (s *Service) SubscriptionDelivery(ctx context.Context) (SubscriptionDeliver
 	if err != nil {
 		return SubscriptionDelivery{}, err
 	}
-	limit, err := decodeOr(vals, keySubscriptionFetchLimit, defaultSubscriptionFetchLimit)
+	limit, err := decodeFetchLimit(vals)
 	if err != nil {
 		return SubscriptionDelivery{}, err
-	}
-	if limit < 1 || limit > SubscriptionFetchLimitMax {
-		return SubscriptionDelivery{}, errs.Wrap(errs.Internal, fmt.Errorf("settings: %s=%d 超出 1–%d", keySubscriptionFetchLimit, limit, SubscriptionFetchLimitMax))
 	}
 	if prefix == "" {
 		v, err, _ := prefixFlight.Do(keySubscriptionPathPrefix, func() (any, error) {
@@ -104,4 +101,24 @@ func (s *Service) ensurePathPrefix(ctx context.Context) (string, error) {
 		return "", errs.Wrap(errs.Internal, fmt.Errorf("settings: 写入 %s 后读不到", keySubscriptionPathPrefix))
 	}
 	return prefix, nil
+}
+
+func decodeFetchLimit(vals map[string]json.RawMessage) (int, error) {
+	limit, err := decodeOr(vals, keySubscriptionFetchLimit, defaultSubscriptionFetchLimit)
+	if err != nil {
+		return 0, err
+	}
+	if limit < 1 || limit > SubscriptionFetchLimitMax {
+		return 0, errs.Wrap(errs.Internal, fmt.Errorf("settings: %s=%d 超出 1–%d", keySubscriptionFetchLimit, limit, SubscriptionFetchLimitMax))
+	}
+	return limit, nil
+}
+
+// SubscriptionFetchLimit 读每条凭据每小时的拉取上限（后台订阅附加设置卡显示用；拉取路径经 SubscriptionDelivery 每次现读）。
+func (s *Service) SubscriptionFetchLimit(ctx context.Context) (int, error) {
+	vals, err := s.store.Values(ctx, []string{keySubscriptionFetchLimit})
+	if err != nil {
+		return 0, err
+	}
+	return decodeFetchLimit(vals)
 }

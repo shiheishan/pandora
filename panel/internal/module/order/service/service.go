@@ -2,6 +2,7 @@
 // 取消与超时释放、我的订单与后台订单。别的模块只调本包。
 //
 // 锁序（全模块同向，避免 40P01）：订单 → 订阅 → 套餐行 → 券 → 账务科目（用户余额、冻结、平台收入、渠道）。
+// 开了购买限制时，门户建单在 place 开头（锁订阅或套餐行之后、锁券之前）拿本人的建单咨询锁 order:purchases:<用户 id>，只有 place 拿它、且总在锁券之前，与结算、取消不交叉。
 // 建单没有订单锁：续费、叠加、换套餐、流量重置先锁订阅，新购先锁套餐行（catalog.Offer Lock）；结算、取消、超时先锁订单。
 // 结算先确认预留（券）再记账，见 SettlePayment。
 // 下单事务里一律先插订单行，再调 promo.Reserve、ledger.HoldForOrder 等（它们的 order_id 有外键）。
@@ -92,6 +93,8 @@ type Subscriptions interface {
 	ResetsUsed(ctx context.Context, subID uuid.UUID) (int, error)
 	// PeriodOrderIDsBySubscriptions 是每份订阅本周期的付费来源订单（按发生先后）：换套餐折算剩余价值的基数
 	PeriodOrderIDsBySubscriptions(ctx context.Context, subIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error)
+	// LiveSubscriptionCounts 是每个用户此刻生效中的订阅份数：下单检查每人订阅数上限
+	LiveSubscriptionCounts(ctx context.Context, userIDs []uuid.UUID, now time.Time) (map[uuid.UUID]int, error)
 }
 
 // Payments 是 payment service 用到的面。
@@ -138,7 +141,8 @@ type Service struct {
 	users    Users
 	idem     idempotency
 	audit    auditWriter
-	hook     PaidHook // UsePaidHook 注入，可为 nil
+	hook     PaidHook       // UsePaidHook 注入，可为 nil
+	limits   PurchaseLimits // UsePurchaseLimits 注入；nil 时不限（测试）
 	now      func() time.Time
 	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 }
@@ -230,6 +234,7 @@ func (s *Service) MissingPorts() []string {
 		ok   bool
 	}{
 		{"PaidHook", s.hook != nil},
+		{"PurchaseLimits", s.limits != nil},
 		{"PluginEvents", s.events != nil},
 		{"Realtime", s.rt != nil},
 	} {

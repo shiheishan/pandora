@@ -25,6 +25,8 @@ paths:
 - 除「令牌有效、可救回」外一律 `ErrPullDenied` → handler 伪装 404；过期回 200 + `render.RenderExpired`（`service/pull.go`、`handler/subscribe.go`）
 - 凭据可用：`active`，或已吊销但 `grace_until` 仍晚于 now；换链接 `rotateLocked` 吊销时 `grace` 传 nil、立即失效（`service/pull.go`、`service/rotate.go`）
 - 令牌按 `token_hash` 查库后再 `hmac.Equal`；短于 16 字符不查库（`service/pull.go`）
+- 凭据每小时拉取上限是 settings 的 `subscription.fetch_limit_per_hour`（缺省 60、1–10000），拉取经 `SubscriptionDelivery` 每次现读，改了立即生效；后台在订阅附加设置卡改（`GET/POST v1/settings/subscription` 的 `fetch_limit_per_hour`，部分更新）。
+- 每个用户生效中的订阅份数 `LiveSubscriptionCounts`（`service/user_caps.go`、`repo/user_caps.go`，一条 SQL，口径同 `StateLive`）给 order 查每人订阅数上限用。
 - 成功/过期提示才占凭据每小时限流；未认证失败按来源 IP HMAC 采样落库（`service/pull.go`、`service/fetchlog.go`）
 - `Profile-Update-Interval`：正常 12 小时，过期 1 小时；续费页 `renewalPageURL`（`service/pull.go`）
 - 查询参数：`target`/`flag`/`type` 选格式（`subscribeTarget`）；`types` 按协议过滤、`filter` 按名字关键字过滤（`render.ParseTypes`/`ParseKeywords`，口径照 Xboard）（`handler/subscribe.go`）

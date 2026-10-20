@@ -47,6 +47,7 @@ import {
   parseMinAmount,
   previewParams,
   priceChoices,
+  purchaseLimitErrors,
   providerBody,
   providerFormFrom,
   providerKind,
@@ -231,6 +232,20 @@ describe('orders', () => {
 })
 
 describe('write forms', () => {
+  it('validates purchase limits like the backend', () => {
+    expect(purchaseLimitErrors({ max_unpaid_orders: 0, max_subscriptions: 0 })).toEqual({})
+    expect(purchaseLimitErrors({ max_unpaid_orders: 50, max_subscriptions: 50 })).toEqual({})
+    expect(purchaseLimitErrors({ max_unpaid_orders: -1, max_subscriptions: 0 })).toEqual({
+      max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+    })
+    expect(purchaseLimitErrors({ max_unpaid_orders: 0, max_subscriptions: 51 })).toEqual({
+      max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
+    })
+    expect(purchaseLimitErrors({ max_unpaid_orders: 1.5, max_subscriptions: 0 })).toEqual({
+      max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+    })
+  })
+
   it('checks reasons and references by characters like Go', () => {
     expect(reasonProblem('补偿', '开单原因')).toContain('至少 5 个字')
     expect(reasonProblem('  补偿一个月  ', '开单原因')).toBeNull()

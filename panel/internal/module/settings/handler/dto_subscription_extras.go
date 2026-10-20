@@ -12,22 +12,26 @@ import (
 type SubscriptionExtrasSettings interface {
 	SubscriptionExtras(ctx context.Context) (service.SubscriptionExtras, error)
 	SetSubscriptionExtras(ctx context.Context, u service.SubscriptionExtrasUpdate) error
+	SubscriptionFetchLimit(ctx context.Context) (int, error)
 }
 
 type subscriptionExtrasResponse struct {
-	InfoNodes      bool `json:"info_nodes"`
-	ProtocolPrefix bool `json:"protocol_prefix"`
+	InfoNodes         bool `json:"info_nodes"`
+	ProtocolPrefix    bool `json:"protocol_prefix"`
+	FetchLimitPerHour int  `json:"fetch_limit_per_hour"`
 }
 
 type setSubscriptionExtrasRequest struct {
-	InfoNodes      *bool `json:"info_nodes"`
-	ProtocolPrefix *bool `json:"protocol_prefix"`
+	InfoNodes         *bool `json:"info_nodes"`
+	ProtocolPrefix    *bool `json:"protocol_prefix"`
+	FetchLimitPerHour *int  `json:"fetch_limit_per_hour"`
 }
 
-func subscriptionExtrasToResponse(e service.SubscriptionExtras) subscriptionExtrasResponse {
+func subscriptionExtrasToResponse(e service.SubscriptionExtras, fetchLimit int) subscriptionExtrasResponse {
 	return subscriptionExtrasResponse{
-		InfoNodes:      e.InfoNodes,
-		ProtocolPrefix: e.ProtocolPrefix,
+		InfoNodes:         e.InfoNodes,
+		ProtocolPrefix:    e.ProtocolPrefix,
+		FetchLimitPerHour: fetchLimit,
 	}
 }
 
@@ -38,7 +42,12 @@ func (h *Handler) getSubscriptionExtras(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, subscriptionExtrasToResponse(e))
+	fetchLimit, err := h.svc.SubscriptionFetchLimit(ctx)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, subscriptionExtrasToResponse(e, fetchLimit))
 }
 
 func (h *Handler) setSubscriptionExtras(c *gin.Context) {
@@ -49,8 +58,9 @@ func (h *Handler) setSubscriptionExtras(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SetSubscriptionExtras(ctx, service.SubscriptionExtrasUpdate{
-		InfoNodes:      req.InfoNodes,
-		ProtocolPrefix: req.ProtocolPrefix,
+		InfoNodes:         req.InfoNodes,
+		ProtocolPrefix:    req.ProtocolPrefix,
+		FetchLimitPerHour: req.FetchLimitPerHour,
 	}); err != nil {
 		httpx.Fail(c, err)
 		return
@@ -60,5 +70,10 @@ func (h *Handler) setSubscriptionExtras(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, subscriptionExtrasToResponse(e))
+	fetchLimit, err := h.svc.SubscriptionFetchLimit(ctx)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, subscriptionExtrasToResponse(e, fetchLimit))
 }

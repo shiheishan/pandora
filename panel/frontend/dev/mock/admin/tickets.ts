@@ -286,23 +286,26 @@ const touch = (t: Row) => {
   t.updated_at = new Date().toISOString()
 }
 
-const supportSettings = { wait_for_reply: false, auto_close_enabled: false, auto_close_hours: 24 }
+const supportSettings = { wait_for_reply: false, auto_close_enabled: false, auto_close_hours: 24, max_open_tickets: 5 }
 
 async function saveSupportSettings(ctx: MockContext): Promise<MockResult> {
   const body = await ctx.body()
   if (!body) return { status: 400, body: envelope('bad_request', '请求体不是合法的 JSON') }
-  const unknown = Object.keys(body).filter((k) => !['wait_for_reply', 'auto_close_enabled', 'auto_close_hours'].includes(k))
+  const unknown = Object.keys(body).filter((k) => !['wait_for_reply', 'auto_close_enabled', 'auto_close_hours', 'max_open_tickets'].includes(k))
   if (unknown.length) return { status: 400, body: envelope('bad_request', `未知字段：${unknown.join(', ')}`) }
   const fields: Record<string, string> = {}
   if (typeof body.wait_for_reply !== 'boolean') fields.wait_for_reply = '必填'
   if (typeof body.auto_close_enabled !== 'boolean') fields.auto_close_enabled = '必填'
   if (typeof body.auto_close_hours !== 'number' || !Number.isInteger(body.auto_close_hours)) fields.auto_close_hours = '必填'
   else if (body.auto_close_hours < 1 || body.auto_close_hours > 720) fields.auto_close_hours = '自动关闭时长要在 1 到 720 小时之间'
+  if (typeof body.max_open_tickets !== 'number' || !Number.isInteger(body.max_open_tickets)) fields.max_open_tickets = '必填'
+  else if (body.max_open_tickets < 1 || body.max_open_tickets > 50) fields.max_open_tickets = '同时打开的工单上限要在 1 到 50 之间'
   if (Object.keys(fields).length) return { status: 422, body: envelope('validation_failed', '请求参数校验未通过', fields) }
   Object.assign(supportSettings, {
     wait_for_reply: body.wait_for_reply === true,
     auto_close_enabled: body.auto_close_enabled === true,
     auto_close_hours: body.auto_close_hours as number,
+    max_open_tickets: body.max_open_tickets as number,
   })
   return { status: 200, body: { ...supportSettings } }
 }

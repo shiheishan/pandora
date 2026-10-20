@@ -339,6 +339,8 @@ func buildServices(r *runtime) (*services, error) {
 	// 后台改了站点设置（站点名等）、订阅附加设置，提交后同步清本进程的入口页快照与订阅拉取快照（serve 单实例，后台的写都在 serve 里）
 	settingsSvc.UseSiteChangeListener(appearanceSvc)
 	settingsSvc.UseSubscriptionExtrasListener(subSvc)
+	// 门户建单查购买限制（每人未支付订单数、每人订阅数），每次现查 settings
+	orderSvc.UsePurchaseLimits(settingsSvc)
 
 	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
 	if err := checkPorts([]portCheck{

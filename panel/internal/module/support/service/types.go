@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,8 +63,6 @@ const (
 
 // 业务上限。
 const (
-	// MaxOpenTickets 是每个用户同时未结（未解决、未关闭）的工单上限，防止刷单淹没客服队列
-	MaxOpenTickets = 5
 	// UserListLimit 是门户「我的工单」最多返回的条数
 	UserListLimit = 100
 	// EscalateBatch 是一轮 SLA 升级最多处理的工单数
@@ -76,13 +75,17 @@ const (
 var (
 	ErrTicketNotFound = errs.Newf(errs.NotFound, "工单不存在")
 	ErrMacroNotFound  = errs.Newf(errs.NotFound, "快捷回复不存在")
-	ErrTooManyOpen    = errs.Newf(errs.Conflict, "您有 5 个进行中的工单，请先处理完再提交新的")
 	ErrReplyClosed    = errs.Newf(errs.Conflict, "工单已关闭，如需继续请新建工单")
 	ErrAlreadyClosed  = errs.Newf(errs.Conflict, "这个工单已经关闭了")
 	ErrAgentReplied   = errs.Newf(errs.Conflict, "客服已经回复过这个工单，不能再撤回。如果问题已解决，请直接关闭")
 	ErrStatusConflict = errs.Newf(errs.Conflict, "工单状态已变化，请刷新后重试")
 	ErrWaitForAgent   = errs.Newf(errs.Conflict, "请等客服回复后再继续发送")
 )
+
+// errTooManyOpen 是已打开的工单达到上限（后台「工单设置」里的每人同时打开的工单上限）。
+func errTooManyOpen(open int64) error {
+	return errs.Newf(errs.Conflict, fmt.Sprintf("您有 %d 个进行中的工单，请先处理完再提交新的", open))
+}
 
 // Category 是一个工单分类。
 type Category struct {
