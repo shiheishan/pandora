@@ -155,7 +155,7 @@ describe('server status', () => {
     expect(canDeleteServer(server({ status: 'draft' }))).toBe(true)
     expect(canDeleteServer(server({ status: 'retired' }))).toBe(true)
     expect(canDeleteServer(server({ status: 'maintenance' }))).toBe(false)
-    expect(deleteServerNotice(server({ node_count: 3 }))).toContain('名下 3 个节点会一起下线')
+    expect(deleteServerNotice(server({ node_count: 3 }))).toContain('名下 3 个节点里，在役的退役；草稿和已停用的解除绑定')
     expect(deleteServerNotice(server({ node_count: 0 }))).toContain('名下没有节点')
   })
 

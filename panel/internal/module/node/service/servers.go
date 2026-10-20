@@ -308,7 +308,7 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 	return s.GetServer(ctx, id)
 }
 
-// DeleteServer 软删一台草稿或已退役的服务器：名下未退役的节点一并退役，全部节点从这台服务器上摘下。
+// DeleteServer 软删一台草稿或已退役的服务器：名下在役节点退役，草稿与已停用的解绑留作配置，全部节点从这台服务器上摘下。
 // 删除时在同一事务里吊销身份、作废未用令牌，提交后让会话层发 Tombstone 断流。
 func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int64) error {
 	if rowVersion <= 0 {
@@ -323,7 +323,7 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 			return &errs.Error{Code: errs.Conflict, Message: "服务器仍在服务，请先在「状态」里退役",
 				Fields: map[string]string{"status": m.Status}}
 		}
-		silenced, nodeIDs, err := s.repo.RetireServerNodes(ctx, id)
+		silenced, unbound, nodeIDs, err := s.repo.DetachServerNodes(ctx, id)
 		if err != nil {
 			return serverWriteErr(err)
 		}
@@ -341,7 +341,7 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 			return err
 		}
 		if err := s.serverAudit(ctx, "server.delete", id, map[string]any{
-			"status": m.Status, "silenced_nodes": silenced,
+			"status": m.Status, "silenced_nodes": silenced, "unbound_nodes": unbound,
 			"revoked_identity_ids": identityIDStrings(revoked),
 			"voided_tokens":        voided,
 		}); err != nil {

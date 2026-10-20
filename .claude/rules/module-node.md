@@ -61,7 +61,7 @@ paths:
 - 绑定 / 改绑 `BindNode`、解绑 `UnbindNode`（`service/nodes_binding.go`，接口 `POST /nodes/:id/bind`、`/unbind`，取代旧的 `/move`）：只许草稿或已停用（`nodeMovableState`，列表的 `movable` 也用它），在役 409「节点在役，先停用再改绑 / 解绑」，退役 409。绑定要有端口（请求可带 `server_port`），换服务器走 `lockServerForNodes`（容量、退役），同一台只锁行；都过 `claimNodePort`。解绑只把 `server_id` 置空（端口释放，端口值留着）。两者都经 `repo.SetNodeServer` 一并清掉运行状态与配置回执（上一台报的不算数），推进配置与名单纪元，审计 `node.server_bind` / `node.server_unbind`。
 - 上线与批量启用：没绑服务器回 409 `fields.server_id`（`nodeUnboundActivateMsg`），先于协议就绪的检查；库里 `nodes_active_shape` 兜底。复制：源节点没绑、也没给目标服务器时副本也不绑。
 - 后台「是否下发」第一项就是绑没绑（`nodeDeliveryFacts.Bound` → `nodeNoteUnbound`）。下发、名单、配置文档天然排除未绑节点（只取在役节点、INNER JOIN servers），不改那些 SQL。
-- 删服务器时名下节点先退役再置空 `server_id`（`repo/servers.go`），这类节点已退役，不能再绑。
+- 删服务器（`DeleteServer` → `repo.DetachServerNodes`）：名下在役节点退役；草稿与已停用的只解绑、留作配置（同 `SetNodeServer` 清运行状态与配置回执，端口值留着），能再绑到别的服务器（用户 2026-10-20 定）；已退役的只清 `server_id`。审计 `server.delete` 带 `silenced_nodes`（退役数）与 `unbound_nodes`（解绑数）。退役且没服务器的节点「是否下发」照「未在役」说，不引导去绑定。
 
 ## 服务状态与运行态
 - 只有 `serving_status`（`draft` / `active` / `disabled` / `retired`），边表在 `nodeServingTransitions`（`service/node_status.go`）；无旧版 17 态生命周期触发器。

@@ -174,7 +174,7 @@ describe('mock api · admin nodes infra', () => {
     expect((await call('GET', `/v1/servers/${s.id}`)).status).toBe(404)
   })
 
-  it('refuses to shrink capacity below the nodes in use and cascades on delete', async () => {
+  it('refuses to shrink capacity below the nodes in use and detaches nodes on delete', async () => {
     const kr = (await servers()).find((x) => x.name === 'kr-sel-edge-1')!
     const made = await call('POST', '/v1/nodes', { name: '首尔 02', server_id: kr.id, node_type: 'shadowsocks', server_host: 'kr2.example.test', server_port: 8388, protocol_config: { cipher: 'aes-256-gcm' } }, 'kr-node-1')
     expect(made.status).toBe(201)
@@ -187,7 +187,8 @@ describe('mock api · admin nodes infra', () => {
     const after = serverSchema.parse(await shrink.json())
     expect((await call('DELETE', `/v1/servers/${kr.id}`, { row_version: after.row_version })).status).toBe(200)
     const orphan = nodesResponse.parse(await (await call('GET', '/v1/nodes?include_retired=1')).json()).nodes.find((n) => n.name === '首尔 02')!
-    expect(orphan).toMatchObject({ serving_status: 'retired', server_id: null })
+    // 草稿节点随删服务器只解绑、留作配置（在役的才退役）
+    expect(orphan).toMatchObject({ serving_status: 'draft', server_id: null })
     const hk = (await servers()).find((x) => x.name === 'hk-hkg-edge-1')!
     const tight = await call('PATCH', `/v1/servers/${hk.id}`, { row_version: hk.row_version, capacity_nodes: 1 })
     expect(await tight.json()).toMatchObject({ error: { code: 'conflict', fields: { capacity_nodes: expect.stringMatching(/^minimum=[2-9]$/) } } })

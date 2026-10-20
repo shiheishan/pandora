@@ -93,7 +93,7 @@ export function serverNodeLines<T extends Pick<NodeRow, 'server_id' | 'serving_s
 
 /** 删除后果：后端不拒绝名下节点，而是级联静默（契约改写了设计的「先迁移或删除」）；资格另见 canDeleteServer */
 export function deleteServerNotice(s: Pick<Server, 'node_count'>): string {
-  return s.node_count > 0 ? `删除后不能恢复。名下 ${s.node_count} 个节点会一起下线，身份立即吊销；同名重新安装可以恢复。` : '删除后不能恢复。名下没有节点。'
+  return s.node_count > 0 ? `删除后不能恢复，服务器身份立即吊销。名下 ${s.node_count} 个节点里，在役的退役；草稿和已停用的解除绑定、留作配置，可以再绑到别的服务器。` : '删除后不能恢复。名下没有节点。'
 }
 
 // ---------------------------------------------------------------------------

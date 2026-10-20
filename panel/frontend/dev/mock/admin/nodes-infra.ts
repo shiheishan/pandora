@@ -458,10 +458,12 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (!(Number.isInteger(body.row_version) && (body.row_version as number) > 0)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { row_version: '必须提供正整数版本号' })
       if (body.row_version !== s.row_version) return reply(ctx, serverConflict(s))
       if (s.status !== 'draft' && s.status !== 'retired') return ctx.fail(409, 'conflict', '服务器仍在服务，请先在「状态」里退役', { status: s.status })
-      // 级联静默：名下节点 serving_status 置 retired、吊销身份、摘掉 server_id
+      // 同 Go DetachServerNodes：在役的退役并吊销身份；草稿与已停用的只解绑、留作配置；全部摘掉 server_id
       for (const n of nodes.filter((x) => x.server_id === s.id)) {
-        n.serving_status = 'retired'
-        n.identityRevoked = true
+        if (n.serving_status === 'active') {
+          n.serving_status = 'retired'
+          n.identityRevoked = true
+        }
         n.server_id = null
       }
       servers.splice(servers.indexOf(s), 1)

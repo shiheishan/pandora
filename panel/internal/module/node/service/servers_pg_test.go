@@ -184,12 +184,23 @@ func TestServerDeleteReadyConflictDraftSuccess(t *testing.T) {
 	}
 }
 
-func TestServerDeleteRetiredDetachesActiveNodes(t *testing.T) {
+// 删服务器：在役节点退役；草稿与已停用的只解绑、留作配置（用户 2026-10-20 定），端口值留着、能再绑到别的服务器。
+func TestServerDeleteRetiredDetachesNodes(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	s := e.server(t, ctx, "del-cascade")
 	e.enroll(t, ctx, s.ID)
 	n := e.ssNode(t, ctx, s.ID, "live", 21004)
 	if _, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion); err != nil {
+		t.Fatal(err)
+	}
+	draft := e.ssNode(t, ctx, s.ID, "keep-draft", 21007)
+	off := e.ssNode(t, ctx, s.ID, "keep-off", 21008)
+	if _, err := e.svc.ActivateNode(ctx, off.ID, off.RowVersion); err != nil {
+		t.Fatal(err)
+	}
+	_, v := invServingOf(t, e, ctx, off.ID)
+	if err := e.svc.BatchNodeStatus(ctx, NodeStatusBatch{ServingStatus: NodeDisabled, Reason: "删机前停用",
+		Items: []NodeVersionRef{{ID: off.ID, RowVersion: v}}}); err != nil {
 		t.Fatal(err)
 	}
 	n, _ = e.svc.GetAdminNode(ctx, n.ID)
@@ -213,8 +224,26 @@ func TestServerDeleteRetiredDetachesActiveNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if status != NodeRetired || serverID != nil || retiredAt == nil || rvAfter <= rvBefore {
-		t.Fatalf("节点应退役、摘机、版本增：status=%s server=%v retired=%v rv %d→%d",
+		t.Fatalf("在役节点应退役、摘机、版本增：status=%s server=%v retired=%v rv %d→%d",
 			status, serverID, retiredAt, rvBefore, rvAfter)
+	}
+
+	other := e.server(t, ctx, "del-cascade-b")
+	for _, c := range []struct {
+		id     uuid.UUID
+		status string
+		port   int
+	}{{draft.ID, NodeDraft, 21007}, {off.ID, NodeDisabled, 21008}} {
+		got, err := e.svc.GetAdminNode(ctx, c.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ServingStatus != c.status || got.ServerID != nil || got.ServerPort == nil || *got.ServerPort != c.port {
+			t.Fatalf("%s 节点应只解绑、状态与端口不变：%+v", c.status, got)
+		}
+		if _, err := e.svc.BindNode(ctx, c.id, NodeBindInput{RowVersion: got.RowVersion, ServerID: other.ID}); err != nil {
+			t.Fatalf("解绑留下的 %s 节点应能再绑：%v", c.status, err)
+		}
 	}
 }
 
