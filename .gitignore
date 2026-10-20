@@ -57,3 +57,7 @@ id_ed25519*
 # 仓库是公开的，这些永远只留在本机
 /ops-local/
 __pycache__/
+
+# >>> magpie: library skills placed here (magpie adds and removes these lines) >>>
+/.mcp.json
+# <<< magpie <<<
