@@ -26,7 +26,7 @@ paths:
 - 凭据可用：`active`，或已吊销但 `grace_until` 仍晚于 now；换链接 `rotateLocked` 吊销时 `grace` 传 nil、立即失效（`service/pull.go`、`service/rotate.go`）
 - 令牌按 `token_hash` 查库后再 `hmac.Equal`；短于 16 字符不查库（`service/pull.go`）
 - 成功/过期提示才占凭据每小时限流；未认证失败按来源 IP HMAC 采样落库（`service/pull.go`、`service/fetchlog.go`）
-- 给 identity 溯源总览的读（`service/trace_reads.go`，实现 identity 的 `TraceFetches` 端口，10-20）：`TraceFetchIPs` 按来源 IP、`TraceFetchUsers` 按用户聚合拉取日志，各一条 SQL，走 `subscription_fetch_log_time_idx (fetched_at)`；按明文补查的 IP 在这里规范写法后用 `InfoHMACSubAudit` 算哈希（与审计盐不同，两路只按明文合并）；排序列只从 repo 白名单取。30 天窗口约等于整张表（保留 31 天）的扫描，5000 用户每天 24 次拉取约 360 万行；真测出瓶颈再加 `(ip_hash, fetched_at)` 索引或小时汇总表
+- 给 identity 溯源总览的读（`service/trace_reads.go`，实现 identity 的 `TraceFetches` 端口，10-20）：`TraceFetchIPs` 按来源 IP、`TraceFetchUsers` 按用户聚合拉取日志，各一条 SQL，走 `subscription_fetch_log_time_idx (fetched_at)`，都先在原表窄聚合（按 IP 的是 (ip_hash, ua_hash, user_id)，按用户的是 (user_id, ip_hash, ua_hash, ua_family)），后面的 CTE 从窄聚合派生，不物化整窗原始行；`TraceFetchUsers` 只补查（Limit = 0）时先取这些用户的凭据、走 `subscription_fetch_log_cred_idx`，共用 IP 再按这些 ip_hash 过滤同窗口别人的拉取；按明文补查的 IP 在这里规范写法后用 `InfoHMACSubAudit` 算哈希（与审计盐不同，两路只按明文合并）；排序列只从 repo 白名单取。30 天窗口约等于整张表（保留 31 天）的扫描，5000 用户每天 24 次拉取约 360 万行；真测出瓶颈再加 `(ip_hash, fetched_at)` 索引或小时汇总表
 - `Profile-Update-Interval`：正常 12 小时，过期 1 小时；续费页 `renewalPageURL`（`service/pull.go`）
 - 查询参数：`target`/`flag`/`type` 选格式（`subscribeTarget`）；`types` 按协议过滤、`filter` 按名字关键字过滤（`render.ParseTypes`/`ParseKeywords`，口径照 Xboard）（`handler/subscribe.go`）
 - 后台模板、订阅附加设置（信息节点、协议前缀，settings 的 `subscription.info_nodes` 等）与订阅域名分组（本模块的表）在拉取侧走进程内快照，30 秒过期（`service/pull_extras.go`）；附加设置改动最多 30 秒后生效，本进程保存或恢复模板、保存订阅域名后快照立即作废。重读失败时有旧快照就沿用、打 Warn、5 秒后再试，没有旧快照才让拉取失败
