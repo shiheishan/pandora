@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,22 @@ type State struct {
 	BadClientCerts          int      `json:"bad_client_certs"`
 	MissingRequestIDs       int      `json:"missing_request_ids"`
 	LastRuntime             []string `json:"last_runtime"`
+	// HelloBuildSerial 是最近一条 Hello 自报的 build_serial（发布构建 > 0，dev 构建 0）。
+	HelloBuildSerial uint64 `json:"hello_build_serial"`
+	// UpgradesSent 是发出的 Upgrade 指令数；UpgradeReports 按到达顺序记 "<phase>:<reason_code>"，
+	// Hello 里带的 last_upgrade 记成 "HELLO:<phase>:<reason_code>"。
+	UpgradesSent   int      `json:"upgrades_sent"`
+	UpgradeReports []string `json:"upgrade_reports"`
+}
+
+// upgradeFeature 是在线升级的能力名，按通道契约独立写死（不 import 节点代码）。
+const upgradeFeature = "upgrade_v1"
+
+// upgradeJob 是要下发的那一次升级：清单与签名原字节、本机架构的二进制地址。
+type upgradeJob struct {
+	manifest  []byte
+	signature []byte
+	url       string
 }
 
 type options struct {
@@ -65,6 +82,8 @@ type options struct {
 	nodePort   int
 	statePath  string
 	token      string
+	// upgrade 非 nil 时，对 Hello 声明了 upgrade_v1 的节点在 Welcome 里回 upgrade_v1 并发一次 Upgrade。
+	upgrade *upgradeJob
 }
 
 type fakePanel struct {
@@ -80,12 +99,16 @@ type fakePanel struct {
 	userUUID   string
 	configJSON []byte
 	configSHA  string
+	upgrade    *upgradeJob
+	upgradeID  string
 
 	mu sync.Mutex
 	// issued 按 request_id 记已签发的证书（同一 request_id 重放返回同一张）；tokenUsedBy 是令牌被哪个 request_id 用了。
 	issued      map[string][]byte
 	tokenUsedBy string
 	state       State
+	// upgradeSent：整个进程只发一次 Upgrade，节点升级后重连不再重发（防验收里来回升级）。
+	upgradeSent bool
 }
 
 func newFakePanel(o options) (*fakePanel, error) {
@@ -118,8 +141,10 @@ func newFakePanel(o options) (*fakePanel, error) {
 		userUUID:   uuid.NewString(),
 		configJSON: configJSON,
 		configSHA:  hex.EncodeToString(sum[:]),
+		upgrade:    o.upgrade,
+		upgradeID:  uuid.NewString(),
 		issued:     make(map[string][]byte),
-		state:      State{ConfigPhases: []string{}, LastRuntime: []string{}},
+		state:      State{ConfigPhases: []string{}, LastRuntime: []string{}, UpgradeReports: []string{}},
 	}, nil
 }
 
@@ -189,7 +214,18 @@ func (p *fakePanel) Session(stream grpc.BidiStreamingServer[nodev1.SessionReques
 	if hello == nil {
 		return status.Error(codes.InvalidArgument, "第一条消息必须是 Hello")
 	}
-	p.record(func(s *State) { s.Hellos++ })
+	p.record(func(s *State) {
+		s.Hellos++
+		s.HelloBuildSerial = hello.GetBuildSerial()
+		if lu := hello.GetLastUpgrade(); lu != nil {
+			s.UpgradeReports = append(s.UpgradeReports, "HELLO:"+lu.GetPhase().String()+":"+lu.GetReasonCode())
+		}
+	})
+	upgradeNegotiated := p.upgrade != nil && slices.Contains(hello.GetFeatures(), upgradeFeature)
+	var features []string
+	if upgradeNegotiated {
+		features = []string{upgradeFeature}
+	}
 
 	var seq uint64
 	send := func(r *nodev1.SessionResponse) error {
@@ -198,7 +234,7 @@ func (p *fakePanel) Session(stream grpc.BidiStreamingServer[nodev1.SessionReques
 		return stream.Send(r)
 	}
 	if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_Welcome{Welcome: &nodev1.Welcome{
-		SessionId: uuid.NewString(), PushIntervalSec: 1, HeartbeatIntervalSec: 1, ServerTimeUnixMs: time.Now().UnixMilli(),
+		SessionId: uuid.NewString(), Features: features, PushIntervalSec: 1, HeartbeatIntervalSec: 1, ServerTimeUnixMs: time.Now().UnixMilli(),
 	}}}); err != nil {
 		return err
 	}
@@ -214,6 +250,16 @@ func (p *fakePanel) Session(stream grpc.BidiStreamingServer[nodev1.SessionReques
 		if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_UsersFull{UsersFull: &nodev1.UsersFull{
 			NodeId: p.nodeID, Version: usersVersion, ChunkIndex: 0, ChunkTotal: 1,
 			Users: []*nodev1.User{{Uid: 1, Uuid: p.userUUID}},
+		}}}); err != nil {
+			return err
+		}
+	}
+	if upgradeNegotiated && p.takeUpgrade() {
+		if err := send(&nodev1.SessionResponse{Body: &nodev1.SessionResponse_Command{Command: &nodev1.Command{
+			Kind: &nodev1.Command_Upgrade{Upgrade: &nodev1.Upgrade{
+				JobId: p.upgradeID, Manifest: p.upgrade.manifest, Signature: p.upgrade.signature,
+				BinaryUrl: p.upgrade.url, ConfirmWithinSec: 60,
+			}},
 		}}}); err != nil {
 			return err
 		}
@@ -258,6 +304,10 @@ func (p *fakePanel) Session(stream grpc.BidiStreamingServer[nodev1.SessionReques
 			}
 		case *nodev1.SessionRequest_Online:
 			p.record(func(s *State) { s.OnlineReports++ })
+		case *nodev1.SessionRequest_UpgradeReport:
+			r := body.UpgradeReport
+			entry := r.GetPhase().String() + ":" + r.GetReasonCode()
+			p.record(func(s *State) { s.UpgradeReports = append(s.UpgradeReports, entry) })
 		case *nodev1.SessionRequest_Renew:
 			cert, err := p.pki.signClient(body.Renew.GetCsrDer(), p.serverID)
 			if err != nil {
@@ -271,6 +321,19 @@ func (p *fakePanel) Session(stream grpc.BidiStreamingServer[nodev1.SessionReques
 			}
 		}
 	}
+}
+
+// takeUpgrade 占下这次进程唯一的一次 Upgrade 下发，并记数。
+func (p *fakePanel) takeUpgrade() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.upgradeSent {
+		return false
+	}
+	p.upgradeSent = true
+	p.state.UpgradesSent++
+	p.saveLocked()
+	return true
 }
 
 // clientCertOK：带了本 CA 签的客户端证书（TLS 层已验链），且 URI SAN 是本服务器。
@@ -325,6 +388,7 @@ func (p *fakePanel) snapshot() State {
 	s := p.state
 	s.ConfigPhases = append([]string(nil), s.ConfigPhases...)
 	s.LastRuntime = append([]string(nil), s.LastRuntime...)
+	s.UpgradeReports = append([]string(nil), s.UpgradeReports...)
 	return s
 }
 
@@ -356,6 +420,9 @@ func main() {
 	statePath := flag.String("state", "", "状态文件（必填）")
 	tokenFile := flag.String("token-file", "", "接入令牌文件（必填）")
 	fpOut := flag.String("ca-fingerprint-out", "", "CA 指纹写到这个文件（必填）")
+	upManifest := flag.String("upgrade-manifest", "", "要下发的 pdnd-manifest.json（可选，与 -upgrade-sig、-upgrade-url 一起给）")
+	upSig := flag.String("upgrade-sig", "", "pdnd-manifest.json.sig")
+	upURL := flag.String("upgrade-url", "", "本机架构二进制的下载地址")
 	flag.Parse()
 	if *statePath == "" || *tokenFile == "" || *fpOut == "" || *nodePort == 0 {
 		log.Fatal("-node-port、-state、-token-file、-ca-fingerprint-out 都必填")
@@ -364,7 +431,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	p, err := newFakePanel(options{serverName: *serverName, nodePort: *nodePort, statePath: *statePath, token: string(token)})
+	job, err := loadUpgradeJob(*upManifest, *upSig, *upURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	p, err := newFakePanel(options{serverName: *serverName, nodePort: *nodePort, statePath: *statePath, token: string(token), upgrade: job})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -380,4 +451,23 @@ func main() {
 	}
 	log.Printf("acceptance panel listening on %s", lis.Addr())
 	log.Fatal(p.serve(lis))
+}
+
+// loadUpgradeJob 读 -upgrade-* 三个参数：都不给即不下发升级；只给一部分报错。
+func loadUpgradeJob(manifestPath, sigPath, url string) (*upgradeJob, error) {
+	if manifestPath == "" && sigPath == "" && url == "" {
+		return nil, nil
+	}
+	if manifestPath == "" || sigPath == "" || url == "" {
+		return nil, errors.New("-upgrade-manifest、-upgrade-sig、-upgrade-url 要一起给")
+	}
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := os.ReadFile(sigPath)
+	if err != nil {
+		return nil, err
+	}
+	return &upgradeJob{manifest: manifest, signature: sig, url: url}, nil
 }
