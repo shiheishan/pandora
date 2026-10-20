@@ -1,4 +1,4 @@
-import { cx } from './kit'
+import { cx } from './kit/cx'
 import { portalBranding } from './appearance'
 import { useAppearance } from './queries'
 import css from './SiteBrand.module.css'

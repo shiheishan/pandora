@@ -8,7 +8,7 @@ import { AuthPage, consumeQuickLogin } from './AuthPage'
 import { authTabFromPath, isHomePath, LOGIN_PATH, mailLoginTokenFromHash, quickLoginTokenFromHash } from './entry-links'
 import { hasServerHome, setHomeHidden } from './home'
 import { consumeMailLogin } from './MailLinkLogin'
-import { Shell } from './Shell'
+import { ShellLoader } from './ShellLoader'
 
 export function App({ runtime, invite }: { runtime: AppRuntime; invite: string | null }) {
   return (
@@ -56,7 +56,7 @@ function Root({ invite }: { invite: string | null }) {
   }, [signedIn])
 
   if (quick.phase === 'pending' || mail.phase === 'pending') return null
-  if (signedIn) return <Shell />
+  if (signedIn) return <ShellLoader />
   if (mail.phase === 'failed') return <AuthPage initialTab="mail" notice={mail.message} />
   if (quick.phase === 'failed') return <AuthPage initialTab="quick" notice={quick.message} />
   if (showHome) return null
