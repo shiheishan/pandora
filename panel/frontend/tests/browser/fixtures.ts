@@ -56,6 +56,8 @@ export async function openAdmin(browser: Browser): Promise<Page> {
     await expect(reauth).toBeHidden()
   })
   await expect(page.getByLabel('邮箱')).toBeHidden()
+  // 外框懒加载：等它挂上（地址改写成规范地址）再交给用例跳页
+  await expect(page.getByRole('main')).toBeVisible()
   return page
 }
 

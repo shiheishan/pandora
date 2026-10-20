@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { navigate, useHashLocation } from '../core/router'
+import { navigate, parseHash, useHashLocation } from '../core/router'
 import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRuntime } from '../shell/runtime'
 import { Empty, Tabs } from '../ui'
@@ -89,8 +89,11 @@ export function Shell() {
 
   // 未知模块、缺省标签一律改写成规范地址，刷新与分享都落在同一处；
   // 模块认得时查询串（页面的筛选条件）跟着走，落回仪表盘时丢掉
+  // 外框是懒加载的：挂上前地址可能已经又变了（登录后紧接着跳页），这次渲染的地址已过时就不改写，
+  // 交给下一次渲染，免得拿旧地址把新地址盖掉
   useEffect(() => {
     if (location.path === route.canonical) return
+    if (parseHash(window.location.hash).path !== location.path) return
     const sameModule = location.path.split('/')[1] === route.module
     navigate(route.canonical, { replace: true, query: sameModule ? Object.fromEntries(location.query) : undefined })
   }, [location, route.canonical, route.module])
