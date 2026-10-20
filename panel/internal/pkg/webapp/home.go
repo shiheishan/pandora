@@ -79,7 +79,7 @@ func sanitizeHome(h Home) Home {
 			Name:      sanitizeText(p.Name),
 			Kind:      sanitizeText(p.Kind),
 			Badge:     sanitizeText(p.Badge),
-			Desc:      sanitizeText(p.Desc),
+			Desc:      strings.Join(strings.Fields(sanitizeMultiline(p.Desc)), " "), // 多行描述按空格接上，不粘连
 			Usage:     sanitizeText(p.Usage),
 			Price:     sanitizeText(p.Price),
 			PriceNote: sanitizeText(p.PriceNote),

@@ -105,7 +105,7 @@ describe('theme-boot.js portal home', () => {
     expect(source).toContain(`'${portalKey}'`)
   })
 
-  it.each(['', '#', '#/'] as const)('portal without token and empty hash %j leaves home unset', (hash) => {
+  it.each(['', '#', '#/', '#/?x=1'] as const)('portal without token and empty hash %j leaves home unset', (hash) => {
     expect(run(withToken(null), 'portal', { hash }).home).toBeUndefined()
   })
 

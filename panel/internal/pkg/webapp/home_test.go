@@ -184,6 +184,16 @@ func TestHandlerWithHome(t *testing.T) {
 	}
 }
 
+func TestHandlerHomeDescJoinsLines(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": {Data: []byte(homeIndex)}}
+	home := sampleHome()
+	home.Plans[0].Desc = "first line\nsecond line"
+	body := serve(Handler(fsys, WithHome(func(context.Context) (Home, bool) { return home, true })), http.MethodGet, "/", nil).Body.String()
+	if !strings.Contains(body, "first line second line") {
+		t.Fatalf("multi-line desc must join with a space:\n%s", body)
+	}
+}
+
 func TestInsertBeforeRootMissingMarker(t *testing.T) {
 	doc := []byte("<!doctype html><body><div id=\"other\"></div></body>")
 	got := insertBeforeRoot(doc, "<div>frag</div>")

@@ -20,7 +20,8 @@
   if (root.getAttribute('data-app') === 'portal') {
     var homeOff = false
     try {
-      var hash = window.location.hash || ''
+      // 与 router 的 parseHash 同口径：只看 ? 之前的路径，#/?x=1 仍算空地址
+      var hash = (window.location.hash || '').split('?')[0]
       homeOff = (hash !== '' && hash !== '#' && hash !== '#/') || /[?&]invite=/.test(window.location.search || '')
     } catch {
       // 读不到地址：按没有页面

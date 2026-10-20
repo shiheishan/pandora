@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../core/api'
-import { navigate, useHashLocation } from '../core/router'
+import { navigate, parseHash, useHashLocation } from '../core/router'
 import { RuntimeProvider, useRuntime, useSignedIn, type AppRuntime } from '../shell/runtime'
 import { useAppearanceTheme } from './appearance'
 import { AuthPage, consumeQuickLogin } from './AuthPage'
@@ -45,10 +45,13 @@ function Root({ invite }: { invite: string | null }) {
     setHomeHidden(!showHome)
   }, [showHome])
 
-  // 退出登录（含令牌失效被清掉）后落到登录页，而不是留在退出前的页面地址上
+  // 退出登录（含令牌失效被清掉）时地址停在空地址上就换成登录页，免得一退出就露出首页；
+  // 停在别的页面地址上不动：登录页照常显示，重新登录后回到原来要去的页面（邮件里的深链）
   const wasSignedIn = useRef(signedIn)
   useEffect(() => {
-    if (wasSignedIn.current && !signedIn) navigate(LOGIN_PATH, { replace: true })
+    if (wasSignedIn.current && !signedIn && isHomePath(parseHash(window.location.hash).path)) {
+      navigate(LOGIN_PATH, { replace: true })
+    }
     wasSignedIn.current = signedIn
   }, [signedIn])
 

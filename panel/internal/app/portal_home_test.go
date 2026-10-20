@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,5 +245,72 @@ func TestPortalHomeUsesPageMeta(t *testing.T) {
 	}
 	if h.SiteName != "虚构站点" || h.Tagline != "虚构标语" || h.Logo != meta.m.Logo {
 		t.Fatalf("meta: %+v", h)
+	}
+}
+
+func TestPortalHomeCatalogErrorDegrades(t *testing.T) {
+	now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	settings := &fakeHomeSettings{h: settingssvc.Home{Enabled: true, Intro: "介绍"}}
+	catalog := &fakeHomeCatalog{err: errors.New("catalog down")}
+	p := newPortalHome(settings, catalog, fakePageMeta{m: appearancesvc.PageMeta{SiteName: "夜海加速"}})
+	p.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	if _, ok := p.Home(ctx); ok || catalog.n != 1 {
+		t.Fatalf("first: ok=%v catalog=%d", ok, catalog.n)
+	}
+	// 失败缓存 5 秒：这段时间不再读库，也不出片段
+	now = now.Add(4 * time.Second)
+	if _, ok := p.Home(ctx); ok || catalog.n != 1 || settings.n != 1 {
+		t.Fatalf("error cached: ok=%v catalog=%d settings=%d", ok, catalog.n, settings.n)
+	}
+	now = now.Add(2 * time.Second)
+	catalog.err = nil
+	if _, ok := p.Home(ctx); !ok || catalog.n != 2 {
+		t.Fatalf("after error ttl: ok=%v catalog=%d", ok, catalog.n)
+	}
+}
+
+// blockingHomeSettings 第一次 Home 等 release 再返回旧值，之后返回新值。
+type blockingHomeSettings struct {
+	started chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (b *blockingHomeSettings) Home(context.Context) (settingssvc.Home, error) {
+	if b.calls.Add(1) == 1 {
+		close(b.started)
+		<-b.release
+		return settingssvc.Home{Enabled: true, Intro: "旧介绍"}, nil
+	}
+	return settingssvc.Home{Enabled: true, Intro: "新介绍"}, nil
+}
+
+func TestPortalHomeChangeDuringLoadServesNewValue(t *testing.T) {
+	settings := &blockingHomeSettings{started: make(chan struct{}), release: make(chan struct{})}
+	p := newPortalHome(settings, &fakeHomeCatalog{}, fakePageMeta{m: appearancesvc.PageMeta{SiteName: "夜海加速"}})
+	ctx := context.Background()
+
+	done := make(chan webapp.Home)
+	go func() {
+		h, _ := p.Home(ctx)
+		done <- h
+	}()
+	<-settings.started
+	// 加载途中保存了首页设置：在途的旧结果可以回给当时的请求，但之后的请求要拿到新值
+	p.HomeSettingsChanged()
+	close(settings.release)
+	if old := <-done; old.Intro != "旧介绍" {
+		t.Fatalf("in-flight result = %q", old.Intro)
+	}
+	for range 2 {
+		h, ok := p.Home(ctx)
+		if !ok || h.Intro != "新介绍" {
+			t.Fatalf("after change: ok=%v intro=%q", ok, h.Intro)
+		}
+	}
+	if n := settings.calls.Load(); n != 2 {
+		t.Fatalf("settings reads = %d, want 2 (new value cached)", n)
 	}
 }

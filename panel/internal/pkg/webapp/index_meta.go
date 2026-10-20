@@ -165,25 +165,37 @@ func insertBeforeHeadClose(doc, insert string) string {
 	return doc[:at] + insert + doc[at:]
 }
 
-// rendered 返回按 meta 与首页内容改写后的入口与 ETag；meta 与首页不变时复用上次的结果（入口页是最热的地址，不每次重写、重算哈希）。
-func (h *handler) rendered(m IndexMeta, home Home, hasHome bool) ([]byte, string) {
+// rendered 返回按 meta 与首页内容改写后的入口与 ETag；meta 与首页原始输入不变时复用上次的结果
+// （入口页是最热的地址，不每次清洗、重写、重算哈希）。raw 是 WithHome 回调的原样返回，只在变了时才清洗。
+// 清洗后 SiteName 为空的首页与没有首页一样：入口只按 meta 改写，meta 也为空时就是原入口。
+func (h *handler) rendered(m IndexMeta, raw Home, rawOK bool) ([]byte, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.hasLast && h.lastMeta == m && h.lastHasHome == hasHome && (!hasHome || h.lastHome.equal(home)) {
+	if h.hasLast && h.lastMeta == m && h.lastHasHome == rawOK && (!rawOK || h.lastHome.equal(raw)) {
 		return h.lastBody, h.lastETag
 	}
-	body := renderIndex(h.index, m)
-	if hasHome {
-		if frag := renderHome(home); frag != "" {
-			body = insertBeforeRoot(body, frag)
-		}
+	var home Home
+	hasHome := false
+	if rawOK {
+		home = sanitizeHome(raw)
+		hasHome = home.SiteName != ""
 	}
-	sum := sha256.Sum256(body)
+	body, etag := h.index, h.etag
+	if hasHome || !m.zero() {
+		body = renderIndex(h.index, m)
+		if hasHome {
+			if frag := renderHome(home); frag != "" {
+				body = insertBeforeRoot(body, frag)
+			}
+		}
+		sum := sha256.Sum256(body)
+		etag = `"` + hex.EncodeToString(sum[:8]) + `"`
+	}
 	h.lastMeta = m
-	h.lastHome = home.clone()
-	h.lastHasHome = hasHome
+	h.lastHome = raw.clone()
+	h.lastHasHome = rawOK
 	h.lastBody = body
-	h.lastETag = `"` + hex.EncodeToString(sum[:8]) + `"`
+	h.lastETag = etag
 	h.hasLast = true
 	return h.lastBody, h.lastETag
 }

@@ -195,16 +195,13 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if h.meta != nil {
 		m = sanitizeMeta(h.meta(r.Context()))
 	}
-	var home Home
-	hasHome := false
+	var raw Home
+	rawOK := false
 	if h.home != nil {
-		if v, ok := h.home(r.Context()); ok {
-			home = sanitizeHome(v)
-			hasHome = home.SiteName != ""
-		}
+		raw, rawOK = h.home(r.Context())
 	}
-	if !m.zero() || hasHome {
-		body, etag = h.rendered(m, home, hasHome)
+	if !m.zero() || rawOK {
+		body, etag = h.rendered(m, raw, rawOK)
 	}
 	csp := indexCSP
 	if h.extra != nil {
