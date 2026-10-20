@@ -239,7 +239,7 @@ func TestRequestUpgradesPreconditions(t *testing.T) {
 	e.svc.UseSessions(sess)
 
 	_, err := e.svc.RequestUpgrades(ctx, []uuid.UUID{uuid.New()})
-	invWantCode(t, err, errs.Unavailable)
+	_ = invWantCode(t, err, errs.Unavailable)
 
 	upgradeDist(t, e.svc)
 
@@ -280,7 +280,7 @@ func TestRequestUpgradesPreconditions(t *testing.T) {
 		many[i] = uuid.New()
 	}
 	_, err = e.svc.RequestUpgrades(ctx, many)
-	invWantCode(t, err, errs.ValidationFailed)
+	_ = invWantCode(t, err, errs.ValidationFailed)
 
 	dir := t.TempDir()
 	amd64 := []byte("manifest-only")

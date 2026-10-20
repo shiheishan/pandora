@@ -155,7 +155,7 @@ func (s *Service) ServerUpgradeViews(ctx context.Context, servers []model.Server
 
 // RequestUpgrades 批量发起在线升级：逐台前置与结果，过了前置的在一个事务里建任务，提交后经会话下发。
 func (s *Service) RequestUpgrades(ctx context.Context, serverIDs []uuid.UUID) (UpgradeBatch, error) {
-	ids := dedupeUUIDs(serverIDs)
+	ids := uniqueUUIDsInOrder(serverIDs)
 	if len(ids) == 0 || len(ids) > UpgradeBatchMax {
 		return UpgradeBatch{}, errs.Invalid(map[string]string{"server_ids": "一次选 1 到 50 台服务器"})
 	}
@@ -219,7 +219,7 @@ func (s *Service) RequestUpgrades(ctx context.Context, serverIDs []uuid.UUID) (U
 				insert: repo.ServerUpgradeInsert{
 					ServerID:      id,
 					TargetVersion: t.Version,
-					TargetSerial:  int64(t.Serial),
+					TargetSerial:  int64(t.Serial), //nolint:gosec // 读清单时已限定 serial ≤ MaxInt64（pdnd_manifest.go）
 					TargetSHA256:  art.SHA256,
 					FromVersion:   m.AgentVersion,
 					FromSHA256:    m.BinarySHA256,
@@ -244,7 +244,7 @@ func (s *Service) RequestUpgrades(ctx context.Context, serverIDs []uuid.UUID) (U
 		createdServerIDs := make([]uuid.UUID, 0, len(created))
 		createdFiles := make(map[uuid.UUID]string, len(created))
 		for _, c := range candidates {
-			jobID, ok := created[c.insert.ServerID]
+			_, ok := created[c.insert.ServerID]
 			if !ok {
 				results[c.idx].Reason = UpgradeBlockInProgress
 				continue
@@ -325,7 +325,7 @@ func (s *Service) RequestUpgrades(ctx context.Context, serverIDs []uuid.UUID) (U
 	return batch, nil
 }
 
-func dedupeUUIDs(ids []uuid.UUID) []uuid.UUID {
+func uniqueUUIDsInOrder(ids []uuid.UUID) []uuid.UUID {
 	seen := make(map[uuid.UUID]bool, len(ids))
 	out := make([]uuid.UUID, 0, len(ids))
 	for _, id := range ids {

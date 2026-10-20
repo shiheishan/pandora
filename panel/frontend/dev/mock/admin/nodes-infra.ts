@@ -192,7 +192,10 @@ function serverOut(s: MockServer, nodes: readonly InfraNode[]) {
   const mine = nodes.filter((n) => n.server_id === s.id)
   const active = mine.filter((n) => n.serving_status === 'active')
   const heartbeat_online = s.status === 'ready' && !!s.last_heartbeat_at && Date.now() - new Date(s.last_heartbeat_at).getTime() <= 90_000
-  const { probe, upgradeV1, buildSerial, ...rest } = s
+  const { probe, ...rest }: Partial<MockServer> = s
+  // 假后端内部字段，不吐给前端
+  delete rest.upgradeV1
+  delete rest.buildSerial
   return {
     ...rest,
     heartbeat_online,

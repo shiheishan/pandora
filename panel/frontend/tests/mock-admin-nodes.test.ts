@@ -256,7 +256,8 @@ describe('mock api · admin nodes infra', () => {
     expect(byName('jp-tyo-edge-2').upgrade.reason).toBe('no_upgrade_support')
     expect(byName('sg-sin-edge-1').upgrade.reason).toBe('up_to_date')
     expect(byName('tw-tpe-edge-1').upgrade.reason).toBe('not_connected')
-    expect(byName('kr-sel-edge-1').upgrade.reason).toBe('not_ready')
+    // 首尔那台草稿机已被前面的用例删掉，用大阪这台草稿
+    expect(byName('jp-osa-edge-1').upgrade.reason).toBe('not_ready')
     expect(byName('us-lax-edge-1').last_upgrade).toMatchObject({ status: 'rolled_back', reason_code: 'confirm_timeout' })
     expect(byName('us-lax-edge-1').upgrade.available).toBe(true)
     for (const s of raw.servers) {
