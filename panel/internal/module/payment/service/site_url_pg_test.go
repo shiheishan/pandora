@@ -64,6 +64,9 @@ func TestNewIntentUsesChangedSiteURL(t *testing.T) {
 		{oldSite + "/#/orders/1", oldSite + "/#/orders/1"},           // 旧域名上的门户：仍是本站
 		{newSite + "/#/orders/2", newSite + "/#/orders/2"},           // 新域名上的门户
 		{"https://evil.example.test/#/orders", newSite + "/#orders"}, // 别的站：回当前站点的订单页
+		{newSite + ".evil.test/#/x", newSite + "/#orders"},           // 前缀相同的别的主机
+		{newSite + "@evil.test/#/x", newSite + "/#orders"},           // 带账号段的别的主机
+		{newSite + `\evil.test/#/x`, newSite + "/#orders"},           // 反斜杠，浏览器当成 /
 	} {
 		orderID, orderNo := e.mkOrder(t, ctx, user)
 		in := e.intentInput(code, orderID, orderNo, user)

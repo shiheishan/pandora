@@ -1025,11 +1025,11 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
 ### 顺序
 
 1. **DNS**：新域名的 A / AAAA 解析到面板服务器的公网 IP。确认：`dig +short <新域名>`。
-2. **【写】nginx 先放出 80**（给 Let's Encrypt 的 HTTP-01 校验用；没有这一步，新域名的 80 会落到默认 server 回 444）。新建一个 `render-nginx.sh` 不管的文件，内容照 `/etc/nginx/conf.d/pandora.conf` 里面板地址那个 80 的 server 块原样复制，只把 `server_name` 换成新域名：
+2. **【写】nginx 先放出 80**（给 Let's Encrypt 的 HTTP-01 校验用；没有这一步，新域名的 80 会落到默认 server 回 444）。新建一个 `render-nginx.sh` 不管的文件 `pandora.site-domain.conf`（文件名必须排在 `pandora.conf` 之后：`conf.d/*.conf` 按文件名顺序加载，复制过去的 443 块引用 `pandora.conf` 顶部定义的 `log_format pandora_safe`，排在前面 `nginx -t` 会报 unknown log format，而且新域名会顶替成 443 的缺省 server），内容照 `/etc/nginx/conf.d/pandora.conf` 里面板地址那个 80 的 server 块原样复制，只把 `server_name` 换成新域名：
 
    ```bash
    sudo grep -n 'server_name' /etc/nginx/conf.d/pandora.conf     # 找到面板地址的 80 与 443 两个块
-   sudoedit /etc/nginx/conf.d/pandora-site-domain.conf             # 粘进 80 块，server_name 改成新域名
+   sudoedit /etc/nginx/conf.d/pandora.site-domain.conf             # 粘进 80 块，server_name 改成新域名
    sudo nginx -t && sudo systemctl reload nginx
    curl -sI http://<新域名>/.well-known/acme-challenge/x           # 应回 404（不是超时，也不是 444 断开）
    ```
@@ -1041,7 +1041,7 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
    ```
 
    certbot 自带的 `certbot.timer` 会续期它；`edge-tls.sh` 只管面板地址的证书，不管这一张。
-4. **【写】nginx 再放出 443**：把 `pandora.conf` 里面板地址那个 443 的 server 块也复制进 `pandora-site-domain.conf`，改三处：`server_name` 换成新域名；删掉 `listen 127.0.0.1:9080;` 那一行（本机运维入口只留一个）；`ssl_certificate` / `ssl_certificate_key` 换成 `/etc/letsencrypt/live/<新域名>/fullchain.pem` 与 `privkey.pem`。后台前缀等其余内容不动。
+4. **【写】nginx 再放出 443**：把 `pandora.conf` 里面板地址那个 443 的 server 块也复制进 `pandora.site-domain.conf`，改三处：`server_name` 换成新域名；删掉 `listen 127.0.0.1:9080;` 那一行（本机运维入口只留一个）；`ssl_certificate` / `ssl_certificate_key` 换成 `/etc/letsencrypt/live/<新域名>/fullchain.pem` 与 `privkey.pem`。后台前缀等其余内容不动。
 
    ```bash
    sudo nginx -t && sudo systemctl reload nginx
@@ -1049,19 +1049,21 @@ sudo /opt/pandora/deploy/edge-tls.sh apply
    ```
 
    这个文件是手工维护的：升级后 `pandora.conf` 由脚本重新渲染，这一份不会跟着变。升级后对照新的 `pandora.conf` 把两个块再复制一遍。
-5. **【写】在后台改主域名**：填 `https://<新域名>`，保存时要重新输入密码。保存成功后新发的邮件、新建的支付单、门户里复制的链接都用新域名，立即生效（worker 里最多晚 30 秒）。
-6. **旧域名至少再留 7 天**，DNS、nginx 与证书都不要动：
-   - 改之前建的支付单，渠道仍按建单时的回调地址推回调（易支付、CoinPayments 的回调地址随单下发）。CoinPayments 的验签同时认新旧两个域名；只认上一个，所以 7 天内不要连着换两次。
+5. **【写】人机验证的域名**（后台开了 Turnstile 或 reCAPTCHA 才做）：先到 Cloudflare Turnstile 或 Google reCAPTCHA 的控制台，把新域名加进当前 site key 的域名列表，旧域名先不删。没加的话新域名上的门户拿不到验证令牌，注册、找回密码、邮件链接登录都过不去。
+6. **【写】在后台改主域名**：填 `https://<新域名>`，保存时要重新输入密码。保存成功后新发的邮件、新建的支付单、门户里复制的链接都用新域名，立即生效（worker 里最多晚 30 秒）。
+7. **旧域名至少再留 7 天**，DNS、nginx 与证书都不要动：
+   - 改之前建的支付单，渠道仍按建单时的回调地址推回调（易支付、CoinPayments 的回调地址随单下发）。CoinPayments 的验签、付完回跳、人机验证的来源核对在改后 30 天内同时认新旧两个域名（只认上一个，30 天后旧的也不再认）。支付单 30 分钟就过期，连着换两次最多让 CoinPayments 的单晚一点入账（回调验签不过，由 worker 主动查单补记），两次隔开 1 小时以上就不受影响。
+   - 旧域名下线以后，记得到人机验证控制台把它从 site key 的域名列表里删掉。
    - 已经发出的邮件里的链接（登录链接 15 分钟内有效）、用户收藏的旧地址、客户端里的旧订阅链接，都还指向旧域名。
    - BTCPay 的回调地址是在 BTCPay 商店里手工填的（第 5 章），不会自己变：要么在 BTCPay 商店「Settings › Webhooks」里改成新域名，要么旧域名一直留着。单独设了「回调地址」前缀的，回调不受主域名影响。
-7. **Telegram**：保存主域名后，面板会用现有的 webhook 密钥把 Telegram webhook 自动重新注册到 `https://<新域名>/v1/webhooks/telegram`（只在 Telegram 已启用、注册过 webhook 时做；新域名不是 https 时不注册）。失败不影响主域名的保存。确认：
+8. **Telegram**：保存主域名后，面板会用现有的 webhook 密钥把 Telegram webhook 自动重新注册到 `https://<新域名>/v1/webhooks/telegram`（只在 Telegram 已启用、注册过 webhook 时做；新域名不是 https 时不注册）。失败不影响主域名的保存。确认：
 
    ```bash
    sudo grep 'Telegram webhook' /var/log/pandora/serve.log | tail -n 3
    # 「已重新注册到新地址」= 成功；「重新注册失败」「没有重新注册」= 没成，后面带原因
    ```
 
-   再用自己的 Telegram 私聊 bot 发 `/start`，有回复就通了。没成功时到后台「通知与插件 › 通知渠道」的 Telegram 卡片点一次保存，会按当前主域名重新注册（这次会换一个新的 webhook 密钥）。不要用 `curl` 带 Bot Token 去查 `getWebhookInfo`：Token 会进 shell 历史和 `ps`。
+   再用自己的 Telegram 私聊 bot 发 `/start`，有回复就通了。没成功时到后台「通知与插件 › 通知渠道」的 Telegram 卡片点一次保存，会按当前主域名重新注册（这次会换一个新的 webhook 密钥）。不要用 `curl` 带 Bot Token 去查 `getWebhookInfo`：Token 会进 shell 历史和 `ps`。重新注册在保存主域名的请求里同步做（最多等 15 秒）；正好同时有人保存了 Telegram 设置（会换 webhook 密钥）时，bot 可能收不到消息，再到 Telegram 卡片点一次保存即可。
 
 ### 改回去
 

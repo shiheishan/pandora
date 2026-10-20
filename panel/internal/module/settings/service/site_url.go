@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"mime"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -36,6 +37,9 @@ const (
 	siteURLLoadTimeout = 2 * time.Second
 	// siteURLProbeTimeout 是保存前连通核对的总时长。
 	siteURLProbeTimeout = 5 * time.Second
+	// siteURLPreviousFor 是改主域名后旧地址还被认的时长：改之前建的发票、发出的邮件、打开的页面在这段时间里照常能用；
+	// 过期就不再认，旧域名停续后被别人注册，也拿不到回跳白名单和人机验证的来源。
+	siteURLPreviousFor = 30 * 24 * time.Hour
 	// siteURLProbePath 是连通核对请求的门户公开接口：本面板一定有、不要登录、回 JSON。
 	siteURLProbePath = "/v1/site-config"
 )
@@ -55,6 +59,8 @@ type SiteURLChangeListener interface{ SiteURLChanged(ctx context.Context) }
 type siteURLValue struct {
 	stored   string // site.url
 	previous string // site.url_previous：上一次改之前的生效值，旧单的回调与旧页面的人机验证还认它
+	// prevUntil 是 site.url_previous_until：previous 认到这个时刻为止；零值（缺行或值坏了）= 不认。
+	prevUntil time.Time
 }
 
 // siteURLState 是主域名的配置值与进程内快照。
@@ -137,7 +143,7 @@ func normalizeSiteURL(raw string, allowHTTP bool) (norm, msg string) {
 		return "", siteURLMsgFormat
 	}
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
-	if host == "" {
+	if !validSiteHost(host) {
 		return "", siteURLMsgFormat
 	}
 	port := u.Port()
@@ -161,6 +167,28 @@ func normalizeSiteURL(raw string, allowHTTP bool) (norm, msg string) {
 	return out, ""
 }
 
+// validSiteHost 只收 IP 字面量（不带 zone）或由 a-z、0-9、-、. 组成、没有空段的主机名（中文域名填 punycode 写法）。
+// url.Parse 放行的 <>"'$&()*+,;= 之类不进链接、canonical 与回跳白名单。
+func validSiteHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if a, err := netip.ParseAddr(host); err == nil {
+		return a.Zone() == ""
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			return false
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func invalidSiteURL(msg string) error { return errs.Invalid(map[string]string{"url": msg}) }
 
 // SiteURL 返回站点对外根地址（当前生效的主域名），以 / 结尾（如 https://panel.example.test/）：
@@ -170,7 +198,7 @@ func (s *Service) SiteURL(ctx context.Context) string {
 	return s.effectiveSiteURL(s.siteURLs(ctx).stored)
 }
 
-// SiteURLAliases 返回本站认的全部根地址（都以 / 结尾，去重，当前生效的在最前）：当前生效值、上一个生效值、配置值。
+// SiteURLAliases 返回本站认的全部根地址（都以 / 结尾，去重，当前生效的在最前）：当前生效值、上一个生效值（改后 siteURLPreviousFor 内）、配置值。
 // 支付回调验签（改域名前建的发票按旧地址签名）、回跳地址、人机验证核对令牌来源（旧域名上打开的页面）用它。
 func (s *Service) SiteURLAliases(ctx context.Context) []string {
 	v := s.siteURLs(ctx)
@@ -183,7 +211,7 @@ func (s *Service) SiteURLAliases(ctx context.Context) []string {
 		}
 	}
 	add(s.effectiveSiteURL(v.stored))
-	if v.previous != "" {
+	if v.previous != "" && s.now().Before(v.prevUntil) {
 		add(v.previous + "/")
 	}
 	add(s.su.fallback)
@@ -217,13 +245,18 @@ func (s *Service) siteURLs(ctx context.Context) siteURLValue {
 	got, err, _ := st.group.Do(strconv.FormatUint(gen, 10), func() (any, error) {
 		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), siteURLLoadTimeout)
 		defer cancel()
-		vals, err := s.store.Values(lctx, []string{keySiteURL, keySiteURLPrevious})
+		vals, err := s.store.Values(lctx, []string{keySiteURL, keySiteURLPrevious, keySiteURLPrevUntil})
 		if err != nil {
 			return siteURLValue{}, err
 		}
 		v := siteURLValue{
 			stored:   s.decodeStoredSiteURL(ctx, vals, keySiteURL),
 			previous: s.decodeStoredSiteURL(ctx, vals, keySiteURLPrevious),
+		}
+		if until, err := decodeOr(vals, keySiteURLPrevUntil, time.Time{}); err == nil {
+			v.prevUntil = until
+		} else {
+			plog.From(ctx).Warn("settings: 主域名设置的值非法，按空", zap.String("key", keySiteURLPrevUntil))
 		}
 		st.mu.Lock()
 		if st.gen == gen {

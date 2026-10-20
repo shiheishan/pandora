@@ -21,8 +21,8 @@ var siteKeys = []string{
 	keySiteURL,
 }
 
-// siteLockKeys 是改站点设置时要锁的行：本组各键，外加改主域名时一起写的 site.url_previous；按 key 顺序加锁。
-var siteLockKeys = append(append([]string{}, siteKeys...), keySiteURLPrevious)
+// siteLockKeys 是改站点设置时要锁的行：本组各键，外加改主域名时一起写的 site.url_previous 与 site.url_previous_until；按 key 顺序加锁。
+var siteLockKeys = append(append([]string{}, siteKeys...), keySiteURLPrevious, keySiteURLPrevUntil)
 
 // decodeSite 按缺省值解出站点设置。
 func decodeSite(vals map[string]json.RawMessage) (Site, error) {
@@ -148,6 +148,7 @@ func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
 			changes = append(changes,
 				change{key: keySiteURL, value: *newURL},
 				change{key: keySiteURLPrevious, value: prevEffective},
+				change{key: keySiteURLPrevUntil, value: s.now().Add(siteURLPreviousFor).UTC()},
 			)
 		}
 		if err := s.writeChanges(ctx, changes); err != nil {

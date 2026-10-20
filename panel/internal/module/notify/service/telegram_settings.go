@@ -250,7 +250,7 @@ func (s *Service) SiteURLChanged(ctx context.Context) {
 	log := plog.From(ctx)
 	cfg, err := s.settings.Telegram(ctx)
 	if err != nil {
-		log.Warn("notify: 主域名改了，读 Telegram 设置失败，webhook 没有重新注册", zap.Error(err))
+		log.Warn("notify: 主域名改了，Telegram webhook 没有重新注册（读 Telegram 设置失败）", zap.Error(err))
 		return
 	}
 	if !cfg.Enabled || cfg.BotToken == "" || cfg.WebhookSecret == "" {
@@ -263,7 +263,7 @@ func (s *Service) SiteURLChanged(ctx context.Context) {
 	}
 	ex, err := s.settings.TelegramExtras(ctx)
 	if err != nil {
-		log.Warn("notify: 主域名改了，读 Telegram 扩展设置失败，webhook 没有重新注册", zap.Error(err))
+		log.Warn("notify: 主域名改了，Telegram webhook 没有重新注册（读 Telegram 扩展设置失败）", zap.Error(err))
 		return
 	}
 	if err := s.tg.SetWebhook(ctx, cfg.BotToken, hookURL, cfg.WebhookSecret, botAllowedUpdates(ex), false); err != nil {

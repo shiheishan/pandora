@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -87,6 +88,11 @@ func TestNormalizeSiteURL(t *testing.T) {
 		{"https://panel.example.test:0", false, siteURLMsgFormat},
 		{"https://panel.example.test:70000", false, siteURLMsgFormat},
 		{"https://pan el.example.test", false, siteURLMsgFormat},
+		{`https://panel"x.example.test`, false, siteURLMsgFormat},
+		{"https://panel.example.test$(x)", false, siteURLMsgFormat},
+		{"https://panel..example.test", false, siteURLMsgFormat},
+		{"https://面板.example.test", false, siteURLMsgFormat},
+		{"https://[fe80::1%25eth0]", false, siteURLMsgFormat},
 		{"https://", false, siteURLMsgFormat},
 		{"mailto:a@panel.example.test", true, siteURLMsgFormat},
 		{"https://" + strings.Repeat("a", SiteURLMaxLen) + ".example.test", false, siteURLMsgFormat},
@@ -219,6 +225,52 @@ func TestSetSiteURLChangesTakeEffectImmediately(t *testing.T) {
 	}
 	if got := s.SiteURLAliases(ctx); !slices.Equal(got, []string{"http://panel.example.test/", want}) {
 		t.Fatalf("aliases after reset = %v", got)
+	}
+}
+
+// 改主域名后旧地址只认 siteURLPreviousFor：到期后回跳白名单、人机验证来源都不再含它（旧域名停续后可能被别人注册）。
+func TestSiteURLPreviousExpires(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(siteConfigOK))
+	defer srv.Close()
+
+	now := time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)
+	st := &kvStore{kv: map[string]json.RawMessage{}}
+	s := newService(st, fakeTx{}, nil, nil, &auditLog{})
+	s.now = func() time.Time { return now }
+	s.UseSiteURLConfig("http://panel.example.test", true)
+
+	newURL := srv.URL
+	if err := s.SetSite(ctx, SiteUpdate{URL: &newURL}); err != nil {
+		t.Fatalf("SetSite: %v", err)
+	}
+	until, err := decodeOr(st.kv, keySiteURLPrevUntil, time.Time{})
+	if err != nil || !until.Equal(now.Add(siteURLPreviousFor)) {
+		t.Fatalf("previous_until = %v, %v", until, err)
+	}
+	want := []string{srv.URL + "/", "http://panel.example.test/"}
+	if got := s.SiteURLAliases(ctx); !slices.Equal(got, want) {
+		t.Fatalf("aliases = %v", got)
+	}
+
+	// 把配置换成另一个，才看得出上一个生效值有没有被去掉
+	st.kv[keySiteURLPrevious] = json.RawMessage(`"http://old.example.test"`)
+	s.invalidateSiteURL()
+	now = now.Add(siteURLPreviousFor - time.Second)
+	if got := s.SiteURLAliases(ctx); !slices.Equal(got, []string{srv.URL + "/", "http://old.example.test/", "http://panel.example.test/"}) {
+		t.Fatalf("aliases before expiry = %v", got)
+	}
+	now = now.Add(time.Minute) // 也越过快照的 TTL
+	if got := s.SiteURLAliases(ctx); !slices.Equal(got, want) {
+		t.Fatalf("aliases after expiry = %v（过期的旧地址不该再认）", got)
+	}
+
+	// 只有旧地址、没有期限（缺行）= 不认
+	now = now.Add(-time.Hour)
+	delete(st.kv, keySiteURLPrevUntil)
+	s.invalidateSiteURL()
+	if got := s.SiteURLAliases(ctx); slices.Contains(got, "http://old.example.test/") {
+		t.Fatalf("previous without until accepted: %v", got)
 	}
 }
 

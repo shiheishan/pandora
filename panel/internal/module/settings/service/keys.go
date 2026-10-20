@@ -2,13 +2,14 @@ package service
 
 // 设置键与缺省值。缺行即取缺省值；新增一组键就在这里加常量、在对应文件加 X / SetX。
 const (
-	keySiteName           = "site.name"            // string，1–40 字
-	keySiteTimezone       = "site.timezone"        // string，IANA 时区名
-	keySiteSEOKeywords    = "site.seo_keywords"    // string，最多 200 字，不含换行
-	keySiteSEODescription = "site.seo_description" // string，最多 160 字，不含换行；空则入口页用主题标语
-	keySiteAllowIndexing  = "site.allow_indexing"  // bool，缺省 DefaultSiteAllowIndexing
-	keySiteURL            = "site.url"             // string，主域名 scheme://host[:port]，空 = 用配置的 public_base_url（site_url.go）
-	keySiteURLPrevious    = "site.url_previous"    // string，上一次改主域名之前的生效值，改 site.url 时一起写
+	keySiteName           = "site.name"               // string，1–40 字
+	keySiteTimezone       = "site.timezone"           // string，IANA 时区名
+	keySiteSEOKeywords    = "site.seo_keywords"       // string，最多 200 字，不含换行
+	keySiteSEODescription = "site.seo_description"    // string，最多 160 字，不含换行；空则入口页用主题标语
+	keySiteAllowIndexing  = "site.allow_indexing"     // bool，缺省 DefaultSiteAllowIndexing
+	keySiteURL            = "site.url"                // string，主域名 scheme://host[:port]，空 = 用配置的 public_base_url（site_url.go）
+	keySiteURLPrevious    = "site.url_previous"       // string，上一次改主域名之前的生效值，改 site.url 时一起写
+	keySiteURLPrevUntil   = "site.url_previous_until" // 时间（RFC 3339），上一个生效值认到什么时候，改 site.url 时一起写
 
 	keyRegistrationMode  = "auth.registration_mode"  // string：closed / invite_only / open
 	keyEmailVerification = "auth.email_verification" // bool
