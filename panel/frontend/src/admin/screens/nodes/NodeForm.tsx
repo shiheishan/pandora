@@ -710,7 +710,7 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
           <Input label="地址" mono value={basic.host} onChange={(e) => set('host', e.target.value)} error={errors.server_host} disabled={disabled} />
           <Input label="端口" mono inputMode="numeric" value={basic.port} onChange={(e) => set('port', e.target.value)} error={errors.server_port} disabled={disabled} />
           <Input label="流量倍率" mono inputMode="decimal" value={basic.rate} onChange={(e) => set('rate', e.target.value)} error={errors.traffic_rate} disabled={disabled} />
-          <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="服务器不能在这里换" disabled readOnly fieldClassName={css.span2} />
+          <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="在「身份与操作」里绑定 / 改绑" disabled readOnly fieldClassName={css.span2} />
           <Select
             label="协议"
             placeholder="选择协议"

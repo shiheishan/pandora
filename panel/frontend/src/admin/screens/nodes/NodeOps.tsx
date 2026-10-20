@@ -329,13 +329,16 @@ export function NodeOps({ node }: { node: NodeRow }) {
       ) : (
         <>
           <NodeServerBinding node={node} onUnbindRequest={() => setConfirm('unbind')} unbindBusy={unbind.isPending} />
-          <DangerRow
-            title="吊销身份"
-            description="节点端立刻停服，要在服务器上重新安装才能恢复。用于机器被入侵或转让。"
-            actionLabel="吊销身份"
-            busy={revoke.isPending}
-            onAction={() => setConfirm('revoke')}
-          />
+          {/* 接入身份是服务器级的，没绑服务器就没有可吊销的（后端也回 409） */}
+          {node.server_id != null && (
+            <DangerRow
+              title="吊销身份"
+              description="节点端立刻停服，要在服务器上重新安装才能恢复。用于机器被入侵或转让。"
+              actionLabel="吊销身份"
+              busy={revoke.isPending}
+              onAction={() => setConfirm('revoke')}
+            />
+          )}
           <DangerRow
             title="退役"
             description="不再下发给用户、吊销身份；退役后不可恢复，历史流量与审计保留。"

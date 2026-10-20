@@ -234,7 +234,8 @@ export const deliverableNodesInPool = (poolId: string): number => store.filter((
 
 /** 后台节点列表的 delivered_to_users / delivery_note：DeliveryState 之后按 Refine 补齐 */
 function deliveryOf(n: Node): { delivered: boolean; note: string } {
-  if (!n.server_id) return { delivered: false, note: DELIVERY_NOTES.unbound }
+  // 删服务器时退役的节点也没有服务器，但已不能再绑，照「未在役」说（同 Go nodeDeliveryVerdict）
+  if (!n.server_id && n.serving_status !== 'retired') return { delivered: false, note: DELIVERY_NOTES.unbound }
   if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
   if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
   if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }

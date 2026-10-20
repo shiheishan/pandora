@@ -168,10 +168,9 @@ export function activateBlock(n: Pick<NodeRow, 'server_id'>): string | null {
   return n.server_id == null ? '先在「身份与操作」里绑定服务器再上线' : null
 }
 
-/** 绑定 / 改绑 / 解绑置灰的原因；能操作时返回 null。只看后端给的 movable 与状态，不自己按别的字段判断 */
+/** 绑定 / 改绑 / 解绑置灰的原因；能操作时返回 null。退役单独说，其余只看后端给的 movable */
 export function bindBlock(n: Pick<NodeRow, 'serving_status' | 'movable'>): string | null {
   if (n.serving_status === 'retired') return '节点已退役'
-  if (n.serving_status === 'active') return '节点在役，先停用再改绑 / 解绑'
   if (!n.movable) return '节点在役，先停用再改绑 / 解绑'
   return null
 }
@@ -211,9 +210,9 @@ const EDGES: Readonly<Record<ServingStatus, readonly ServingStatus[]>> = {
 }
 export const canTransition = (from: ServingStatus, to: ServingStatus) => EDGES[from].includes(to)
 
-/** 批量启用 / 停用：整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员 */
+/** 批量启用 / 停用：整批有一条非法后端就整批 409，所以只提交能转的（启用还要已绑服务器），其余计数告诉管理员 */
 export function batchPlan(rows: readonly NodeRow[], to: 'active' | 'disabled'): { items: Array<{ id: string; row_version: number }>; skipped: number } {
-  const ok = rows.filter((n) => n.serving_status !== to && canTransition(n.serving_status, to))
+  const ok = rows.filter((n) => n.serving_status !== to && canTransition(n.serving_status, to) && (to !== 'active' || n.server_id != null))
   return { items: ok.map((n) => ({ id: n.id, row_version: n.row_version })), skipped: rows.length - ok.length }
 }
 

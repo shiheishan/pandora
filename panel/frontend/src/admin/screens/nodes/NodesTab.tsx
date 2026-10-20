@@ -134,7 +134,7 @@ export function NodesTab() {
       void invalidate()
       const verb = to === 'active' ? '启用' : '停用'
       toast(
-        updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}）` : ''}` : `选中的节点当前状态都不能${verb}`,
+        updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}${to === 'active' ? '或没绑服务器' : ''}）` : ''}` : `选中的节点当前状态都不能${verb}`,
         updated ? 'ok' : 'danger',
       )
     },

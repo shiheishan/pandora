@@ -27,6 +27,17 @@ func TestNodeDeliveryVerdict_unboundFirst(t *testing.T) {
 	}
 }
 
+// 删服务器时节点先退役再清 server_id：这类节点不能再绑，说明照「未在役」给，不引导去绑定。
+func TestNodeDeliveryVerdict_retiredUnboundIsNotActive(t *testing.T) {
+	f := nodeAllDeliveryFacts()
+	f.Bound = false
+	f.Serving = NodeRetired
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNoteNotActive {
+		t.Fatalf("退役且未绑应判为 (false, notActive)，got (%v, %q)", ok, note)
+	}
+}
+
 func TestNodeDeliveryVerdict_notActive(t *testing.T) {
 	f := nodeAllDeliveryFacts()
 	f.Serving = "disabled"

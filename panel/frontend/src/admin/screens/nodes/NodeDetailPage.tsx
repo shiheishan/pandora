@@ -92,6 +92,8 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
           <SideFact label="服务器">
             {row.server_id ? (
               <a href={href(`/nodes/servers/${row.server_id}`)}>{row.server_name ?? '服务器'}</a>
+            ) : row.serving_status === 'retired' ? (
+              '未绑定'
             ) : (
               <a href={href(`/nodes/nodes/${id}/ops`, listQuery)}>未绑定 · 去绑定</a>
             )}

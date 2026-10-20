@@ -189,6 +189,12 @@ describe('status transitions', () => {
     expect(batchPlan(rows, 'active')).toEqual({ items: [{ id: 'a', row_version: 5 }], skipped: 2 })
     expect(batchPlan(rows, 'disabled')).toEqual({ items: [{ id: 'b', row_version: 5 }], skipped: 2 })
   })
+
+  it('batch enable skips disabled nodes that have no server (backend would 409 the whole batch)', () => {
+    const rows = [row({ id: 'a', serving_status: 'disabled' }), row({ id: 'u', serving_status: 'disabled', server_id: null })]
+    expect(batchPlan(rows, 'active')).toEqual({ items: [{ id: 'a', row_version: 5 }], skipped: 1 })
+    expect(batchPlan([row({ id: 'u', serving_status: 'active', server_id: null })], 'disabled').items).toHaveLength(1)
+  })
 })
 
 describe('ordering', () => {
