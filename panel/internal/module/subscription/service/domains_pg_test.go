@@ -174,7 +174,7 @@ func TestAdminDomainConfigScoresPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	if err := e.svc.scores.Apply(ctx, map[string]float64{"https://a.example.test": 0.5}, now); err != nil {
+	if err := e.svc.scores.Apply(ctx, map[string]map[string]float64{"https://a.example.test": {domainScoreFieldAll: 0.5}}, now); err != nil {
 		t.Fatal(err)
 	}
 	view, err := e.svc.AdminDomainConfig(ctx)
