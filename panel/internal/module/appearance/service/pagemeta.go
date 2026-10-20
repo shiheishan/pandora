@@ -1,8 +1,7 @@
 // 入口页与门户外观用的站点信息快照：站点名取系统设置 site.name，标语与 Logo 取生效主题的 branding（已按白名单过滤）。
 //
 // 入口页是门户最热的地址，不能每次回源都查库，所以缓存进程内快照：
-//   - 成功缓存 30 秒；本进程保存或激活主题后立即失效（serve 是单进程，后台保存也走它），30 秒只是兜底，
-//     站点名改了最多 30 秒生效，这是接受的；
+//   - 成功缓存 30 秒；本进程保存站点设置、保存或激活主题后都在提交后立刻失效，30 秒只是兜底；
 //   - 读失败也缓存 5 秒（库慢或挂了时不让每个入口页请求都去等一次超时），失败期间沿用上次成功的值；
 //   - 同一时刻只有一趟读库（singleflight），读库不持锁、不跟随第一个调用者的取消，上限 2 秒。
 
@@ -156,5 +155,8 @@ func (s *Service) loadPageMeta(ctx context.Context) (PageMeta, error) {
 	return out, nil
 }
 
-// invalidatePageMeta 让本进程的 PageMeta 快照立刻失效（保存或激活主题后调用）。
+// invalidatePageMeta 让本进程的 PageMeta 快照立刻失效（站点设置或主题保存/激活提交后调用）。
 func (s *Service) invalidatePageMeta() { s.metaGen.Add(1) }
+
+// SiteSettingsChanged 实现 settings 的 SiteChangeListener：站点设置（站点名等）提交后让快照立刻失效。
+func (s *Service) SiteSettingsChanged() { s.invalidatePageMeta() }

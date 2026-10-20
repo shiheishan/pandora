@@ -341,6 +341,8 @@ func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// TxCtx 整例回滚，提交后钩子（AfterCommit 里的快照失效）不执行：这里手动失效，模拟提交后的效果
+	e.svc.invalidatePageMeta()
 	metaAfter := e.svc.PageMeta(ctx)
 	if metaAfter.Tagline != "一路畅通" || metaAfter.Logo != logo {
 		t.Fatalf("激活后 PageMeta 期望 一路畅通 与 logo，得到 %+v", metaAfter)

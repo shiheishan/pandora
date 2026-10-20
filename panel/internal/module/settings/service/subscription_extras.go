@@ -84,10 +84,14 @@ func (s *Service) SetSubscriptionExtras(ctx context.Context, u SubscriptionExtra
 		if err := s.writeChanges(ctx, changes); err != nil {
 			return err
 		}
-		return s.writeAudit(ctx, auditSubscriptionExtrasChanged, auditResourceSettings, map[string]any{
+		if err := s.writeAudit(ctx, auditSubscriptionExtrasChanged, auditResourceSettings, map[string]any{
 			"group":  "subscription",
 			"before": b,
 			"after":  a,
-		})
+		}); err != nil {
+			return err
+		}
+		s.subscriptionExtrasChanged(ctx)
+		return nil
 	})
 }

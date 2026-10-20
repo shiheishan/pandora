@@ -74,11 +74,15 @@ func (s *Service) SetSite(ctx context.Context, u SiteUpdate) error {
 		if err := s.writeChanges(ctx, changes); err != nil {
 			return err
 		}
-		return s.writeAudit(ctx, auditSiteChanged, auditResourceSettings, map[string]any{
+		if err := s.writeAudit(ctx, auditSiteChanged, auditResourceSettings, map[string]any{
 			"group":  "site",
 			"before": b,
 			"after":  a,
-		})
+		}); err != nil {
+			return err
+		}
+		s.siteChanged(ctx)
+		return nil
 	})
 }
 

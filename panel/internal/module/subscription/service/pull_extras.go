@@ -1,7 +1,7 @@
 package service
 
 // 拉取时用到的后台模板、订阅附加设置（信息节点、协议前缀，在 settings）与订阅域名分组（本模块的表），
-// 进程内快照 30 秒过期（serve 是单实例），拉取路径因此不每次多查库；后台改动最多 30 秒后生效。
+// 进程内快照 30 秒过期（serve 是单实例）；附加设置（经 settings 的监听）、模板、订阅域名在本进程保存后立即作废，30 秒只是兜底。
 
 import (
 	"context"
@@ -54,8 +54,18 @@ func (x *extrasSnapshot) template(f render.Format) string {
 // pullExtras 是快照的进程内缓存；零值可用。
 type pullExtras struct {
 	mu   sync.Mutex
+	gen  atomic.Uint64
 	snap atomic.Pointer[extrasSnapshot]
 }
+
+// invalidate 让快照立刻失效；失效之前开始、之后才读完的那趟重读不会把旧内容写回。
+func (p *pullExtras) invalidate() {
+	p.gen.Add(1)
+	p.snap.Store(nil)
+}
+
+// SubscriptionExtrasChanged 实现 settings 的 SubscriptionExtrasListener：订阅附加设置提交后让拉取快照立刻失效。
+func (s *Service) SubscriptionExtrasChanged() { s.extras.invalidate() }
 
 // get 返回未过期的快照，过期或没有时重读（并发的重读经 mu 合成一次：拿到锁后再看一次是否已被别人刷新）。
 // src 为 nil 时附加设置取零值（全部关闭），tr 为 nil 时分组为空。读失败时：有旧快照就沿用它、打一条 Warn，
@@ -70,6 +80,7 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 	if snap := p.snap.Load(); snap != nil && !now.Before(snap.loadedAt) && now.Sub(snap.loadedAt) < extrasTTL {
 		return snap, nil
 	}
+	g := p.gen.Load()
 	settings, raw, groups, err := readExtras(ctx, src, tr)
 	if err != nil {
 		old := p.snap.Load()
@@ -80,7 +91,9 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 		// 旧快照的内容发布后只读，浅拷贝共用即可；把加载时刻挪到「extrasRetry 后过期」
 		stale := *old
 		stale.loadedAt = now.Add(extrasRetry - extrasTTL)
-		p.snap.Store(&stale)
+		if p.gen.Load() == g {
+			p.snap.Store(&stale)
+		}
 		return &stale, nil
 	}
 	templates := make(map[render.Format]string, len(raw))
@@ -93,7 +106,9 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 		domains:   newDomainSet(groups),
 		loadedAt:  now,
 	}
-	p.snap.Store(snap)
+	if p.gen.Load() == g {
+		p.snap.Store(snap)
+	}
 	return snap, nil
 }
 

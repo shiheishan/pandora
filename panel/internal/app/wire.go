@@ -336,6 +336,10 @@ func buildServices(r *runtime) (*services, error) {
 	// 邮件链接登录第 1 步的人机验证由 identity 校验（与注册、找回同一套）
 	authSvc.UseMailLink(settingsSvc, notifySvc, identitySvc, limiter, cfg.PublicBaseURL)
 
+	// 后台改了站点设置（站点名等）、订阅附加设置，提交后同步清本进程的入口页快照与订阅拉取快照（serve 单实例，后台的写都在 serve 里）
+	settingsSvc.UseSiteChangeListener(appearanceSvc)
+	settingsSvc.UseSubscriptionExtrasListener(subSvc)
+
 	// 装配自检：所有带 Use* 注入的 service 在这里统一检查必需端口（各自的 MissingPorts），缺了就拒绝启动
 	if err := checkPorts([]portCheck{
 		{"settings", settingsSvc}, {"audit", auditSvc}, {"identity", identitySvc}, {"catalog", catalogSvc},
