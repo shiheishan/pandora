@@ -330,8 +330,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       tokens.set(data.access_token)
       return true
     }
-    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；5xx 是暂时故障，抛给调用方、不清令牌
+    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；
+    // 429（面板或 nginx 限速，同一出口 IP 后面人多时会碰到）与 5xx 是暂时故障，抛给调用方、不清令牌
     const error = await readError(res)
+    if (error.status === 429) throw error
     if (error.status >= 400 && error.status < 500) return false
     throw error
   }

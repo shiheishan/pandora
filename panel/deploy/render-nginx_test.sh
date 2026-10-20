@@ -99,7 +99,9 @@ count_eq 1 "~^/$path/v1/ 1;"
 count_eq 1 'limit_req_status 429;'
 count_eq 1 'limit_conn_status 429;'
 refute -Eq '^[[:space:]]*proxy_intercept_errors' "$OUT"
-for pair in '413 payload_too_large' '429 rate_limited' '502 service_unavailable' '503 service_unavailable' '504 timeout'; do
+refute -Fq '@pandora_503' "$OUT"
+[[ "$(grep -cE '^[[:space:]]*types \{ \}$' "$OUT")" -eq 4 ]]
+for pair in '413 payload_too_large' '429 rate_limited' '502 service_unavailable' '504 timeout'; do
   code="${pair%% *}"
   name="${pair#* }"
   count_eq 1 "error_page $code @pandora_$code;"
@@ -221,6 +223,9 @@ refute -Fq 'sub-probe/' "$TEST_DIR/sub.conf"
 [[ "$(grep -c "$path" "$TEST_DIR/sub.conf")" -eq "$(grep -c "$path" "$OUT")" ]]
 refute -Fq '__PANDORA_' "$TEST_DIR/sub.conf"
 assert_proxy_headers_per_location "$TEST_DIR/sub.conf"
+# 订阅域名的 443 也回 429：主域名一处 + sub-a 的 443 一处（sub-b 缺证书只有 80）
+[[ "$(grep -c 'limit_req_status 429;' "$TEST_DIR/sub.conf")" -eq 2 ]]
+[[ "$(grep -c 'limit_conn_status 429;' "$TEST_DIR/sub.conf")" -eq 2 ]]
 banned_words "$TEST_DIR/sub.conf"
 [[ "$(grep -c -F 'return 308 https://$host$request_uri;' "$TEST_DIR/sub.conf")" -ge 2 ]]
 

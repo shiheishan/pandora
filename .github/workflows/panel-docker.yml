@@ -244,6 +244,18 @@ jobs:
           [ "$ok" = 1 ] || { echo "::error::重建 serve 后经 9080 打不开门户（nginx 与 serve 不在同一个命名空间？）"; exit 1; }
           wait-healthy
 
+      - name: Nginx returns a JSON envelope while serve is down
+        run: |
+          # 真 nginx 上验 map + error_page + 命名 location：serve 停掉时 API 路径回 502 信封，非 API 路径仍是默认页
+          dc stop serve
+          code="$(curl -s -o "$RUNNER_TEMP/502.json" -w '%{http_code} %{content_type}' --max-time 10 http://127.0.0.1:9080/v1/site-config)"
+          case "$code" in "502 application/json"*) ;; *) false ;; esac || { echo "::error::serve 停掉时 /v1/ 应回 502 JSON，实际 $code"; cat "$RUNNER_TEMP/502.json"; exit 1; }
+          python3 -c 'import json,sys; e=json.load(open(sys.argv[1]))["error"]; assert e["code"]=="service_unavailable" and e["request_id"], e' "$RUNNER_TEMP/502.json"
+          page="$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 10 http://127.0.0.1:9080/)"
+          case "$page" in "502 text/html"*) ;; *) false ;; esac || { echo "::error::serve 停掉时 / 应回 nginx 默认 502 页，实际 $page"; exit 1; }
+          dc start serve
+          wait-healthy
+
       - name: Kill serve in place and ensure nginx keeps serving
         run: |
           # 模拟崩溃 / OOM：从宿主杀掉 serve 主进程，Docker 按 restart: unless-stopped 就地拉起；

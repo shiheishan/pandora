@@ -480,6 +480,15 @@ describe('access token refresh on 401', () => {
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
 
+  it('refresh 429 keeps the token and throws rate_limited', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup([envelope(401, 'unauthorized'), envelope(429, 'rate_limited')], { onUnauthorized })
+    const error = await rejection(env.client.get('v1/me', ok))
+    expect(error.code).toBe('rate_limited')
+    expect(env.tokens.get()).toBe('tok-1')
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
   it('skips refresh when another tab already rotated the token inside the lock', async () => {
     const tokens = createTokenStore('admin', { storage: null, events: null })
     tokens.set('tok-1')

@@ -31,7 +31,7 @@ paths:
 - 请求体经 `httpx.BindJSON`（1 MiB、`DisallowUnknownFields`），校验失败 422 `validation_failed`，`fields` 写中文；业务校验在 service。
 - 成功响应不包信封：直接回 DTO，状态码表达结果，经 `httpx.OK` / `Created` / `Accepted` / `NoContent` 写；要录进幂等表的经 `idemsvc.JSON`。handler 里不直接调 `c.JSON`。
 - 错误交给 `httpx.Fail`（或 `c.Error`）统一写信封，不要自己拼 JSON。面向用户的文案是中文，页面原样显示。
-- 不直接写响应由 forbidigo 钉住（`c.JSON` 家族、`c.String`、`c.Data`、`c.Status`、`c.AbortWith*`、`c.Redirect`、`c.File*`、`gin.H`、`c.Writer.Write*`、`http.Error` / `NotFound` / `ServeContent` / `ServeFile` / `Redirect`）。非 JSON 出口按文件放行，白名单在 `panel/tools/depguardgen` 模板的 `exclusions.rules`：httpx、webapp、`realtime/sse.go`、幂等的 `recorder.go`、`robots.go`、订阅的 `subscribe.go` / `probe_frame.go`、`pdnd_dist.go`、identity / giftcard / audit 的 `csv.go`、支付的 `ack.go`。新的非 JSON 出口把写响应的那几行抽到同包单独文件再加进白名单，不用 `//nolint`。
+- 不直接写响应由 forbidigo 钉住（`c.JSON` 家族、`c.String`、`c.Data`、`c.Status`、`c.AbortWith*`、`c.Redirect`、`c.File*`、`gin.H`、`c.Writer.Write*`、`http.Error` / `NotFound` / `ServeContent` / `ServeFile` / `Redirect`）。非 JSON 出口按文件放行，白名单在 `panel/tools/depguardgen` 模板的 `exclusions.rules`：httpx、webapp、`realtime/sse.go`、幂等的 `recorder.go`、`robots.go`、订阅的 `subscribe.go` / `probe_frame.go`、`pdnd_dist.go`、identity / giftcard / audit 的 `csv.go`、支付的 `ack.go`。新的非 JSON 出口把写响应的那几行抽到同包单独文件再加进白名单，不用 `//nolint`。经 `io.Writer` 接口写正文（`csv.NewWriter(c.Writer)`、幂等重放的 `Serve(c.Writer)`）不在检查范围内，评审时看。
 - 引擎关了 `RedirectTrailingSlash`：后台在 nginx 前缀后面，gin 的跳转不带前缀会跳到门户；多一个尾斜杠就是 404。
 
 ## 幂等
