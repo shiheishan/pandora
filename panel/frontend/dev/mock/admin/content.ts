@@ -567,6 +567,32 @@ let siteName = 'Pandora'
 let siteSeoKeywords = ''
 let siteSeoDescription = ''
 let siteAllowIndexing = false
+// 主域名（真后端 site.url，空 = 用安装时的地址 url_fallback）：校验与文案照 Go settings/service/site_url.go，假后端按生产口径只收 https。
+// 保存前的连通核对假后端发不了真请求：主机名以 .invalid 结尾的一律当「打不开本面板」，页面上能走到 422 那一支
+const SITE_URL_FALLBACK = 'https://panel.example.test'
+let siteURL = ''
+const SITE_URL_FORMAT = '请填写完整的地址，如 https://panel.example.com，不带路径和查询串'
+const normalizeSiteURL = (raw: string): { url: string } | { error: string } => {
+  const v = raw.trim()
+  if (!v) return { url: '' }
+  // eslint-disable-next-line no-control-regex
+  if (v.length > 200 || /[?#\s\u0000-\u001f\u007f]/.test(v)) return { error: SITE_URL_FORMAT }
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/]*)\/?$/.exec(v)
+  if (!m) return { error: SITE_URL_FORMAT }
+  const scheme = m[1]!.toLowerCase()
+  if (scheme === 'http') return { error: '主域名必须使用 https' }
+  if (scheme !== 'https') return { error: SITE_URL_FORMAT }
+  let u: URL
+  try {
+    u = new URL(v)
+  } catch {
+    return { error: SITE_URL_FORMAT }
+  }
+  const host = u.hostname.replace(/\.$/, '')
+  if (u.username || u.password || !host || u.port === '0') return { error: SITE_URL_FORMAT }
+  if (host.endsWith('.invalid')) return { error: '这个地址打不开本面板' }
+  return { url: `https://${host}${u.port ? `:${u.port}` : ''}` }
+}
 // 站点 SEO 文字不许含控制字符（同 Go 的 unicode.IsControl）
 // eslint-disable-next-line no-control-regex
 const SEO_CONTROL = /[\u0000-\u001f\u007f-\u009f]/
@@ -690,6 +716,8 @@ export const content: MockModule = {
         seo_keywords: siteSeoKeywords,
         seo_description: siteSeoDescription,
         allow_indexing: siteAllowIndexing,
+        url: siteURL,
+        url_fallback: SITE_URL_FALLBACK,
       })
     },
     'POST /v1/settings/site': async (ctx) => {
@@ -700,6 +728,7 @@ export const content: MockModule = {
         seo_keywords: 'string',
         seo_description: 'string',
         allow_indexing: 'boolean',
+        url: 'string',
       })
       if (!decoded.ok) return reply(ctx, decoded.result)
       const body = decoded.body
@@ -709,6 +738,14 @@ export const content: MockModule = {
       let nextSeoKeywords = siteSeoKeywords
       let nextSeoDescription = siteSeoDescription
       let nextAllowIndexing = siteAllowIndexing
+      let nextURL = siteURL
+
+      // 主域名在事务外先校验、核对连通（Go 的 prepareSiteURL），不过就整次不写
+      if ('url' in body && body.url !== null) {
+        const r = normalizeSiteURL(str(body.url))
+        if ('error' in r) return reply(ctx, invalid({ url: r.error }))
+        nextURL = r.url
+      }
 
       if ('name' in body && body.name !== null) {
         const name = str(body.name).trim()
@@ -751,6 +788,7 @@ export const content: MockModule = {
       siteSeoKeywords = nextSeoKeywords
       siteSeoDescription = nextSeoDescription
       siteAllowIndexing = nextAllowIndexing
+      siteURL = nextURL
 
       ctx.send(200, {
         name: siteName,
@@ -758,6 +796,8 @@ export const content: MockModule = {
         seo_keywords: siteSeoKeywords,
         seo_description: siteSeoDescription,
         allow_indexing: siteAllowIndexing,
+        url: siteURL,
+        url_fallback: SITE_URL_FALLBACK,
       })
     },
 

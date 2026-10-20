@@ -128,13 +128,16 @@ export const slotSaved = z.object({ saved: z.literal(true), dropped: z.array(z.s
 // ---------------------------------------------------------------------------
 // 站点设置：形状只在 admin/site.ts 定义一次，外框与本页共用
 // ---------------------------------------------------------------------------
-// 站点设置（GET/POST v1/settings/site）；放在这里而不是 admin/site.ts，测试与冒烟（node 侧 tsconfig）引它时不带进 tsx 运行时；SEO 三项给门户入口页用
+// 站点设置（GET/POST v1/settings/site）；放在这里而不是 admin/site.ts，测试与冒烟（node 侧 tsconfig）引它时不带进 tsx 运行时；SEO 三项给门户入口页用。
+// url 是后台存的主域名（空 = 用安装时的地址 url_fallback），只影响链接；url_fallback 只读，POST 不收
 export const siteSettingsSchema = z.object({
   name: z.string(),
   timezone: z.string(),
   seo_keywords: z.string(),
   seo_description: z.string(),
   allow_indexing: z.boolean(),
+  url: z.string(),
+  url_fallback: z.string(),
 })
 
 // ---------------------------------------------------------------------------

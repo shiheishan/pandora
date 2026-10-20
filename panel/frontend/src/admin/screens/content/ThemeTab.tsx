@@ -209,6 +209,7 @@ function SiteCard() {
   const [keywords, setKeywords] = useState<string | null>(null)
   const [description, setDescription] = useState<string | null>(null)
   const [indexing, setIndexing] = useState<boolean | null>(null)
+  const [url, setURL] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const current = site.data
   const nameValue = name ?? current?.name ?? ''
@@ -216,16 +217,19 @@ function SiteCard() {
   const keywordsValue = keywords ?? current?.seo_keywords ?? ''
   const descriptionValue = description ?? current?.seo_description ?? ''
   const indexingValue = indexing ?? current?.allow_indexing ?? false
+  const urlValue = url ?? current?.url ?? ''
+  const urlFallback = current?.url_fallback ?? ''
 
   const dirty =
     (name !== null && name.trim() !== current?.name) ||
     (picked !== null && picked !== current?.timezone) ||
     (keywords !== null && keywords.trim() !== (current?.seo_keywords ?? '')) ||
     (description !== null && description.trim() !== (current?.seo_description ?? '')) ||
-    (indexing !== null && indexing !== (current?.allow_indexing ?? false))
+    (indexing !== null && indexing !== (current?.allow_indexing ?? false)) ||
+    (url !== null && url.trim() !== (current?.url ?? ''))
 
   const save = useMutation({
-    mutationFn: (body: Partial<SiteSettings>) => api.post('v1/settings/site', siteSettingsSchema, { body }),
+    mutationFn: (body: Partial<Omit<SiteSettings, 'url_fallback'>>) => api.post('v1/settings/site', siteSettingsSchema, { body }),
     onSuccess: (r, vars) => {
       const changed = Object.keys(vars)
       if (changed.length >= 2) {
@@ -237,12 +241,14 @@ function SiteCard() {
         else if (k === 'seo_keywords') toast('关键词已保存')
         else if (k === 'seo_description') toast('站点描述已保存')
         else if (k === 'allow_indexing') toast(r.allow_indexing ? '已允许搜索引擎收录门户首页' : '已关闭搜索引擎收录')
+        else if (k === 'url') toast(r.url ? `主域名已改为 ${r.url}` : '主域名已恢复为安装时的地址')
       }
       setName(null)
       setPicked(null)
       setKeywords(null)
       setDescription(null)
       setIndexing(null)
+      setURL(null)
       setErrors({})
       void invalidate('site')
     },
@@ -258,6 +264,8 @@ function SiteCard() {
     const keywordsChanged = keywords !== null && keywords.trim() !== (current?.seo_keywords ?? '')
     const descriptionChanged = description !== null && description.trim() !== (current?.seo_description ?? '')
     const indexingChanged = indexing !== null && indexing !== (current?.allow_indexing ?? false)
+    const urlTrimmed = urlValue.trim()
+    const urlChanged = url !== null && urlTrimmed !== (current?.url ?? '')
 
     const errs: Record<string, string> = {}
     if (nameChanged) {
@@ -286,12 +294,14 @@ function SiteCard() {
       return
     }
 
-    const body: Partial<SiteSettings> = {}
+    const body: Partial<Omit<SiteSettings, 'url_fallback'>> = {}
     if (nameChanged) body.name = nameTrimmed
     if (tzChanged) body.timezone = picked!
     if (keywordsChanged) body.seo_keywords = keywordsTrimmed
     if (descriptionChanged) body.seo_description = descriptionTrimmed
     if (indexingChanged) body.allow_indexing = indexing!
+    // 主域名的格式与连通都由服务端核对（开发环境也收 http），不通的 422 fields.url 显示在这一栏下面
+    if (urlChanged) body.url = urlTrimmed
     save.mutate(body)
   }
 
@@ -331,6 +341,25 @@ function SiteCard() {
       <p className={css.hint}>
         站点名用在浏览器标题、邮件和订阅配置名里；用户端用量图按天统计、后台收入趋势都按这个时区切日；修改只影响之后的数据，已记下的按日用量不重算。
       </p>
+      <div className={css.siteSeo}>
+        <Input
+          label="主域名"
+          mono
+          placeholder={urlFallback || 'https://panel.example.com'}
+          hint={`只影响链接：邮件里的链接、支付回调与付完回跳、订阅链接、Telegram 机器人。nginx 和证书不会跟着变，要先把新域名配好；节点连面板的地址也不变。留空就用安装时的地址${urlFallback ? ` ${urlFallback}` : ''}。保存前会检查新地址能不能打开本面板`}
+          value={urlValue}
+          maxLength={200}
+          inputMode="url"
+          autoComplete="off"
+          spellCheck={false}
+          error={errors.url}
+          disabled={save.isPending}
+          onChange={(e) => {
+            setURL(e.target.value)
+            if (errors.url) setErrors((prev) => ({ ...prev, url: '' }))
+          }}
+        />
+      </div>
       <div className={css.siteSeo}>
         <Input
           label="搜索关键词"
