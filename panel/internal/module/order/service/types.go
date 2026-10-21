@@ -105,7 +105,7 @@ const (
 // 对外的固定错误。同一个变量只读共享，调用方可以 errors.Is 比较。
 var (
 	ErrNotFound           = errs.New(errs.NotFound)
-	ErrSamePlanUseRenewal = errs.Newf(errs.Conflict, "你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变")
+	ErrSamePlanUseRenewal = errs.Newf(errs.Conflict, "你已经有一份这个套餐，请续在原来那份上（链接不变），或选择另开一份")
 	// ErrSamePlanUseStack 是一次性套餐已有同一个、没选「另开一份」：让用户选叠加到原来那一份还是另开一份
 	ErrSamePlanUseStack = errs.Newf(errs.Conflict, "你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份")
 	ErrOpenChange       = errs.Newf(errs.Conflict, "这份套餐还有未完成的续费、叠加或换套餐订单，请先付款或取消")
@@ -128,7 +128,7 @@ var (
 	ErrResetNotSold = errs.Newf(errs.Conflict, "这个套餐不提供流量重置")
 	// ErrResetLimitReached、ErrResetLimitReachedOneTime 是本周期（订阅套餐）或有效期内（一次性套餐）的付费重置次数已到套餐上限。
 	// 对外码是 conflict，fields.reason = reset_limit_reached 供前端区分
-	ErrResetLimitReached = &errs.Error{Code: errs.Conflict, Message: "本周期的流量重置次数已用完",
+	ErrResetLimitReached = &errs.Error{Code: errs.Conflict, Message: "本期的流量重置次数已用完",
 		Fields: map[string]string{"reason": "reset_limit_reached"}}
 	ErrResetLimitReachedOneTime = &errs.Error{Code: errs.Conflict, Message: "有效期内的流量重置次数已用完",
 		Fields: map[string]string{"reason": "reset_limit_reached"}}
@@ -553,9 +553,12 @@ const (
 type Landing struct {
 	Mode           string
 	SubscriptionID *uuid.UUID
+	// DisabledReason 不可选的原因（中文原话，门户原样显示）；为空表示可选。目前只有新开一份在到了每人份数上限时不可选
+	DisabledReason string
 }
 
 // Landings 是买 planID 的全部落点：new 恒在最前；同款订阅套餐给 renew，同款一次性套餐给 stack，别的未停用的给 change。
+// 新开那项到了每人份数上限时带 DisabledReason，仍列出。
 type Landings struct {
 	Options []Landing
 }

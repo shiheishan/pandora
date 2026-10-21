@@ -366,6 +366,8 @@ func quoteFrom(q service.QuoteResult) (quoteResponse, error) {
 type landingResponse struct {
 	Mode           string  `json:"mode"`
 	SubscriptionID *string `json:"subscription_id,omitempty"`
+	// DisabledReason 不可选的原因，可选时缺席
+	DisabledReason *string `json:"disabled_reason,omitempty"`
 }
 
 // landingsResponse 是 GET /me/checkout/landings 的响应。
@@ -376,10 +378,15 @@ type landingsResponse struct {
 func landingsFrom(l service.Landings) landingsResponse {
 	opts := make([]landingResponse, 0, len(l.Options))
 	for _, o := range l.Options {
-		opts = append(opts, landingResponse{
+		r := landingResponse{
 			Mode:           o.Mode,
 			SubscriptionID: idStr(o.SubscriptionID),
-		})
+		}
+		if o.DisabledReason != "" {
+			dr := o.DisabledReason
+			r.DisabledReason = &dr
+		}
+		opts = append(opts, r)
 	}
 	return landingsResponse{Options: opts}
 }

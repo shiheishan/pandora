@@ -10,7 +10,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-// 并发新购：MaxSubscriptions=1，两个 goroutine 同时建单，恰有一单成功、一单 409。
+// 并发新购：MaxSubscriptions=1，两个 goroutine 同时建单，恰有一单成功、一单份数上限拒绝。
 func TestPurchaseLimitSubscriptionsConcurrent(t *testing.T) {
 	e, ctx := newCommitEnv(t)
 	user := e.mkUser(t, ctx)
@@ -39,26 +39,26 @@ func TestPurchaseLimitSubscriptionsConcurrent(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	ok, conflict := 0, 0
+	ok, refused := 0, 0
 	for _, err := range results {
 		switch {
 		case err == nil:
 			ok++
-		case codeOf(err) == errs.Conflict:
-			conflict++
+		case codeOf(err) == errs.SubscriptionLimitReached:
+			refused++
 		default:
 			t.Fatalf("意外错误: %v", err)
 		}
 	}
-	if ok != 1 || conflict != 1 {
-		t.Fatalf("成功 %d、冲突 %d，期望各 1", ok, conflict)
+	if ok != 1 || refused != 1 {
+		t.Fatalf("成功 %d、份数上限拒绝 %d，期望各 1", ok, refused)
 	}
 	if n := e.count(t, ctx, `SELECT count(*) FROM orders WHERE user_id = ? AND kind = 'new' AND status = 'pending_payment'`, user); n != 1 {
 		t.Fatalf("待付新购单 %d 张，期望 1", n)
 	}
 }
 
-// 订阅数上限对全额余额（0 元应付）新购同样生效。
+// 份数上限对全额余额（0 元应付）新购同样生效。
 func TestPurchaseLimitSubscriptionsAppliesToZeroPay(t *testing.T) {
 	e, ctx := newEnv(t)
 	user := e.mkUser(t, ctx)
@@ -76,11 +76,11 @@ func TestPurchaseLimitSubscriptionsAppliesToZeroPay(t *testing.T) {
 		PriceID:  priceB,
 		Checkout: Checkout{UseBalance: dec("50")},
 	})
-	if codeOf(err) != errs.Conflict {
-		t.Fatalf("全额余额新购第二份订阅应 409，得到 %v", err)
+	if codeOf(err) != errs.SubscriptionLimitReached {
+		t.Fatalf("全额余额新购第二份套餐应 409，得到 %v", err)
 	}
-	if !strings.Contains(err.Error(), "每人最多 1 份订阅") {
-		t.Fatalf("文案应含每人最多 1 份订阅，得到: %v", err)
+	if !strings.Contains(err.Error(), "每人最多 1 份套餐") {
+		t.Fatalf("文案应含每人最多 1 份套餐，得到: %v", err)
 	}
 	if n := e.count(t, ctx, `SELECT count(*) FROM subscriptions WHERE user_id = ?`, user); n != 1 {
 		t.Fatalf("订阅数 %d，期望仍为 1", n)
@@ -122,7 +122,7 @@ func TestPurchaseLimitUnpaidSkipsFullBalance(t *testing.T) {
 	}
 }
 
-// 订阅数上限只限制新购，不限制换套餐、叠加单、流量重置单。
+// 份数上限只限制新购，不限制换套餐、叠加单、流量重置单。
 func TestPurchaseLimitSubscriptionsIgnoresOtherKinds(t *testing.T) {
 	// 换套餐单 CreatePlanChangeOrder
 	t.Run("change", func(t *testing.T) {
@@ -137,7 +137,7 @@ func TestPurchaseLimitSubscriptionsIgnoresOtherKinds(t *testing.T) {
 
 		// 先断言新购会被拒（上限已满）
 		_, err := e.svc.CreateNewOrder(uctx, NewOrderInput{PlanID: planB, PriceID: priceB})
-		if codeOf(err) != errs.Conflict {
+		if codeOf(err) != errs.SubscriptionLimitReached {
 			t.Fatalf("上限已满新购应 409，得到 %v", err)
 		}
 
@@ -166,7 +166,7 @@ func TestPurchaseLimitSubscriptionsIgnoresOtherKinds(t *testing.T) {
 
 		// 先断言新购会被拒
 		_, err := e.svc.CreateNewOrder(uctx, NewOrderInput{PlanID: otherPlan, PriceID: otherPrice})
-		if codeOf(err) != errs.Conflict {
+		if codeOf(err) != errs.SubscriptionLimitReached {
 			t.Fatalf("上限已满新购应 409，得到 %v", err)
 		}
 
@@ -193,7 +193,7 @@ func TestPurchaseLimitSubscriptionsIgnoresOtherKinds(t *testing.T) {
 
 		// 先断言新购会被拒
 		_, err := e.svc.CreateNewOrder(uctx, NewOrderInput{PlanID: otherPlan, PriceID: otherPrice})
-		if codeOf(err) != errs.Conflict {
+		if codeOf(err) != errs.SubscriptionLimitReached {
 			t.Fatalf("上限已满新购应 409，得到 %v", err)
 		}
 
