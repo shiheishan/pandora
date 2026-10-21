@@ -1,6 +1,21 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
-import { canonicalTag, emptyBody, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
+import {
+  activeIdentitySeq,
+  canonicalTag,
+  emptyBody,
+  heartbeatStale,
+  identityView,
+  infraRoutes,
+  pools,
+  revokeServerIdentity,
+  serverById,
+  serverEnrolled,
+  serverMetricsLatest,
+  SERVER_STATUS_LABEL,
+  servers,
+  validateRouting,
+} from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
 import { copyMemberships, groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
 import {
@@ -56,19 +71,19 @@ interface Node {
   protocol_config: Json
   protocol_schema_version: number
   sort_order: number
-  last_heartbeat_at: string | null
-  identity_serial: number | null
   online_users: number
   online_ips: number
   traffic_bytes_24h: number
   created_at: string
   updated_at: string
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Array<Json> }
-  identityRevoked: boolean
   xb: XBState
   /** 入站证书心跳；null = 未报过 */
   cert: CertSnapshot | null
 }
+
+/** 节点心跳就是所在服务器的心跳，同 Go row.ServerLastHeartbeatAt */
+const hbOf = (n: Node) => serverById(n.server_id)?.last_heartbeat_at ?? null
 
 interface CertSnapshot {
   mode: 'acme' | 'file'
@@ -101,15 +116,12 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     protocol_config: {},
     protocol_schema_version: 1,
     sort_order: (nodeNo - 100) * 10,
-    last_heartbeat_at: ago(4),
-    identity_serial: 3,
     online_users: 0,
     online_ips: 0,
     traffic_bytes_24h: 0,
     created_at: created,
     updated_at: created,
     routing: { outbounds: [], routes: [] },
-    identityRevoked: false,
     xb: xbDefaults(),
     cert: null,
     ...p,
@@ -198,21 +210,35 @@ const store: Node[] = [
       online_users: 356,
       online_ips: 402,
       traffic_bytes_24h: Math.round(1.49 * 1024 * GB),
-      protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } },
+      protocol_config: {
+        network: 'tcp',
+        tls: 2,
+        reality_settings: {
+          dest: 'www.apple.com:443',
+          server_name: 'www.apple.com',
+          // 读接口会抹掉私钥，假数据只要有值即可；别放像真密钥的串（gitleaks 会拦）
+          private_key: 'mock-reality-private-key',
+          public_key: 'Qw2Er4Ty6Ui8Op0As1Df3Gh5Jk7Lz9Xc2Vb4Nm6Qp8R',
+          short_id: '3f9a7c21',
+        },
+      },
     },
     1,
   ),
-  node({
-    name: '新加坡 02',
-    node_type: 'shadowsocks',
-    serving_status: 'active',
-    country_code: 'SG',
-    server_port: 8388,
-    last_heartbeat_at: ago(900),
-    online_users: 0,
-    traffic_bytes_24h: 864 * GB,
-    protocol_config: { cipher: 'aes-256-gcm' },
-  }, 2),
+  // 「心跳超时仍下发」演示——所在服务器 15 分钟没心跳，列表显示离线、仍在下发
+  node(
+    {
+      name: '新加坡 02',
+      node_type: 'shadowsocks',
+      serving_status: 'active',
+      country_code: 'SG',
+      server_port: 8388,
+      online_users: 0,
+      traffic_bytes_24h: 864 * GB,
+      protocol_config: { cipher: 'aes-256-gcm' },
+    },
+    2,
+  ),
   node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' }, xb: { ...xbDefaults(), tags: ['流媒体'], limit_bytes: 500 * GI, used_bytes: 540 * GI, reset_day: 20, exceeded_at: ago(86400) } }, 3),
   node(
     {
@@ -236,14 +262,14 @@ const store: Node[] = [
     },
     1,
   ),
-  node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, protocol_config: {} }, 2),
-  node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
+  node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', protocol_config: {} }, 2),
+  node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', protocol_config: { network: 'ws', tls: 0 } }, 5),
   // R105：在役但没划进节点池，不服务任何用户
   node({ name: '香港 03（未入池）', node_type: 'shadowsocks', serving_status: 'active', country_code: 'HK', server_port: 8389, pool_id: null, protocol_config: { cipher: 'aes-256-gcm' } }, 0),
   // R108：新服务器（大阪，草稿）上刚接入完的草稿节点，等「上线」一步推到 active
-  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8388, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
   // R113：同一台新服务器上、划进还没绑套餐的新池的节点——首次搭建的常态，上线成功但带 warnings
-  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', country_code: 'JP', server_port: 8389, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
   node(
     {
       name: '法兰克福 01 · ECH',
@@ -270,9 +296,8 @@ const store: Node[] = [
     4,
   ),
   // 没绑服务器的草稿：节点先作为配置存着（不占端口、不下发），详情「身份与操作」里绑定后才能上线
-  node({ name: '伦敦 01（未绑定）', node_type: 'trojan', serving_status: 'draft', server_id: null, country_code: 'GB', last_heartbeat_at: null, identity_serial: null, protocol_config: { network: 'tcp' } }),
+  node({ name: '伦敦 01', node_type: 'trojan', serving_status: 'draft', server_id: null, country_code: 'GB', protocol_config: { network: 'tcp', tls: 1, cert_mode: 'acme' } }),
 ]
-keepAlive(store, (n) => n.serving_status !== 'retired' && !n.deleted && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }
 
 const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
@@ -281,6 +306,11 @@ const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
 const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
 // 节点还没绑服务器就上线时的文案（activate 与批量改状态同一条）
 const UNBOUND_ACTIVATE = '节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线'
+/** 照 Go serverNotEnrolledMsg */
+const SERVER_NOT_ENROLLED = '服务器还没接入（先在服务器页生成安装命令完成接入）'
+
+/** 照 Go nodeProtocolReady：协议类型、对外地址、端口、schema 版本 */
+const protocolReady = (n: Node): boolean => Boolean(n.node_type && n.server_host && n.server_port !== null && n.protocol_schema_version > 0)
 
 /** 上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113；见 node/service 的 nodeNoPoolWarning） */
 function activationWarnings(n: Node): string[] {
@@ -292,50 +322,52 @@ function activationWarnings(n: Node): string[] {
 const DELIVERY_NOTES = {
   unbound: '未绑定服务器，不下发：先在节点详情「身份与操作」里绑定服务器，再上线',
   notActive: '节点不在服务中（草稿、已停用或已退役）',
-  neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
-  stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
-  serverNotReady: '所属服务器未就绪或已删除，不下发',
+  noPool: NO_POOL_NOTE,
+  poolInactive: '所在节点池未启用，不下发',
+  poolUnbound: '所在节点池没有绑定任何套餐，不会出现在任何用户的订阅里',
+  neverSeen: '所在服务器从未上报过心跳，不下发 —— 多半是还没在机器上安装节点端。发出去就是一条必然连不上的线路',
+  exceeded: XB_EXCEEDED_NOTE,
   nodeNotReady: '协议、端口或可连地址不完整，不下发',
-  poolUnbound: '所在节点池没有绑定任何套餐，暂时不服务任何用户',
+  serverNotReady: '所属服务器未就绪或已删除，不下发',
+  stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
 }
-const STABLE_TYPES = new Set(SCHEMAS.filter((s) => s.status === 'stable').map((s) => s.node_type))
 
-/** subscription.DeliverableNodeSQL 的镜像：与用户、套餐都无关的节点自身条件 */
+/** repo.DeliverableNodeCond 的镜像：与用户、套餐都无关的节点自身条件 */
 function deliverable(n: Node): boolean {
-  if (n.xb.exceeded_at !== null) return false
-  const srv = servers.find((s) => s.id === n.server_id)
-  if (!srv || srv.status !== 'ready') return false
-  const port = n.server_port ?? 0
-  const host = n.server_host || srv.public_ipv4 || ''
-  return n.serving_status === 'active' && !!n.node_type && STABLE_TYPES.has(n.node_type) && n.protocol_schema_version === 1 && port >= 1 && port <= 65535 && !!n.last_heartbeat_at && host !== ''
+  const srv = serverById(n.server_id)
+  return Boolean(n.serving_status === 'active' && !n.xb.exceeded_at && srv && srv.status === 'ready' && !!srv.last_heartbeat_at)
 }
 
 /** 套餐页 GET v1/plans/{id}/pools 的 deliverable_nodes：池里节点自身可下发的个数 */
 export const deliverableNodesInPool = (poolId: string): number => store.filter((n) => n.pool_id === poolId && deliverable(n)).length
 
-/** 后台节点列表的 delivered_to_users / delivery_note：DeliveryState 之后按 Refine 补齐 */
+/** 后台节点列表的 delivered_to_users / delivery_note：按 Go nodeDeliveryVerdict 顺序判定 */
 function deliveryOf(n: Node): { delivered: boolean; note: string } {
   // 删服务器时退役的节点也没有服务器，但已不能再绑，照「未在役」说（同 Go nodeDeliveryVerdict）
   if (!n.server_id && n.serving_status !== 'retired') return { delivered: false, note: DELIVERY_NOTES.unbound }
   if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
-  if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
-  if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
-  if (n.xb.exceeded_at) return { delivered: false, note: XB_EXCEEDED_NOTE }
+  if (n.pool_id === null) return { delivered: false, note: DELIVERY_NOTES.noPool }
+  const pool = pools.find((p) => p.id === n.pool_id)
+  if (pool?.status !== 'active') return { delivered: false, note: DELIVERY_NOTES.poolInactive }
+  if (!pool?.plans.length) return { delivered: false, note: DELIVERY_NOTES.poolUnbound }
+  const hb = hbOf(n)
+  if (!hb) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
+  if (n.xb.exceeded_at) return { delivered: false, note: DELIVERY_NOTES.exceeded }
   if (!deliverable(n)) {
-    const srv = servers.find((s) => s.id === n.server_id)
+    const srv = serverById(n.server_id)
     return { delivered: false, note: srv?.status === 'ready' ? DELIVERY_NOTES.nodeNotReady : DELIVERY_NOTES.serverNotReady }
   }
-  if (!pools.find((p) => p.id === n.pool_id)?.plans.length) return { delivered: false, note: DELIVERY_NOTES.poolUnbound }
-  const fresh = Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
+  const fresh = Date.now() - new Date(hb).getTime() < 600_000
   return { delivered: true, note: fresh ? '' : DELIVERY_NOTES.stale }
 }
 
 function listRow(n: Node) {
-  const srv = servers.find((s) => s.id === n.server_id)
+  const srv = serverById(n.server_id)
   const pool = pools.find((p) => p.id === n.pool_id)
-  const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
+  const hb = hbOf(n)
+  const stale = heartbeatStale(hb)
   const { delivered, note } = deliveryOf(n)
-  const cpu = srv?.probe ? srv.probe.cpu_bp / 100 : null
+  const m = serverMetricsLatest(srv)
   return {
     id: n.id,
     node_no: n.node_no,
@@ -346,17 +378,17 @@ function listRow(n: Node) {
     server_name: srv?.name ?? null,
     pool_id: n.pool_id,
     pool_name: pool?.name ?? null,
-    agent_version: n.last_heartbeat_at ? 'core r53' : null,
-    hostname: n.last_heartbeat_at ? srv?.name ?? null : null,
+    agent_version: srv?.agent_version ?? null,
+    hostname: srv?.hostname ?? null,
     public_ipv4: srv?.public_ipv4 ?? null,
-    cpu_cores: 4,
-    memory_mb: 4096,
-    disk_gb: 80,
-    last_heartbeat_at: n.last_heartbeat_at,
+    cpu_cores: srv?.cpu_cores ?? null,
+    memory_mb: srv?.memory_mb ?? null,
+    disk_gb: srv?.disk_gb ?? null,
+    last_heartbeat_at: hb,
     stale,
     delivered_to_users: delivered,
     delivery_note: note,
-    identity_serial: n.identity_serial,
+    identity_serial: activeIdentitySeq(srv),
     // 与 service.nodeMovableState 同口径：草稿或已停用能改绑 / 解绑
     movable: n.serving_status === 'draft' || n.serving_status === 'disabled',
     created_at: n.created_at,
@@ -369,10 +401,10 @@ function listRow(n: Node) {
     online_users: n.online_users,
     online_ips: n.online_ips,
     traffic_bytes_24h: n.traffic_bytes_24h,
-    cpu_percent: cpu,
-    mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
-    metrics_at: cpu === null ? null : ago(20),
-    granted_plans: pool?.plans.length ? pool.plans : null,
+    cpu_percent: m?.cpu_percent ?? null,
+    mem_percent: m?.mem_percent ?? null,
+    metrics_at: m?.at ?? null,
+    granted_plans: pool?.plans.length ? [...pool.plans].sort() : [],
     cert: n.cert,
     ...xbRow(n.xb),
   }
@@ -389,10 +421,23 @@ function detailRow(n: Node) {
   }
 }
 
+const ipIdentifier = (id: string | null): boolean => Boolean(id && (/^[0-9.]+$/.test(id) || id.includes(':')))
+
+/** 照 Go CertAttentionNodes（指向 node/repo 的 CertAttentionBaseCond / CertFailingCond / CertExpiringCond） */
+export function certAttention(n: Node): boolean {
+  return Boolean(
+    n.serving_status === 'active' &&
+      n.cert !== null &&
+      (n.cert.error_code !== null ||
+        (n.cert.not_after !== null &&
+          new Date(n.cert.not_after).getTime() < Date.now() + (ipIdentifier(n.cert.identifier) ? 2 : 14) * 86400_000)),
+  )
+}
+
 /** node/repo 的 nodeListFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
-const NODE_STATES = ['all', 'online', 'offline', 'disabled', 'retired']
+const NODE_STATES = ['all', 'online', 'offline', 'disabled', 'retired', 'cert']
 function matchesState(n: Node, state: string): boolean {
-  const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
+  const stale = heartbeatStale(hbOf(n))
   switch (state) {
     case 'all':
       return n.serving_status !== 'retired'
@@ -404,6 +449,8 @@ function matchesState(n: Node, state: string): boolean {
       return n.serving_status === 'draft' || n.serving_status === 'disabled'
     case 'retired':
       return n.serving_status === 'retired'
+    case 'cert':
+      return certAttention(n)
     default:
       return true
   }
@@ -411,7 +458,7 @@ function matchesState(n: Node, state: string): boolean {
 /** 服务端搜索：名称、展示名、服务器名、国家、协议、地址、编号里按子串找，不分大小写 */
 function matchesSearch(n: Node, q: string): boolean {
   if (!q) return true
-  const srv = servers.find((s) => s.id === n.server_id)
+  const srv = serverById(n.server_id)
   const hay = [n.name, n.display_name, srv?.name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
   return hay.includes(q.toLowerCase())
 }
@@ -462,7 +509,7 @@ function flatten(obj: unknown, prefix = ''): Array<[string, unknown]> {
   return Object.entries(obj).flatMap(([k, v]) => (v && typeof v === 'object' && !Array.isArray(v) && !['headers', 'padding_scheme'].includes(k) ? flatten(v, `${prefix}${k}.`) : [[`${prefix}${k}`, v]]))
 }
 
-/** 简化的协议校验：协议必须 stable、字段在 allowed 内、必填齐、枚举值合法；vless tls=2 需要 REALITY 四项 */
+/** 简化的协议校验：协议必须 stable、字段在 allowed 内、必填齐、枚举值合法；vless/trojan REALITY 需要五项；vless 裸 tcp / trojan 缺 tls 校验 */
 function validateProtocol(nodeType: string, config: unknown): Record<string, string> {
   const s = SCHEMAS.find((x) => x.node_type === nodeType)
   if (!s || s.status !== 'stable') return { node_type: `不支持的协议：${nodeType}` }
@@ -480,10 +527,26 @@ function validateProtocol(nodeType: string, config: unknown): Record<string, str
     if (path === 'cert_mode' || (acme && (path === 'cert_path' || path === 'key_path'))) continue
     if (!flat.has(path)) fields[`protocol_config.${path}`] = '必填'
   }
-  if (nodeType === 'vless' && String(flat.get('tls')) === '2') {
-    for (const key of ['dest', 'server_name', 'private_key', 'short_id']) {
-      if (!flat.get(`reality_settings.${key}`)) fields[`protocol_config.${key}`] = `REALITY 需要 ${key}`
+  const tlsVal = flat.get('tls')
+  const netVal = flat.get('network')
+  if (nodeType === 'vless' && (tlsVal === undefined || tlsVal === 0 || tlsVal === '0') && (netVal === undefined || netVal === '' || netVal === 'tcp')) {
+    fields['protocol_config.network'] = 'tcp 不加密就是明文代理（UUID 和目标地址全裸）：请改用 REALITY，或换 ws / httpupgrade / grpc / xhttp 并套 CDN'
+  }
+  if ((nodeType === 'vless' || nodeType === 'trojan') && String(tlsVal) === '2') {
+    // 照 Go Validate：内核键（server_names、short_ids…）报的错会映射回表单路径 protocol_config.reality_settings.<键>
+    const realityFields: Record<string, string> = {
+      dest: '必填：借用握手的真实站点，如 www.apple.com:443（需支持 TLS 1.3 + X25519）',
+      server_name: '必填：至少一个，且要和 dest 的证书对得上',
+      private_key: '私钥必填',
+      public_key: '公钥必填（客户端要用它，不能省）',
+      short_id: '必填：至少一个 short id（不超过 16 位的十六进制，可用「生成」按钮）',
     }
+    for (const [key, msg] of Object.entries(realityFields)) {
+      if (!flat.get(`reality_settings.${key}`)) fields[`protocol_config.reality_settings.${key}`] = msg
+    }
+  }
+  if (nodeType === 'trojan' && (tlsVal === undefined || tlsVal === 0 || tlsVal === '0')) {
+    fields['protocol_config.tls'] = 'Trojan 普通传输必须启用 tls'
   }
   return fields
 }
@@ -571,8 +634,16 @@ function batchStatusCheck(rows: Node[], to: string): MockResult | null {
   if (!(to in EDGES)) return invalid({ serving_status: '不支持的服务状态' })
   for (const n of rows) {
     if (!EDGES[n.serving_status]!.includes(to)) return err(409, 'conflict', '不允许的节点服务状态转换', { serving_status: `${n.serving_status} -> ${to}` })
-    if (to === 'active' && !n.server_id) return err(409, 'conflict', UNBOUND_ACTIVATE, { server_id: UNBOUND_ACTIVATE, id: n.id })
-    if (to === 'active' && (!n.node_type || servers.find((s) => s.id === n.server_id)?.status !== 'ready')) return err(409, 'conflict', '节点协议或服务器状态未满足启用条件')
+    if (to === 'active') {
+      if (!n.server_id) return err(409, 'conflict', UNBOUND_ACTIVATE, { server_id: UNBOUND_ACTIVATE, id: n.id })
+      const srv = serverById(n.server_id)
+      if (!protocolReady(n) || !srv || srv.status !== 'ready') {
+        return err(409, 'conflict', '节点协议未配好或所在服务器未就绪，不能启用；新服务器上的节点请用「上线」', { id: n.id })
+      }
+      if (!serverEnrolled(srv)) {
+        return err(409, 'conflict', SERVER_NOT_ENROLLED, { server_id: SERVER_NOT_ENROLLED, id: n.id })
+      }
+    }
   }
   return null
 }
@@ -607,7 +678,7 @@ export const nodes: MockModule = {
       const state = ctx.query.get('state') ?? ''
       const q = (ctx.query.get('q') ?? '').trim()
       const id = (ctx.query.get('id') ?? '').trim()
-      if (state && !NODE_STATES.includes(state)) return reply(ctx, invalid({ state: '只能是 all、online、offline、disabled、retired 之一' }))
+      if (state && !NODE_STATES.includes(state)) return reply(ctx, invalid({ state: '只能是 all、online、offline、disabled、retired、cert 之一' }))
       if ([...q].length > 120) return reply(ctx, invalid({ q: '搜索词太长' }))
       if (id && !UUID.test(id)) return reply(ctx, invalid({ id: '格式不正确' }))
       const tagRaw = ctx.query.get('tag') ?? ''
@@ -648,8 +719,6 @@ export const nodes: MockModule = {
           display_name: text(body.display_name) || null,
           country_code: text(body.country_code).toUpperCase() || null,
           protocol_config: body.protocol_config as Json,
-          last_heartbeat_at: null,
-          identity_serial: null,
         })
         n.server_id = srv?.id ?? null
         n.row_version = 1
@@ -705,7 +774,7 @@ export const nodes: MockModule = {
         const target = targetId ? servers.find((s) => s.id === targetId) : undefined
         if (targetId && !target) return invalid({ target_server_id: '服务器不存在' })
         if (target && target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
-        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', last_heartbeat_at: null, identity_serial: null, online_users: 0, online_ips: 0, traffic_bytes_24h: 0 })
+        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', online_users: 0, online_ips: 0, traffic_bytes_24h: 0 })
         // node() 先给新 id 与编号，再被源节点的字段覆盖：复制出来的必须是新节点
         copy.id = randomUUID()
         copy.node_no = nodeNo
@@ -854,11 +923,11 @@ export const nodes: MockModule = {
         if (body.row_version !== n.row_version) return conflict(n)
         if (n.serving_status === 'retired') return err(409, 'conflict', '节点已退役，不能上线')
         if (!n.server_id) return err(409, 'conflict', UNBOUND_ACTIVATE, { server_id: UNBOUND_ACTIVATE })
-        if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、对外地址、端口），补齐后再上线')
-        const srv = servers.find((s) => s.id === n.server_id)
+        if (!protocolReady(n)) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、对外地址、端口），补齐后再上线')
+        const srv = serverById(n.server_id)
         if (!srv) return err(409, 'conflict', '节点所在的服务器已删除，不能上线')
-        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '服务器还没接入（先在服务器页生成安装命令完成接入）')
-        if (srv.status !== 'ready' && !SERVER_TO_READY.includes(srv.status)) return err(409, 'conflict', `节点所在的服务器处于 ${srv.status}，不能进入 ready，先处理服务器状态再上线`)
+        if (!serverEnrolled(srv)) return err(409, 'conflict', SERVER_NOT_ENROLLED, { server_id: SERVER_NOT_ENROLLED })
+        if (srv.status !== 'ready' && !SERVER_TO_READY.includes(srv.status)) return err(409, 'conflict', `节点所在的服务器处于「${SERVER_STATUS_LABEL[srv.status] ?? srv.status}」，不能投入服务：把节点换绑到其他服务器后再上线`)
         n.serving_status = 'active'
         srv.status = 'ready'
         touch(n)
@@ -876,7 +945,6 @@ export const nodes: MockModule = {
         if (body.row_version !== n.row_version) return conflict(n)
         if (n.serving_status === 'retired') return err(409, 'conflict', '节点已经退役')
         n.serving_status = 'retired'
-        n.identityRevoked = true
         touch(n)
         return { status: 200, body: adminNode(n) }
       })
@@ -887,8 +955,10 @@ export const nodes: MockModule = {
       if (!n) return reply(ctx, notFound())
       // 照 Go RevokeNodeIdentity：没绑服务器、服务器没有有效身份都是 409
       if (!n.server_id) return reply(ctx, err(409, 'conflict', '节点还没放到服务器上，没有接入身份'))
-      if (!n.identity_serial || n.identityRevoked) return reply(ctx, err(409, 'conflict', '这台服务器没有有效的接入身份'))
-      n.identityRevoked = true
+      const srv = serverById(n.server_id)
+      if (!srv || !revokeServerIdentity(srv, '后台吊销')) {
+        return reply(ctx, err(409, 'conflict', '这台服务器没有有效的接入身份'))
+      }
       ctx.send(200, { ok: true })
     },
     'POST /v1/nodes/config/publish': async (ctx) => {
@@ -904,15 +974,55 @@ export const nodes: MockModule = {
     },
     'GET /v1/nodes/:id/metrics': (ctx) => {
       const n = findNode(ctx.params.id)
-      if (!n || !n.last_heartbeat_at || n.serving_status === 'retired') return ctx.send(200, { points: null, latest: null })
+      if (!n) return reply(ctx, notFound('节点不存在'))
+      const mParam = Number(ctx.query.get('minutes'))
+      const minutes = Number.isInteger(mParam) && mParam >= 1 && mParam <= 1440 ? mParam : 60
+      const srv = serverById(n.server_id)
+      if (!srv || !srv.last_heartbeat_at || !srv.probe) return ctx.send(200, { points: [], latest: null })
       const now = Date.now()
-      const scale = n.online_users / 400 || 0.05
-      const points = Array.from({ length: 144 }, (_, i) => {
-        const at = now - (143 - i) * 600_000
+      const end = Date.parse(srv.last_heartbeat_at)
+      const start = now - minutes * 60_000
+      const timestamps: number[] = []
+      for (let t = end; t >= start; t -= 600_000) {
+        timestamps.push(t)
+      }
+      timestamps.reverse()
+      if (timestamps.length === 0) return ctx.send(200, { points: [], latest: null })
+      const totalOnline = store
+        .filter((x) => !x.deleted && x.server_id === srv.id && x.serving_status === 'active')
+        .reduce((sum, x) => sum + x.online_users, 0)
+      const scale = totalOnline / 400 || 0.05
+      const points = timestamps.map((at, idx) => {
         const wave = 0.5 + 0.5 * Math.sin(((at / 3600_000) % 24) / 3.8)
-        return { at: new Date(at).toISOString(), cpu_percent: Math.round(20 + 50 * wave * scale), mem_percent: 55, load1: 0.8, rx_speed: Math.round(40e6 * wave * scale), tx_speed: Math.round(8e6 * wave * scale), tcp_conns: Math.round(900 * wave * scale) }
+        const isLast = idx === timestamps.length - 1
+        return {
+          at: new Date(at).toISOString(),
+          cpu_percent: isLast ? srv.probe!.cpu_bp / 100 : Math.round(20 + 50 * wave * scale),
+          mem_percent: 55,
+          load1: 0.8,
+          rx_speed: Math.round(40e6 * wave * scale),
+          tx_speed: Math.round(8e6 * wave * scale),
+          tcp_conns: Math.round(900 * wave * scale),
+        }
       })
-      ctx.send(200, { points, latest: { cpu_percent: points.at(-1)!.cpu_percent, mem_used_mb: 2400, mem_total_mb: 4096, disk_used_gb: 22, disk_total_gb: 80, load1: 0.8, load5: 0.7, load15: 0.6, tcp_conns: points.at(-1)!.tcp_conns, uptime_sec: 86400 * 12, rx_total: 9e12, tx_total: 2e12 } })
+      const lastPoint = points.at(-1)!
+      ctx.send(200, {
+        points,
+        latest: {
+          cpu_percent: srv.probe.cpu_bp / 100,
+          mem_used_mb: srv.probe.mem_used_mb,
+          mem_total_mb: srv.probe.mem_total_mb,
+          disk_used_gb: srv.probe.disk_used_gb,
+          disk_total_gb: srv.probe.disk_total_gb,
+          load1: 0.8,
+          load5: 0.7,
+          load15: 0.6,
+          tcp_conns: lastPoint.tcp_conns,
+          uptime_sec: 86400 * 12,
+          rx_total: 9e12,
+          tx_total: 2e12,
+        },
+      })
     },
     'GET /v1/nodes/:id/routing': (ctx) => {
       const n = findNode(ctx.params.id)
@@ -939,18 +1049,7 @@ export const nodes: MockModule = {
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       // 照 Go NodeIdentity：没绑服务器回空视图（无身份、0 个令牌），身份与令牌都是服务器级的
-      const identity = n.server_id && n.identity_serial
-        ? {
-            serial: n.identity_serial,
-            status: n.identityRevoked ? 'revoked' : 'active',
-            spiffe_id: `spiffe://pandora/node/${n.id}`,
-            fingerprint_sha256: randomBytes(32).toString('hex'),
-            issued_at: ago(86400 * 20),
-            expires_at: new Date(Date.now() + 86400_000 * 70).toISOString(),
-            ...(n.identityRevoked ? { revoked_at: ago(60), revoked_reason: 'admin_revoked' } : {}),
-          }
-        : null
-      ctx.send(200, { identity, bootstrap_tokens_pending: n.server_id && !n.last_heartbeat_at ? 1 : 0 })
+      ctx.send(200, identityView(serverById(n.server_id)))
     },
   },
 }
