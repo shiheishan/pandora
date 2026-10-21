@@ -48,7 +48,8 @@ func TestManualPendingNotifiesUser(t *testing.T) {
 	if err := e.row(ctx, `SELECT expires_at FROM orders WHERE id = ?`, c.OrderID).Scan(&expiresAt); err != nil {
 		t.Fatal(err)
 	}
-	if !n.ExpiresAt.Equal(expiresAt) {
+	// PG timestamptz 只到微秒（四舍五入），Linux 上 Go 的时刻带纳秒：差不到 1 微秒算同一时刻
+	if d := n.ExpiresAt.Sub(expiresAt); d >= time.Microsecond || d <= -time.Microsecond {
 		t.Fatalf("ExpiresAt 通知 %s 库 %s", n.ExpiresAt, expiresAt)
 	}
 	if !expiresAt.After(before) {
