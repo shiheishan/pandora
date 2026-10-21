@@ -278,7 +278,6 @@ export const MIN_PAYMENT = Math.min(...PAY_METHODS.map((m) => m.min_amount))
 // ---------------------------------------------------------------------------
 export interface GiftTemplate {
   name: string
-  description: string
   type: 'general' | 'plan' | 'mystery'
   rewards: { balance?: number; traffic_bytes?: number; expire_days?: number; reset_quota?: boolean; plan_id?: string; price_id?: string; pool?: Array<{ label: string; weight: number; balance?: number; traffic_bytes?: number; expire_days?: number; reset_quota?: boolean }> }
   /** 兑换时的拒绝（预览照常能看到卡面） */
@@ -288,17 +287,15 @@ export interface GiftTemplate {
 const TRAFFIC_PLAN = PLANS[3]!
 
 export const GIFT_CARDS: Readonly<Record<string, GiftTemplate>> = {
-  'GC-0923-H2K9-7QPA': { name: '国庆余额卡', description: '', type: 'general', rewards: { balance: 10000 } },
-  'GC-1001-TRAF-0200': { name: '流量礼包', description: '', type: 'general', rewards: { traffic_bytes: 200 * GIB } },
+  'GC-0923-H2K9-7QPA': { name: '国庆余额卡', type: 'general', rewards: { balance: 10000 } },
+  'GC-1001-TRAF-0200': { name: '流量礼包', type: 'general', rewards: { traffic_bytes: 200 * GIB } },
   'GC-0911-Q7ZP-M3VX': {
     name: '标准版月卡',
-    description: '兑换后开通标准版，已有订阅则顺延 30 天',
     type: 'plan',
     rewards: { plan_id: PLANS[0]!.id, price_id: PLANS[0]!.prices[0]!.id },
   },
   'GC-1024-MYST-BOX1': {
     name: '万圣节盲盒',
-    description: '',
     type: 'mystery',
     rewards: {
       pool: [
@@ -308,18 +305,17 @@ export const GIFT_CARDS: Readonly<Record<string, GiftTemplate>> = {
       ],
     },
   },
-  'GC-EXTD-0007-DAYS': { name: '续命卡', description: '', type: 'general', rewards: { expire_days: 7 } },
-  'GC-0000-NEWU-0001': { name: '新人专享卡', description: '仅限新注册用户', type: 'general', rewards: { balance: 2000 }, redeemError: '这张卡只能新用户使用' },
-  'GC-1002-RSET-QUOT': { name: '流量重置卡', description: '', type: 'general', rewards: { reset_quota: true } },
+  'GC-EXTD-0007-DAYS': { name: '续命卡', type: 'general', rewards: { expire_days: 7 } },
+  'GC-0000-NEWU-0001': { name: '新人专享卡', type: 'general', rewards: { balance: 2000 }, redeemError: '这张卡只能新用户使用' },
+  'GC-1002-RSET-QUOT': { name: '流量重置卡', type: 'general', rewards: { reset_quota: true } },
   'GC-1016-ONCE-0100': {
     name: '流量版卡',
-    description: '',
     type: 'plan',
     rewards: { plan_id: TRAFFIC_PLAN.id, price_id: TRAFFIC_PLAN.prices[0]!.id },
   },
   // 原型 CARDS（proto-s5a / s5b）
-  'A7K2-STD1-M9QX': { name: '标准版 · 1 个月', description: '', type: 'plan', rewards: { plan_id: PROTO_PLANS[1]!.id, price_id: PROTO_PLANS[1]!.prices[0]!.id } },
-  'B3P8-PRO1-W4RT': { name: '进阶版 · 1 个月', description: '', type: 'plan', rewards: { plan_id: PROTO_PLANS[2]!.id, price_id: PROTO_PLANS[2]!.prices[0]!.id } },
-  'C5D3-D030-H8NE': { name: '加 30 天', description: '', type: 'general', rewards: { expire_days: 30 } },
-  'D9R1-RSET-J2LU': { name: '流量清零重算一次', description: '', type: 'general', rewards: { reset_quota: true } },
+  'A7K2-STD1-M9QX': { name: '标准版 · 1 个月', type: 'plan', rewards: { plan_id: PROTO_PLANS[1]!.id, price_id: PROTO_PLANS[1]!.prices[0]!.id } },
+  'B3P8-PRO1-W4RT': { name: '进阶版 · 1 个月', type: 'plan', rewards: { plan_id: PROTO_PLANS[2]!.id, price_id: PROTO_PLANS[2]!.prices[0]!.id } },
+  'C5D3-D030-H8NE': { name: '加 30 天', type: 'general', rewards: { expire_days: 30 } },
+  'D9R1-RSET-J2LU': { name: '流量清零重算一次', type: 'general', rewards: { reset_quota: true } },
 }

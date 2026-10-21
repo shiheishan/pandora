@@ -40,16 +40,14 @@ func (s *Service) Preview(ctx context.Context, rawCode string) (CardPreview, err
 		return CardPreview{}, ErrCodeUnusable
 	}
 	out := CardPreview{
-		ID:          t.ID,
-		Name:        t.Name,
-		Description: t.Description,
-		Type:        t.Type,
-		Status:      t.Status,
-		Rewards:     t.Rewards,
-		Conditions:  t.Conditions,
-		Limits:      t.Limits,
-		ThemeColor:  t.ThemeColor,
-		CreatedAt:   t.CreatedAt,
+		ID:         t.ID,
+		Name:       t.Name,
+		Type:       t.Type,
+		Status:     t.Status,
+		Rewards:    t.Rewards,
+		Conditions: t.Conditions,
+		Limits:     t.Limits,
+		CreatedAt:  t.CreatedAt,
 	}
 	if t.Type == TypeMystery {
 		labels := make([]Prize, 0, len(t.Rewards.Pool))

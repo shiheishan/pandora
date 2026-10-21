@@ -62,29 +62,25 @@ type Rewards struct {
 
 // Conditions 是领取条件。
 type Conditions struct {
-	NewUserOnly    bool
-	PaidUserOnly   bool
-	AllowedPlanIDs []uuid.UUID
-	RequireInvite  bool
+	NewUserOnly   bool
+	PaidUserOnly  bool
+	RequireInvite bool
 }
 
-// Limits 是使用限制：0 表示不限。
+// Limits 是每人限兑次数：0 表示不限。
 type Limits struct {
 	MaxUsePerUser int
-	CooldownHours int
 }
 
 // Template 是一个礼品卡模板（后台视图）。
 type Template struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	Type        string
-	Status      string
-	Rewards     Rewards
-	Conditions  Conditions
-	Limits      Limits
-	ThemeColor  string
+	ID         uuid.UUID
+	Name       string
+	Type       string
+	Status     string
+	Rewards    Rewards
+	Conditions Conditions
+	Limits     Limits
 	// PriceArchived 是套餐卡指向的价格档已下架（归档或不存在）：后台标「价格已下架」，兑换会被拒，编辑时必须重选在售价
 	PriceArchived bool
 	// CodeTotal、CodeUsed 是这个模板下的码数与已兑换数
@@ -95,16 +91,14 @@ type Template struct {
 
 // TemplateInput 是新建或修改模板的输入；ID 为 nil 是新建。卡型建好后不能改。
 type TemplateInput struct {
-	ID          *uuid.UUID
-	Name        string
-	Description string
-	Type        string
+	ID   *uuid.UUID
+	Name string
+	Type string
 	// Status 空串按 active
 	Status     string
 	Rewards    Rewards
 	Conditions Conditions
 	Limits     Limits
-	ThemeColor string
 }
 
 // Batch 是一个生码批次的后台视图。
@@ -256,16 +250,14 @@ type RedeemResult struct {
 
 // CardPreview 是门户兑换前看到的卡面：模板里用户该看的部分（不含发行量）。盲盒只回奖品名，不回权重与奖励。
 type CardPreview struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	Type        string
-	Status      string
-	Rewards     Rewards
-	Conditions  Conditions
-	Limits      Limits
-	ThemeColor  string
-	CreatedAt   time.Time
+	ID         uuid.UUID
+	Name       string
+	Type       string
+	Status     string
+	Rewards    Rewards
+	Conditions Conditions
+	Limits     Limits
+	CreatedAt  time.Time
 	// PlanName、PlanKind、Interval、IntervalCount、ValidityDays 只给套餐卡
 	// PlanKind 是套餐类型（catalog 的 "subscription" / "one_time"）；ValidityDays 只给一次性套餐的价格：有效天数，nil 为永久
 	PlanName      string

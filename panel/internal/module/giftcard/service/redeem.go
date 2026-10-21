@@ -11,7 +11,6 @@ import (
 	catalogsvc "github.com/aegispanel/aegis/internal/module/catalog/service"
 	"github.com/aegispanel/aegis/internal/module/giftcard/model"
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
-	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/money"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
@@ -69,15 +68,14 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 		if t.Status != TemplateActive {
 			return ErrTemplateInactive
 		}
-		subs := &userSubs{s: s, user: user}
-		if err := s.checkConditions(ctx, user, t, subs); err != nil {
+		if err := s.checkConditions(ctx, user, t); err != nil {
 			return err
 		}
-		if t.Limits.MaxUsePerUser > 0 || t.Limits.CooldownHours > 0 {
+		if t.Limits.MaxUsePerUser > 0 {
 			if err := s.repo.LockUserTemplate(ctx, user, t.ID); err != nil {
 				return gcErr(err)
 			}
-			if err := s.checkLimits(ctx, user, t, now); err != nil {
+			if err := s.checkLimits(ctx, user, t); err != nil {
 				return err
 			}
 		}
@@ -96,7 +94,7 @@ func (s *Service) Redeem(ctx context.Context, in RedeemInput) (RedeemResult, err
 		var opt Option
 		placed, targetPermanent := false, false
 		if o.Kind != offerNone {
-			us, err := subs.get(ctx)
+			us, err := s.subs.ByUser(ctx, user)
 			if err != nil {
 				return err
 			}
@@ -171,31 +169,8 @@ func permanentIn(cands []candidate, id uuid.UUID) bool {
 	return false
 }
 
-// userSubs 在一次兑换里只取一次用户的订阅摘要（领取条件与落点共用）。
-type userSubs struct {
-	s      *Service
-	user   uuid.UUID
-	loaded bool
-	val    subsSnapshot
-}
-
-// subsSnapshot 是 subscription 的 UserSubscriptions（别名，免得本文件到处写包名）。
-type subsSnapshot = subsvc.UserSubscriptions
-
-func (u *userSubs) get(ctx context.Context) (subsSnapshot, error) {
-	if u.loaded {
-		return u.val, nil
-	}
-	v, err := u.s.subs.ByUser(ctx, u.user)
-	if err != nil {
-		return subsSnapshot{}, err
-	}
-	u.val, u.loaded = v, true
-	return v, nil
-}
-
 // checkConditions 校验领取条件。付费记录与邀请关系没装配时宁可不让兑（ErrConditionUnavailable）。
-func (s *Service) checkConditions(ctx context.Context, user uuid.UUID, t Template, subs *userSubs) error {
+func (s *Service) checkConditions(ctx context.Context, user uuid.UUID, t Template) error {
 	c := t.Conditions
 	if c.NewUserOnly || c.PaidUserOnly {
 		if s.paid == nil {
@@ -210,26 +185,6 @@ func (s *Service) checkConditions(ctx context.Context, user uuid.UUID, t Templat
 		}
 		if c.PaidUserOnly && !paid {
 			return errs.Newf(errs.ValidationFailed, "这张卡需要有过付费记录才能使用")
-		}
-	}
-	if len(c.AllowedPlanIDs) > 0 {
-		us, err := subs.get(ctx)
-		if err != nil {
-			return err
-		}
-		allowed := make(map[uuid.UUID]bool, len(c.AllowedPlanIDs))
-		for _, id := range c.AllowedPlanIDs {
-			allowed[id] = true
-		}
-		ok := false
-		for _, sub := range us.Subscriptions {
-			if allowed[sub.PlanID] && sub.State.AcceptsChange() {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return errs.Newf(errs.ValidationFailed, "你当前的套餐不在这张卡的适用范围内")
 		}
 	}
 	if c.RequireInvite {
@@ -247,20 +202,14 @@ func (s *Service) checkConditions(ctx context.Context, user uuid.UUID, t Templat
 	return nil
 }
 
-// checkLimits 校验每人次数与冷却；调用方已取 (用户, 模板) 的咨询锁，并发兑同一模板的不同码排队数。
-func (s *Service) checkLimits(ctx context.Context, user uuid.UUID, t Template, now time.Time) error {
-	used, last, err := s.repo.UserTemplateUsage(ctx, user, t.ID)
+// checkLimits 校验每人限兑次数；调用方已取 (用户, 模板) 的咨询锁，并发兑同一模板的不同码排队数。
+func (s *Service) checkLimits(ctx context.Context, user uuid.UUID, t Template) error {
+	used, err := s.repo.UserTemplateUsage(ctx, user, t.ID)
 	if err != nil {
 		return gcErr(err)
 	}
 	if t.Limits.MaxUsePerUser > 0 && used >= int64(t.Limits.MaxUsePerUser) {
 		return errs.Newf(errs.ValidationFailed, "这个活动你已经兑换过了，每人限 "+strconv.Itoa(t.Limits.MaxUsePerUser)+" 次")
-	}
-	if t.Limits.CooldownHours > 0 && last != nil {
-		next := last.Add(time.Duration(t.Limits.CooldownHours) * time.Hour)
-		if next.After(now) {
-			return errs.Newf(errs.ValidationFailed, "兑换太频繁了，请在 "+next.UTC().Format("2006-01-02 15:04")+"（UTC）之后再试")
-		}
 	}
 	return nil
 }
@@ -301,7 +250,7 @@ func (g granted) result(t Template) RedeemResult {
 }
 
 // redemptionModel 把发放结果转成兑换流水行。
-// redeemedAt 显式写兑换时刻（与 used_at、冷却判断同一个时钟）。
+// redeemedAt 显式写兑换时刻（与 used_at 同一个时钟）。
 func redemptionModel(c model.Code, t Template, user uuid.UUID, g granted, redeemedAt time.Time) *model.Redemption {
 	m := &model.Redemption{
 		RedeemedAt:     redeemedAt,

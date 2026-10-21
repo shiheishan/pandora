@@ -57,13 +57,11 @@ describe('gift cards', () => {
   const tpl = (t: Partial<GiftTemplate>): GiftTemplate => ({
     id: 't',
     name: '卡',
-    description: '',
     type: 'general',
     status: 'active',
     rewards: {},
     conditions: {},
     limits: {},
-    theme_color: '',
     code_total: 0,
     code_used: 0,
     price_archived: false,
@@ -129,13 +127,11 @@ describe('gift cards', () => {
       ok: true,
       body: {
         name: '通用卡',
-        description: '',
         type: 'general',
         status: 'active',
         rewards: { balance: 10050, traffic_bytes: 50 * GB, expire_days: 30, reset_quota: true },
         conditions: { new_user_only: true },
         limits: { max_use_per_user: 2 },
-        theme_color: '',
       },
     })
   })
@@ -216,25 +212,21 @@ describe('gift cards', () => {
     const t = tpl({
       id: 't-123',
       name: '原模板',
-      description: '原说明',
       type: 'general',
       status: 'active',
       rewards: { balance: 2000, traffic_bytes: 10 * GB },
       conditions: { new_user_only: true, require_invite: true },
-      limits: { max_use_per_user: 3, cooldown_hours: 24 },
-      theme_color: '#ff0000',
+      limits: { max_use_per_user: 3 },
     })
     const pausedBody = templateStatusBody(t, 'paused')
     expect(pausedBody).toEqual({
       id: 't-123',
       name: '原模板',
-      description: '原说明',
       type: 'general',
       status: 'paused',
       rewards: { balance: 2000, traffic_bytes: 10 * GB },
       conditions: { new_user_only: true, require_invite: true },
-      limits: { max_use_per_user: 3, cooldown_hours: 24 },
-      theme_color: '#ff0000',
+      limits: { max_use_per_user: 3 },
     })
   })
 

@@ -292,13 +292,11 @@ export const wallet: MockModule = {
           card: {
             id: code,
             name: card.name,
-            description: card.description,
             type: card.type,
             status: 'active',
             rewards,
             conditions: {},
             limits: {},
-            theme_color: '#b9442b',
             created_at: '2026-09-01T00:00:00Z',
             ...cardPreviewFields(card),
             placement: placement(portalState(ctx.user.userId), card),

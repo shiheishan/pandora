@@ -341,19 +341,18 @@ func TestListCodesBadFilter(t *testing.T) {
 	mustStatus(t, w, http.StatusBadRequest)
 }
 
-// 保存模板：分转元、id 解析。
+// 保存模板：分转元、条件与限次透传、id 解析。
 func TestSaveTemplateCents(t *testing.T) {
-	planID := uuid.New()
 	var got service.TemplateInput
 	f := &fakeSvc{saveTemplate: func(in service.TemplateInput) (service.Template, error) {
 		got = in
 		return service.Template{ID: uuid.New(), Name: in.Name, Type: in.Type, Rewards: in.Rewards}, nil
 	}}
 	w := do(newEngine(f, true, nil), http.MethodPost, "/v1/gift-cards",
-		`{"name":"卡","type":"general","rewards":{"balance":1999},"conditions":{"allowed_plan_ids":["`+planID.String()+`"]}}`)
+		`{"name":"卡","type":"general","rewards":{"balance":1999},"conditions":{"new_user_only":true},"limits":{"max_use_per_user":2}}`)
 	mustStatus(t, w, http.StatusOK)
 	if !got.Rewards.Balance.Equal(decimal.RequireFromString("19.99")) || got.ID != nil ||
-		len(got.Conditions.AllowedPlanIDs) != 1 || got.Conditions.AllowedPlanIDs[0] != planID {
+		!got.Conditions.NewUserOnly || got.Limits.MaxUsePerUser != 2 {
 		t.Fatalf("service 收到 %+v", got)
 	}
 	tpl := obj(t, w.Body.Bytes())["template"].(map[string]any)

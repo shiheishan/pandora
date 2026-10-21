@@ -223,13 +223,11 @@ export function buildTemplateRequest(f: TemplateForm, plans: readonly Plan[] | u
     ok: true,
     body: {
       name,
-      description: '',
       type: f.type,
       status: 'active',
       rewards,
       conditions,
       limits,
-      theme_color: '',
     },
   }
 }
@@ -239,13 +237,11 @@ export function templateStatusBody(t: GiftTemplate, status: 'active' | 'paused')
   return {
     id: t.id,
     name: t.name,
-    description: t.description,
     type: t.type,
     status,
     rewards: t.rewards,
     conditions: t.conditions,
     limits: t.limits,
-    theme_color: t.theme_color,
   }
 }
 
