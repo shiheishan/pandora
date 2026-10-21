@@ -70,7 +70,7 @@ function InviteCard({ summary }: { summary: Commission['summary'] | undefined })
   const siteName = appearance.data?.site_name?.trim() || 'Pandora'
   const code = invite.data?.invite.code
   const link = code ? inviteLink(code, window.location.origin) : ''
-  const usage = invite.data ? inviteUsage(invite.data.invite) : null
+  const usage = invite.data ? inviteUsage(invite.data) : null
   const closed = site.data?.registration_mode === 'closed'
   const parts = summary ? headlineParts(summary.direct_rate_bp, summary.scope) : null
 

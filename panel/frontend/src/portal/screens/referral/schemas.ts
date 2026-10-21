@@ -21,5 +21,6 @@ export const inviteSchema = z.object({
   invitees: z.array(z.object({ email: z.string(), bound_at: z.string(), risk_flag: z.enum(['none', 'suspicious', 'confirmed_fraud']) })),
   codes: z.array(inviteCodeSchema),
   max_codes: z.number().int(),
+  single_use: z.boolean(),
 })
 export type Invite = z.output<typeof inviteSchema>
