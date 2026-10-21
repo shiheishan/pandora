@@ -209,7 +209,7 @@ var (
 	// ErrNoPlacement 是这张卡要落到一份在用的套餐上，而用户一份都没有。
 	ErrNoPlacement = errs.Newf(errs.ValidationFailed, "现在没有在用的套餐，这张卡暂时用不了。先续费再来兑换，卡不会过期")
 	// ErrNoTrafficTarget 是卡要送流量，用户没有生效中的、限流量的订阅。
-	ErrNoTrafficTarget = errs.Newf(errs.ValidationFailed, "没有可加流量的订阅")
+	ErrNoTrafficTarget = errs.Newf(errs.ValidationFailed, "没有能加流量的套餐（要有一份在用、限流量的）")
 	// ErrRenewArchived 是选了续费但套餐已归档。
 	ErrRenewArchived = errs.Newf(errs.ValidationFailed, "这张卡的套餐已归档，不能再续费")
 	// ErrChoiceStale 是选定的用法不在当前选项里（订阅状态在预览之后变了，或请求被篡改）。

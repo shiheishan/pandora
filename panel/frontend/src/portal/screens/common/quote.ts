@@ -44,6 +44,9 @@ export function expectation(quote: Quote, row: QuoteRow, split: BalanceSplit) {
   return { as_of: quote.as_of, expect: { total: row.total, balance_applied: split.applied, payable: split.payable } }
 }
 
+/** 门户新开一份到了每人份数上限（409）：报价、建单都回，原话显示，不当加载失败 */
+export const isSubscriptionLimit = (e: unknown) => isApiError(e, 'subscription_limit_reached')
+
 /** 建单被拒的两种购买特有情形（设计稿 2.2 / 2.4，httpx.CodeQuoteChanged / CodeOrderPending，都是 409），按码认 */
 export function purchaseRefusal(error: unknown): 'quote_changed' | 'order_pending' | null {
   if (isApiError(error, 'quote_changed')) return 'quote_changed'

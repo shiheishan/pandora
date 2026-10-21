@@ -520,6 +520,11 @@
   font-weight: 600;
 }
 
+/* 一个都选不了时列表下面的去处按钮 */
+.landAct {
+  margin-top: 14px;
+}
+
 @media (max-width: 639px) {
   .tier {
     padding: 14px 16px;

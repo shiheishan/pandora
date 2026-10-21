@@ -91,19 +91,19 @@ var (
 	// ErrNotFound 是订阅不存在或不是这个用户的（不暴露存在与否）。
 	ErrNotFound = errs.New(errs.NotFound)
 	// ErrRenewalWindowClosed 是过期超过 30 天、续费窗口已关的订阅再来续费或换套餐。
-	ErrRenewalWindowClosed = errs.Newf(errs.Conflict, "这条订阅已过期超过 30 天，不能再原地续费，请重新购买（会换新的订阅链接）")
+	ErrRenewalWindowClosed = errs.Newf(errs.Conflict, "这一份已过期超过 30 天，不能再续费，请重新买一份（会是新链接）")
 	// ErrExtendWindowClosed 是续费窗口已关的订阅再来延期。
-	ErrExtendWindowClosed = errs.Newf(errs.Conflict, "这条订阅已过期超过 30 天，不能再延长，只能重新购买（会换新的订阅链接）")
+	ErrExtendWindowClosed = errs.Newf(errs.Conflict, "这一份已过期超过 30 天，不能再延长，只能重新买一份（会是新链接）")
 	// ErrNotLive 是只给生效中的订阅做的操作（重置流量）遇到不生效的订阅。
 	ErrNotLive = errs.Newf(errs.ValidationFailed, "这一份不在生效中，不能重置流量")
 	// ErrNoTrafficQuota 是订阅没有流量配额行。
-	ErrNoTrafficQuota = errs.Newf(errs.ValidationFailed, "这个订阅没有流量配额")
+	ErrNoTrafficQuota = errs.Newf(errs.ValidationFailed, "这一份不限流量，不用重置")
 	// ErrNotActive 是送流量的那一份已过期（送的流量只给生效中的订阅）。
 	ErrNotActive = errs.Newf(errs.Conflict, "这一份已过期，不能再加流量")
 	// ErrUnlimited 是送流量的那一份不限流量（没有限额的流量配额行），无需加。
 	ErrUnlimited = errs.Newf(errs.Conflict, "这一份不限流量，无需加流量")
 	// ErrBonusPeriodSwitching：本期已结束、还没滚到下一期，这时送的流量会在滚动时被清零。
-	ErrBonusPeriodSwitching = errs.Newf(errs.Conflict, "流量周期正在切换，请稍后再试")
+	ErrBonusPeriodSwitching = errs.Newf(errs.Conflict, "本期流量刚结束，正在换到下一期，请几分钟后再试")
 	// ErrRenewOneTime 是一次性套餐来续费：一次性套餐不能续费，只能叠加或另买一份。
 	ErrRenewOneTime = errs.Newf(errs.Conflict, "一次性套餐不能续费，可以叠加到这一份或另买一份")
 	// ErrStackNotOneTime 是叠加的目标不是一次性套餐，或与要叠加的不是同一个套餐。
@@ -111,14 +111,14 @@ var (
 	// ErrVersionUnavailable 是开通、换套餐给的版本不存在、不属于该套餐或没发布。
 	ErrVersionUnavailable = errs.Newf(errs.Conflict, "该套餐尚未发布可用版本")
 	// ErrStateChanged 是带旧状态的条件更新影响 0 行（并发改了状态）。
-	ErrStateChanged = errs.Newf(errs.Conflict, "订阅状态已变化，请刷新后重试")
+	ErrStateChanged = errs.Newf(errs.Conflict, "这一份的状态刚变了，请刷新后重试")
 	// ErrRotateWhileExpired 是门户在订阅不生效时换链接：续费后原链接自动恢复，过期期间换掉会让所有设备上的旧链接在续费后失效。
-	ErrRotateWhileExpired = errs.Newf(errs.Conflict, "订阅已过期，续费后原链接会自动恢复；过期期间不能更换订阅链接")
+	ErrRotateWhileExpired = errs.Newf(errs.Conflict, "这一份已过期，续费后原链接会自动恢复；过期期间不能换新链接")
 	// ErrPullDenied 是订阅拉取认证不通过（前缀或令牌不对、凭据失效、订阅已停用、主人账号停用）：
 	// handler 一律回伪装 404，不区分原因。
 	ErrPullDenied = errs.New(errs.NotFound)
 	// ErrDeliveryUnavailable 是订阅分发要的依赖（UseDelivery、UseNodeSource）还没装配：回 503，不伪造空结果。
-	ErrDeliveryUnavailable = errs.Newf(errs.Unavailable, "订阅分发暂不可用，请稍后再试")
+	ErrDeliveryUnavailable = errs.Newf(errs.Unavailable, "链接服务暂时不可用，请稍后再试")
 )
 
 // Actor 是事件与流水上的操作者。Kind 为 ActorUser、ActorAdmin 时 ID 必填，其余为 nil。

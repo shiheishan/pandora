@@ -352,7 +352,7 @@ func (s *Service) placeRenewal(ctx context.Context, d renewalDraft) (Created, mo
 		priceID = sub.Price.PriceID
 	}
 	if priceID == nil {
-		return Created{}, model.Order{}, errs.Newf(errs.Conflict, "这条订阅没有关联价格，无法续费")
+		return Created{}, model.Order{}, errs.Newf(errs.Conflict, "这一份没有记录原来的价格，请选一个时长再续费")
 	}
 	uid := d.UserID
 	// 续费不锁套餐行（Lock: false）：价格行由冻结触发器钉死不可改，

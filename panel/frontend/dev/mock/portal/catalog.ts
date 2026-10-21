@@ -225,9 +225,6 @@ export function planView(p: CatalogPlan) {
   }
 }
 
-/** 支付最低额（分）：站点取所有启用且接单的 CNY 渠道里最大的 min_amount，epay 默认 100（设计稿 2.6） */
-export const MIN_PAYMENT = 100
-
 // ---------------------------------------------------------------------------
 // 优惠码：percent 的 value 是万分比。error 模拟后端的各种拒绝（契约 coupons/preview 的错误列表）
 // ---------------------------------------------------------------------------
@@ -262,14 +259,19 @@ export interface PayMethod {
   httpMethod: 'GET' | 'POST'
   fee_fixed: number
   fee_percent: string
+  /** 渠道最低付款额（分）；订单应付低于它时这个方式付不了，与 Go payment_providers.min_amount 同口径 */
+  min_amount: number
 }
 
 export const PAY_METHODS: readonly PayMethod[] = [
-  { provider: 'epay', method: 'alipay', label: '支付宝', httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00' },
-  { provider: 'epay', method: 'wxpay', label: '微信支付', httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00' },
-  { provider: 'legacy', method: 'qqpay', label: 'QQ 钱包', httpMethod: 'POST', fee_fixed: 0, fee_percent: '0.00' },
-  { provider: 'btcpay', method: '', label: 'BTCPay', httpMethod: 'GET', fee_fixed: 0, fee_percent: '1.00' },
+  { provider: 'epay', method: 'alipay', label: '支付宝', httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00', min_amount: 100 },
+  { provider: 'epay', method: 'wxpay', label: '微信支付', httpMethod: 'GET', fee_fixed: 0, fee_percent: '0.00', min_amount: 100 },
+  { provider: 'legacy', method: 'qqpay', label: 'QQ 钱包', httpMethod: 'POST', fee_fixed: 0, fee_percent: '0.00', min_amount: 100 },
+  { provider: 'btcpay', method: '', label: 'BTCPay', httpMethod: 'GET', fee_fixed: 0, fee_percent: '1.00', min_amount: 2000 },
 ]
+
+/** 站点最低付款额（分）：启用且接单的在线渠道里最小的 min_amount（Go payment repo.MinAcceptingAmount）。报价、建单按它判；发起支付按所选方式自己的 min_amount 判 */
+export const MIN_PAYMENT = Math.min(...PAY_METHODS.map((m) => m.min_amount))
 
 // ---------------------------------------------------------------------------
 // 礼品卡（契约门户-05，修订 R31、R68）：卡码 → 模板；error 模拟兑换条件不满足

@@ -9,7 +9,7 @@ export const PAY_IN_PROGRESS_MAX_RETRIES = 3
  */
 export const PAY_IN_PROGRESS_BACKOFF_MS: readonly number[] = [2000, 5000, 10000]
 
-/** 发起支付失败后怎么办：retry_later = 过一会儿自动再发；check_order = 先刷新订单再定；unpayable = 订单不可付（调 onUnpayable）；show = 只显示错误 */
+/** 发起支付失败后怎么办：retry_later = 过一会儿自动再发；check_order = 先刷新订单再定；unpayable = 订单不可付（调 onUnpayable）；show = 只显示错误（含 below_method_minimum：换方式付，不刷新订单） */
 export type PayFailureAction = { kind: 'retry_later'; delayMs: number } | { kind: 'check_order' } | { kind: 'unpayable' } | { kind: 'show' }
 
 const PENDING_PAYMENT = 'pending_payment'
@@ -23,6 +23,8 @@ export function payFailureAction(error: unknown, attempts: number): PayFailureAc
     }
     return { kind: 'show' }
   }
+  // 低于所选方式的最低额：换一种付款方式才能付，不刷新订单、不当成被取代
+  if (isApiError(error, 'below_method_minimum')) return { kind: 'show' }
   if (isApiError(error, 'conflict')) return { kind: 'check_order' }
   if (isApiError(error, 'order_lapsed')) return { kind: 'unpayable' }
   return { kind: 'show' }

@@ -76,7 +76,7 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 		return IntentDraft{}, err
 	}
 	if in.Amount.LessThan(p.MinAmount) {
-		return IntentDraft{}, ErrBelowMinimum
+		return IntentDraft{}, errBelowMethodMinimum(p.MinAmount)
 	}
 
 	surcharge := Surcharge(in.Amount, p.FeeFixed, p.FeePercent)

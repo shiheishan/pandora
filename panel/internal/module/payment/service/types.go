@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -216,8 +217,10 @@ type PaymentMethod struct {
 	Method      string
 	FeeFixed    decimal.Decimal
 	FeePercent  decimal.Decimal
-	Fee         *decimal.Decimal // 调用方给了应付金额时才有：这次的手续费
-	Total       *decimal.Decimal // 调用方给了应付金额时才有：合计
+	// MinAmount 渠道的最低付款额（元）：订单应付低于它时这个方式付不了（发起支付回 below_method_minimum）。
+	MinAmount decimal.Decimal
+	Fee       *decimal.Decimal // 调用方给了应付金额时才有：这次的手续费
+	Total     *decimal.Decimal // 调用方给了应付金额时才有：合计
 }
 
 // ---------------------------------------------------------------------------
@@ -382,8 +385,6 @@ var (
 	ErrProviderDisabled = errs.Newf(errs.Unavailable, "该支付渠道已停用，请更换其他支付方式")
 	// ErrProviderPaused 是渠道暂停收新单。
 	ErrProviderPaused = errs.Newf(errs.Unavailable, "该支付渠道暂停收单，请稍后再试或更换渠道")
-	// ErrBelowMinimum 是应付低于所选渠道的最低额。
-	ErrBelowMinimum = errs.Newf(errs.Conflict, "支付金额低于该付款方式的最低额")
 	// ErrAmountMismatch 是渠道报来的金额与支付意图快照不一致，整笔拒收。
 	ErrAmountMismatch = errs.Newf(errs.Conflict, "支付金额与订单不一致")
 	// ErrNeverPaid 是订单从没发起过支付，无从查单。
@@ -393,3 +394,8 @@ var (
 	// ErrPaymentReused 是渠道流水号（或线下凭证号）已用于别的订单。
 	ErrPaymentReused = errs.Newf(errs.Conflict, "凭证号已用于其他订单")
 )
+
+// errBelowMethodMinimum 是应付低于所选渠道的最低额：换一种付款方式还能付，所以用独立码（门户对普通 409 会当成「被新的发起取代」去重试）。
+func errBelowMethodMinimum(min decimal.Decimal) error {
+	return errs.Newf(errs.BelowMethodMinimum, fmt.Sprintf("这个付款方式最低付 ¥%s，请换一种付款方式", min.StringFixed(2)))
+}

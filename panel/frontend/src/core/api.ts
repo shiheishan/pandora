@@ -32,6 +32,9 @@ export const SERVER_ERROR_CODES = [
   'order_pending',
   'order_lapsed',
   'payment_in_progress',
+  // 409：发起支付时应付低于所选付款方式的最低额（换一种付款方式）/ 门户新开一份时已到每人份数上限
+  'below_method_minimum',
+  'subscription_limit_reached',
   // 405 路由存在但方法不对 / 413 请求体超过上限（面板或 nginx 的 client_max_body_size）/
   // 504 请求超时（面板的请求期限或 nginx 等上游超时）
   'method_not_allowed',

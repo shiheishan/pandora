@@ -89,7 +89,7 @@ export const subs: MockModule = {
       }
       // 过期期间不许换（subscription.ErrRotateWhileExpired）
       if (sub.status === 'expired' || new Date(sub.current_period_end).getTime() <= now) {
-        return ctx.fail(409, 'conflict', '订阅已过期，续费后原链接会自动恢复；过期期间不能更换订阅链接')
+        return ctx.fail(409, 'conflict', '这一份已过期，续费后原链接会自动恢复；过期期间不能换新链接')
       }
       sub.rotations.push(now)
       sub.token = newToken()

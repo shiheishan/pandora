@@ -5,6 +5,7 @@ import { useApi } from '../../../shell/runtime'
 // ---------------------------------------------------------------------------
 // GET v1/me/checkout/landings?plan_id=（Go order/handler 的 landingsResponse）：买这个套餐能放到哪里。
 // 由用户选，不替用户猜；只有一个选项时不用选。new 永远在第一个；subscription_id 只有 new 时缺席（omitempty）。
+// 到了每人份数上限时 new 那项带 disabled_reason（原话，门户原样显示、置灰），可选时缺席。
 //   new                     另开一份（新链接）
 //   renew   <一份>          同款的订阅套餐：续在那一份上（链接不变）
 //   stack   <一份>          同款的一次性套餐：叠加到那一份（总量加上、天数顺延，链接不变）
@@ -13,7 +14,7 @@ import { useApi } from '../../../shell/runtime'
 // ---------------------------------------------------------------------------
 export const LANDING_MODES = ['new', 'renew', 'stack', 'change'] as const
 
-const landingSchema = z.object({ mode: z.enum(LANDING_MODES), subscription_id: z.string().optional() })
+const landingSchema = z.object({ mode: z.enum(LANDING_MODES), subscription_id: z.string().optional(), disabled_reason: z.string().optional() })
 export type Landing = z.output<typeof landingSchema>
 
 export const landingsSchema = z.object({ options: z.array(landingSchema) })

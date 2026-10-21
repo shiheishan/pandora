@@ -69,15 +69,15 @@ func TestPurchaseLimitSubscriptions(t *testing.T) {
 	sub := e.provision(t, ctx, user, planA, verA, priceA, 1000)
 
 	_, err := e.svc.CreateNewOrder(uctx, NewOrderInput{PlanID: planB, PriceID: priceB, NewCopy: true, Label: "第二份"})
-	if codeOf(err) != errs.Conflict {
+	if codeOf(err) != errs.SubscriptionLimitReached {
 		t.Fatalf("新购另一套餐应 409，得到 %v", err)
 	}
-	if !strings.Contains(err.Error(), "每人最多 1 份订阅") {
+	if !strings.Contains(err.Error(), "每人最多 1 份套餐") {
 		t.Fatalf("文案: %v", err)
 	}
 
 	if _, err := e.svc.CreateRenewalOrder(uctx, RenewalOrderInput{SubscriptionID: sub.ID}); err != nil {
-		t.Fatalf("续费不受订阅数上限: %v", err)
+		t.Fatalf("续费不受份数上限: %v", err)
 	}
 }
 
@@ -94,8 +94,11 @@ func TestPurchaseLimitSubscriptionsCountsPendingNew(t *testing.T) {
 		t.Fatalf("新购套餐 A: %v", err)
 	}
 	_, err := e.svc.CreateNewOrder(uctx, NewOrderInput{PlanID: planB, PriceID: priceB})
-	if codeOf(err) != errs.Conflict {
+	if codeOf(err) != errs.SubscriptionLimitReached {
 		t.Fatalf("待付新购占名额，新购 B 应 409，得到 %v", err)
+	}
+	if !strings.Contains(err.Error(), "（含 1 张没付款的新买订单）") {
+		t.Fatalf("文案应含待付新购提示: %v", err)
 	}
 }
 

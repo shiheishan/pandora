@@ -144,6 +144,8 @@ export interface PortalState {
   redemptions: RedemptionFixture[]
   /** 已兑换过的卡码（大写），再兑回 422 */
   usedCodes: Set<string>
+  /** 每人份数上限（Go settings purchase.max_subscriptions）；缺席或 0 = 不限。测试直接改 portalState(userId).maxSubscriptions，或调 POST /v1/__mock/purchase-limits */
+  maxSubscriptions?: number
 }
 
 export interface LedgerEntry {

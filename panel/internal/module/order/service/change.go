@@ -116,7 +116,7 @@ func quoteChangeLines(ctx context.Context, s *Service, userID uuid.UUID, in Quot
 	hasSub := in.SubscriptionID != nil && *in.SubscriptionID != uuid.Nil
 	hasPlan := in.PlanID != nil && *in.PlanID != uuid.Nil
 	if !hasSub && !hasPlan {
-		return nil, errs.Invalid(map[string]string{"subscription_id": "订阅与套餐至少给一个"})
+		return nil, errs.Invalid(map[string]string{"subscription_id": "要换的那一份与目标套餐至少给一个"})
 	}
 	var sources []quoteSource
 	if hasSub {

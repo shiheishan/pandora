@@ -222,6 +222,7 @@ func (s *Service) PaymentMethods(ctx context.Context, amount *decimal.Decimal) (
 				Method:      method,
 				FeeFixed:    m.FeeFixed,
 				FeePercent:  m.FeePercent,
+				MinAmount:   m.MinAmount,
 			}
 			if amount != nil && amount.IsPositive() {
 				fee := Surcharge(*amount, m.FeeFixed, m.FeePercent)
