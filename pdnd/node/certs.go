@@ -43,24 +43,47 @@ func configACMEIdentifier(nc *nodev1.NodeConfig) string {
 	return acmeIdentifier(cfg)
 }
 
-// wantCerts 把 configs 里所有 acme 标识符（去重、去空）交给 Manager.Want。
+// wantCerts 记下 configs 里所有 acme 标识符（去重、去空），再交给证书管理（syncCertWant）。
 // 不论这些节点这次能不能装上，certs 为 nil 时什么都不做。
 func (s *Server) wantCerts(configs []*nodev1.NodeConfig) {
 	if s.certs == nil {
 		return
 	}
-	seen := make(map[string]struct{})
-	var ids []string
+	s.certWanted = s.certWanted[:0]
 	for _, nc := range configs {
-		id := configACMEIdentifier(nc)
+		if id := configACMEIdentifier(nc); id != "" {
+			s.certWanted = append(s.certWanted, id)
+		}
+	}
+	s.syncCertWant()
+}
+
+// syncCertWant 把「最近一份配置要的 ∪ 在服务的旧配置在用的」标识符整体交给 Manager.Want。
+// 后一半不能少：新配置换了证书名字而新证书还没到时，旧配置继续服务，它的证书得照常续期、不进闲置回收
+// （certs 审查 M1）；新配置装上、旧名字不再有人用时再调一次，旧证书才开始闲置计时。
+func (s *Server) syncCertWant() {
+	if s.certs == nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(s.certWanted))
+	ids := make([]string, 0, len(s.certWanted))
+	add := func(id string) {
 		if id == "" {
-			continue
+			return
 		}
 		if _, dup := seen[id]; dup {
-			continue
+			return
 		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
+	}
+	for _, id := range s.certWanted {
+		add(id)
+	}
+	for _, nodeID := range s.order {
+		if n := s.nodes[nodeID]; n != nil && n.started {
+			add(acmeIdentifier(n.activeConfig))
+		}
 	}
 	s.certs.Want(ids)
 }

@@ -160,6 +160,27 @@ func TestCertWantCollectsACMEIdentifiers(t *testing.T) {
 	assertStrings(t, "Want", got, "node1.example.com")
 }
 
+// 换证书名字而新证书还没到时，旧配置继续服务，它的证书也得留在 Want 里照常续期；新配置装上后旧名字才退出（certs 审查 M1）。
+func TestCertWantKeepsServingIdentifierUntilSwitched(t *testing.T) {
+	ts, fake := newCertTestServer(t)
+	fake.setCert("a.example.com", &tls.Certificate{})
+	ts.config(acmeNodeConfig(t, "n1", "a.example.com"))
+	assertStrings(t, "装上 A 后 Want", sortedCopy(fake.lastWant()), "a.example.com")
+
+	ts.config(acmeNodeConfig(t, "n1", "b.example.com"))
+	assertStrings(t, "B 未到时 Want", sortedCopy(fake.lastWant()), "a.example.com", "b.example.com")
+
+	fake.setCert("b.example.com", &tls.Certificate{})
+	ts.onCertReady("b.example.com")
+	assertStrings(t, "B 装上后 Want", sortedCopy(fake.lastWant()), "b.example.com")
+}
+
+func sortedCopy(in []string) []string {
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
+}
+
 func TestCertPendingDoesNotTouchKernel(t *testing.T) {
 	k := newFakeKernel()
 	ts := newTestServer(t, k, "")
@@ -293,5 +314,37 @@ func TestNilCertManagerReportsPending(t *testing.T) {
 	rt := runtimeInHeartbeat(ts, "n1")
 	if rt.Cert == nil || rt.Cert.Identifier != "node1.example.com" {
 		t.Fatalf("Cert = %v", rt.Cert)
+	}
+}
+
+// 冷启动时缓存的 acme 证书不在：节点先记进坏版本台账，证书一到就装上，不必等面板连上（certs 审查 S4）。
+func TestColdStartWaitsForCertThenInstalls(t *testing.T) {
+	dir := t.TempDir()
+	first := newTestServer(t, newFakeKernel(), dir)
+	firstCerts := newFakeCerts()
+	firstCerts.setCert("node1.example.com", &tls.Certificate{})
+	first.certs = firstCerts
+	first.welcome()
+	nc := acmeNodeConfig(t, "n1", "node1.example.com")
+	first.config(nc)
+	if !first.node(t, "n1").started {
+		t.Fatal("证书在时节点没起来")
+	}
+
+	k := newFakeKernel()
+	restarted := newTestServer(t, k, dir)
+	fake := newFakeCerts()
+	restarted.certs = fake
+	restarted.Start()
+	n := restarted.node(t, "n1")
+	if n.started || k.port("n1") != 0 {
+		t.Fatal("证书不在时不应装入站")
+	}
+	assertStrings(t, "证书需求", fake.lastWant(), "node1.example.com")
+
+	fake.setCert("node1.example.com", &tls.Certificate{})
+	restarted.onCertReady("node1.example.com")
+	if !n.started || k.port("n1") != 443 {
+		t.Fatalf("证书到了没装上：started=%v port=%d", n.started, k.port("n1"))
 	}
 }

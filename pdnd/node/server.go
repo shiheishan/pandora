@@ -65,10 +65,13 @@ type Server struct {
 	scope  string
 	kernel core.Core
 	certs  CertManager
-	log    *slog.Logger
-	cache  *serverCache
-	now    func() time.Time
-	metric func() *nodev1.HostMetrics
+	// certWanted 是最近一份配置（面板的全量 ServerConfig，或冷启动的落盘缓存）里的 acme 标识符；
+	// 交给证书管理的是它并上在服务的旧配置用的标识符（syncCertWant）。
+	certWanted []string
+	log        *slog.Logger
+	cache      *serverCache
+	now        func() time.Time
+	metric     func() *nodev1.HostMetrics
 
 	// link 在 Run 里设上；Start（冷启动）时还没有会话。
 	link Link

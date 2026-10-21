@@ -106,6 +106,8 @@ func (s *Server) applyServerConfig(cfg *nodev1.ServerConfig) {
 		}
 	}
 	s.order = order
+	// 停掉的节点、换了证书名字并已装上的节点，旧标识符不再有人用：交回证书管理，让它们开始闲置计时
+	s.syncCertWant()
 	if s.cache != nil {
 		if err := s.cache.saveOrder(order); err != nil {
 			s.log.Warn("节点顺序落盘失败（不影响服务）", "err", err)
@@ -137,6 +139,10 @@ func (s *Server) applyNodeConfig(n *Node, nc *nodev1.NodeConfig) {
 // tryInstall 装一个节点的配置，按结果记坏版本台账、报回执。
 func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 	sha := strings.ToLower(nc.GetContentSha256())
+	oldCertID := ""
+	if n.started {
+		oldCertID = acmeIdentifier(n.activeConfig)
+	}
 	err := s.installNodeConfig(n, nc)
 	if err != nil {
 		f := n.failed
@@ -156,6 +162,10 @@ func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 		n.log.Error("配置装不上", "版本", sha, "原因", f.reason, "第几次", f.attempts,
 			"旧配置仍在服务", n.started, "下次重试", f.nextRetry.Sub(now).Round(time.Second), "err", err)
 		return
+	}
+	if oldCertID != "" && oldCertID != acmeIdentifier(n.activeConfig) {
+		// 旧配置的证书名字不再在服务：重算一次，让旧证书开始闲置计时（新配置的名字已在 certWanted 里）
+		s.syncCertWant()
 	}
 	s.sendConfigAck(n, sha, nodev1.ConfigPhase_CONFIG_PHASE_SWITCHED, "", "")
 	n.log.Info("入站已就绪", "port", intFrom(n.activeConfig, "server_port"), "type", n.nodeType, "版本", sha)

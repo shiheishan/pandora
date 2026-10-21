@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"strings"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
@@ -48,7 +49,14 @@ func (s *Server) Start() {
 		err = s.installNodeConfig(n, nc)
 		n.offlineStart = false
 		if err != nil {
-			n.log.Warn("没能用落盘缓存起服务，等面板下发", "err", err)
+			// 记进坏版本台账：缓存的 acme 证书不在（被删或坏了）时，证书一到 onCertReady 就能重装，
+			// 别的原因按「已停」的间隔由内务节拍重试；不记的话面板连上之前这个节点一直不服务（certs 审查 S4）
+			n.failed = &applyFailure{
+				sha: strings.ToLower(nc.GetContentSha256()), cfg: nc, attempts: 1,
+				nextRetry: s.clock().Add(panel.Jitter(stoppedRetryInterval)),
+				reason:    reasonOf(err), detail: reportDetail(err.Error()),
+			}
+			n.log.Warn("没能用落盘缓存起服务，等面板下发或稍后重试", "err", err)
 			continue
 		}
 		n.fromCache = true
