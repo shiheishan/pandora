@@ -216,9 +216,10 @@ function RecordsList() {
   const [all, setAll] = useState(false)
   const toast = useToast()
 
-  async function copyHash(hash: string) {
+  async function copyHash(hash: string, url: string | undefined) {
     if (await copyText(hash)) toast('交易哈希已复制')
-    else toast('复制失败，请手动选中复制', 'danger')
+    // 页面上只有缩写，选不到全文：有浏览器链接时引导去那里看完整哈希
+    else toast(url ? '复制失败，可以点「在区块浏览器查看」看完整哈希' : '复制失败，请再试一次', 'danger')
   }
 
   return (
@@ -239,11 +240,11 @@ function RecordsList() {
                     {r.meta}
                     <span className={css.tx}>
                       交易哈希 <code className={css.txCode} title={txHash}>{shortHash(txHash)}</code>
-                      <button type="button" className={css.txAct} onClick={() => void copyHash(txHash)}>
+                      <button type="button" className={css.txAct} aria-label="复制交易哈希" onClick={() => void copyHash(txHash, r.txUrl)}>
                         复制
                       </button>
                       {r.txUrl && (
-                        <a className={css.txAct} href={r.txUrl} target="_blank" rel="noopener noreferrer">
+                        <a className={css.txAct} href={r.txUrl} target="_blank" rel="noopener noreferrer" aria-label="在区块浏览器查看（新窗口打开）">
                           在区块浏览器查看
                         </a>
                       )}

@@ -149,11 +149,15 @@ export interface CommissionRecord {
 type Entry = Commission['entries'][number]
 type Withdrawal = Commission['withdrawals'][number]
 
-function entryStatus(e: Entry): { status: string; tone: RecordTone } {
+function entryStatus(e: Entry, now: Date): { status: string; tone: RecordTone } {
   switch (e.status) {
     case 'pending':
       if (e.under_review) {
         return { status: '审核中', tone: 'plus' }
+      }
+      // 冻结期已过、每小时一次的解冻任务还没跑到时，不写一个已经过去的日期
+      if (new Date(e.frozen_until).getTime() <= now.getTime()) {
+        return { status: '即将解冻', tone: 'plus' }
       }
       return { status: `冻结至 ${shortDate(e.frozen_until)}`, tone: 'plus' }
     case 'available':
@@ -193,7 +197,7 @@ export function shortHash(hash: string): string {
   return `${h.slice(0, 8)}…${h.slice(-6)}`
 }
 
-export function commissionRecords(c: Commission): CommissionRecord[] {
+export function commissionRecords(c: Commission, now: Date = new Date()): CommissionRecord[] {
   const rows: CommissionRecord[] = []
   c.entries.forEach((e, i) => {
     const title = e.level <= 1 ? '好友付款返佣' : `第 ${e.level} 级好友付款返佣`
@@ -207,7 +211,7 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
       amount: e.amount,
       icon: 'gift',
       at: e.created_at,
-      ...entryStatus(e),
+      ...entryStatus(e, now),
     })
   })
   for (const t of c.transfers) {

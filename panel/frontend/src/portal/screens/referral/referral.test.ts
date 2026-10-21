@@ -280,6 +280,7 @@ describe('佣金记录', () => {
           { ...entry('voided', '2026-09-01T12:00:00Z', '2026-09-01T00:00:00Z', 2), order_no: '', from: '' },
         ],
       }),
+      new Date('2026-09-23T00:00:00Z'),
     )
     expect(rows[0]!.status).toBe('冻结至 09-29')
     expect(rows[1]).toMatchObject({ title: '第 2 级好友付款返佣', status: '已作废', tone: 'void' })
@@ -294,6 +295,15 @@ describe('佣金记录', () => {
       commission({ entries: [entry('pending', '2026-09-22T02:00:00Z', '2026-09-01T00:00:00Z', 1, true)] }),
     )[0]!
     expect(row.status).toBe('审核中')
+    expect(row.tone).toBe('plus')
+  })
+
+  it('冻结期已过、解冻任务还没跑到时写即将解冻，不写已过的日期', () => {
+    const row = commissionRecords(
+      commission({ entries: [entry('pending', '2026-09-22T02:00:00Z', '2026-09-29T10:00:00Z')] }),
+      new Date('2026-09-29T10:30:00Z'),
+    )[0]!
+    expect(row.status).toBe('即将解冻')
     expect(row.tone).toBe('plus')
   })
 
