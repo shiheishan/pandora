@@ -500,7 +500,7 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     // 没接入的草稿：同版本号回 409 并说服务器还没接入（照 Go serverNotEnrolledMsg，带 fields.server_id）
     const early = await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version }, 'act-7')
     expect(early.status).toBe(409)
-    expect(await early.json()).toMatchObject({ error: { message: '服务器还没接入（先在服务器页生成安装命令完成接入）', fields: { server_id: '服务器还没接入（先在服务器页生成安装命令完成接入）' } } })
+    expect(await early.json()).toMatchObject({ error: { message: '服务器还没接入：先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令', fields: { server_id: '服务器还没接入：先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令' } } })
   })
 
   it('seeds an unbound draft: no identity, no tokens, cannot go live', async () => {

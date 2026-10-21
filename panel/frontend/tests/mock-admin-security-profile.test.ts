@@ -136,9 +136,11 @@ describe('mock api · admin security scenarios', () => {
     expect(rows.map((r) => r.resource_id).sort()).toEqual(published.map((v) => v.id).sort())
     for (const r of rows) {
       const v = published.find((x) => x.id === r.resource_id)!
+      const p = plans.find((x) => x.versions.some((y) => y.id === v.id))!
+      // 与 Go catalog.PlanVersionLabels 同口径：「套餐名 · vN」
       expect(r).toMatchObject({
         resource_type: 'plan_version',
-        resource_label: null,
+        resource_label: `${p.name} · v${v.version}`,
         actor_kind: 'admin',
         actor_email: v.created_by_email,
       })

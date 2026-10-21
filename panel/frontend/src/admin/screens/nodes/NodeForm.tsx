@@ -24,6 +24,7 @@ import {
   protocolLabel,
   protocolNotices,
   realityEnabled,
+  realityKeypairToast,
   serverAcceptsNodes,
   toFormValues,
   toProtocolConfig,
@@ -31,10 +32,12 @@ import {
   validateBasic,
   visibleFields,
   withProtocolDefaults,
+  withRealityKeypair,
   type BasicForm,
   type FormValues,
   type ProtocolField,
 } from './logic'
+import { wizardServerHint } from './infra'
 import css from './form.module.css'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
@@ -348,13 +351,9 @@ export function NodeCreateWizard({
   const reality = useMutation({
     mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
     onSuccess: (k) => {
-      setValues({
-        ...current,
-        [REALITY_KEYS.private_key]: k.private_key,
-        [REALITY_KEYS.public_key]: k.public_key,
-        [REALITY_KEYS.short_id]: k.short_id,
-      })
-      toast('已生成 REALITY 密钥对，私钥保存后不再回显')
+      const next = withRealityKeypair(current, k)
+      setValues(next.values)
+      toast(realityKeypairToast(next.keptShortId))
     },
     onError: (error) => fail(error),
   })
@@ -387,11 +386,7 @@ export function NodeCreateWizard({
   const footNotes = ['第 1 步，共 3 步', '第 2 步，共 3 步', '创建后在节点详情右上角上线']
 
   const selectedServer = basic.serverId ? (servers.data ?? []).find((sv) => sv.id === basic.serverId) : undefined
-  const serverHint = !basic.serverId
-    ? UNBOUND_HINT
-    : selectedServer?.enrolled
-      ? '已接入：创建后在节点详情右上角点「上线」，这台服务器随之投入服务'
-      : '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行后再上线'
+  const serverHint = !basic.serverId ? UNBOUND_HINT : wizardServerHint(selectedServer)
   const selectedPool = basic.poolId ? (pools.data ?? []).find((p) => p.id === basic.poolId) : undefined
   const poolHint =
     selectedPool && selectedPool.plan_names.length === 0
@@ -693,13 +688,9 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
   const reality = useMutation({
     mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
     onSuccess: (k) => {
-      setValues({
-        ...current,
-        [REALITY_KEYS.private_key]: k.private_key,
-        [REALITY_KEYS.public_key]: k.public_key,
-        [REALITY_KEYS.short_id]: k.short_id,
-      })
-      toast('已生成 REALITY 密钥对，私钥保存后不再回显')
+      const next = withRealityKeypair(current, k)
+      setValues(next.values)
+      toast(realityKeypairToast(next.keptShortId))
     },
     onError: (error) => fail(error),
   })

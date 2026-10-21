@@ -38,6 +38,8 @@ import {
   type ProtocolField,
   BASIC_STEP_KEYS,
   realityEnabled,
+  realityKeypairToast,
+  withRealityKeypair,
   VISION_FLOW,
   withProtocolDefaults,
   clearableSecret,
@@ -928,3 +930,22 @@ describe('sameNodeLine with new fields', () => {
   })
 })
 
+
+describe('withRealityKeypair', () => {
+  const k = { private_key: 'GEN-PRIV', public_key: 'GEN-PUB', short_id: 'ab12' }
+
+  it('keeps a short_id the admin already typed and still replaces both keys', () => {
+    const { values, keptShortId } = withRealityKeypair({ tls: '2', 'reality_settings.short_id': '0123abcd', 'reality_settings.private_key': 'OLD' }, k)
+    expect(keptShortId).toBe(true)
+    expect(values).toMatchObject({ tls: '2', 'reality_settings.private_key': 'GEN-PRIV', 'reality_settings.public_key': 'GEN-PUB', 'reality_settings.short_id': '0123abcd' })
+    expect(realityKeypairToast(keptShortId)).toContain('short_id 保留你填的值')
+  })
+
+  it('fills short_id only when it is empty or blank', () => {
+    expect(withRealityKeypair({ tls: '2' }, k).values['reality_settings.short_id']).toBe('ab12')
+    const blank = withRealityKeypair({ 'reality_settings.short_id': '  ' }, k)
+    expect(blank.keptShortId).toBe(false)
+    expect(blank.values['reality_settings.short_id']).toBe('ab12')
+    expect(realityKeypairToast(false)).toBe('已生成 REALITY 密钥对，私钥保存后不再回显')
+  })
+})

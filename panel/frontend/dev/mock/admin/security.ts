@@ -108,8 +108,20 @@ function idsByEmail(q: string): Set<string> {
   for (const [id, email] of seenActors) if (email.toLowerCase().includes(needle)) out.add(id)
   return out
 }
-/** 对象可读名：Go 只有用户（邮箱）与工单（工单号）两个解析器，其余为 null */
-const labelOf = (r: AuditRow) => (r.resource_type === 'user' ? emailOf(r.resource_id) : r.resource_type === 'ticket' ? r.resource_label : null)
+/** 对象可读名：与 Go 登记的解析器一致——用户（邮箱）、工单（工单号）、套餐（套餐名）、套餐版本（套餐名 · v版本号），其余为 null */
+function labelOf(r: AuditRow): string | null {
+  if (r.resource_type === 'user') return emailOf(r.resource_id)
+  if (r.resource_type === 'ticket') return r.resource_label
+  if (r.resource_type === 'plan') return plans.find((p) => p.id === r.resource_id)?.name ?? null
+  if (r.resource_type === 'plan_version') {
+    for (const p of plans) {
+      const v = p.versions.find((x) => x.id === r.resource_id)
+      if (v) return `${p.name} · v${v.version}`
+    }
+    return null
+  }
+  return null
+}
 
 type AuditSeedInput = Omit<AuditRow, 'id' | 'occurred_at' | 'ip_hash'> & { at?: string; ip_hash?: string | null }
 

@@ -305,14 +305,14 @@ function AddServer({ open, onClose, onCreated }: { open: boolean; onClose: () =>
             取消
           </Button>
           <Button size="dialog" variant="primary" busy={create.isPending} onClick={submit}>
-            添加并生成安装命令
+            添加并签发安装令牌
           </Button>
         </>
       }
     >
       <div className={css.stack}>
         <ServerFields form={form} errors={errors} fields={['name', 'capacity', 'notes']} disabled={create.isPending} onChange={setForm} />
-        <div className={css.faint}>地区、IP、系统与规格在机器接入后由 agent 自动回填。生成安装令牌需要重新验证身份。</div>
+        <div className={css.faint}>地区、IP、系统与规格在机器接入后由 agent 自动回填。签发安装令牌需要重新验证身份。</div>
       </div>
     </Modal>
   )

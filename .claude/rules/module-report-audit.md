@@ -39,6 +39,7 @@ paths:
 
 ## audit 写入与表
 
+- **动作代号与前端中文名对照**：守卫 `service/actions_frontend_test.go` 的 `TestAuditActionsMatchFrontend`——`service/actions_scan_test.go` 用 go/ast 扫 `panel/internal` 全部非测试文件里写进 audit `Event.Action` 的代号（字面量、本包或别包常量、包装函数参数如 `nodeAudit(ctx, "node.create", …)`、局部变量、结构体字段如 order 的 `AuditAction`），与前端 `screens/security/logic.ts` 的 `ACTION_NAMES` 双向比对（前端多出的只许 `frontendOnlyActions` 里的访问日志伪动作 `subscription.fetch`）。**加、改名、删审计动作要同改前端表**；守卫解析不了的写法（多返回值赋给动作变量、从 map 或函数返回值取动作）直接判红，改成常量 / 字面量，或扩展扫描器。
 - 业务模块只经 `panel/internal/module/audit/service` 的 `Service.Write`（→ `repo.Insert`）写 `audit_events`；无哈希链（设计见 `docs/architecture.md` §1 决定 12）。
 - 表只追加：`panel/db/migrations/00003_audit.sql` 的 `audit_events_append_only`；清理只走 `purge_audit_events`，worker 任务 `retention:audit`（`audit/task/task.go`，保留 400 天）。
 - `Event.Data` 不放秘密；`ActorID` 与 ctx 登录主体不一致直接报错，操作对象放 `ResourceID` / `Data`（`service/service.go`）。
@@ -55,7 +56,7 @@ paths:
 ## 查询、导出与敏感查看
 
 - 列表/导出共用 `repo.Query` 形状（`repo/repo.go`）；导出先 `Count`，超过 `ExportMax`（50000）回 422，再 `Write` 动作 `audit.export`，再写 CSV（`service/query.go`）。
-- 搜索框（`Filter.Query` → `repo.Query.Text`）：动作 ILIKE 包含；邮箱包含反查出的用户 id（`ActorDirectory.IDsByEmail`，存 `TextUserIDs`）命中 `actor_id IN` 或 `resource_type = 'user' AND resource_id IN`（别人对他的操作、冲着他的匿名登录失败都能搜到）；整串是 uuid 时 `resource_id =` 或 `actor_id =`（用户详情「看审计记录」传用户 id 跳过来，只搜这一个人，不走邮箱包含匹配混进别人）。对象名（套餐名、节点名）不能搜：可读名只有登记了 labeler 的类型（目前 user → 邮箱、ticket → 工单号），其余前端显示「类型 · id 前 8 位」。守卫 `service/query_pg_test.go` 的 `TestListQueryMatchesUserAsResource`。
+- 搜索框（`Filter.Query` → `repo.Query.Text`）：动作 ILIKE 包含；邮箱包含反查出的用户 id（`ActorDirectory.IDsByEmail`，存 `TextUserIDs`）命中 `actor_id IN` 或 `resource_type = 'user' AND resource_id IN`（别人对他的操作、冲着他的匿名登录失败都能搜到）；整串是 uuid 时 `resource_id =` 或 `actor_id =`（用户详情「看审计记录」传用户 id 跳过来，只搜这一个人，不走邮箱包含匹配混进别人）。对象名（套餐名、节点名）不能搜：可读名只有登记了 labeler 的类型（`wire.go` 的 `UseResourceLabeler`：user → 邮箱、ticket → 工单号、plan → 套餐名、plan_version → 「套餐名 · v版本号」），查不到的 id 与其余类型前端显示「类型 · id 前 8 位」。守卫 `service/query_pg_test.go` 的 `TestListQueryMatchesUserAsResource`。
 - 访问明细 `AccessEvents`（`service/ops.go`、`repo/ops.go`）：`FilterActors` 时只看 `ActorIDs` 这些操作者；再带 `TargetActions` 时这些动作另按对象匹配（`resource_type = 'user' AND resource_id = ANY(ActorIDs)`，identity 用它把匿名的 `user.login_failed` 挂到被试账号上）；行里带 `ResourceType`（没有为空串）与 `ResourceID`。守卫 `service/ops_pg_test.go` 的 `TestAccessEventsTargetActionsPG`。
 - 自由文本列（邮箱、标签、reason 等）过 `csvSafe`；对外复用 `CSVSafe`（identity 用户导出）。单测 `service/csv_test.go` 的 `TestCsvSafe`。
 - `RecordSourceIPView` → `security.source_ip_viewed` 只给溯源总览「显示」明文 IP 用（`data.view` = `ViewTrace`，见下一节）。访问日志、聚类列表、用户画像的读取不记（用户 10-21 定）。
