@@ -11,7 +11,6 @@ const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_sch
 const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
 const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
-export type RiskLevel = (typeof RISK_LEVELS)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
 
 const int = z.number().int()

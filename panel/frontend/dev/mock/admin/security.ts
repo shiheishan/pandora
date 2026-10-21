@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
+import { plans } from './plans-store.ts'
 import { userStore, type User } from './users.ts'
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ async function decode(ctx: MockContext, shape: Shape): Promise<{ ok: true; body:
 
 /** 归属地：Go 在读时用 GeoIP 现算，这里按前缀给固定结果（与 geoip.NetworkKind 同值） */
 const GEO: ReadonlyArray<readonly [string, string, string]> = [
+  ['192.0.2.', '中国 浙江 电信', 'residential'],
   ['10.', '内网地址', 'private'],
   ['192.168.', '内网地址', 'private'],
   ['127.', '本机回环地址', 'loopback'],
@@ -47,6 +49,17 @@ function geoOf(ip: string): { geo: string; kind: string } {
   const hit = ip ? GEO.find(([p]) => ip.startsWith(p)) : undefined
   return hit ? { geo: hit[1], kind: hit[2] } : { geo: '', kind: '' }
 }
+
+/** 每个用户固定的家里宽带与手机出口：各人不同，所以不会凭空形成共享 IP 聚类 */
+const homeIp = (i: number) => `192.0.2.${10 + (i % 48)}`
+const mobileIp = (i: number) => `198.51.100.${200 + (i % 48)}`
+/** 00080 之前的存量审计没有明文来源 IP 与 auth_context（ip_hash 仍在）；种子里早于 30 天的行按存量写 */
+const LEGACY_MS = 30 * DAY
+const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148'
+const ATTACK_UA = 'python-requests/2.31'
+/** 当前登录的这位管理员（ctx.user）写审计时用的来源 IP */
+const ADMIN_IP = '10.8.0.9'
+const indexOf = (u: User) => userStore.indexOf(u)
 
 const userAt = (i: number): User => userStore[i % userStore.length]!
 const findUser = (id: string) => userStore.find((u) => u.id === id)
@@ -74,58 +87,355 @@ interface AuditRow {
   auth_context: 'session' | 'reauth' | null
   source_ip: string | null
   user_agent: string | null
+  /** 同一来源 IP 的稳定键（Go 是 HMAC，这里直接用 IP 串）；存量行 source_ip 为 null 但 ip_hash 仍在；不出现在任何响应里 */
+  ip_hash: string | null
 }
 const audit: AuditRow[] = []
 
-function record(row: Omit<AuditRow, 'id' | 'occurred_at'> & { at?: string }): AuditRow {
-  const { at, ...rest } = row
-  const r: AuditRow = { id: randomUUID(), occurred_at: at ?? new Date().toISOString(), ...rest }
-  // 新行放最前再做稳定排序：同一毫秒写的两条，后写的仍排在前面
+/** 写过审计的其它操作者（当前登录的管理员等）：id → 邮箱 */
+const seenActors = new Map<string, string>()
+function emailOf(id: string | null): string | null {
+  if (!id) return null
+  return userStore.find((u) => u.id === id)?.email ?? STAFF.find((s) => s.id === id)?.email ?? seenActors.get(id) ?? null
+}
+/** IDsByEmailLike：邮箱包含 q（不分大小写）的账号 id */
+function idsByEmail(q: string): Set<string> {
+  const needle = q.toLowerCase()
+  const out = new Set<string>()
+  for (const u of userStore) if (u.email.toLowerCase().includes(needle)) out.add(u.id)
+  for (const s of STAFF) if (s.email.toLowerCase().includes(needle)) out.add(s.id)
+  for (const [id, email] of seenActors) if (email.toLowerCase().includes(needle)) out.add(id)
+  return out
+}
+/** 对象可读名：Go 只有用户（邮箱）与工单（工单号）两个解析器，其余为 null */
+const labelOf = (r: AuditRow) => (r.resource_type === 'user' ? emailOf(r.resource_id) : r.resource_type === 'ticket' ? r.resource_label : null)
+
+type AuditSeedInput = Omit<AuditRow, 'id' | 'occurred_at' | 'ip_hash'> & { at?: string; ip_hash?: string | null }
+
+function record(row: AuditSeedInput): AuditRow {
+  const { at, ip_hash, actor_id, actor_email, ...rest } = row
+  const hash = ip_hash !== undefined ? ip_hash : rest.source_ip
+  const r: AuditRow = {
+    id: randomUUID(),
+    occurred_at: at ?? new Date().toISOString(),
+    actor_id,
+    actor_email,
+    ip_hash: hash,
+    ...rest,
+  }
+  if (actor_id && actor_email) seenActors.set(actor_id, actor_email)
   audit.unshift(r)
   audit.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
   return r
 }
 
-const STAFF: ReadonlyArray<readonly [string, string]> = [
-  ['linzhou@example.test', '10.8.0.12'],
-  ['zhou.min@example.test', '10.8.0.31'],
-  ['tang.yiming@example.test', '10.8.0.44'],
-]
-const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 Safari/605.1.15'
-const PUBLIC_IPS = ['198.51.100.42', '198.51.100.31', '198.51.100.24', '198.51.100.51', '198.51.100.16']
+const seedRows: AuditRow[] = []
+function seed(row: AuditSeedInput): void {
+  const { at, ip_hash, actor_id, actor_email, ...rest } = row
+  const occurred_at = at ?? new Date().toISOString()
+  const hash = ip_hash !== undefined ? ip_hash : rest.source_ip
+  const legacy = Date.now() - Date.parse(occurred_at) > LEGACY_MS
+  const r: AuditRow = {
+    id: randomUUID(),
+    occurred_at,
+    actor_id,
+    actor_email,
+    ip_hash: hash,
+    ...rest,
+    source_ip: legacy ? null : rest.source_ip,
+    auth_context: legacy ? null : rest.auth_context,
+  }
+  if (actor_id && actor_email) seenActors.set(actor_id, actor_email)
+  seedRows.push(r)
+}
 
-// 种子：14 天，约 140 条；10 天以前的是 00080 之前的存量行（没有 auth_context 与来源 IP）
+interface Staff {
+  id: string
+  email: string
+  ip: string
+}
+const STAFF: readonly Staff[] = [
+  { id: '5a1f0000-0000-4000-8000-000000000001', email: 'linzhou@example.test', ip: '10.8.0.12' },
+  { id: '5a1f0000-0000-4000-8000-000000000002', email: 'zhou.min@example.test', ip: '10.8.0.31' },
+  { id: '5a1f0000-0000-4000-8000-000000000003', email: 'tang.yiming@example.test', ip: '10.8.0.44' },
+  { id: '5a1f0000-0000-4000-8000-000000000004', email: 'ops@example.test', ip: '10.8.0.20' },
+  { id: '5a1f0000-0000-4000-8000-000000000005', email: 'support@example.test', ip: '10.8.0.52' },
+]
+const staffByEmail = (email: string | null) => STAFF.find((s) => s.email === email) ?? STAFF[3]!
+const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 Safari/605.1.15'
+const ua = (i: number) => (i % 3 === 0 ? MOBILE_UA : BROWSER)
+
+const sessionId = () => randomUUID()
+/** 工单号照迁移 00027 的 CHECK：TK + 8 位日期 + '-' + 8 位 [A-Z2-7] */
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+function ticketNo(k: number, at: number): string {
+  let n = k + 1000
+  let s = ''
+  for (let i = 0; i < 8; i++) {
+    s = B32[n % 32] + s
+    n = Math.floor(n / 32)
+  }
+  return `TK${new Date(at).toISOString().slice(0, 10).replace(/-/g, '')}-${s}`
+}
+
+/** 共享 IP 场景：成员挑的是真实种子——0 号是管理员（停用时跳过），9 号已停用，24 / 39 已停用、40 已封禁
+ *  （停用前登录过）；pending 账号从没登录成功过，不当成员。198.51.100.71 这组全是存量行（没有明文 IP），
+ *  聚类里 IP 显示为「无法解密」。风控聚类与用户画像都由这些审计行现算 */
+const CLUSTER_SCENES: ReadonlyArray<{ ip: string; members: number[]; lastMin: number; legacy?: boolean }> = [
+  { ip: '198.51.100.18', members: [3, 9, 13, 18, 23], lastMin: 6 },
+  { ip: '203.0.113.45', members: [5, 25, 45], lastMin: 20 },
+  { ip: '198.51.100.24', members: [0, 7, 27], lastMin: 45 },
+  { ip: '198.51.100.42', members: [1, 21], lastMin: 3 * 24 * 60 },
+  { ip: '198.51.100.51', members: [15, 35], lastMin: 180 },
+  { ip: '198.51.100.61', members: [12, 31], lastMin: 300 },
+  { ip: '198.51.100.31', members: [24, 39, 40], lastMin: 900 },
+  { ip: '198.51.100.71', members: [19, 29], lastMin: 40 * 24 * 60, legacy: true },
+]
+
 ;(function seedAudit() {
+  const base = { resource_type: null as string | null, resource_id: null as string | null, resource_label: null as string | null, outcome: 'success', reason: null as string | null }
+  const anonFail = (over: Pick<AuditSeedInput, 'action' | 'at' | 'resource_type' | 'resource_id' | 'reason' | 'source_ip' | 'user_agent'>) =>
+    seed({
+      ...base,
+      actor_kind: 'anonymous',
+      actor_id: null,
+      actor_email: null,
+      api_domain: 'public',
+      auth_context: null,
+      outcome: 'failure',
+      ...over,
+    })
+
+  // A. 每个用户
+  for (let i = 0; i < 48; i++) {
+    const u = userStore[i]!
+    seed({
+      ...base,
+      actor_kind: 'user',
+      actor_id: u.id,
+      actor_email: u.email,
+      action: 'user.registered',
+      api_domain: 'public',
+      auth_context: null,
+      source_ip: homeIp(i),
+      user_agent: ua(i),
+      at: u.created_at,
+    })
+    // Go 只让 active 账号登录成功：pending 没有登录行（停用、封禁的是停用前登录的）
+    if (u.last_login_at && u.status !== 'pending') {
+      const lastMs = Date.parse(u.last_login_at)
+      const createdMs = Date.parse(u.created_at)
+      const loginTimes = [lastMs, lastMs - 3 * DAY, lastMs - 11 * DAY]
+      for (let j = 0; j < loginTimes.length; j++) {
+        const t = loginTimes[j]!
+        if (t < createdMs || t < Date.now() - 90 * DAY) continue
+        const ip = j === 1 && i % 3 === 0 ? mobileIp(i) : homeIp(i)
+        seed({
+          ...base,
+          actor_kind: 'user',
+          actor_id: u.id,
+          actor_email: u.email,
+          action: 'user.login',
+          resource_type: 'session',
+          resource_id: sessionId(),
+          api_domain: 'public',
+          auth_context: 'session',
+          source_ip: ip,
+          user_agent: ua(i),
+          at: new Date(t).toISOString(),
+        })
+      }
+      if (i % 5 === 2) {
+        const pwdAt = Math.min(lastMs + 20 * MIN, Date.now() - MIN)
+        if (pwdAt > createdMs) {
+          seed({
+            ...base,
+            actor_kind: 'user',
+            actor_id: u.id,
+            actor_email: u.email,
+            action: 'user.password_changed',
+            resource_type: 'user',
+            resource_id: u.id,
+            api_domain: 'public',
+            auth_context: 'session',
+            source_ip: homeIp(i),
+            user_agent: ua(i),
+            at: new Date(pwdAt).toISOString(),
+          })
+        }
+      }
+    }
+  }
+
+  // B. 后台与系统动作
   for (let k = 0; k < 140; k++) {
     const ago = (k * 137 + 3) * MIN
-    const legacy = ago > 10 * DAY
-    const [email, staffIp] = STAFF[k % STAFF.length]!
-    const u = userAt(k * 5 + 2)
-    const pub = PUBLIC_IPS[k % PUBLIC_IPS.length]!
-    const staff = { actor_kind: 'admin', actor_id: randomUUID(), actor_email: email, api_domain: 'admin', source_ip: legacy ? null : staffIp, user_agent: BROWSER }
-    const user = { actor_kind: 'user', actor_id: u.id, actor_email: u.email, api_domain: 'public', source_ip: legacy ? null : pub, user_agent: BROWSER }
-    const base = { resource_type: null, resource_id: null, resource_label: null, outcome: 'success', reason: null, auth_context: null as AuditRow['auth_context'] }
-    const auth = (c: 'session' | 'reauth') => (legacy ? null : c)
-    const rows: Array<Omit<AuditRow, 'id' | 'occurred_at'>> = [
-      { ...base, ...staff, action: 'user.balance.adjust', resource_type: 'user', resource_id: u.id, resource_label: u.email, reason: '线路故障补偿', auth_context: auth('reauth') },
-      { ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, source_ip: null, user_agent: null, action: 'order.expired', resource_type: 'order', resource_id: randomUUID(), resource_label: `PD${2609 + (k % 20)}-${3300 + k}` },
-      { ...base, ...user, action: 'user.login', auth_context: null },
-      { ...base, ...staff, action: 'ticket.assign', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260923-${(1000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
-      { ...base, ...staff, action: 'node.update', resource_type: 'node', resource_id: randomUUID(), resource_label: `香港 0${(k % 4) + 1}`, auth_context: auth('session') },
-      { ...base, actor_kind: 'anonymous', actor_id: null, actor_email: null, api_domain: 'public', source_ip: legacy ? null : '198.51.100.18', user_agent: 'python-requests/2.31', action: 'user.login', outcome: 'failure' },
-      { ...base, ...staff, action: 'gift_card.batch.export', resource_type: 'gift_card_batch', resource_id: randomUUID(), auth_context: auth('reauth') },
-      { ...base, ...user, action: 'user.registered', resource_type: 'user', resource_id: u.id, resource_label: u.email },
-      { ...base, ...staff, action: 'plan.version.publish', resource_type: 'plan', resource_id: randomUUID(), resource_label: '专业版', auth_context: auth('reauth') },
-      { ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, source_ip: null, user_agent: null, action: 'payment.succeeded', resource_type: 'order', resource_id: randomUUID(), resource_label: `PD2609-${3400 + k}` },
-      { ...base, actor_kind: 'agent', actor_id: randomUUID(), actor_email: 'support@example.test', api_domain: 'admin', source_ip: legacy ? null : '10.8.0.52', user_agent: BROWSER, action: 'ticket.reply', resource_type: 'ticket', resource_id: randomUUID(), resource_label: `TK20260922-${(2000 + k).toString(36).toUpperCase()}`, auth_context: auth('session') },
-      { ...base, ...staff, action: 'payment_provider.toggle', resource_type: 'payment_provider', auth_context: auth('reauth'), outcome: k % 4 === 0 ? 'denied' : 'success', reason: '渠道维护' },
-      { ...base, ...user, action: 'user.password_changed', resource_type: 'user', resource_id: u.id, resource_label: u.email, auth_context: auth('session') },
-      { ...base, actor_kind: 'node', actor_id: null, actor_email: null, api_domain: 'node', source_ip: legacy ? null : '203.0.113.14', user_agent: 'pdnd/1.4.2', action: 'node.enroll', resource_type: 'node', resource_id: randomUUID(), resource_label: `us-lax-edge-${(k % 3) + 1}`, outcome: k % 5 === 0 ? 'failure' : 'success' },
-      { ...base, actor_kind: 'plugin', actor_id: null, actor_email: null, api_domain: null, source_ip: null, user_agent: null, action: 'plugin.hook.deliver', resource_type: 'plugin_hook', outcome: k % 3 === 0 ? 'failure' : 'success' },
-      { ...base, ...staff, action: 'withdrawal.approve', resource_type: 'withdrawal', resource_id: randomUUID(), auth_context: auth('reauth'), outcome: k % 7 === 0 ? 'partial' : 'success' },
-    ]
-    record({ ...rows[k % rows.length]!, at: iso(ago) })
+    const at = iso(ago)
+    const atMs = Date.now() - ago
+    const s = STAFF[k % 4]!
+    const t = userAt(k * 5 + 2)
+    const staffRow = {
+      actor_kind: 'admin' as const,
+      actor_id: s.id,
+      actor_email: s.email,
+      api_domain: 'admin' as const,
+      source_ip: s.ip,
+      user_agent: BROWSER,
+    }
+    const mod = k % 12
+    if (mod === 0) {
+      seed({ ...base, ...staffRow, action: 'balance.adjusted', resource_type: 'user', resource_id: t.id, reason: '线路故障补偿', auth_context: 'reauth', at })
+    } else if (mod === 1) {
+      seed({ ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, auth_context: null, source_ip: null, user_agent: null, action: 'order.expired', resource_type: 'order', resource_id: randomUUID(), at })
+    } else if (mod === 2) {
+      seed({ ...base, ...staffRow, action: 'ticket.assign', resource_type: 'ticket', resource_id: randomUUID(), resource_label: ticketNo(k, atMs), auth_context: 'session', at })
+    } else if (mod === 3) {
+      seed({ ...base, ...staffRow, action: 'node.update', resource_type: 'node', resource_id: randomUUID(), auth_context: 'session', at })
+    } else if (mod === 4) {
+      seed({ ...base, ...staffRow, action: 'gift_card.batch_exported', resource_type: 'gift_card_batch', resource_id: randomUUID(), auth_context: 'reauth', at })
+    } else if (mod === 5) {
+      seed({ ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, auth_context: null, source_ip: null, user_agent: null, action: 'payment.succeeded', resource_type: 'order', resource_id: randomUUID(), at })
+    } else if (mod === 6) {
+      const sup = STAFF[4]!
+      seed({
+        ...base,
+        actor_kind: 'admin',
+        actor_id: sup.id,
+        actor_email: sup.email,
+        api_domain: 'admin',
+        source_ip: sup.ip,
+        user_agent: BROWSER,
+        action: 'ticket.reply',
+        resource_type: 'ticket',
+        resource_id: randomUUID(),
+        resource_label: ticketNo(k + 500, atMs),
+        auth_context: 'session',
+        at,
+      })
+    } else if (mod === 7) {
+      seed({ ...base, ...staffRow, action: 'payment_provider.toggle', resource_type: 'payment_provider', resource_id: randomUUID(), reason: '渠道维护', auth_context: 'reauth', at })
+    } else if (mod === 8) {
+      seed({ ...base, ...staffRow, action: 'user.status_change', resource_type: 'user', resource_id: t.id, reason: '多次恶意退单', auth_context: 'reauth', at })
+    } else if (mod === 9) {
+      seed({ ...base, ...staffRow, action: 'withdrawal.approve', resource_type: 'withdrawal', resource_id: randomUUID(), auth_context: 'reauth', outcome: k % 7 === 0 ? 'partial' : 'success', at })
+    } else if (mod === 10) {
+      seed({ ...base, ...staffRow, action: 'subscription.extended', resource_type: 'subscription', resource_id: randomUUID(), reason: '线路故障补偿', auth_context: 'reauth', at })
+    } else {
+      seed({ ...base, ...staffRow, action: 'security.source_ip_viewed', resource_type: 'user', resource_id: t.id, auth_context: 'session', at })
+    }
   }
+
+  // C. 套餐
+  for (const p of plans) {
+    for (const v of p.versions) {
+      const op = staffByEmail(v.created_by_email)
+      const staffRow = {
+        actor_kind: 'admin' as const,
+        actor_id: op.id,
+        actor_email: op.email,
+        api_domain: 'admin' as const,
+        source_ip: op.ip,
+        user_agent: BROWSER,
+      }
+      if (v.status === 'published' && v.published_at) {
+        seed({
+          ...base,
+          ...staffRow,
+          action: 'plan_version.publish',
+          resource_type: 'plan_version',
+          resource_id: v.id,
+          auth_context: 'reauth',
+          at: v.published_at,
+        })
+      } else if (v.status === 'draft') {
+        seed({
+          ...base,
+          ...staffRow,
+          action: 'plan.usage_update',
+          resource_type: 'plan',
+          resource_id: p.id,
+          auth_context: 'reauth',
+          at: v.created_at,
+        })
+      }
+    }
+  }
+
+  // D. k.liu 撞库
+  const kl = userStore[1]!
+  for (let j = 0; j < 15; j++) {
+    anonFail({
+      action: 'user.login_failed',
+      at: iso((7 + j * 12) * MIN),
+      resource_type: 'user',
+      resource_id: kl.id,
+      reason: 'invalid_credentials',
+      source_ip: j % 2 === 0 ? '203.0.113.48' : '203.0.113.19',
+      user_agent: ATTACK_UA,
+    })
+  }
+  if (kl.last_login_at) {
+    anonFail({
+      action: 'user.login_failed',
+      at: new Date(Date.parse(kl.last_login_at) - MIN).toISOString(),
+      resource_type: 'user',
+      resource_id: kl.id,
+      reason: 'invalid_credentials',
+      source_ip: homeIp(1),
+      user_agent: BROWSER,
+    })
+  }
+
+  // E. 其它登录失败
+  for (let k = 0; k < 40; k++) {
+    const at = iso((k * 503 + 11) * MIN)
+    const target = k % 4 === 0 ? userAt(k * 3 + 13) : null
+    const inactive = k % 10 === 7
+    anonFail({
+      action: 'user.login_failed',
+      at,
+      resource_type: inactive || target ? 'user' : null,
+      resource_id: inactive ? userAt(9).id : target?.id ?? null,
+      reason: inactive ? 'account_inactive' : 'invalid_credentials',
+      source_ip: '198.51.100.18',
+      user_agent: ATTACK_UA,
+    })
+  }
+
+  // F. 聚类登录行：第 m 个成员在 lastMin + m * 7 分钟前、再早 2 天、再早 9 天各登录一次
+  for (const scene of CLUSTER_SCENES) {
+    scene.members.forEach((member, m) => {
+      const u = userStore[member]!
+      for (const extraMin of [0, 2 * 24 * 60, 9 * 24 * 60]) {
+        const tMin = scene.lastMin + m * 7 + extraMin
+        seed({
+          ...base,
+          actor_kind: 'user',
+          actor_id: u.id,
+          actor_email: u.email,
+          action: 'user.login',
+          resource_type: 'session',
+          resource_id: sessionId(),
+          api_domain: 'public',
+          auth_context: scene.legacy ? null : 'session',
+          source_ip: scene.legacy ? null : scene.ip,
+          ip_hash: scene.ip,
+          user_agent: ua(member),
+          at: iso(tMin * MIN),
+        })
+      }
+    })
+  }
+
+  // Go 每次登录成功都写 users.last_login_at：聚类场景里的登录比用户种子的 last_login_at 新时跟上
+  for (const r of seedRows) {
+    if (r.action !== 'user.login' || !r.actor_id) continue
+    const u = findUser(r.actor_id)
+    if (u && (!u.last_login_at || u.last_login_at < r.occurred_at)) u.last_login_at = r.occurred_at
+  }
+
+  audit.push(...seedRows)
+  audit.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
 })()
 
 const csvSafe = (s: string) => (s && '=+-@\t\r'.includes(s[0]!) ? `'${s}` : s)
@@ -142,7 +452,7 @@ const auditJson = (r: AuditRow) => ({
   api_domain: r.api_domain,
   outcome: r.outcome,
   reason: r.reason,
-  resource_label: r.resource_label,
+  resource_label: labelOf(r),
   auth_context: r.auth_context,
   source_ip: r.source_ip,
 })
@@ -152,20 +462,36 @@ interface AuditQuery {
   actorKind: string
   outcome: string
   q: string
+  ids: Set<string>
   from: number | null
   to: number | null
 }
 function auditFilter(q: URLSearchParams): AuditQuery {
-  return { action: q.get('action') ?? '', actorKind: q.get('actor_kind') ?? '', outcome: q.get('outcome') ?? '', q: (q.get('q') ?? '').trim(), from: null, to: null }
+  const text = (q.get('q') ?? '').trim()
+  return {
+    action: q.get('action') ?? '',
+    actorKind: q.get('actor_kind') ?? '',
+    outcome: q.get('outcome') ?? '',
+    q: text,
+    ids: text ? idsByEmail(text) : new Set(),
+    from: null,
+    to: null,
+  }
 }
 function auditMatch(r: AuditRow, f: AuditQuery): boolean {
   const q = f.q.toLowerCase()
   const t = Date.parse(r.occurred_at)
+  const searchHit =
+    !q ||
+    r.action.toLowerCase().includes(q) ||
+    (r.actor_id !== null && f.ids.has(r.actor_id)) ||
+    (r.resource_type === 'user' && r.resource_id !== null && f.ids.has(r.resource_id)) ||
+    r.resource_id === f.q
   return (
     (!f.action || r.action.startsWith(f.action)) &&
     (!f.actorKind || r.actor_kind === f.actorKind) &&
     (!f.outcome || r.outcome === f.outcome) &&
-    (!q || r.action.toLowerCase().includes(q) || (r.actor_email ?? '').toLowerCase().includes(q) || r.resource_id === f.q) &&
+    searchHit &&
     (f.from === null || t >= f.from) &&
     (f.to === null || t < f.to)
   )
@@ -204,21 +530,71 @@ interface Fetch {
   ip: string
   ua: string
   result: string
+  format: string
 }
 const fetches: Fetch[] = []
 const CLIENTS = ['clash-verge/2.0.4', 'sing-box/1.10.1', 'Shadowrocket/2.2.53', 'v2rayN/7.1']
+
+/** 照 Go render.UAFamily：按顺序匹配，先命中者胜 */
+const UA_FAMILIES: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['sing-box', ['sing-box', 'sfi/', 'sfa/']],
+  ['shadowrocket', ['shadowrocket']],
+  ['stash', ['stash']],
+  ['loon', ['loon']],
+  ['surfboard', ['surfboard']],
+  ['clash', ['clash', 'mihomo']],
+  ['quantumult', ['quantumult']],
+  ['surge', ['surge']],
+  ['v2ray', ['v2ray']],
+  ['shadowsocks', ['shadowsocks']],
+]
+function uaFamily(ua: string): string {
+  const s = ua.toLowerCase()
+  if (!s) return 'none'
+  return UA_FAMILIES.find(([, needles]) => needles.some((n) => s.includes(n)))?.[0] ?? 'other'
+}
+
+function fetchFormat(ua: string): string {
+  const fam = uaFamily(ua)
+  if (fam === 'clash') return 'clash'
+  if (fam === 'sing-box') return 'singbox'
+  return 'uri'
+}
+
+const userHasLiveSub = (u: User) => u.subs.some((s) => s.status === 'active')
+
 ;(function seedFetches() {
-  for (let k = 0; k < 60; k++) {
+  for (let k = 0; k < 120; k++) {
     const scan = k % 11 === 5
-    fetches.push({
-      at: iso((k * 53 + 1) * MIN),
-      user: scan ? null : userAt(k * 3 + 1),
-      ip: scan ? '203.0.113.14' : PUBLIC_IPS[(k * 2) % PUBLIC_IPS.length]!,
-      ua: scan ? 'curl/8.4.0' : CLIENTS[k % CLIENTS.length]!,
-      result: scan ? 'not_found' : k % 17 === 8 ? 'rate_limited' : k % 19 === 3 ? 'expired' : 'ok',
-    })
+    if (scan) {
+      fetches.push({ at: iso((k * 37 + 1) * MIN), user: null, ip: '203.0.113.14', ua: 'curl/8.4.0', result: 'not_found', format: '' })
+      continue
+    }
+    const idx = (k * 7 + 1) % 48
+    const user = userStore[idx]!
+    const ip = k % 3 === 0 ? mobileIp(idx) : homeIp(idx)
+    const uaStr = CLIENTS[idx % CLIENTS.length]!
+    const live = userHasLiveSub(user)
+    const result = !live ? 'expired' : k % 17 === 8 ? 'rate_limited' : k % 23 === 11 ? 'error' : 'ok'
+    fetches.push({ at: iso((k * 37 + 1) * MIN), user, ip, ua: uaStr, result, format: fetchFormat(uaStr) })
   }
 })()
+
+/** 最近一条冲着 k.liu 的匿名登录失败是否在 10 分钟内 */
+function recentKlLoginFailed(): boolean {
+  const kl = userStore[1]!
+  for (const r of audit) {
+    if (
+      r.action === 'user.login_failed' &&
+      r.actor_id === null &&
+      r.resource_type === 'user' &&
+      r.resource_id === kl.id
+    ) {
+      return Date.now() - Date.parse(r.occurred_at) < 10 * MIN
+    }
+  }
+  return false
+}
 
 /** 实时监控要看得到新行：每次读按流逝时间补事件，约 6 秒一条，一次最多 3 条 */
 let lastTick = Date.now()
@@ -227,10 +603,56 @@ function tick() {
   for (let i = 0; i < due; i++) {
     const n = audit.length + fetches.length
     const u = userAt(n * 7)
-    const ip = PUBLIC_IPS[n % PUBLIC_IPS.length]!
+    const ui = indexOf(u)
+    const ip = homeIp(ui)
     const at = new Date(Date.now() - (due - 1 - i) * 1000).toISOString()
-    if (n % 3 === 0) record({ at, actor_kind: 'user', actor_id: u.id, actor_email: u.email, action: 'user.login', resource_type: null, resource_id: null, resource_label: null, api_domain: 'public', outcome: n % 4 === 0 ? 'failure' : 'success', reason: null, auth_context: null, source_ip: ip, user_agent: BROWSER })
-    else fetches.unshift({ at, user: u, ip, ua: CLIENTS[n % CLIENTS.length]!, result: 'ok' })
+    if (n % 3 === 0) {
+      if (ui === 1) {
+        const kl = userStore[1]!
+        if (!recentKlLoginFailed()) {
+          record({
+            at,
+            actor_kind: 'anonymous',
+            actor_id: null,
+            actor_email: null,
+            action: 'user.login_failed',
+            resource_type: 'user',
+            resource_id: kl.id,
+            resource_label: null,
+            api_domain: 'public',
+            outcome: 'failure',
+            reason: 'invalid_credentials',
+            auth_context: null,
+            source_ip: n % 2 === 0 ? '203.0.113.48' : '203.0.113.19',
+            user_agent: ATTACK_UA,
+          })
+        } else {
+          const uaStr = CLIENTS[ui % CLIENTS.length]!
+          fetches.unshift({ at, user: u, ip, ua: uaStr, result: 'ok', format: fetchFormat(uaStr) })
+        }
+      } else {
+        record({
+          at,
+          actor_kind: 'user',
+          actor_id: u.id,
+          actor_email: u.email,
+          action: 'user.login',
+          resource_type: 'session',
+          resource_id: sessionId(),
+          resource_label: null,
+          api_domain: 'public',
+          outcome: 'success',
+          reason: null,
+          auth_context: 'session',
+          source_ip: ip,
+          user_agent: ua(ui),
+        })
+        u.last_login_at = at
+      }
+    } else {
+      const uaStr = CLIENTS[ui % CLIENTS.length]!
+      fetches.unshift({ at, user: u, ip, ua: uaStr, result: 'ok', format: fetchFormat(uaStr) })
+    }
   }
   if (due > 0) lastTick = Date.now()
 }
@@ -252,6 +674,47 @@ type AccessItem = Record<string, string>
 /** omitempty：空串的键不出现 */
 const compact = (o: Record<string, string>): AccessItem => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== ''))
 
+function accessAuditItem(r: AuditRow): AccessItem & { occurred_at: string } {
+  const g = geoOf(r.source_ip ?? '')
+  const target =
+    r.actor_id === null && r.action === 'user.login_failed' && r.resource_type === 'user' && r.resource_id
+      ? { target_user_id: r.resource_id, target_user_email: emailOf(r.resource_id) ?? '' }
+      : { target_user_id: '', target_user_email: '' }
+  return {
+    ...compact({
+      category: categoryOf(r.action),
+      action: r.action,
+      user_id: r.actor_id ?? '',
+      user_email: emailOf(r.actor_id) ?? '',
+      ...target,
+      ip: r.source_ip ?? '',
+      geo: g.geo,
+      network_kind: g.kind,
+      user_agent: r.user_agent ?? '',
+      outcome: r.outcome,
+    }),
+    occurred_at: r.occurred_at,
+  }
+}
+
+function recordSourceIpViewed(ctx: MockContext) {
+  record({
+    actor_kind: 'admin',
+    actor_id: ctx.user.userId,
+    actor_email: ctx.user.email,
+    action: 'security.source_ip_viewed',
+    resource_type: null,
+    resource_id: null,
+    resource_label: null,
+    api_domain: 'admin',
+    outcome: 'success',
+    reason: null,
+    auth_context: ctx.reauthed ? 'reauth' : 'session',
+    source_ip: ADMIN_IP,
+    user_agent: BROWSER,
+  })
+}
+
 function accessList(ctx: MockContext): MockResult {
   const q = ctx.query
   const lim = Number((q.get('limit') ?? '').trim())
@@ -264,24 +727,25 @@ function accessList(ctx: MockContext): MockResult {
   if (!['', 'success', 'failure', 'denied', 'partial', 'error'].includes(outcome)) return invalid({ outcome: '只支持 success、failure、denied、partial 或 error' })
   const ip = (q.get('ip') ?? '').trim()
   const who = (q.get('user') ?? '').trim()
-  const byId = UUID.test(who)
-  const userOk = (id: string | null, email: string | null) => !who || (byId ? id === who.toLowerCase() : (email ?? '').toLowerCase().includes(who.toLowerCase()))
+  const ids: Set<string> | null = !who ? null : UUID.test(who) ? new Set([who.toLowerCase()]) : idsByEmail(who)
+  const auditUserHit = (r: AuditRow) =>
+    ids === null || (r.actor_id !== null && ids.has(r.actor_id)) || (r.action === 'user.login_failed' && r.resource_type === 'user' && r.resource_id !== null && ids.has(r.resource_id))
+  const fetchUserHit = (userId: string | undefined) => ids === null || (userId !== undefined && ids.has(userId))
 
   const items: Array<AccessItem & { occurred_at: string }> = []
   if (category !== 'subscribe') {
     for (const r of audit) {
       if (category && categoryOf(r.action) !== category) continue
       if (ip && r.source_ip !== ip) continue
-      if (!userOk(r.actor_id, r.actor_email)) continue
+      if (!auditUserHit(r)) continue
       if (outcome && !(outcome === 'error' ? r.outcome !== 'success' : r.outcome === outcome)) continue
-      const g = geoOf(r.source_ip ?? '')
-      items.push({ ...compact({ category: categoryOf(r.action), action: r.action, user_id: r.actor_id ?? '', user_email: r.actor_email ?? '', ip: r.source_ip ?? '', geo: g.geo, network_kind: g.kind, user_agent: r.user_agent ?? '', outcome: r.outcome }), occurred_at: r.occurred_at })
+      items.push(accessAuditItem(r))
     }
   }
   if ((category === '' || category === 'subscribe') && ['', 'success', 'error'].includes(outcome)) {
     for (const f of fetches) {
       if (ip && f.ip !== ip) continue
-      if (!userOk(f.user?.id ?? null, f.user?.email ?? null)) continue
+      if (!fetchUserHit(f.user?.id)) continue
       if (outcome === 'success' && f.result !== 'ok') continue
       if (outcome === 'error' && f.result === 'ok') continue
       const g = geoOf(f.ip)
@@ -373,10 +837,10 @@ async function disableAccounts(ctx: MockContext): Promise<MockResult> {
     else if (u.status === 'suspended' || u.status === 'banned') skipped.push({ user_id: id, reason: 'already_disabled' })
     else done.push(u)
   }
-  const actor = { actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, api_domain: 'admin', auth_context: 'reauth' as const, source_ip: '10.8.0.12', user_agent: BROWSER }
+  const actor = { actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, api_domain: 'admin', auth_context: 'reauth' as const, source_ip: ADMIN_IP, user_agent: BROWSER }
   for (const u of done) {
     u.status = 'suspended'
-    record({ ...actor, action: 'user.status_change', resource_type: 'user', resource_id: u.id, resource_label: u.email, outcome: 'success', reason })
+    record({ ...actor, action: 'user.status_change', resource_type: 'user', resource_id: u.id, resource_label: null, outcome: 'success', reason })
   }
   if (done.length > 0) c.review = { decision: 'disabled', decided_at: new Date().toISOString(), expires_at: null }
   record({ ...actor, action: 'risk.ip_cluster.disable', resource_type: done.length ? 'ip_cluster_review' : null, resource_id: null, resource_label: null, outcome: done.length === 0 ? 'failure' : skipped.length ? 'partial' : 'success', reason })
@@ -428,7 +892,7 @@ async function setSwitch(ctx: MockContext): Promise<MockResult> {
   if (!enabled && stored === null) return err(409, 'conflict', `开关 ${s.code} 不允许该操作：${CHECK('feature_switches_disable_needs_reason')}`)
   s.enabled = enabled
   s.reason = stored
-  record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'feature_switch.toggle', resource_type: 'feature_switch', resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: reason || null, auth_context: 'reauth', source_ip: '10.8.0.12', user_agent: BROWSER })
+  record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'feature_switch.toggle', resource_type: 'feature_switch', resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: reason || null, auth_context: 'reauth', source_ip: ADMIN_IP, user_agent: BROWSER })
   switchListeners.forEach((fn) => fn({ code: s.code, enabled }))
   return { status: 200, body: { ok: true, enabled } }
 }
@@ -638,17 +1102,19 @@ export const security: MockModule = {
       const lines = [
         'occurred_at,actor_kind,actor_email,action,resource_type,resource_id,resource_label,api_domain,outcome,reason,source_ip,auth_context',
         ...rows.map((r) =>
-          [r.occurred_at.replace(/\.\d+Z$/, 'Z'), r.actor_kind, csvSafe(s(r.actor_email)), r.action, s(r.resource_type), s(r.resource_id), csvSafe(s(r.resource_label)), s(r.api_domain), r.outcome, csvSafe(s(r.reason)), s(r.source_ip), s(r.auth_context)].map(csvCell).join(','),
+          [r.occurred_at.replace(/\.\d+Z$/, 'Z'), r.actor_kind, csvSafe(s(r.actor_email)), r.action, s(r.resource_type), s(r.resource_id), csvSafe(s(labelOf(r))), s(r.api_domain), r.outcome, csvSafe(s(r.reason)), s(r.source_ip), s(r.auth_context)].map(csvCell).join(','),
         ),
       ]
-      record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'audit.export', resource_type: null, resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: null, auth_context: 'reauth', source_ip: '10.8.0.12', user_agent: BROWSER })
+      record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'audit.export', resource_type: null, resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: null, auth_context: 'reauth', source_ip: ADMIN_IP, user_agent: BROWSER })
       const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
       ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text: `\ufeff${lines.join('\n')}\n`, headers: { 'Content-Disposition': `attachment; filename="audit-${stamp}.csv"` } })
     },
 
     'GET /v1/access-log': (ctx) => {
       tick()
-      reply(ctx, accessList(ctx))
+      const r = accessList(ctx)
+      if (r.status === 200) recordSourceIpViewed(ctx)
+      reply(ctx, r)
     },
 
     'GET /v1/ip-clusters': (ctx) => {
@@ -659,6 +1125,7 @@ export const security: MockModule = {
         .sort((a, b) => b.members.length - a.members.length || b.last.localeCompare(a.last))
         .slice(0, 50)
         .map(clusterJson)
+      recordSourceIpViewed(ctx)
       ctx.send(200, { clusters: rows })
     },
 
@@ -702,7 +1169,7 @@ export const security: MockModule = {
         outcome: 'success',
         reason: null,
         auth_context: 'session',
-        source_ip: '10.8.0.12',
+        source_ip: ADMIN_IP,
         user_agent: BROWSER,
       })
       ctx.send(200, { ip, geo: g.geo, network_kind: g.kind })
@@ -717,7 +1184,7 @@ export const security: MockModule = {
       if (!c) return reply(ctx, NOT_FOUND)
       const expires = new Date(Date.now() + NORMAL_TTL).toISOString()
       c.review = { decision: 'normal', decided_at: new Date().toISOString(), expires_at: expires }
-      record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'risk.ip_cluster.mark_normal', resource_type: 'ip_cluster_review', resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: null, auth_context: ctx.reauthed ? 'reauth' : 'session', source_ip: '10.8.0.12', user_agent: BROWSER })
+      record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'risk.ip_cluster.mark_normal', resource_type: 'ip_cluster_review', resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: null, auth_context: ctx.reauthed ? 'reauth' : 'session', source_ip: ADMIN_IP, user_agent: BROWSER })
       ctx.send(200, { key: ctx.params.key, decision: 'normal', expires_at: expires.replace(/\.\d+Z$/, 'Z') })
     },
     'POST /v1/ip-clusters/:key/disable-accounts': async (ctx) => {

@@ -34,8 +34,11 @@ describe('mock api · admin security and operations', () => {
     const all = await audit('?limit=200')
     expect(all.events).toHaveLength(Math.min(200, all.total))
     expect((await audit('?limit=500')).events).toHaveLength(50)
-    expect(all.events.some((e) => e.auth_context === null && e.source_ip === null && e.actor_kind === 'admin')).toBe(true)
-    expect(all.events.some((e) => e.actor_kind === 'node')).toBe(true)
+    // 00080 之前的存量行没有 auth_context 与明文 IP：套餐版本多是几个月前发布的
+    const legacy = (await audit('?action=plan_version.&limit=200')).events
+    expect(legacy.some((e) => e.auth_context === null && e.source_ip === null && e.actor_kind === 'admin')).toBe(true)
+    // 库里的操作者类型只有四种（CHECK）
+    expect(all.events.every((e) => ['user', 'admin', 'system', 'anonymous'].includes(e.actor_kind))).toBe(true)
 
     const orders = await audit('?action=order.&limit=200')
     expect(orders.events.length).toBeGreaterThan(0)
