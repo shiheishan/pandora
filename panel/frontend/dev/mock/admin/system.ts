@@ -193,6 +193,13 @@ const DEFAULTS: Record<string, { subject: string; body: string }> = {
   'order.paid|inapp': { subject: '支付成功', body: '订单 {{order_no}} 已支付成功，「{{plan}}」已开通，有效期至 {{expires_at}}。' },
   'ticket.replied|inapp': { subject: '工单有新回复', body: '你的工单「{{subject}}」有新回复，点击查看。' },
   'auth.email_verify|email': { subject: '【{{site}}】注册验证码 {{code}}', body: '你好，\n\n你正在注册 {{site}}，验证码是：\n\n{{code}}\n\n验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。\n\n{{site}}' },
+  // 后台换链接、后台开待付单（与 Go 的 registry_admin_ops.go、迁移 00063 逐字一致）
+  'subscription.link_rotated|inapp': { subject: '链接已更换', body: '管理员给你的「{{plan}}」换了新链接，旧链接已失效，用它的设备会连不上。请到「我的套餐」复制新链接，在 App 里重新添加；原来那条可以删掉。到期日和流量不变。' },
+  'subscription.link_rotated|email': { subject: '【{{site}}】你的套餐链接已更换', body: '你好，\n\n管理员给你的「{{plan}}」换了新链接，旧链接已失效，用它的设备会连不上。\n请登录后到「我的套餐」复制新链接，在 App 里重新添加；原来那条可以删掉。到期日和流量不变。\n\n{{subs_url}}\n\n{{site}}' },
+  'subscription.link_rotated|telegram': { subject: '链接已更换', body: '管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加：{{subs_url}}' },
+  'order.pending_created|inapp': { subject: '有一张待付款订单', body: '管理员给你开了一张订单 {{order_no}}（「{{plan}}」），应付 {{amount}}。请在 {{expires_at}} 前到「订单」页付款，过期自动取消。' },
+  'order.pending_created|email': { subject: '【{{site}}】你有一张待付款订单 {{order_no}}', body: '你好，\n\n管理员给你开了一张订单，等你付款：\n订单号：{{order_no}}\n套餐：{{plan}}\n应付：{{amount}}\n付款期限：{{expires_at}}\n\n过期自动取消。登录后到「订单」页付款：\n{{order_url}}\n\n{{site}}' },
+  'order.pending_created|telegram': { subject: '有一张待付款订单', body: '管理员给你开了一张订单 {{order_no}}（「{{plan}}」），应付 {{amount}}，请在 {{expires_at}} 前付款，过期自动取消。去付款：{{order_url}}' },
 }
 const DESCRIPTION: Record<string, string> = {
   'subscription.expiring': '套餐到期前提醒（由定时扫描触发，每个订阅每个提醒窗口只发一次）',
@@ -200,11 +207,13 @@ const DESCRIPTION: Record<string, string> = {
   'order.paid': '订单支付成功后发给下单用户',
   'ticket.replied': '工单被管理员回复后通知提单人',
   'auth.email_verify': '注册第 1 步发给注册邮箱的验证码（开启邮箱验证时；邮箱已注册则不发）',
+  'subscription.link_rotated': '管理员在后台给用户的某一份换链接后发给属主（用户自己在用户端换不发）',
+  'order.pending_created': '管理员在后台人工开单、选「待用户支付」后发给这个用户（赠送、线下已收款不发）',
   'admin.order_paid': '订单支付成功后发一条到管理员群组（后台「Telegram · 机器人与群组」的收款提醒开着时；随支付成功通知的扫描写入）',
   'admin.ticket_opened': '用户新建工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单',
   'admin.ticket_replied': '用户回复工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单',
 }
-const SAMPLE: Record<string, string> = { site: '潘多拉面板', plan: '旗舰套餐', days: '3', expires_at: '2026-08-31 23:59', percent: '85', remaining: '3.2 GB', order_no: 'AO20260804-XXXXXX', subject: '无法连接节点', amount: '29.90 CNY', email: 'us***@example.com', ticket_no: 'TK20260804-ABCDEFGH', body: '节点连不上了，麻烦看一下。', traffic: '12.5 GB', balance: '88.00 CNY' }
+const SAMPLE: Record<string, string> = { site: '潘多拉面板', plan: '旗舰套餐', days: '3', expires_at: '2026-08-31 23:59', percent: '85', remaining: '3.2 GB', order_no: 'AO20260804-XXXXXX', subject: '无法连接节点', amount: '29.90 CNY', email: 'us***@example.com', ticket_no: 'TK20260804-ABCDEFGH', body: '节点连不上了，麻烦看一下。', traffic: '12.5 GB', balance: '88.00 CNY', subs_url: 'https://panel.example.test/#/subs', order_url: 'https://panel.example.test/#/orders' }
 const tpl = (code: string, channel: string, category: string, vars: string[], override?: { subject: string; body: string }): Tpl => {
   const d = override ?? DEFAULTS[`${code}|${channel}`]!
   return { code, channel, category, version: override ? 3 : 1, subject: d.subject, body: d.body, vars, updated_at: new Date(Date.now() - 86_400_000 * 20).toISOString() }
@@ -212,6 +221,12 @@ const tpl = (code: string, channel: string, category: string, vars: string[], ov
 const templates: Tpl[] = [
   tpl('admin.broadcast', 'email', 'marketing', ['subject', 'body'], { subject: '{{subject}}', body: '{{body}}' }),
   tpl('auth.email_verify', 'email', 'transactional', ['site', 'code', 'minutes']),
+  tpl('order.pending_created', 'email', 'transactional', ['site', 'order_no', 'plan', 'amount', 'expires_at', 'order_url']),
+  tpl('order.pending_created', 'inapp', 'transactional', ['order_no', 'plan', 'amount', 'expires_at']),
+  tpl('order.pending_created', 'telegram', 'transactional', ['order_no', 'plan', 'amount', 'expires_at', 'order_url']),
+  tpl('subscription.link_rotated', 'email', 'transactional', ['site', 'plan', 'subs_url']),
+  tpl('subscription.link_rotated', 'inapp', 'transactional', ['plan']),
+  tpl('subscription.link_rotated', 'telegram', 'transactional', ['plan', 'subs_url']),
   tpl('order.paid', 'inapp', 'transactional', ['order_no', 'plan', 'expires_at'], { subject: '支付成功 🎉', body: '订单 {{order_no}} 已支付，「{{plan}}」已开通，有效期至 {{expires_at}}。感谢支持！' }),
   tpl('order.paid', 'telegram', 'transactional', ['order_no', 'plan', 'expires_at'], { subject: '支付成功', body: '订单 {{order_no}} 已支付，「{{plan}}」已开通，有效期至 {{expires_at}}。' }),
   tpl('quota.warning', 'email', 'service', ['site', 'plan', 'percent', 'remaining']),

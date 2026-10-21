@@ -179,6 +179,8 @@ const TEMPLATE_NAME: Readonly<Record<string, string>> = {
   'quota.warning': '流量预警',
   'order.paid': '订单支付成功',
   'ticket.replied': '工单有新回复',
+  'subscription.link_rotated': '后台换链接',
+  'order.pending_created': '后台开待付单',
   'admin.broadcast': '群发邮件',
   'auth.email_verify': '注册验证码',
 }

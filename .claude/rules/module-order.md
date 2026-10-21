@@ -53,6 +53,7 @@ paths:
     插件事件：发 `order.created`、应付为 0（余额全额）的单发 `order.paid`，不发 `subscription.provisioned`（重置不改到期；叠加单顺延到期，按续期发 `subscription.provisioned`）。付款后给管理员群组发收款提醒、不给用户发支付成功通知（见 module-notify）。
   - 后台开单落点由人选（`planPlacements` / `candidatesFrom` 最多 50 份，生效中优先、新的优先）：同款订阅套餐是续费、同款一次性是叠加（`PlacementStack`），换掉生效中的永不自动默认。
   - 人工开单（`CreateManualOrder`）：原因必填 5–500 字，审计 `order.manual_created`；结算方式收 `grant`（赠送履约）、`pending`、`offline`（同一事务调 `RecordOffline`），不接受 `balance`。
+    `pending` 开单后在同一事务里调 `PendingNotifier.ManualPendingCreated`（`service/manual_notify.go`，app 适配到 notify 的 `NotifyOrderPending`，模板 `order.pending_created`：订单号、应付、付款期限、订单页链接），返回错误时开单一起回滚；`grant`、`offline` 不通知（用户 10-21 定）。`PendingNotifier` 在 `MissingPorts` 里。
 - 账本与佣金：
   - 账本科目按 id 升序加锁（见上面「科目怎么加锁」）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
   - 后台提现列表 `GET v1/withdrawals?status=`：逗号分隔多个状态取并集（与订单、工单列表的多状态筛选同写法，handler 拆、service 的 `withdrawalStatusFilter` 校验去重），任一不是 requested / approved / rejected / paid 整体 422 `status`；不带为全部，最多 200 笔。后台「处理中」= requested,approved，「已完成」= paid,rejected。
