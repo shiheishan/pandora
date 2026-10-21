@@ -113,7 +113,6 @@ export type ClusterDisabled = z.output<typeof clusterDisabled>
 const switchSchema = z.object({
   code: z.string(),
   enabled: z.boolean(),
-  essential: z.boolean(),
   reason: z.string().nullable(),
 })
 export type SwitchRow = z.output<typeof switchSchema>

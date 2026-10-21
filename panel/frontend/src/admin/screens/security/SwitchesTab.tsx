@@ -39,7 +39,6 @@ function SwitchLine({ view: v, onToggle }: { view: SwitchView; onToggle: () => v
         <div className={css.swtTitle}>
           <span className={css.swtName}>{v.title}</span>
           <span className={css.swtCode}>{v.code}</span>
-          {v.kind === 'essential' && <Tag tone="neutral">核心 · 不可关闭</Tag>}
           {v.kind === 'missing' && <Tag tone="neutral">缺行</Tag>}
         </div>
         <div className={css.swtDesc}>{v.desc}</div>
@@ -50,7 +49,7 @@ function SwitchLine({ view: v, onToggle }: { view: SwitchView; onToggle: () => v
         <span>{v.status}</span>
         <Switch
           aria-label={v.title}
-          checked={v.degraded || v.kind === 'essential'}
+          checked={v.degraded}
           disabled={!toggleable}
           tone={paused ? 'danger' : undefined}
           onChange={onToggle}
