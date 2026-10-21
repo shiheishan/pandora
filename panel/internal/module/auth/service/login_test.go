@@ -376,3 +376,113 @@ func TestLoginBackendErrorReleasesAttempt(t *testing.T) {
 		t.Fatalf("没有结论的结果应退回名额，计数=%d", n)
 	}
 }
+
+func TestLoginDisabledPublic(t *testing.T) {
+	h := newTestService(t)
+	_ = h.Users.addUser("off@example.com", "right-pass", "suspended")
+
+	// 门户登录口令对 → errors.Is(err, errAccountDisabled)，errs.As(err).Code == errs.Forbidden，message 「账号已停用」
+	tok1, err1 := h.S.Login(testCtx("203.0.113.1"), authn.AudiencePublic, "off@example.com", "right-pass")
+	if !errors.Is(err1, errAccountDisabled) {
+		t.Fatalf("口令对应 Is errAccountDisabled, 得 %v", err1)
+	}
+	if e := errs.As(err1); e.Code != errs.Forbidden || e.Message != "账号已停用" {
+		t.Fatalf("code/msg=%v/%q, want forbidden/账号已停用", e.Code, e.Message)
+	}
+	if tok1.AccessToken != "" {
+		t.Fatalf("不应返回 AccessToken: %+v", tok1)
+	}
+
+	h.Redis.FastForward(failureAuditWindow + time.Second)
+
+	// 口令错 → errors.Is(err, errInvalidCredentials)
+	tok2, err2 := h.S.Login(testCtx("203.0.113.2"), authn.AudiencePublic, "off@example.com", "wrong-pass")
+	if !errors.Is(err2, errInvalidCredentials) {
+		t.Fatalf("口令错应 Is errInvalidCredentials, 得 %v", err2)
+	}
+	if e := errs.As(err2); e.Code != errs.Unauthorized || e.Message != "邮箱或密码不正确" {
+		t.Fatalf("code/msg=%v/%q, want unauthorized/邮箱或密码不正确", e.Code, e.Message)
+	}
+	if tok2.AccessToken != "" {
+		t.Fatalf("不应返回 AccessToken: %+v", tok2)
+	}
+
+	// 两次都不建会话（loginSuccessEvents(h.Audit) 为 0 条）
+	if success := loginSuccessEvents(h.Audit); len(success) != 0 {
+		t.Fatalf("不应建会话，loginSuccessEvents=%d", len(success))
+	}
+
+	// 失败审计 reason 分别是 account_inactive 与 invalid_credentials
+	failed := loginFailedEvents(h.Audit)
+	if len(failed) != 2 {
+		t.Fatalf("loginFailedEvents=%d want 2", len(failed))
+	}
+	if r, _ := failed[0].ev.Data["reason"].(string); r != reasonAccountInactive {
+		t.Fatalf("第 1 次失败 reason=%q want %q", r, reasonAccountInactive)
+	}
+	if r, _ := failed[1].ev.Data["reason"].(string); r != reasonInvalidCredentials {
+		t.Fatalf("第 2 次失败 reason=%q want %q", r, reasonInvalidCredentials)
+	}
+
+	// 再用 "banned" 状态的另一个账号测一次口令对 → errAccountDisabled
+	_ = h.Users.addUser("banned@example.com", "right-pass", "banned")
+	tok3, err3 := h.S.Login(testCtx("203.0.113.3"), authn.AudiencePublic, "banned@example.com", "right-pass")
+	if !errors.Is(err3, errAccountDisabled) {
+		t.Fatalf("banned 口令对应 Is errAccountDisabled, 得 %v", err3)
+	}
+	if tok3.AccessToken != "" {
+		t.Fatalf("不应返回 AccessToken: %+v", tok3)
+	}
+}
+
+func TestLoginDisabledCountsAsFailure(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	_ = h.Users.addUser("off@example.com", "right-pass", "suspended")
+
+	for i := 0; i < failureThreshold; i++ {
+		_, err := h.S.Login(ctx, authn.AudiencePublic, "off@example.com", "right-pass")
+		if !errors.Is(err, errAccountDisabled) {
+			t.Fatalf("第 %d 次应 Is errAccountDisabled, 得 %v", i+1, err)
+		}
+	}
+	// 第 11 次回 errs.RateLimited（计数照旧，口令对也算一次失败）
+	_, err := h.S.Login(ctx, authn.AudiencePublic, "off@example.com", "right-pass")
+	if e := errs.As(err); e.Code != errs.RateLimited || e.RetryAfterSeconds <= 0 {
+		t.Fatalf("第 11 次应 RateLimited: %v", err)
+	}
+}
+
+func TestLoginDisabledAdminAudience(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+
+	adminUID := h.Users.addUser("admin-off@example.com", "right-pass", "suspended")
+	h.Store.addAdmin(adminUID)
+
+	_ = h.Users.addUser("user-off@example.com", "right-pass", "suspended")
+
+	// 一个停用的管理员（addUser + h.Store.addAdmin）后台登录口令对 → errAccountDisabled
+	tokAdmin, errAdmin := h.S.Login(ctx, authn.AudienceAdmin, "admin-off@example.com", "right-pass")
+	if !errors.Is(errAdmin, errAccountDisabled) {
+		t.Fatalf("停用管理员后台登录口令对应 Is errAccountDisabled, 得 %v", errAdmin)
+	}
+	if e := errs.As(errAdmin); e.Code != errs.Forbidden || e.Message != "账号已停用" {
+		t.Fatalf("code/msg=%v/%q want forbidden/账号已停用", e.Code, e.Message)
+	}
+	if tokAdmin.AccessToken != "" {
+		t.Fatalf("不应返回 AccessToken: %+v", tokAdmin)
+	}
+
+	// 一个停用的非管理员后台登录口令对 → errInvalidCredentials（文案「邮箱或密码不正确」）
+	tokPlain, errPlain := h.S.Login(ctx, authn.AudienceAdmin, "user-off@example.com", "right-pass")
+	if !errors.Is(errPlain, errInvalidCredentials) {
+		t.Fatalf("停用非管理员后台登录口令对应 Is errInvalidCredentials, 得 %v", errPlain)
+	}
+	if e := errs.As(errPlain); e.Code != errs.Unauthorized || e.Message != "邮箱或密码不正确" {
+		t.Fatalf("code/msg=%v/%q want unauthorized/邮箱或密码不正确", e.Code, e.Message)
+	}
+	if tokPlain.AccessToken != "" {
+		t.Fatalf("不应返回 AccessToken: %+v", tokPlain)
+	}
+}

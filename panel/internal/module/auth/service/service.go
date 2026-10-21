@@ -159,12 +159,15 @@ type AdminSummary struct {
 	CreatedAt time.Time
 }
 
-// 对外的固定错误。口令错、用户不存在、停用、登后台的不是管理员一律 errInvalidCredentials（IAM-006）。
+// 对外的固定错误。口令错、用户不存在、登后台的不是管理员一律 errInvalidCredentials（IAM-006）；停用账号口令对了回 errAccountDisabled。
 var (
 	errInvalidCredentials = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
 	errSessionInvalid     = errs.New(errs.Unauthorized)
 	// ErrStaffPortalLogin 是后台人员登录门户时的中性提示（不带后台路径）。
 	ErrStaffPortalLogin = errs.Newf(errs.Forbidden, "该账号是管理账号，不能登录用户门户，请从管理后台的登录入口登录")
+	// errAccountDisabled 是停用或封禁的账号口令验证通过之后的明确提示（用户 10-21 定）；口令错时仍回 errInvalidCredentials，
+	// 所以只有知道正确口令的人才看得到账号被停用。后台入口只对管理员名单里的人这样提示，其余照旧与口令错相同（IAM-006）。
+	errAccountDisabled = errs.Newf(errs.Forbidden, "账号已停用")
 )
 
 // actorID 取 ctx 里登录主体的用户 ID；没有登录主体（命令行）时为 nil。
