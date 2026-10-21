@@ -298,7 +298,7 @@ func TestDeliveryCacheConcurrentRender(t *testing.T) {
 			}
 			proxyUUID := uuid.NewString()
 			for _, f := range formats {
-				if body, _, _ := render.Render(f, nodes, proxyUUID, "sing-box 1.13.0", render.Options{}); len(body) == 0 {
+				if body, _, _ := render.RenderRequest(render.Request{Format: f, Nodes: nodes, ProxyUUID: proxyUUID, UA: "sing-box 1.13.0"}); len(body) == 0 {
 					errs <- fmt.Errorf("%s 渲染为空", f)
 					return
 				}

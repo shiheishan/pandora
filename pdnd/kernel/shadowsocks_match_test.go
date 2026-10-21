@@ -3,13 +3,16 @@ package kernel
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha1"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
+	"golang.org/x/crypto/hkdf"
 )
 
 // 零分配 HKDF 必须与标准库 hkdf 参考实现逐字节一致：覆盖全部密钥长度、
@@ -294,4 +297,11 @@ func BenchmarkShadowsocksHandshakeActiveSubset(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func deriveSSSubkey(master, salt []byte, length int) ([]byte, error) {
+	reader := hkdf.New(sha1.New, master, salt, []byte("ss-subkey"))
+	key := make([]byte, length)
+	_, err := io.ReadFull(reader, key)
+	return key, err
 }

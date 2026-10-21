@@ -147,7 +147,7 @@ func TestColdStartFollowsCachedOrder(t *testing.T) {
 
 func newNativeKernel(t *testing.T) *nativekernel.NativeCore {
 	t.Helper()
-	k := nativekernel.NewNativeCore(nil)
+	k := nativekernel.NewNativeCoreWithLogger(nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if err := k.Start(ctx); err != nil {

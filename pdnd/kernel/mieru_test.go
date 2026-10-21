@@ -97,7 +97,7 @@ func TestNativeMieruTCPInterop(t *testing.T) {
 	if err := client.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 	conn, err := client.DialContext(context.Background(), target)
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestNativeMieruUDPInterop(t *testing.T) {
 	if err := client.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 	target := echo.LocalAddr().(*net.UDPAddr)
 	conn, err := client.DialContext(context.Background(), &net.UDPAddr{IP: target.IP, Port: target.Port})
 	if err != nil {

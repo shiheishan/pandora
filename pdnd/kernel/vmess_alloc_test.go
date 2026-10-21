@@ -3,6 +3,7 @@ package kernel
 import (
 	"bufio"
 	"bytes"
+	"crypto/cipher"
 	"io"
 	"testing"
 )
@@ -47,4 +48,12 @@ func BenchmarkVMessAEADRead32K(b *testing.B) {
 			got += n
 		}
 	}
+}
+
+func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADReader {
+	return newVMessChunkReader(upstream, aead, nonce, option, false)
+}
+
+func newVMessAEADWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADWriter {
+	return newVMessChunkWriter(upstream, aead, nonce, option, false)
 }

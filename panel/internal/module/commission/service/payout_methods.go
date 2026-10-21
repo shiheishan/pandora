@@ -14,9 +14,6 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// WithdrawMethodOther 是迁移前用户自由填写的收款信息，只用于展示存量记录，新申请不能选。
-const WithdrawMethodOther = "other"
-
 // tronBase58Alphabet 是 TRON 地址用的比特币 base58 字母表（无 0/O/I/l）。
 const tronBase58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -32,26 +29,9 @@ var usdtWithdrawMethods = map[string]struct{}{
 	settingssvc.WithdrawMethodUSDTBEP20: {},
 }
 
-var knownWithdrawMethods = map[string]struct{}{
-	settingssvc.WithdrawMethodAlipay:    {},
-	settingssvc.WithdrawMethodWechat:    {},
-	settingssvc.WithdrawMethodBank:      {},
-	settingssvc.WithdrawMethodPayPal:    {},
-	settingssvc.WithdrawMethodUSDTTRC20: {},
-	settingssvc.WithdrawMethodUSDTERC20: {},
-	settingssvc.WithdrawMethodUSDTBEP20: {},
-	WithdrawMethodOther:                 {},
-}
-
 // IsUSDTMethod 判断是否为三种 USDT 链上提现方式之一。
 func IsUSDTMethod(m string) bool {
 	_, ok := usdtWithdrawMethods[m]
-	return ok
-}
-
-// KnownWithdrawMethod 判断是否为目录内七种方式或存量 other（展示与校验旧数据用）。
-func KnownWithdrawMethod(m string) bool {
-	_, ok := knownWithdrawMethods[m]
 	return ok
 }
 

@@ -493,3 +493,13 @@ func TestHy2DownlinkStaleColdCountDoesNotWarm(t *testing.T) {
 		t.Logf("每毫秒一包，第 %d 包后进热态", pushed)
 	})
 }
+
+// size 返回当前存货数（测试用）。
+func (s *hy2Stock[T]) size() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.items)
+}
+
+// inUse 返回当前占着的热态名额数。
+func (l *hy2WarmLimit) inUse() int { return len(l.slots) }

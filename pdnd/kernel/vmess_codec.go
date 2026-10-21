@@ -102,10 +102,6 @@ type vmessAEADReader struct {
 	done bool
 }
 
-func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADReader {
-	return newVMessChunkReader(upstream, aead, nonce, option, false)
-}
-
 func newVMessChunkReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte, packet bool) *vmessAEADReader {
 	var base [12]byte
 	copy(base[:], nonce)
@@ -231,10 +227,6 @@ type vmessAEADWriter struct {
 	packet   bool
 	nonce    [12]byte
 	count    uint16
-}
-
-func newVMessAEADWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADWriter {
-	return newVMessChunkWriter(upstream, aead, nonce, option, false)
 }
 
 func newVMessChunkWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, option byte, packet bool) *vmessAEADWriter {

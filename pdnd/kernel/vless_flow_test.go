@@ -2,6 +2,8 @@ package kernel
 
 import (
 	"bytes"
+	"context"
+	"net"
 	"strings"
 	"testing"
 )
@@ -66,7 +68,7 @@ func TestParseVLESSAddons(t *testing.T) {
 
 	t.Run("不支持的线型要报错", func(t *testing.T) {
 		// 字段 1 用 varint 线型（0）而不是 length-delimited
-		if _, err := ParseVLESSAddons([]byte{byte(1<<3 | 0), 5}); err == nil {
+		if _, err := ParseVLESSAddons([]byte{1 << 3, 5}); err == nil {
 			t.Error("线型不对应当报错，而不是当成合法输入")
 		}
 	})
@@ -124,4 +126,32 @@ func TestNegotiateVLESSFlow(t *testing.T) {
 			t.Errorf("%q 的错误里应当指向 %s，实际：%v", f, FlowVision, err)
 		}
 	}
+}
+
+func (a *vlessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
+	return a.handleConnSession(ctx, conn, nil)
+}
+
+// EncodeVLESSAddons 按同一套规则编码，供测试与将来的出站方向使用。
+func EncodeVLESSAddons(a VLESSAddons) []byte {
+	var out []byte
+	if a.Flow != "" {
+		out = append(out, byte(addonsFieldFlow<<3|2))
+		out = appendAddonsVarint(out, uint64(len(a.Flow)))
+		out = append(out, a.Flow...)
+	}
+	if len(a.Seed) > 0 {
+		out = append(out, byte(addonsFieldSeed<<3|2))
+		out = appendAddonsVarint(out, uint64(len(a.Seed)))
+		out = append(out, a.Seed...)
+	}
+	return out
+}
+
+func appendAddonsVarint(b []byte, v uint64) []byte {
+	for v >= 0x80 {
+		b = append(b, byte(v)|0x80)
+		v >>= 7
+	}
+	return append(b, byte(v))
 }

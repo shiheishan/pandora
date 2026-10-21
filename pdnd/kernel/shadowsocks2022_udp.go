@@ -38,7 +38,6 @@ import (
 )
 
 const (
-	ss2022UDPSepHeader = 16 // 分离头
 	// ss2022UDPMinPacket 是客户端包的最短长度：分离头 16 + 身份头 16 + 类型 1 + 时间戳 8 + 填充长度 2 + 最短地址（IPv4）7 + 标签 16。
 	ss2022UDPMinPacket = 16 + 16 + 1 + 8 + 2 + 7 + 16
 )

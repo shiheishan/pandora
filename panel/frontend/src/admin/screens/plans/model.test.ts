@@ -19,7 +19,6 @@ import {
   createFieldKey,
   createProblems,
   createdToast,
-  currentVersion,
   detailTabs,
   draftVersion,
   emptyCreate,
@@ -311,8 +310,6 @@ describe('detail shell', () => {
     expect(draftVersion(planDetail())).toBeUndefined()
     const p = planDetail({ versions: [version({ id: 'v1' }), version({ id: 'v2', version: 2, status: 'draft', published_at: null })] })
     expect(draftVersion(p)?.id).toBe('v2')
-    expect(currentVersion(p)?.id).toBe('v1')
-    expect(currentVersion(planDetail({ version: 2, versions: p.versions }))).toBeUndefined()
   })
 })
 

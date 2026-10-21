@@ -12,8 +12,6 @@ export { devicesText, gb } from './catalog'
 
 /** 还在手上的一份：生效中，或过期 30 天内还能救回（续费或换套餐都在原链接上） */
 export const isHeld = (s: Subscription) => isLive(s) || (s.status === 'expired' && (s.changeable || s.renewable))
-/** 彻底停用：已取消，或过期且窗口已关 */
-export const isDeadSub = (s: Subscription) => !isHeld(s)
 
 /** 「我的套餐」列出的份：接口顺序，只留还在手上的 */
 export const heldSubs = (subs: readonly Subscription[]) => subs.filter(isHeld)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { monthlyNote, periodName, periodOf, periodUnit, savingAmount, type Price } from '../common/catalog'
+import { periodOf, periodUnit, type Price } from '../common/catalog'
 import { payReturnUrl, paySuccessText } from '../common/PayFlow'
 import { makeNaming } from '../common/purchase'
 import { rebuyQuery } from '../common/orders'
@@ -239,14 +239,7 @@ describe('完成页', () => {
 describe('目录文案', () => {
   it('价格档归档与文案', () => {
     expect([periodOf(price('a', 1, 'month', 3)), periodOf(price('b', 1, 'year')), periodOf(price('c', 1, 'one_time'))]).toEqual(['3m', '12m', 'once'])
-    expect([periodName('12m'), periodName('once'), periodName('6m')]).toEqual(['年付', '一次性', '半年付'])
     expect([periodUnit('3m'), periodUnit('once')]).toEqual(['/ 季', ''])
-  })
-
-  it('折合月价与省额', () => {
-    expect(monthlyNote(price('m', 2900, 'month'))).toBe('按月付费')
-    expect(monthlyNote(price('y', 29900, 'year'))).toBe('折合 ¥24.92 / 月')
-    expect(savingAmount(STD, STD.prices[2]!)).toBe(3000 * 12 - 30000)
   })
 })
 

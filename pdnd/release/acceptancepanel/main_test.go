@@ -260,3 +260,14 @@ func TestUpgradeRoundTrip(t *testing.T) {
 		t.Fatal("同一进程不应再发第二次 Upgrade")
 	}
 }
+
+// snapshot 返回状态的一份拷贝（测试用）。
+func (p *fakePanel) snapshot() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.state
+	s.ConfigPhases = append([]string(nil), s.ConfigPhases...)
+	s.LastRuntime = append([]string(nil), s.LastRuntime...)
+	s.UpgradeReports = append([]string(nil), s.UpgradeReports...)
+	return s
+}

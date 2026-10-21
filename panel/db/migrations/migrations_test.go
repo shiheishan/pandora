@@ -25,13 +25,23 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// downAll 回退到 0，只给往返测试用（二进制只提供逐个回退的 migrate down）。
+func downAll(ctx context.Context, db *sql.DB) error {
+	p, err := provider(db)
+	if err != nil {
+		return err
+	}
+	_, err = p.DownTo(ctx, 0)
+	return err
+}
+
 func TestRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
 	if err := Up(ctx, db); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	if err := DownAll(ctx, db); err != nil {
+	if err := downAll(ctx, db); err != nil {
 		t.Fatalf("down all: %v", err)
 	}
 	if err := Up(ctx, db); err != nil {

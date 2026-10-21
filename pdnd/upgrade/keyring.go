@@ -45,17 +45,6 @@ func ParsePublicKey(text []byte) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(data), nil
 }
 
-// NewKeyring 从给定的公钥列表构造 Keyring。若公钥列表为空，生成空 Keyring。
-func NewKeyring(pubs ...ed25519.PublicKey) *Keyring {
-	km := make(map[string]ed25519.PublicKey, len(pubs))
-	for _, pub := range pubs {
-		if len(pub) == ed25519.PublicKeySize {
-			km[KeyID(pub)] = pub
-		}
-	}
-	return &Keyring{keys: km}
-}
-
 // LoadKeyring 在 fsys 中按 pattern 匹配文件并逐个解析为公钥。
 // 任一文件读取或解析失败时整体报错并带上文件名。
 func LoadKeyring(fsys fs.FS, pattern string) (*Keyring, error) {

@@ -213,3 +213,14 @@ func BenchmarkVMessReplay10k(b *testing.B) {
 		}
 	})
 }
+
+// size 返回所有保留代里的条目数（测试与诊断用）。
+func (f *replayFilter) size() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	total := 0
+	for _, gen := range f.gens {
+		total += len(gen)
+	}
+	return total
+}

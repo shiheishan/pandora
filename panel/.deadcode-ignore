@@ -1,0 +1,9 @@
+# deadcode 的误报（.github/scripts/deadcode.sh 读）。每行一个 ERE，匹配
+# 「<文件>:<行>:<列>: unreachable func: <名字>」；# 开头是注释，每条上面写理由，模式里不写行号。
+
+# 名字是 _ 的函数是编译期接口断言（func _() { var _ I = s.M }），按定义不会被调用
+: unreachable func: _$
+
+# Target 带 WebDAV 用户名与口令（未导出字段，%v / %#v 照样会打出来）：String / GoString 脱敏，
+# 防日后被格式化进日志或错误。现在没有代码格式化它，属防御性实现，不删
+^internal/pkg/dbbackup/target\.go:[0-9]+:[0-9]+: unreachable func: Target\.(String|GoString)$

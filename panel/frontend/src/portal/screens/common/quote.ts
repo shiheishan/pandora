@@ -10,7 +10,7 @@ import { useApi } from '../../../shell/runtime'
 // 字段与 Go order/handler 的 quoteResponse / quoteRowResponse 一一对应，都没有 omitempty：
 // 指针字段（各 id、优惠码、明细、周期）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
+export { type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 import { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 
 export interface QuoteRequest {

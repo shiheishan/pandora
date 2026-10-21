@@ -13,7 +13,6 @@ export const THEME_COLORS = [
 ] as const
 export type ColorKey = (typeof THEME_COLORS)[number][0]
 
-const TOKEN_NAME_BY_KEY: Readonly<Record<ColorKey, string>> = Object.fromEntries(THEME_COLORS.map(([key, token]) => [key, token])) as Readonly<Record<ColorKey, string>>
 /** 令牌名 → 设计规范默认浅色（缺键回退用） */
 const LIGHT_DEFAULT: Readonly<Record<string, string>> = Object.fromEntries(COLOR_TOKENS.map((t) => [t.name, t.light]))
 
@@ -191,6 +190,3 @@ export function themeSwatches(t: Pick<Theme, 'tokens'>): string[] {
 export function activateNotice(target: Theme): string {
   return `用户端所有用户看到的都会换成「${target.name}」，明暗两组随用户切换，正在使用的主题会被替换。站点名不随主题变化，在本页的「站点设置」里改。`
 }
-
-/** 测试与类型需要：字段键 → 令牌名 */
-export const colorTokenName = (key: ColorKey): string => TOKEN_NAME_BY_KEY[key]

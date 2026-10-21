@@ -252,7 +252,7 @@ func TestHy2DownlinkUDPUsesSharedWarmLimit(t *testing.T) {
 	_ = upstream.SetDeadline(time.Now())
 	<-done
 	if !seen {
-		t.Fatal(fmt.Sprintf("每毫秒一包的会话经生产入口跑了 3 秒，共享热态名额一次都没被占：生产路径没用 hy2DownlinkWarm"))
+		t.Fatal("每毫秒一包的会话经生产入口跑了 3 秒，共享热态名额一次都没被占：生产路径没用 hy2DownlinkWarm")
 	}
 	if used := hy2DownlinkWarm.inUse(); used != 0 {
 		t.Fatalf("会话结束后共享热态名额还占着 %d 个", used)

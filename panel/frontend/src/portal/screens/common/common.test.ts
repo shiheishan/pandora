@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { changeHint, copyTabText, eyebrowText, expiryText, goneText, heroTraffic, isExpiredNow, leakSources, lowTip, metaLine, pillText, renewText, resetRow } from './card-text'
-import { APP_UPDATE, guideApps, guideText, parseGuideDevice } from './app-update'
+import { APP_UPDATE, guideApps, parseGuideDevice } from './app-update'
 import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
@@ -9,8 +9,9 @@ import { refusalOf } from './quote'
 import { ApiError } from '../../../core/api'
 import { orderQuerySchema, queryFailure, queryOutcome } from './order-query'
 import { archivedRefundText, expiryNote, intervalLabel, isPayable, isPlanArchivedRefund, orderRowSchema, orderTitle } from './orders'
-import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
-import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
+import { pickPrimary } from '../../queries'
+import { subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
+import { buildUsageBars, bytesParts, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary } from './traffic'
 
 const NOW = new Date('2026-09-24T12:00:00Z')
 const GIB = 1024 ** 3
@@ -76,29 +77,6 @@ describe('traffic', () => {
     ]
     expect(pickTrafficQuota(rows, NOW)?.limit).toBe(2)
     expect(pickTrafficQuota([{ metric: 'devices', limit: 5, consumed: 1, remaining: 4 }])).toBeNull()
-  })
-
-  it('用量等级：80% 警示、95% 危险', () => {
-    expect(usageLevel(0.79)).toBe('ok')
-    expect(usageLevel(0.8)).toBe('warn')
-    expect(usageLevel(0.95)).toBe('danger')
-  })
-
-  it('到期：向上取整天数，7 天内为紧急，时刻精确到分钟、按切日时区', () => {
-    expect(expiryInfo('2026-09-30T00:00:00Z', NOW)).toMatchObject({ days: 6, urgent: true, expired: false, label: '6 天后到期' })
-    expect(expiryInfo('2026-11-05T10:00:00Z', NOW)).toMatchObject({ days: 42, urgent: false })
-    expect(expiryInfo(null, NOW)).toBeNull()
-    // 给了切日时区就按它出时刻：上海 09-27 零点
-    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'Asia/Shanghai')?.date).toBe('2026-09-27 00:00')
-    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'UTC')?.date).toBe('2026-09-26 16:00')
-  })
-
-  it('到期：最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」', () => {
-    const in5h = new Date(NOW.getTime() + 4.5 * 3_600_000).toISOString()
-    expect(expiryInfo(in5h, NOW, 'UTC')).toMatchObject({ hours: 5, urgent: true, expired: false, label: '还剩 5 小时' })
-    const past = expiryInfo(new Date(NOW.getTime() - 3_600_000).toISOString(), NOW, 'UTC')
-    expect(past).toMatchObject({ hours: 0, urgent: true, expired: true })
-    expect(past?.label).toBe(`已于 ${past?.date} 到期`)
   })
 
   it('重置日：一次性为 null；否则 next_reset_at → 额度周期末 → 用量窗口末', () => {
@@ -219,12 +197,6 @@ describe('subscriptions', () => {
     expect(pickPrimary(expired)?.id).toBe('newer')
     expect(pickPrimary([expired[0]!])).toBeNull()
     expect(pickPrimary([...expired, sub({ id: 'live' })])?.id).toBe('live')
-  })
-
-  it('续费入口：取服务端的 renewable', () => {
-    expect(canRenew(sub())).toBe(true)
-    expect(canRenew(sub({ renewable: false }))).toBe(false)
-    expect(canRenew(sub({ status: 'expired', renewable: false }))).toBe(false)
   })
 
   it('按日用量 schema 与契约一致', () => {
@@ -431,7 +403,7 @@ describe('在 App 里点一次更新（按 App 的帮助）', () => {
     for (const app of apps) {
       const s = APP_UPDATE[app]
       expect(s, app).toBeDefined()
-      expect([s!.where, s!.tap, s!.ok].every((x) => guideText(x).length > 0), app).toBe(true)
+      expect([s!.where, s!.tap, s!.ok].every((x) => x.length > 0), app).toBe(true)
     }
     // 先常用的，再「其他 App」
     expect(guideApps('ios')).toEqual(['Shadowrocket', 'Stash', 'Quantumult X', 'Loon', 'sing-box'])

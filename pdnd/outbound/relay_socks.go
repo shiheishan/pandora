@@ -52,12 +52,11 @@ func init() {
 
 type socksOut struct {
 	instanceIdentity
-	tag              string
-	server           M.Socksaddr
-	username         string
-	password         string
-	dialer           Dialer
-	udpOverTCPNotSup bool
+	tag      string
+	server   M.Socksaddr
+	username string
+	password string
+	dialer   Dialer
 }
 
 func newSocks(o Options) (Outbound, error) {

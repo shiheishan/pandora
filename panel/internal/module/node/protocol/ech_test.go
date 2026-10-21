@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"strings"
@@ -41,9 +42,9 @@ func TestGenerateECHKey_echExample(t *testing.T) {
 			t.Fatalf("ECHConfig 字节与 Config 不一致，偏移 %d", i)
 		}
 	}
-	name, err := ECHPublicNameFromList(k.ConfigList)
+	name, err := echPublicNameFromList(k.ConfigList)
 	if err != nil {
-		t.Fatalf("ECHPublicNameFromList: %v", err)
+		t.Fatalf("echPublicNameFromList: %v", err)
 	}
 	if name != "ech.example.com" {
 		t.Fatalf("public_name 应为 ech.example.com，得到 %q", name)
@@ -258,4 +259,56 @@ func TestECHCapable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// echPublicNameFromList 从 ECHConfigList 解析 public_name，测试用它核对 GenerateECHKey 写进去的名字。
+func echPublicNameFromList(list []byte) (string, error) {
+	cfg, err := ECHConfigFromList(list)
+	if err != nil {
+		return "", err
+	}
+	contents := cfg[4:]
+	if len(contents) < 1+2+2+2+2+8+1+1 {
+		return "", errors.New("ECHConfig 内容过短")
+	}
+	off := 0
+	off++    // config_id
+	off += 2 // kem_id
+	pkLen := int(binary.BigEndian.Uint16(contents[off : off+2]))
+	off += 2
+	if off+pkLen > len(contents) {
+		return "", errors.New("ECHConfig 公钥长度无效")
+	}
+	off += pkLen
+	if off+2 > len(contents) {
+		return "", errors.New("ECHConfig cipher_suites 长度缺失")
+	}
+	csLen := int(binary.BigEndian.Uint16(contents[off : off+2]))
+	off += 2
+	if off+csLen > len(contents) {
+		return "", errors.New("ECHConfig cipher_suites 内容无效")
+	}
+	off += csLen
+	if off+1 > len(contents) {
+		return "", errors.New("ECHConfig max_name_length 缺失")
+	}
+	off++ // max_name_length
+	if off+1 > len(contents) {
+		return "", errors.New("ECHConfig public_name 长度缺失")
+	}
+	nameLen := int(contents[off])
+	off++
+	if off+nameLen > len(contents) {
+		return "", errors.New("ECHConfig public_name 内容无效")
+	}
+	name := string(contents[off : off+nameLen])
+	off += nameLen
+	if off+2 > len(contents) {
+		return "", errors.New("ECHConfig extensions 长度缺失")
+	}
+	extLen := int(binary.BigEndian.Uint16(contents[off : off+2]))
+	if off+2+extLen != len(contents) {
+		return "", errors.New("ECHConfig extensions 长度与实际不符")
+	}
+	return name, nil
 }

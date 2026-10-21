@@ -25,12 +25,12 @@ func TestServerErrorCodesMatchFrontend(t *testing.T) {
 		ts = append(ts, string(m[1]))
 	}
 	var gocodes []string
-	for _, c := range Codes() {
+	for c := range specs {
 		gocodes = append(gocodes, string(c))
 	}
 	slices.Sort(ts)
 	slices.Sort(gocodes)
 	if !slices.Equal(ts, gocodes) {
-		t.Fatalf("errs.Codes() 与前端 SERVER_ERROR_CODES 不一致\nGo: %v\nTS: %v", gocodes, ts)
+		t.Fatalf("errs 的错误码表与前端 SERVER_ERROR_CODES 不一致\nGo: %v\nTS: %v", gocodes, ts)
 	}
 }

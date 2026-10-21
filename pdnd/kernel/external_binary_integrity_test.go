@@ -1,3 +1,7 @@
+//go:build interop_external || interop_mihomo
+
+// 只有外部客户端互通测试（-tags interop_external / interop_mihomo）用：缺省构建里没有调用方。
+
 package kernel
 
 import (

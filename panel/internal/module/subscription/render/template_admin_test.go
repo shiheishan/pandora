@@ -10,7 +10,7 @@ import (
 
 // 1. 内置模板与不带模板逐字节相同：对 clash、clash-premium、stash 三种，
 // RenderRequest(Request{Format: f, Nodes: loadNodes(t), ProxyUUID: fixtureUUID, Template: DefaultTemplate(f, Options{})})
-// 与 Render(f, loadNodes(t), fixtureUUID, "", Options{}) 的 body 完全相同；Nodes 为 nil 时同样相同。
+// 与 renderPlain(f, loadNodes(t), fixtureUUID, "", Options{}) 的 body 完全相同；Nodes 为 nil 时同样相同。
 func TestDefaultTemplateByteForByteWithNoTemplate(t *testing.T) {
 	formats := []Format{FormatClash, FormatClashPremium, FormatStash}
 	for _, f := range formats {
@@ -22,7 +22,7 @@ func TestDefaultTemplateByteForByteWithNoTemplate(t *testing.T) {
 					ProxyUUID: fixtureUUID,
 					Template:  DefaultTemplate(f, Options{}),
 				})
-				withoutTmpl, ct2, count2 := Render(f, nodes, fixtureUUID, "", Options{})
+				withoutTmpl, ct2, count2 := renderPlain(f, nodes, fixtureUUID, "", Options{})
 				if !bytes.Equal(withTmpl, withoutTmpl) {
 					t.Fatalf("%s nodes=%d: with default template diff from without template:\nwith:\n%s\nwithout:\n%s",
 						f, len(nodes), withTmpl, withoutTmpl)

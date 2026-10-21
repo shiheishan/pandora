@@ -281,7 +281,6 @@ export const paymentSettingsSchema = z.object({
   effective_base: z.string(),
   public_base_url: z.string(),
 })
-export type PaymentSettings = z.output<typeof paymentSettingsSchema>
 
 // ---------------------------------------------------------------------------
 // 收入调整（报表口径，只追加）：列表、登记与冲销同形；reversal_of 是 omitempty，R66 登记人

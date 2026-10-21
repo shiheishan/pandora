@@ -156,7 +156,7 @@ func (e *udpWiringEcho) nextPayload() string {
 // deviceWiringUDPEcho 经 pc 发一包到 target 并等回显。UDP（尤其 QUIC DATAGRAM）
 // 在忙的检查机上会丢包：每 300ms 重发一次，最多等 5 秒。
 func deviceWiringUDPEcho(pc net.PacketConn, target net.Addr, payload string) error {
-	defer pc.SetReadDeadline(time.Time{})
+	defer func() { _ = pc.SetReadDeadline(time.Time{}) }()
 	deadline := time.Now().Add(5 * time.Second)
 	buf := make([]byte, 2048)
 	var lastErr error

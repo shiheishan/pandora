@@ -39,10 +39,6 @@ export function setTheme(theme: Theme): void {
   apply(theme)
 }
 
-export function toggleTheme(): void {
-  setTheme(currentTheme() === 'dark' ? 'light' : 'dark')
-}
-
 // 另一个标签页改了主题：storage 事件只在其它页面触发，这里跟着切
 function onStorage(event: StorageEvent): void {
   if (event.key === THEME_STORAGE_KEY) apply(parseTheme(event.newValue))

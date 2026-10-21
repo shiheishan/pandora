@@ -32,10 +32,6 @@ type controlServer struct {
 	auth sessionAuthorizer
 }
 
-func newControlServer(svc *service.Service, auth sessionAuthorizer) *controlServer {
-	return &controlServer{svc: svc, auth: auth}
-}
-
 // NewControlServer 构造 ControlService 的服务端实现；server.go 注册它。会话管理器每次建流时经
 // svc.SessionManager() 取（装配时 svc.UseSessions(svc.NewSessions(...))），没装配时建流回 Unavailable。
 func NewControlServer(svc *service.Service) nodev1.ControlServiceServer {

@@ -133,14 +133,8 @@ func TestValidatePaidUSDT(t *testing.T) {
 	}
 }
 
-func TestIsUSDTMethodAndKnownWithdrawMethod(t *testing.T) {
+func TestIsUSDTMethod(t *testing.T) {
 	if !IsUSDTMethod(settingssvc.WithdrawMethodUSDTTRC20) || IsUSDTMethod(settingssvc.WithdrawMethodAlipay) {
 		t.Fatal("IsUSDTMethod")
-	}
-	if !KnownWithdrawMethod(WithdrawMethodOther) || !KnownWithdrawMethod(settingssvc.WithdrawMethodBank) {
-		t.Fatal("KnownWithdrawMethod")
-	}
-	if KnownWithdrawMethod("bogus") {
-		t.Fatal("未知方式应 false")
 	}
 }

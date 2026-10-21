@@ -17,7 +17,6 @@ export const err = (status: number, code: string, message: string, fields?: Reco
 })
 export const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
 export const NOT_FOUND = err(404, 'not_found', '资源不存在或无权访问')
-export const DUP = err(409, 'conflict', '目录对象已存在或活动报价发生冲突')
 export const stale = (current: number, kind = '套餐') =>
   err(409, 'conflict', `${kind}已被其他管理员修改，请刷新后重试`, { row_version: `current=${current}` })
 export const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)

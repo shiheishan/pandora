@@ -173,7 +173,7 @@ func mustTunnel(t *testing.T, dial tunnelDialer, port int, credential string, ta
 // tunnelEchoes 发一行、读回同一行。
 func tunnelEchoes(conn net.Conn) bool {
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-	defer conn.SetDeadline(time.Time{})
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 	if _, err := conn.Write([]byte("ping\n")); err != nil {
 		return false
 	}

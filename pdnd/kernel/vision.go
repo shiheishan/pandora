@@ -420,16 +420,6 @@ func (c *VisionConn) Write(p []byte) (int, error) {
 // 读侧：剥离 padding
 //------------------------------------------------------------------------------
 
-// asClient 把这个状态切成客户端上行语义：首帧带 16 字节 UUID 前缀。
-//
-// 服务端（默认）不带——客户端已经知道自己是谁，多出来的 16 字节会被它
-// 当成帧内容，此后每一帧的边界都错开 16 字节。将来做 Vision 出站时
-// 走这条。
-func (s *visionState) asClient(uuid []byte) *visionState {
-	s.writeOnceUUID = append([]byte(nil), uuid...)
-	return s
-}
-
 // matchCandidate 在已授权用户里找出帧首 16 字节对应的那个。
 //
 // 除了比对 UUID，还要求紧随其后的命令字节是三个合法值之一。多这一道
