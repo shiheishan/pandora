@@ -6,18 +6,43 @@ import { Button, Card, Checkbox, Input, Modal, QueryView, Segmented, Select, Swi
 import { Row, RowList, SectionTitle } from '../../kit'
 import { StatusChip } from './ChannelCard'
 import { adminAlertBody, formatSender, REGISTRATION_LABEL, registrationBody, smtpBody, smtpFormFrom, smtpStatus, validateSmtp, type AdminAlert, type SmtpForm, type Tone } from './logic'
+import { useSwitches } from '../security/queries'
 import { useFailure, useInvalidateSystem, useMailSettings, useTelegramExtras, useTelegramSettings } from './queries'
 import { ENCRYPTIONS, mailTested, okResponse, REGISTRATION_MODES, telegramExtrasSchema, type RegistrationMode, type TelegramExtras } from './schemas'
 import css from './notify.module.css'
 import sys from './system.module.css'
 import { TelegramDialog } from './TelegramCard'
 
-function registrationSummary(mode: RegistrationMode, verify: boolean): string {
-  return `${REGISTRATION_LABEL[mode]}注册 · ${verify ? '需验证邮箱' : '不验证邮箱'}`
+/** 降级开关里与注册有关的两项；还没取到时为 null（摘要只按注册设置写） */
+interface SignupSwitches {
+  /** 「暂停新用户注册」（auth.registration 关）：缺行也算暂停，与后端 RegistrationPolicy 一致 */
+  registrationPaused: boolean
+  /** 「暂停邮件投递」（notify.email 关）：缺行算照常；要验证邮箱的注册第 1 步此时回 503 */
+  mailPaused: boolean
+}
+
+function signupSwitches(rows: readonly { code: string; enabled: boolean }[] | undefined): SignupSwitches | null {
+  if (!rows) return null
+  const reg = rows.find((r) => r.code === 'auth.registration')
+  const mail = rows.find((r) => r.code === 'notify.email')
+  return { registrationPaused: !reg || !reg.enabled, mailPaused: mail ? !mail.enabled : false }
+}
+
+function registrationSummary(mode: RegistrationMode, verify: boolean, sw: SignupSwitches | null): string {
+  const base = `${REGISTRATION_LABEL[mode]}注册 · ${verify ? '需验证邮箱' : '不验证邮箱'}`
+  if (sw?.registrationPaused) return `已暂停新用户注册（降级开关）· 设置为${base}`
+  if (sw?.mailPaused && verify && mode !== 'closed') return `${base} · 邮件已暂停，新用户暂时注册不了`
+  return base
+}
+
+function registrationTone(mode: RegistrationMode, verify: boolean, sw: SignupSwitches | null): Tone {
+  if (mode === 'closed' || sw?.registrationPaused) return 'muted'
+  return sw?.mailPaused && verify ? 'warn' : 'ok'
 }
 
 export function ChannelsTab() {
   const mail = useMailSettings()
+  const sw = signupSwitches(useSwitches().data)
   const telegram = useTelegramSettings()
   const extras = useTelegramExtras()
   const [open, setOpen] = useState<'mail' | 'telegram' | 'registration' | null>(null)
@@ -127,7 +152,7 @@ export function ChannelsTab() {
                     {dirty.registration && <Tag tone="warn">未保存</Tag>}
                   </span>
                 }
-                meta={registrationSummary(saved.registration_mode, saved.email_verification)}
+                meta={registrationSummary(saved.registration_mode, saved.email_verification, sw)}
                 actions={
                   <Button size="sm" onClick={() => setOpen('registration')}>
                     配置
@@ -286,6 +311,7 @@ function MailDialog({ open, onClose, onDirtyChange }: DialogProps) {
 // ---------------------------------------------------------------------------
 function RegistrationDialog({ open, onClose, onDirtyChange }: DialogProps) {
   const mail = useMailSettings()
+  const sw = signupSwitches(useSwitches().data)
   const saved = mail.data
   const api = useApi()
   const toast = useToast()
@@ -320,7 +346,7 @@ function RegistrationDialog({ open, onClose, onDirtyChange }: DialogProps) {
   }
 
   if (saved === undefined || value === null) return null
-  const status = { label: registrationSummary(saved.registration_mode, saved.email_verification), tone: (saved.registration_mode === 'closed' ? 'muted' : 'ok') as Tone }
+  const status = { label: registrationSummary(saved.registration_mode, saved.email_verification, sw), tone: registrationTone(saved.registration_mode, saved.email_verification, sw) }
   return (
     <Modal
       open={open}
@@ -336,7 +362,7 @@ function RegistrationDialog({ open, onClose, onDirtyChange }: DialogProps) {
       }
     >
       <p className={css.notePlain}>
-        实际能否注册还受降级开关控制：「auth.registration」关闭时一律不能注册；「notify.email」关闭时验证码发不出去。开关在 <a href={href('/security/switches')}>安全与运维 · 降级开关</a>。
+        实际能否注册还受降级开关控制：「暂停新用户注册」打开时一律不能注册；「暂停邮件投递」打开时，要验证邮箱的注册会提示稍后再试，用户端也不显示找回密码与邮件登录。开关在 <a href={href('/security/switches')}>安全与运维 · 降级开关</a>。
       </p>
       <div className={css.regRow}>
         <span className={css.regLabel}>注册模式</span>

@@ -101,9 +101,16 @@ export function StatusDialog({ user, open, onClose, onDone }: { user: UserDetail
       onCancel={close}
       onConfirm={() => void submit()}
     >
-      <p className={css.dialogText}>
-        {enabling ? `${user.email} 可以重新登录。` : `${user.email} 的全部登录会话会立即失效，之后无法登录。`}
-      </p>
+      {enabling ? (
+        <p className={css.dialogText}>{user.email} 可以重新登录，没到期的套餐恢复可用（停用期间的时间不补）。</p>
+      ) : (
+        <>
+          {/* 以后端为准：账号不是 active 时登录、订阅拉取、节点名单一律拒，停用与封禁走同一判断 */}
+          <p className={css.dialogText}>立即生效：{user.email} 的全部登录会话失效，节点马上断开，套餐不能再用（到期时间照常走，不顺延）。</p>
+          <p className={css.dialogText}>用户再登录时，密码输对会看到「账号已停用」，输错仍只提示「邮箱或密码不正确」；找回密码收不到邮件。</p>
+          <p className={css.dialogText}>「停用」和「封禁」效果完全一样，只是后台记的状态不同（封禁一般用于违规），用户列表可以按状态分开筛。</p>
+        </>
+      )}
       {!enabling && (
         <div className={css.dialogField}>
           <span className={css.fieldLabel}>方式</span>
@@ -128,7 +135,7 @@ export function StatusDialog({ user, open, onClose, onDone }: { user: UserDetail
           setError(null)
         }}
         error={error ?? undefined}
-        hint="写进审计日志"
+        hint="只写进审计日志，用户看不到"
       />
     </ActionModal>
   )
@@ -334,9 +341,10 @@ export function BalanceForm({ user, onClose, onDone }: { user: UserDetail; onClo
         error={errors.amount || undefined}
         data-autofocus=""
       />
+      {/* 原因原样显示在用户钱包的「人工调整」流水里（用户 10-21 定：不拆字段，标签写明） */}
       <Input
-        aria-label="调整原因"
-        placeholder="调整原因（写入审计）"
+        aria-label="原因（用户能看到）"
+        placeholder="原因（用户能看到）"
         value={reason}
         onChange={(e) => {
           setReason(e.target.value)
