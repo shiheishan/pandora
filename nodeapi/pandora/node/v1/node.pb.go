@@ -1026,7 +1026,10 @@ type NodeRuntime struct {
 	// 降级原因码（如 port_in_use、start_failed、config_rejected），running 时为空。
 	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	// 端口被同机另一个节点占用时，占用者的 node_id。
-	ReasonNodeId  string `protobuf:"bytes,4,opt,name=reason_node_id,json=reasonNodeId,proto3" json:"reason_node_id,omitempty"`
+	ReasonNodeId string `protobuf:"bytes,4,opt,name=reason_node_id,json=reasonNodeId,proto3" json:"reason_node_id,omitempty"`
+	// 入站证书的状态：自动申请（acme）的节点每拍都带；手填证书（file）的只带 not_after_unix。
+	// 不用证书的协议不带。
+	Cert          *CertStatus `protobuf:"bytes,5,opt,name=cert,proto3" json:"cert,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1089,6 +1092,95 @@ func (x *NodeRuntime) GetReasonNodeId() string {
 	return ""
 }
 
+func (x *NodeRuntime) GetCert() *CertStatus {
+	if x != nil {
+		return x.Cert
+	}
+	return nil
+}
+
+// CertStatus 是一个节点入站证书的状态（节点端能力 cert_acme_v1）。
+type CertStatus struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 证书的标识符（域名或 IP，与配置文档的 cert_identifier 相同）；file 模式为空。
+	Identifier string `protobuf:"bytes,1,opt,name=identifier,proto3" json:"identifier,omitempty"`
+	// 当前证书的到期时间（Unix 秒）；0 = 还没有证书。
+	NotAfterUnix int64 `protobuf:"varint,2,opt,name=not_after_unix,json=notAfterUnix,proto3" json:"not_after_unix,omitempty"`
+	// 最近一次申请或续期失败的原因码（如 challenge_port_busy、validation_failed）；成功后清空。
+	ErrorCode string `protobuf:"bytes,3,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	// 失败详情（CA 回的 problem detail，至多 1024 字节、可打印 ASCII）。
+	ErrorDetail string `protobuf:"bytes,4,opt,name=error_detail,json=errorDetail,proto3" json:"error_detail,omitempty"`
+	// 下一次申请或续期的计划时间（Unix 秒）；0 = 没有计划。
+	NextAttemptUnix int64 `protobuf:"varint,5,opt,name=next_attempt_unix,json=nextAttemptUnix,proto3" json:"next_attempt_unix,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CertStatus) Reset() {
+	*x = CertStatus{}
+	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertStatus) ProtoMessage() {}
+
+func (x *CertStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertStatus.ProtoReflect.Descriptor instead.
+func (*CertStatus) Descriptor() ([]byte, []int) {
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *CertStatus) GetIdentifier() string {
+	if x != nil {
+		return x.Identifier
+	}
+	return ""
+}
+
+func (x *CertStatus) GetNotAfterUnix() int64 {
+	if x != nil {
+		return x.NotAfterUnix
+	}
+	return 0
+}
+
+func (x *CertStatus) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *CertStatus) GetErrorDetail() string {
+	if x != nil {
+		return x.ErrorDetail
+	}
+	return ""
+}
+
+func (x *CertStatus) GetNextAttemptUnix() int64 {
+	if x != nil {
+		return x.NextAttemptUnix
+	}
+	return 0
+}
+
 // TrafficReport 是一个统计周期的流量增量。面板在 UNIQUE(server, report_id) 下落库，
 // 提交后回 TrafficAck；同一 report_id 内容不同就报错。节点收到 ack 之前保留这一批，重连后按原 id 重发。
 type TrafficReport struct {
@@ -1102,7 +1194,7 @@ type TrafficReport struct {
 
 func (x *TrafficReport) Reset() {
 	*x = TrafficReport{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1114,7 +1206,7 @@ func (x *TrafficReport) String() string {
 func (*TrafficReport) ProtoMessage() {}
 
 func (x *TrafficReport) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1127,7 +1219,7 @@ func (x *TrafficReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficReport.ProtoReflect.Descriptor instead.
 func (*TrafficReport) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{10}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TrafficReport) GetReportId() string {
@@ -1157,7 +1249,7 @@ type TrafficEntry struct {
 
 func (x *TrafficEntry) Reset() {
 	*x = TrafficEntry{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1169,7 +1261,7 @@ func (x *TrafficEntry) String() string {
 func (*TrafficEntry) ProtoMessage() {}
 
 func (x *TrafficEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1182,7 +1274,7 @@ func (x *TrafficEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficEntry.ProtoReflect.Descriptor instead.
 func (*TrafficEntry) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{11}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TrafficEntry) GetNodeId() string {
@@ -1224,7 +1316,7 @@ type OnlineIPs struct {
 
 func (x *OnlineIPs) Reset() {
 	*x = OnlineIPs{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1236,7 +1328,7 @@ func (x *OnlineIPs) String() string {
 func (*OnlineIPs) ProtoMessage() {}
 
 func (x *OnlineIPs) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1249,7 +1341,7 @@ func (x *OnlineIPs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnlineIPs.ProtoReflect.Descriptor instead.
 func (*OnlineIPs) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{12}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *OnlineIPs) GetEntries() []*OnlineEntry {
@@ -1270,7 +1362,7 @@ type OnlineEntry struct {
 
 func (x *OnlineEntry) Reset() {
 	*x = OnlineEntry{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1282,7 +1374,7 @@ func (x *OnlineEntry) String() string {
 func (*OnlineEntry) ProtoMessage() {}
 
 func (x *OnlineEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1295,7 +1387,7 @@ func (x *OnlineEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnlineEntry.ProtoReflect.Descriptor instead.
 func (*OnlineEntry) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{13}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OnlineEntry) GetNodeId() string {
@@ -1335,7 +1427,7 @@ type ConfigAck struct {
 
 func (x *ConfigAck) Reset() {
 	*x = ConfigAck{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1347,7 +1439,7 @@ func (x *ConfigAck) String() string {
 func (*ConfigAck) ProtoMessage() {}
 
 func (x *ConfigAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1360,7 +1452,7 @@ func (x *ConfigAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigAck.ProtoReflect.Descriptor instead.
 func (*ConfigAck) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{14}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ConfigAck) GetNodeId() string {
@@ -1411,7 +1503,7 @@ type UsersAck struct {
 
 func (x *UsersAck) Reset() {
 	*x = UsersAck{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1423,7 +1515,7 @@ func (x *UsersAck) String() string {
 func (*UsersAck) ProtoMessage() {}
 
 func (x *UsersAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1436,7 +1528,7 @@ func (x *UsersAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsersAck.ProtoReflect.Descriptor instead.
 func (*UsersAck) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{15}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *UsersAck) GetNodeId() string {
@@ -1483,7 +1575,7 @@ type UpgradeReport struct {
 
 func (x *UpgradeReport) Reset() {
 	*x = UpgradeReport{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1495,7 +1587,7 @@ func (x *UpgradeReport) String() string {
 func (*UpgradeReport) ProtoMessage() {}
 
 func (x *UpgradeReport) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1508,7 +1600,7 @@ func (x *UpgradeReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeReport.ProtoReflect.Descriptor instead.
 func (*UpgradeReport) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{16}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *UpgradeReport) GetJobId() string {
@@ -1549,7 +1641,7 @@ type RenewRequest struct {
 
 func (x *RenewRequest) Reset() {
 	*x = RenewRequest{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1561,7 +1653,7 @@ func (x *RenewRequest) String() string {
 func (*RenewRequest) ProtoMessage() {}
 
 func (x *RenewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1574,7 +1666,7 @@ func (x *RenewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewRequest.ProtoReflect.Descriptor instead.
 func (*RenewRequest) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{17}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RenewRequest) GetCsrDer() []byte {
@@ -1604,7 +1696,7 @@ type SessionResponse struct {
 
 func (x *SessionResponse) Reset() {
 	*x = SessionResponse{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1616,7 +1708,7 @@ func (x *SessionResponse) String() string {
 func (*SessionResponse) ProtoMessage() {}
 
 func (x *SessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1629,7 +1721,7 @@ func (x *SessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionResponse.ProtoReflect.Descriptor instead.
 func (*SessionResponse) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{18}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SessionResponse) GetSeq() uint64 {
@@ -1772,7 +1864,7 @@ type Welcome struct {
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1784,7 +1876,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1797,7 +1889,7 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{19}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Welcome) GetSessionId() string {
@@ -1847,7 +1939,7 @@ type ServerConfig struct {
 
 func (x *ServerConfig) Reset() {
 	*x = ServerConfig{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1859,7 +1951,7 @@ func (x *ServerConfig) String() string {
 func (*ServerConfig) ProtoMessage() {}
 
 func (x *ServerConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1872,7 +1964,7 @@ func (x *ServerConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerConfig.ProtoReflect.Descriptor instead.
 func (*ServerConfig) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{20}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ServerConfig) GetReleaseId() string {
@@ -1907,7 +1999,7 @@ type NodeConfig struct {
 
 func (x *NodeConfig) Reset() {
 	*x = NodeConfig{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1919,7 +2011,7 @@ func (x *NodeConfig) String() string {
 func (*NodeConfig) ProtoMessage() {}
 
 func (x *NodeConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1932,7 +2024,7 @@ func (x *NodeConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeConfig.ProtoReflect.Descriptor instead.
 func (*NodeConfig) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{21}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *NodeConfig) GetNodeId() string {
@@ -1978,7 +2070,7 @@ type UsersFull struct {
 
 func (x *UsersFull) Reset() {
 	*x = UsersFull{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1990,7 +2082,7 @@ func (x *UsersFull) String() string {
 func (*UsersFull) ProtoMessage() {}
 
 func (x *UsersFull) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2003,7 +2095,7 @@ func (x *UsersFull) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsersFull.ProtoReflect.Descriptor instead.
 func (*UsersFull) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{22}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *UsersFull) GetNodeId() string {
@@ -2056,7 +2148,7 @@ type UsersDelta struct {
 
 func (x *UsersDelta) Reset() {
 	*x = UsersDelta{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2068,7 +2160,7 @@ func (x *UsersDelta) String() string {
 func (*UsersDelta) ProtoMessage() {}
 
 func (x *UsersDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2081,7 +2173,7 @@ func (x *UsersDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsersDelta.ProtoReflect.Descriptor instead.
 func (*UsersDelta) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{23}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *UsersDelta) GetNodeId() string {
@@ -2135,7 +2227,7 @@ type User struct {
 
 func (x *User) Reset() {
 	*x = User{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2147,7 +2239,7 @@ func (x *User) String() string {
 func (*User) ProtoMessage() {}
 
 func (x *User) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2160,7 +2252,7 @@ func (x *User) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use User.ProtoReflect.Descriptor instead.
 func (*User) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{24}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *User) GetUid() int64 {
@@ -2201,7 +2293,7 @@ type TrafficAck struct {
 
 func (x *TrafficAck) Reset() {
 	*x = TrafficAck{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2213,7 +2305,7 @@ func (x *TrafficAck) String() string {
 func (*TrafficAck) ProtoMessage() {}
 
 func (x *TrafficAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2226,7 +2318,7 @@ func (x *TrafficAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficAck.ProtoReflect.Descriptor instead.
 func (*TrafficAck) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{25}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TrafficAck) GetReportId() string {
@@ -2247,7 +2339,7 @@ type Certificate struct {
 
 func (x *Certificate) Reset() {
 	*x = Certificate{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2259,7 +2351,7 @@ func (x *Certificate) String() string {
 func (*Certificate) ProtoMessage() {}
 
 func (x *Certificate) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2272,7 +2364,7 @@ func (x *Certificate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Certificate.ProtoReflect.Descriptor instead.
 func (*Certificate) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{26}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Certificate) GetCertChainPem() []byte {
@@ -2303,7 +2395,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2315,7 +2407,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2328,7 +2420,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{27}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Command) GetKind() isCommand_Kind {
@@ -2398,7 +2490,7 @@ type Reconnect struct {
 
 func (x *Reconnect) Reset() {
 	*x = Reconnect{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2410,7 +2502,7 @@ func (x *Reconnect) String() string {
 func (*Reconnect) ProtoMessage() {}
 
 func (x *Reconnect) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2423,7 +2515,7 @@ func (x *Reconnect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Reconnect.ProtoReflect.Descriptor instead.
 func (*Reconnect) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{28}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Reconnect) GetInMs() uint32 {
@@ -2460,7 +2552,7 @@ type Upgrade struct {
 
 func (x *Upgrade) Reset() {
 	*x = Upgrade{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[29]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2472,7 +2564,7 @@ func (x *Upgrade) String() string {
 func (*Upgrade) ProtoMessage() {}
 
 func (x *Upgrade) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[29]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2485,7 +2577,7 @@ func (x *Upgrade) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Upgrade.ProtoReflect.Descriptor instead.
 func (*Upgrade) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{29}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Upgrade) GetJobId() string {
@@ -2534,7 +2626,7 @@ type Tombstone struct {
 
 func (x *Tombstone) Reset() {
 	*x = Tombstone{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[30]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2546,7 +2638,7 @@ func (x *Tombstone) String() string {
 func (*Tombstone) ProtoMessage() {}
 
 func (x *Tombstone) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[30]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2559,7 +2651,7 @@ func (x *Tombstone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tombstone.ProtoReflect.Descriptor instead.
 func (*Tombstone) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{30}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Tombstone) GetReason() string {
@@ -2641,12 +2733,23 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\ttcp_conns\x18\v \x01(\rR\btcpConns\x12\x1d\n" +
 	"\n" +
 	"uptime_sec\x18\f \x01(\x04R\tuptimeSec\x12\x18\n" +
-	"\apartial\x18\r \x01(\bR\apartial\"\x9c\x01\n" +
+	"\apartial\x18\r \x01(\bR\apartial\"\xcd\x01\n" +
 	"\vNodeRuntime\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x126\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x1e.pandora.node.v1.RuntimeStatusR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12$\n" +
-	"\x0ereason_node_id\x18\x04 \x01(\tR\freasonNodeId\"e\n" +
+	"\x0ereason_node_id\x18\x04 \x01(\tR\freasonNodeId\x12/\n" +
+	"\x04cert\x18\x05 \x01(\v2\x1b.pandora.node.v1.CertStatusR\x04cert\"\xc0\x01\n" +
+	"\n" +
+	"CertStatus\x12\x1e\n" +
+	"\n" +
+	"identifier\x18\x01 \x01(\tR\n" +
+	"identifier\x12$\n" +
+	"\x0enot_after_unix\x18\x02 \x01(\x03R\fnotAfterUnix\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x03 \x01(\tR\terrorCode\x12!\n" +
+	"\ferror_detail\x18\x04 \x01(\tR\verrorDetail\x12*\n" +
+	"\x11next_attempt_unix\x18\x05 \x01(\x03R\x0fnextAttemptUnix\"e\n" +
 	"\rTrafficReport\x12\x1b\n" +
 	"\treport_id\x18\x01 \x01(\tR\breportId\x127\n" +
 	"\aentries\x18\x02 \x03(\v2\x1d.pandora.node.v1.TrafficEntryR\aentries\"m\n" +
@@ -2791,7 +2894,7 @@ func file_pandora_node_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_pandora_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_pandora_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_pandora_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_pandora_node_v1_node_proto_goTypes = []any{
 	(RuntimeStatus)(0),      // 0: pandora.node.v1.RuntimeStatus
 	(ConfigPhase)(0),        // 1: pandora.node.v1.ConfigPhase
@@ -2806,71 +2909,73 @@ var file_pandora_node_v1_node_proto_goTypes = []any{
 	(*Heartbeat)(nil),       // 10: pandora.node.v1.Heartbeat
 	(*HostMetrics)(nil),     // 11: pandora.node.v1.HostMetrics
 	(*NodeRuntime)(nil),     // 12: pandora.node.v1.NodeRuntime
-	(*TrafficReport)(nil),   // 13: pandora.node.v1.TrafficReport
-	(*TrafficEntry)(nil),    // 14: pandora.node.v1.TrafficEntry
-	(*OnlineIPs)(nil),       // 15: pandora.node.v1.OnlineIPs
-	(*OnlineEntry)(nil),     // 16: pandora.node.v1.OnlineEntry
-	(*ConfigAck)(nil),       // 17: pandora.node.v1.ConfigAck
-	(*UsersAck)(nil),        // 18: pandora.node.v1.UsersAck
-	(*UpgradeReport)(nil),   // 19: pandora.node.v1.UpgradeReport
-	(*RenewRequest)(nil),    // 20: pandora.node.v1.RenewRequest
-	(*SessionResponse)(nil), // 21: pandora.node.v1.SessionResponse
-	(*Welcome)(nil),         // 22: pandora.node.v1.Welcome
-	(*ServerConfig)(nil),    // 23: pandora.node.v1.ServerConfig
-	(*NodeConfig)(nil),      // 24: pandora.node.v1.NodeConfig
-	(*UsersFull)(nil),       // 25: pandora.node.v1.UsersFull
-	(*UsersDelta)(nil),      // 26: pandora.node.v1.UsersDelta
-	(*User)(nil),            // 27: pandora.node.v1.User
-	(*TrafficAck)(nil),      // 28: pandora.node.v1.TrafficAck
-	(*Certificate)(nil),     // 29: pandora.node.v1.Certificate
-	(*Command)(nil),         // 30: pandora.node.v1.Command
-	(*Reconnect)(nil),       // 31: pandora.node.v1.Reconnect
-	(*Upgrade)(nil),         // 32: pandora.node.v1.Upgrade
-	(*Tombstone)(nil),       // 33: pandora.node.v1.Tombstone
+	(*CertStatus)(nil),      // 13: pandora.node.v1.CertStatus
+	(*TrafficReport)(nil),   // 14: pandora.node.v1.TrafficReport
+	(*TrafficEntry)(nil),    // 15: pandora.node.v1.TrafficEntry
+	(*OnlineIPs)(nil),       // 16: pandora.node.v1.OnlineIPs
+	(*OnlineEntry)(nil),     // 17: pandora.node.v1.OnlineEntry
+	(*ConfigAck)(nil),       // 18: pandora.node.v1.ConfigAck
+	(*UsersAck)(nil),        // 19: pandora.node.v1.UsersAck
+	(*UpgradeReport)(nil),   // 20: pandora.node.v1.UpgradeReport
+	(*RenewRequest)(nil),    // 21: pandora.node.v1.RenewRequest
+	(*SessionResponse)(nil), // 22: pandora.node.v1.SessionResponse
+	(*Welcome)(nil),         // 23: pandora.node.v1.Welcome
+	(*ServerConfig)(nil),    // 24: pandora.node.v1.ServerConfig
+	(*NodeConfig)(nil),      // 25: pandora.node.v1.NodeConfig
+	(*UsersFull)(nil),       // 26: pandora.node.v1.UsersFull
+	(*UsersDelta)(nil),      // 27: pandora.node.v1.UsersDelta
+	(*User)(nil),            // 28: pandora.node.v1.User
+	(*TrafficAck)(nil),      // 29: pandora.node.v1.TrafficAck
+	(*Certificate)(nil),     // 30: pandora.node.v1.Certificate
+	(*Command)(nil),         // 31: pandora.node.v1.Command
+	(*Reconnect)(nil),       // 32: pandora.node.v1.Reconnect
+	(*Upgrade)(nil),         // 33: pandora.node.v1.Upgrade
+	(*Tombstone)(nil),       // 34: pandora.node.v1.Tombstone
 }
 var file_pandora_node_v1_node_proto_depIdxs = []int32{
 	5,  // 0: pandora.node.v1.EnrollRequest.host:type_name -> pandora.node.v1.HostInfo
 	7,  // 1: pandora.node.v1.SessionRequest.hello:type_name -> pandora.node.v1.Hello
 	10, // 2: pandora.node.v1.SessionRequest.heartbeat:type_name -> pandora.node.v1.Heartbeat
-	13, // 3: pandora.node.v1.SessionRequest.traffic:type_name -> pandora.node.v1.TrafficReport
-	15, // 4: pandora.node.v1.SessionRequest.online:type_name -> pandora.node.v1.OnlineIPs
-	17, // 5: pandora.node.v1.SessionRequest.config_ack:type_name -> pandora.node.v1.ConfigAck
-	18, // 6: pandora.node.v1.SessionRequest.users_ack:type_name -> pandora.node.v1.UsersAck
-	20, // 7: pandora.node.v1.SessionRequest.renew:type_name -> pandora.node.v1.RenewRequest
-	19, // 8: pandora.node.v1.SessionRequest.upgrade_report:type_name -> pandora.node.v1.UpgradeReport
+	14, // 3: pandora.node.v1.SessionRequest.traffic:type_name -> pandora.node.v1.TrafficReport
+	16, // 4: pandora.node.v1.SessionRequest.online:type_name -> pandora.node.v1.OnlineIPs
+	18, // 5: pandora.node.v1.SessionRequest.config_ack:type_name -> pandora.node.v1.ConfigAck
+	19, // 6: pandora.node.v1.SessionRequest.users_ack:type_name -> pandora.node.v1.UsersAck
+	21, // 7: pandora.node.v1.SessionRequest.renew:type_name -> pandora.node.v1.RenewRequest
+	20, // 8: pandora.node.v1.SessionRequest.upgrade_report:type_name -> pandora.node.v1.UpgradeReport
 	5,  // 9: pandora.node.v1.Hello.host:type_name -> pandora.node.v1.HostInfo
 	8,  // 10: pandora.node.v1.Hello.applied_configs:type_name -> pandora.node.v1.AppliedConfig
 	9,  // 11: pandora.node.v1.Hello.applied_users:type_name -> pandora.node.v1.AppliedUsers
-	19, // 12: pandora.node.v1.Hello.last_upgrade:type_name -> pandora.node.v1.UpgradeReport
+	20, // 12: pandora.node.v1.Hello.last_upgrade:type_name -> pandora.node.v1.UpgradeReport
 	11, // 13: pandora.node.v1.Heartbeat.metrics:type_name -> pandora.node.v1.HostMetrics
 	12, // 14: pandora.node.v1.Heartbeat.nodes:type_name -> pandora.node.v1.NodeRuntime
 	0,  // 15: pandora.node.v1.NodeRuntime.status:type_name -> pandora.node.v1.RuntimeStatus
-	14, // 16: pandora.node.v1.TrafficReport.entries:type_name -> pandora.node.v1.TrafficEntry
-	16, // 17: pandora.node.v1.OnlineIPs.entries:type_name -> pandora.node.v1.OnlineEntry
-	1,  // 18: pandora.node.v1.ConfigAck.phase:type_name -> pandora.node.v1.ConfigPhase
-	2,  // 19: pandora.node.v1.UpgradeReport.phase:type_name -> pandora.node.v1.UpgradePhase
-	22, // 20: pandora.node.v1.SessionResponse.welcome:type_name -> pandora.node.v1.Welcome
-	23, // 21: pandora.node.v1.SessionResponse.config:type_name -> pandora.node.v1.ServerConfig
-	25, // 22: pandora.node.v1.SessionResponse.users_full:type_name -> pandora.node.v1.UsersFull
-	26, // 23: pandora.node.v1.SessionResponse.users_delta:type_name -> pandora.node.v1.UsersDelta
-	28, // 24: pandora.node.v1.SessionResponse.traffic_ack:type_name -> pandora.node.v1.TrafficAck
-	29, // 25: pandora.node.v1.SessionResponse.certificate:type_name -> pandora.node.v1.Certificate
-	30, // 26: pandora.node.v1.SessionResponse.command:type_name -> pandora.node.v1.Command
-	24, // 27: pandora.node.v1.ServerConfig.nodes:type_name -> pandora.node.v1.NodeConfig
-	27, // 28: pandora.node.v1.UsersFull.users:type_name -> pandora.node.v1.User
-	27, // 29: pandora.node.v1.UsersDelta.upserted:type_name -> pandora.node.v1.User
-	31, // 30: pandora.node.v1.Command.reconnect:type_name -> pandora.node.v1.Reconnect
-	33, // 31: pandora.node.v1.Command.tombstone:type_name -> pandora.node.v1.Tombstone
-	32, // 32: pandora.node.v1.Command.upgrade:type_name -> pandora.node.v1.Upgrade
-	3,  // 33: pandora.node.v1.EnrollmentService.Enroll:input_type -> pandora.node.v1.EnrollRequest
-	6,  // 34: pandora.node.v1.ControlService.Session:input_type -> pandora.node.v1.SessionRequest
-	4,  // 35: pandora.node.v1.EnrollmentService.Enroll:output_type -> pandora.node.v1.EnrollResponse
-	21, // 36: pandora.node.v1.ControlService.Session:output_type -> pandora.node.v1.SessionResponse
-	35, // [35:37] is the sub-list for method output_type
-	33, // [33:35] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	13, // 16: pandora.node.v1.NodeRuntime.cert:type_name -> pandora.node.v1.CertStatus
+	15, // 17: pandora.node.v1.TrafficReport.entries:type_name -> pandora.node.v1.TrafficEntry
+	17, // 18: pandora.node.v1.OnlineIPs.entries:type_name -> pandora.node.v1.OnlineEntry
+	1,  // 19: pandora.node.v1.ConfigAck.phase:type_name -> pandora.node.v1.ConfigPhase
+	2,  // 20: pandora.node.v1.UpgradeReport.phase:type_name -> pandora.node.v1.UpgradePhase
+	23, // 21: pandora.node.v1.SessionResponse.welcome:type_name -> pandora.node.v1.Welcome
+	24, // 22: pandora.node.v1.SessionResponse.config:type_name -> pandora.node.v1.ServerConfig
+	26, // 23: pandora.node.v1.SessionResponse.users_full:type_name -> pandora.node.v1.UsersFull
+	27, // 24: pandora.node.v1.SessionResponse.users_delta:type_name -> pandora.node.v1.UsersDelta
+	29, // 25: pandora.node.v1.SessionResponse.traffic_ack:type_name -> pandora.node.v1.TrafficAck
+	30, // 26: pandora.node.v1.SessionResponse.certificate:type_name -> pandora.node.v1.Certificate
+	31, // 27: pandora.node.v1.SessionResponse.command:type_name -> pandora.node.v1.Command
+	25, // 28: pandora.node.v1.ServerConfig.nodes:type_name -> pandora.node.v1.NodeConfig
+	28, // 29: pandora.node.v1.UsersFull.users:type_name -> pandora.node.v1.User
+	28, // 30: pandora.node.v1.UsersDelta.upserted:type_name -> pandora.node.v1.User
+	32, // 31: pandora.node.v1.Command.reconnect:type_name -> pandora.node.v1.Reconnect
+	34, // 32: pandora.node.v1.Command.tombstone:type_name -> pandora.node.v1.Tombstone
+	33, // 33: pandora.node.v1.Command.upgrade:type_name -> pandora.node.v1.Upgrade
+	3,  // 34: pandora.node.v1.EnrollmentService.Enroll:input_type -> pandora.node.v1.EnrollRequest
+	6,  // 35: pandora.node.v1.ControlService.Session:input_type -> pandora.node.v1.SessionRequest
+	4,  // 36: pandora.node.v1.EnrollmentService.Enroll:output_type -> pandora.node.v1.EnrollResponse
+	22, // 37: pandora.node.v1.ControlService.Session:output_type -> pandora.node.v1.SessionResponse
+	36, // [36:38] is the sub-list for method output_type
+	34, // [34:36] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_pandora_node_v1_node_proto_init() }
@@ -2888,7 +2993,7 @@ func file_pandora_node_v1_node_proto_init() {
 		(*SessionRequest_Renew)(nil),
 		(*SessionRequest_UpgradeReport)(nil),
 	}
-	file_pandora_node_v1_node_proto_msgTypes[18].OneofWrappers = []any{
+	file_pandora_node_v1_node_proto_msgTypes[19].OneofWrappers = []any{
 		(*SessionResponse_Welcome)(nil),
 		(*SessionResponse_Config)(nil),
 		(*SessionResponse_UsersFull)(nil),
@@ -2897,7 +3002,7 @@ func file_pandora_node_v1_node_proto_init() {
 		(*SessionResponse_Certificate)(nil),
 		(*SessionResponse_Command)(nil),
 	}
-	file_pandora_node_v1_node_proto_msgTypes[27].OneofWrappers = []any{
+	file_pandora_node_v1_node_proto_msgTypes[28].OneofWrappers = []any{
 		(*Command_Reconnect)(nil),
 		(*Command_Tombstone)(nil),
 		(*Command_Upgrade)(nil),
@@ -2908,7 +3013,7 @@ func file_pandora_node_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pandora_node_v1_node_proto_rawDesc), len(file_pandora_node_v1_node_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   31,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
