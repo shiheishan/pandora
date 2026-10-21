@@ -388,6 +388,13 @@ sudo /opt/pandora/deploy/edge-tls.sh status             # 面板 HTTPS 证书
 sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/secrets.env /opt/pandora/bin/pandora admin list
 ```
 
+管理员账号：
+
+- 第一个管理员在首装时建（见上文「首装会问」）；网页上没有建管理员的入口。之后再加：上面的写法把子命令换成 `admin create --email <邮箱> --password-stdin`（口令经管道给，写法同 RUNBOOK 第 2 章「管理员进不来」的重置口令）；已有账号设为管理员用 `admin grant --email <邮箱>`，撤销用 `admin revoke --email <邮箱>`。
+- 改口令：后台左下账号菜单「修改密码」，成功后这个账号的全部后台会话（含当前）退出，用新口令重新登录。管理员口令至少 12 位，同时含字母和数字。
+- 忘了口令：管理员不能走用户端的找回密码，在服务器上 `admin reset-password`（见 RUNBOOK 第 2 章），会吊销全部会话并清掉登录失败暂停。
+- 换邮箱：后台不能改自己的邮箱。用新邮箱 `admin create` 一个管理员，登录确认后再 `admin revoke` 旧账号。
+
 nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对外。模板 include 的真实来源 IP 信任表 `/etc/pandora/cloudflare-realip.conf` 不存在时，渲染器写一份**不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP` 一律不采信。站点在 Cloudflare 后面（橙色云）时，渲染后再写入 Cloudflare 的官方网段并重载；升级重新渲染不会覆盖这个文件，Cloudflare 调整网段时重跑同一条命令即可：
 
 ```bash
