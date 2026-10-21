@@ -43,11 +43,12 @@ function seed(u: User, deps: LedgerDeps): LedgerEntry[] {
     return { id: randomUUID(), kind, delta, balance_after: running, memo, order_id, at }
   }
 
-  const e1 = mk('balance_topup', u.balance + 2000, '余额充值', null, t(created, 0.25))
-  const e2 = firstOrder
-    ? mk('balance_hold', -3000, '', firstOrder.id, t(created, 0.5))
-    : mk('balance_adjusted', -3000, '线下退款后冲平余额', null, t(created, 0.5))
-  const e3 = mk('balance_adjusted', 1000, '补偿：节点故障 2 小时', null, t(created, 0.75))
+  // 中间余额都不为负（真库里用户余额有非负约束）：先充值、再补偿，最后一笔出账把余额落到 u.balance
+  const e1 = mk('balance_topup', u.balance + 3000, '余额充值', null, t(created, 0.25))
+  const e2 = mk('balance_adjusted', 1000, '补偿：节点故障 2 小时', null, t(created, 0.5))
+  const e3 = firstOrder
+    ? mk('balance_hold', -4000, '', firstOrder.id, t(created, 0.75))
+    : mk('balance_adjusted', -4000, '线下退款后冲平余额', null, t(created, 0.75))
 
   return [e1, e2, e3]
 }

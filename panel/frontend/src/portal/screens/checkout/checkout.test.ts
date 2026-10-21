@@ -245,6 +245,8 @@ describe('完成页', () => {
     const pay = (amount: number, method?: string) => ({ status: 'succeeded', amount, created_at: '', method, provider_name: 'W9 演示收银（假商户）' })
     expect(paidText({ balance_applied: 850, payments: [pay(950, 'alipay')] })).toBe('余额付了 ¥8.50，支付宝付了 ¥9.50')
     expect(paidText({ balance_applied: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
+    expect(paidText({ balance_applied: 0, payments: [pay(3000, 'offline')] })).toBe('线下收款 ¥30.00')
+    expect(paidText({ balance_applied: 850, payments: [pay(950, 'offline')] })).toBe('余额付了 ¥8.50，线下收款 ¥9.50')
   })
 
   it('落到的那一份按订单详情的 subscription_id 认', () => {

@@ -52,6 +52,15 @@ describe('mock api · admin users balance ledger', () => {
     }
   })
 
+  it('never shows a negative running balance in the seeds', async () => {
+    const list = (await (await get('/v1/users?limit=100')).json()) as { users: Array<{ id: string }> }
+    expect(list.users.length).toBeGreaterThan(20)
+    for (const u of list.users) {
+      const page = balanceEntriesSchema.parse(await (await get(`/v1/users/${u.id}/balance-entries`)).json())
+      for (const e of page.entries) expect(e.balance_after).toBeGreaterThanOrEqual(0)
+    }
+  })
+
   it('returns an empty page for a user without balance activity or an unknown id', async () => {
     const adminRes = await get(`/v1/users/${ADMIN_USER}/balance-entries`)
     expect(adminRes.status).toBe(200)

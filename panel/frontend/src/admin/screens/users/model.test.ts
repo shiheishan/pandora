@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ledgerLabel } from '../../../portal/screens/wallet/model'
 import { extendedSchema, rotatedSchema, userDetailSchema, usersSchema } from './api'
+import { balanceEntryNote } from './ledger'
 import {
   BALANCE_KINDS,
   balanceCents,
@@ -312,5 +313,18 @@ describe('余额流水叫法', () => {
   it('金额带正负号', () => {
     expect(balanceDeltaView(1000)).toEqual({ text: '+¥10.00', out: false })
     expect(balanceDeltaView(-350)).toEqual({ text: '−¥3.50', out: true })
+  })
+})
+
+describe('余额流水原因列', () => {
+  it('订单取消退回的原因码翻成中文，认不出的英文码不显示，原话照写', () => {
+    expect(balanceEntryNote('balance_release', 'expired')).toBe('超时未支付')
+    expect(balanceEntryNote('balance_release', 'user_cancelled')).toBe('用户自己取消')
+    expect(balanceEntryNote('balance_release', 'account_deleted')).toBe('账号已注销')
+    expect(balanceEntryNote('balance_release', 'some_new_code')).toBe('')
+    expect(balanceEntryNote('balance_release', '管理员取消：重复下单')).toBe('管理员取消：重复下单')
+    expect(balanceEntryNote('balance_adjusted', ' 补偿：节点故障 ')).toBe('补偿：节点故障')
+    expect(balanceEntryNote('balance_hold', '')).toBe('')
+    expect(balanceEntryNote('balance_topup', 'internal_code')).toBe('')
   })
 })

@@ -57,7 +57,9 @@ export function paidText(o: Pick<OrderDetail, 'balance_applied' | 'payments'>, w
   const parts: string[] = []
   if (o.balance_applied > 0) parts.push(`余额付了 ${money(o.balance_applied)}`)
   const online = o.payments.reduce((n, p) => n + p.amount, 0)
-  if (online > 0) parts.push(`${payMethodName(o.payments)}付了 ${money(online)}`)
+  // 线下收款是后台人工入账，不说「线下收款付了」，写「线下收款 ¥X」
+  const offline = o.payments.length > 0 && o.payments.every((p) => p.method === 'offline')
+  if (online > 0) parts.push(offline ? `线下收款 ${money(online)}` : `${payMethodName(o.payments)}付了 ${money(online)}`)
   if (waived > 0) parts.push(`零头 ${money(waived)} 已免`)
   return parts.length ? parts.join('，') : '这次没有花钱'
 }

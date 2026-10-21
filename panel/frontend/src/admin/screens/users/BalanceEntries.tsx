@@ -5,6 +5,7 @@ import { href } from '../../../core/router'
 import { Empty, Pager, QueryView, Table } from '../../../ui'
 import { SectionTitle } from '../../kit'
 import { BALANCE_ENTRIES_PAGE, useBalanceEntries, type UserDetail } from './api'
+import { balanceEntryNote } from './ledger'
 import { balanceDeltaView, balanceKindLabel } from './model'
 import css from './Subs.module.css'
 
@@ -78,7 +79,7 @@ export function BalanceEntries({ d }: { d: UserDetail }) {
                         </a>
                       )
                     : null
-                  const memo = e.memo.trim() ? e.memo.trim() : null
+                  const memo = balanceEntryNote(e.kind, e.memo) || null
                   if (!orderLink && !memo) return <span className={css.dim}>—</span>
                   const parts: ReactNode[] = []
                   if (orderLink) parts.push(orderLink)

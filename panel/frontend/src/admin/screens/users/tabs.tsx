@@ -219,7 +219,8 @@ export function OrdersTab({
         )}
       </section>
 
-      <BalanceEntries d={d} />
+      {/* 按用户 id 作 key：换用户时翻页回到第一页 */}
+      <BalanceEntries key={d.id} d={d} />
 
       <section>
         <SectionTitle hint="最近 20 单">订单</SectionTitle>

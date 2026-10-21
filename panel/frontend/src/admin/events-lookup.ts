@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { isApiError, type ApiClient } from '../core/api'
 import { formatMoney } from '../core/format'
 import { useApi } from '../shell/runtime'
+import { ORDER_STATUS_TEXT } from './entity-search'
 import { MAX_EVENTS, type EventItem, type EventLookup } from './events'
 
 const LOOKUP_STALE_MS = 10 * 60_000
@@ -70,14 +71,6 @@ export type EventDetail =
 
 /** ok = 读到了；gone = 404 或按 id 查不到（已删除）；none = 没查、还在查或读失败（退回通用文案） */
 export type LookupState = { kind: 'ok'; detail: EventDetail } | { kind: 'gone' } | { kind: 'none' }
-
-const ORDER_STATUS_TEXT: Record<string, string> = {
-  pending_payment: '待支付',
-  paid: '已支付',
-  fulfilled: '已支付',
-  cancelled: '已取消',
-  expired: '已过期',
-}
 
 const TICKET_STATUS_TEXT: Record<string, string> = {
   open: '待处理',

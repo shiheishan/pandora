@@ -95,12 +95,16 @@ const SUB_STATUS_TEXT: Record<string, string> = {
   expired: '已过期',
 }
 
-const ORDER_STATUS_TEXT: Record<string, string> = {
+/**
+ * 订单状态文案：与 users/model.ts 的 ORDER_STATUS_VIEW 逐条一致（超时未付写「超时取消」，报告 2.3-13；
+ * 外框不能 import screens/**，守卫在 entity-search.test.ts）。实时动态（events-lookup.ts）也用这一份
+ */
+export const ORDER_STATUS_TEXT: Readonly<Record<string, string>> = {
   pending_payment: '待支付',
   paid: '已支付',
   fulfilled: '已支付',
   cancelled: '已取消',
-  expired: '已过期',
+  expired: '超时取消',
 }
 
 /** serving_status + stale → 状态文案（照 nodes/logic.ts 的 nodeState） */
