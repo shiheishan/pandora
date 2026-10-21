@@ -38,11 +38,13 @@ type Server struct {
 	LastHeartbeatAt *time.Time
 	// HeartbeatOnline：status = ready 且最近心跳在 NodeStaleAfter 之内
 	HeartbeatOnline bool
-	CPUCores        *int
-	MemoryMB        *int
-	DiskGB          *int
-	CapacityNodes   int
-	Notes           *string
+	// Enrolled：服务器有有效接入身份（HasActiveIdentity 口径：active 且没过期），节点「上线」要求它为 true
+	Enrolled      bool
+	CPUCores      *int
+	MemoryMB      *int
+	DiskGB        *int
+	CapacityNodes int
+	Notes         *string
 	// NodeCount 是名下未删除的节点数（含已退役）
 	NodeCount int
 	// ActiveNodeCount 是名下 serving_status = active 的节点数

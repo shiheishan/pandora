@@ -19,6 +19,7 @@ paths:
 
 ## 名单与线路资格
 - 名单 `Rosters`、订阅线路 `node_source.go` 共用 `poolAdmits`（`service/delivery.go`）；池限组时空名单 = 不限，默认组用户进不了限组池。
+- 后台节点列表 `state=cert` 与仪表盘 `CertAttentionNodes` 共用 `repo.CertAttentionBaseCond` / `CertFailingCond` / `CertExpiringCond`（`repo/report_reads.go`，两个占位符依次是 IP 证书、域名证书的门槛，service 按 `CertExpiringIP` / `CertExpiringDomain` 算好传入）；别在别处另写一份证书门槛。
 - 「节点自己能不能下发」只有 `repo.DeliverableNodeCond`；「服务器上该跑哪些节点」只有 `repo.ServedOnServerCond`（`repo/repo.go`）。订阅拉取、后台列表「是否下发」都引用前者，不另写 SQL 变体。
 - 心跳超时不写进 `DeliverableNodeCond`；从没心跳过的服务器不满足条件。运行异常只降级：`repo.NodeDegradedCond`，`preferFresh` 先摘降级节点，全是降级时仍下发（`repo/delivery.go`、`service/delivery.go` 的 `HeartbeatFreshWindow`）。
 - 名单版本 `rosterVersion` 前缀 `u1-`（`service/delivery.go`）；同池节点共用一份 `Users` 切片，不要改切片。
@@ -65,6 +66,9 @@ paths:
 
 ## 服务状态与运行态
 - 只有 `serving_status`（`draft` / `active` / `disabled` / `retired`），边表在 `nodeServingTransitions`（`service/node_status.go`）；无旧版 17 态生命周期触发器。
+- 给后台看的 409 文案不出英文状态码，用 `statusLabel(nodeStatusLabels / serverStatusLabels, …)` 换成中文状态名（与前端 `infra.ts` 的 `SERVER_STATUS` 同一组说法），并写明下一步；`fields` 里的 `"<from> -> <to>"` 与错误码照旧给前端判断（uxfix-node 10-21）。服务器进 ready 没有在役节点用 `serverNoActiveNodeMsg`（`fields.nodes: requires_valid_active_node` 不变）。
+- 上线结果的 `warnings`（`activationWarnings`，`service/nodes_lifecycle.go`）：无池 `nodeNoPoolWarning`；池没绑在用套餐 `nodePoolUnboundWarning`（与列表下发说明同一口径：`poolLivePlans` / `livePlansFromUsage`，`service/pool_live_plans.go`，列表的 `nodeListExtrasFor` 也调它）；读 catalog 出错只记警告、不挡上线。前端 `logic.activationHint` 按这两句原文匹配，改文案两边一起改。
+- 服务器 DTO 的 `enrolled`：有没有有效接入身份（`HasActiveIdentity` 口径；列表一次 `ActiveIdentitySeqs` 批量读，详情 `HasActiveIdentity`）。后台据此区分「还没接入」与「已接入」，不要按心跳猜。`heartbeat_online` 只对 ready 为真，草稿的心跳新鲜与否前端按 `last_heartbeat_at` 自己判。
 - 服务器心跳在 `servers.last_heartbeat_at`；后台失联 `NodeStaleAfter`（90s，`service/node_types.go`）。`RecordHeartbeat` 每拍写服务器心跳，节点 `runtime_status` 只在变化时写（`service/session_store.go`）。
 - 配置回执 `RecordConfigAck`：`switched`/`health_passed` 写 `applied_config_*` 并清 `apply_failed_*`；`failed` 只写失败台账，已应用版本不动。
 

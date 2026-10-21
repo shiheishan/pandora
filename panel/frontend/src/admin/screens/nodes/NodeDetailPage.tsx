@@ -17,7 +17,7 @@ import { trafficUsageLabel } from './xb'
 export const DETAIL_TABS = [
   ['metrics', '概览'],
   ['proto', '协议参数'],
-  ['settings', '路由与流量'],
+  ['settings', '设置'],
   ['ops', '身份与操作'],
 ] as const
 export type DetailTab = (typeof DETAIL_TABS)[number][0]
@@ -38,7 +38,7 @@ function regionLabel(code: string | null): string {
 
 /**
  * node 是列表行（列表里有就秒出），列表没加载到时用单取结果 detail 兜底；
- * detail 同时给协议页签带编辑字段。「路由与流量」的编辑器要 traffic_rate，从 detail 取
+ * detail 同时给协议页签带编辑字段。「设置」页签的编辑器要 traffic_rate，从 detail 取
  */
 export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
   const list = useNodes()
@@ -105,7 +105,12 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
           <SideFact label="节点池">{row.pool_name ?? '未划入节点池'}</SideFact>
           <SideFact label="是否下发">
             {row.delivered_to_users ? (
-              <span className={css.okText}>正在下发给用户</span>
+              // 下发中但带说明（心跳超时仍下发、运行降级时兜底下发）：说明用警告色原样显示，不说「正在下发」了事
+              row.delivery_note ? (
+                <span className={css.warnText}>{row.delivery_note}</span>
+              ) : (
+                <span className={css.okText}>正在下发给用户</span>
+              )
             ) : (
               // 后端的说明是完整句子（多数已写明「不下发」），原样显示，不再加前缀
               <span className={css.warnText}>{row.delivery_note || '不下发'}</span>

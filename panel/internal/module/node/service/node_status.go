@@ -62,3 +62,22 @@ func ValidServerStatus(s string) bool {
 	_, ok := serverStatusTransitions[s]
 	return ok
 }
+
+// nodeStatusLabels、serverStatusLabels 是状态的中文名（与后台页面一致），只给面向管理员的错误文案用；
+// 错误码与 fields 里仍是英文状态码。
+var (
+	nodeStatusLabels = map[string]string{
+		NodeDraft: "草稿", NodeActive: "在役", NodeDisabled: "已停用", NodeRetired: "已退役",
+	}
+	serverStatusLabels = map[string]string{
+		ServerDraft: "草稿", ServerReady: "服务中", ServerDraining: "维护中", ServerMaintenance: "停机维护", ServerRetired: "已退役",
+	}
+)
+
+// statusLabel 取状态的中文名；表里没有的原样返回。
+func statusLabel(labels map[string]string, status string) string {
+	if l, ok := labels[status]; ok {
+		return l
+	}
+	return status
+}

@@ -128,7 +128,7 @@ var (
 	}
 	inventoryServerKeys = []string{
 		"id", "name", "status", "status_reason", "row_version", "region", "hostname", "public_ipv4", "public_ipv6",
-		"private_ipv4", "architecture", "os_name", "agent_version", "last_heartbeat_at", "heartbeat_online",
+		"private_ipv4", "architecture", "os_name", "agent_version", "last_heartbeat_at", "heartbeat_online", "enrolled",
 		"cpu_cores", "memory_mb", "disk_gb", "capacity_nodes", "notes", "node_count",
 		"active_node_count", "serving_node_count", "never_seen_node_count", "created_at", "updated_at",
 		"cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at",

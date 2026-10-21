@@ -13,7 +13,7 @@ import type { NodeRow } from './schemas'
 
 type EditKind = 'routing' | 'traffic' | 'access' | null
 
-/** 「路由与流量」页签：路由、流量与标签、访问三块只读摘要，「编辑」各开一个弹窗装现成的编辑器 */
+/** 「设置」页签：路由、流量与标签、访问三块只读摘要，「编辑」各开一个弹窗装现成的编辑器 */
 export function NodeSettings({ node, baseRate }: { node: NodeRow; baseRate: number | null }) {
   const routing = useNodeRouting(node.id)
   const [edit, setEdit] = useState<EditKind>(null)

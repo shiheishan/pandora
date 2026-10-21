@@ -14,7 +14,7 @@ type FormField struct {
 	// 布尔为 "true"/"false"，数字为十进制文本，"" 表示没填）；所有键同时满足才显示。
 	ShowIf map[string][]string `json:"show_if,omitempty"`
 	// Default 是新建时预填的值，类型同存储（number→数字、boolean→布尔、其余→字符串）；
-	// 只给节点端实际缺省或唯一可选的值。
+	// 给推荐且能通过校验的值：照缺省预填后，校验只在没有缺省、必须由管理员填的字段上报错（守卫：TestSchemaFormDefaultsValidate）。
 	Default     any    `json:"default,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
 	// OptionLabels：枚举值 → 显示文字；键 "" 是选填枚举「不选」那一项的文字。
@@ -168,12 +168,12 @@ func appendAll(dst []FormField, parts ...[]FormField) []FormField {
 
 var protocolForms = map[string]formSpec{
 	"vless": {
-		note: "REALITY + tcp 时用 xtls-rprx-vision；普通 TLS（tls=1）暂未开放。",
+		note: "缺省是 REALITY + tcp + xtls-rprx-vision：填 REALITY 目标站与 SNI，点「生成密钥对」后就能保存；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
-				{Path: "tls", Label: "加密", OptionLabels: map[string]string{"0": "0 · 不加密", "2": "2 · REALITY"}},
-				{Path: "flow", Label: "流控（flow）", ShowIf: showFlowVLESS, OptionLabels: map[string]string{"": "留空"}},
+				{Path: "tls", Label: "加密", Default: 2, OptionLabels: map[string]string{"0": "0 · 不加密", "2": "2 · REALITY"}},
+				{Path: "flow", Label: "流控（flow）", Default: "xtls-rprx-vision", ShowIf: showFlowVLESS, OptionLabels: map[string]string{"": "留空"}},
 				{Path: "utls", Label: "uTLS 指纹", ShowIf: showTLS2, OptionLabels: utlsOptionLabels},
 			},
 			realityFields(), transportFields(),
@@ -181,14 +181,14 @@ var protocolForms = map[string]formSpec{
 			certFields(showTLS1), mkcpFields(), xhttpFields(),
 		),
 		hints: map[string]string{
-			"tls":       "不加密时不能用裸 tcp。",
+			"tls":       "缺省 2 · REALITY。选 0 · 不加密时传输不能是 tcp，否则保存会被拒绝。",
 			"ws_path":   "旧字段名，与「路径」二选一即可。",
 			"grpc_path": "旧字段名，与 serviceName 二选一即可。",
 			"mask":      "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
 		},
 	},
 	"vmess": {
-		note: "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+		note: "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式"},
@@ -206,11 +206,11 @@ var protocolForms = map[string]formSpec{
 		},
 	},
 	"trojan": {
-		note: "Trojan 支持普通 TLS（1）与 REALITY（2），不能不加密；没有流控。",
+		note: "缺省是普通 TLS（1）+ 自动申请证书（Let's Encrypt）：上线前把对外地址解析到这台服务器；也可选 REALITY（2）。Trojan 不能不加密；没有流控。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
-				{Path: "tls", Label: "加密", OptionLabels: map[string]string{"1": "1 · TLS", "2": "2 · REALITY"}},
+				{Path: "tls", Label: "加密", Default: 1, OptionLabels: map[string]string{"1": "1 · TLS", "2": "2 · REALITY"}},
 				{Path: "utls", Label: "uTLS 指纹", OptionLabels: utlsOptionLabels},
 			},
 			certModeFields(showTLS1), clientTLSFieldsForCertMode(showTLS1), realityFields(), transportFields(),

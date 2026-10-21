@@ -27,7 +27,9 @@ paths:
 
 ## 表单元数据（10-16）
 - `Schema.Note` 与 `Schema.Fields`（`schema_form.go` 的 `protocolForms`，`Schemas()` 经 `withForms` 挂上；不写进 `schema.go` 的字面量，免得碰对齐门）。`Fields` 按显示顺序、每个 `AllowedProperties` 恰好一项：`label` 中文名、`advanced` 高级参数（默认折叠）、`show_if`（键是另一字段路径，值按表单字符串比较，布尔 "true"/"false"、未填 ""，各键同时满足才显示）、`default`、`placeholder`、`option_labels`（"" 键是选填枚举「不选」项的文字）。
-- `default` 只给节点端实际缺省或唯一可选的值（vless / trojan 的 network=tcp 与表单一贯把缺省当 tcp 一致；tls 三态不给默认；tuic 拥塞控制缺省 cubic 只写进选项文字；shadowtls method 缺省按 pdnd 是 aes-256-gcm）。改 pdnd 的缺省要同步这里。
+- `default` 给推荐且能通过校验的值（uxfix-node 10-21 改）：照缺省预填、折叠隐藏字段后，`Validate` 只许在没有缺省、必须由管理员填的字段（REALITY 目标站 / SNI / 密钥对 / short id、Shadowsocks 加密方式之类）上报错，守卫 `TestSchemaFormDefaultsValidate`。现行：VLESS `tls=2`（REALITY）+ `network=tcp` + `flow=xtls-rprx-vision`；Trojan `tls=1` + `cert_mode=acme`；tuic 拥塞控制缺省 cubic 只写进选项文字；shadowtls method 缺省按 pdnd 是 aes-256-gcm、`wildcard_sni` 缺省 off。改 pdnd 的缺省要同步这里；`note` / `hints` 写清哪种组合「保存会被拒绝」，前端照原文显示。
+- 严格解码（`validateKernelShape`）的结构体要收下 `AllowedProperties` 里的每个键：漏收的键表单一填就整份 422「包含不支持的字段」（10-21 前 shadowtls 的 `wildcard_sni` 就是这样，缺省 off 也存不进去）。`wildcard_sni` 只认 off / authed / all（与 pdnd `shadowTLSWildcardSNI` 同组）。
+- `Validate` 的 422 键已映射回表单路径（如 REALITY 报 `protocol_config.reality_settings.server_name`，不是内核的 `server_names`），假后端照这个键写。
 - 表单表里的额外说明经 `withForms` 补进 `Hints`（只补没有的键）；`schema_form_test.go` 钉住：路径集合与 `AllowedProperties` 相同、必填不能高级、`show_if` / `option_labels` / `default` 的取值合乎枚举与类型。加字段要同时登记表单元数据。
 
 ## 其它

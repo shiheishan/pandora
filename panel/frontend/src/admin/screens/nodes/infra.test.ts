@@ -24,6 +24,7 @@ import {
   serverMeters,
   serverNodeLines,
   serverNotes,
+  serverNextStep,
   serverSubtitle,
   upgradeBlockNote,
   upgradeConfirmBody,
@@ -60,6 +61,7 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     agent_version: 'core r53',
     last_heartbeat_at: '2026-09-24T10:00:00Z',
     heartbeat_online: true,
+    enrolled: true,
     cpu_cores: 4,
     memory_mb: 4096,
     disk_gb: 80,
@@ -154,9 +156,9 @@ describe('server status', () => {
     expect(quickToggle('ready')).toMatchObject({ to: 'draining', label: '标记维护' })
     expect(quickToggle('draining')).toMatchObject({ to: 'ready', label: '恢复服务' })
     expect(quickToggle('maintenance')).toMatchObject({ to: 'ready' })
-    expect(quickToggle('draft')).toMatchObject({ to: 'ready', label: '投入服务' })
+    expect(quickToggle('draft')).toBeNull()
     expect(quickToggle('retired')).toBeNull()
-    for (const from of ['ready', 'draining', 'maintenance', 'draft'] as const) expect(nextServerStatuses(from)).toContain(quickToggle(from)!.to)
+    for (const from of ['ready', 'draining', 'maintenance'] as const) expect(nextServerStatuses(from)).toContain(quickToggle(from)!.to)
   })
 
   it('状态边表与后端 serverStatusTransitions 逐边一致', () => {
@@ -191,7 +193,7 @@ describe('server status', () => {
       },
       now,
     )
-    expect(notes).toEqual(['原因：磁盘告警', '心跳 5 分钟前，可能已断开', '2 个在役节点从未心跳（多半没装 agent）'])
+    expect(notes).toEqual(['原因：磁盘告警', '心跳 5 分钟前，可能已断开', '这台服务器从未上报心跳，名下 2 个在役节点不会下发（多半还没装节点端）'])
     expect(serverNotes({ status: 'ready', status_reason: null, heartbeat_online: false, last_heartbeat_at: null, never_seen_node_count: 0 }, now)).toEqual([
       '还没有收到心跳',
     ])
@@ -200,6 +202,25 @@ describe('server status', () => {
       's1',
     )
     expect(lines.map((n) => n.id)).toEqual(['a'])
+  })
+
+  it('serverNextStep for draft servers', () => {
+    const now = new Date('2026-09-24T10:05:00Z')
+    expect(serverNextStep(server({ status: 'ready' }), now)).toBeNull()
+    expect(serverNextStep(server({ status: 'draft', enrolled: false }), now)).toBe('还没接入：签发安装令牌，在机器上用 root 执行')
+    // 草稿的 heartbeat_online 恒为 false（后端只对 ready 算），按心跳时间判
+    expect(
+      serverNextStep(server({ status: 'draft', enrolled: true, heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:04:30Z' }), now),
+    ).toBe('已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务')
+    expect(serverNextStep(server({ status: 'draft', enrolled: true, last_heartbeat_at: null }), now)).toBe('已接入，但节点端还没连上面板：先在机器上检查节点端服务')
+    expect(
+      serverNextStep(
+        server({ status: 'draft', enrolled: true, heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }),
+        now,
+      ),
+    ).toBe(
+      '已接入，但节点端没连着面板（心跳 5 分钟前）：先在机器上检查节点端服务，再新建或绑定节点并上线',
+    )
   })
 })
 

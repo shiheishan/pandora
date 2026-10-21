@@ -64,7 +64,7 @@ export function PoolsTab() {
                   </div>
                   <div className={x.chips}>
                     {p.members.length === 0 ? (
-                      <span className={css.faint}>没有节点。在节点详情『路由与流量 › 访问』里把节点池选成它。</span>
+                      <span className={css.faint}>没有节点。在节点详情「设置 › 访问」里把节点池选成它。</span>
                     ) : (
                       p.members.map((m) => (
                         <button key={m.id} type="button" className={`${x.memberChip} ${x.chipButton}`} onClick={() => navigate(`/nodes/nodes/${m.id}`)} aria-label={`打开节点 ${m.name}`}>

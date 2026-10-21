@@ -102,9 +102,14 @@ func (s *Service) ListServers(ctx context.Context, f ServerFilter) ([]Server, er
 	if err != nil {
 		return nil, err
 	}
+	seqs, err := s.repo.ActiveIdentitySeqs(ctx, ids, s.identityNow())
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	for _, r := range rows {
 		srv := serverFromModel(r, counts[r.ID], now)
+		_, srv.Enrolled = seqs[r.ID]
 		if m, ok := metrics[r.ID]; ok {
 			applyServerMetrics(&srv, m)
 		}
@@ -136,6 +141,9 @@ func (s *Service) GetServer(ctx context.Context, id uuid.UUID) (Server, error) {
 		return Server{}, err
 	}
 	srv := serverFromModel(m, counts[id], s.now())
+	if srv.Enrolled, err = s.repo.HasActiveIdentity(ctx, id, s.identityNow()); err != nil {
+		return Server{}, err
+	}
 	metrics, err := s.serverMetricsByID(ctx, []uuid.UUID{id})
 	if err != nil {
 		return Server{}, err
@@ -288,7 +296,7 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 				return err
 			}
 			if !has {
-				return &errs.Error{Code: errs.Conflict, Message: "服务器没有在役节点，不能进入 ready；先在节点上用「上线」",
+				return &errs.Error{Code: errs.Conflict, Message: serverNoActiveNodeMsg,
 					Fields: map[string]string{"nodes": "requires_valid_active_node"}}
 			}
 		}

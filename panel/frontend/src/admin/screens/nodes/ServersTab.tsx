@@ -1,7 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { MoreHorizontalIcon, PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
-import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
@@ -20,6 +19,7 @@ import {
   serverDeleteBlock,
   serverMeters,
   serverNotes,
+  serverNextStep,
   serverSubtitle,
   upgradeBlockNote,
   upgradeConfirmBody,
@@ -28,6 +28,7 @@ import {
   upgradeTarget,
   validateServerForm,
 } from './infra'
+import { InstallModal } from './InstallModal'
 import x from './infra.module.css'
 import css from './nodes.module.css'
 import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
@@ -178,6 +179,7 @@ function ServerCard({
   const meters = serverMeters(s)
   const allMetersNull = meters.every((m) => m.percent === null)
   const notes = serverNotes(s)
+  const nextStep = serverNextStep(s)
   const blockNote = upgradeBlockNote(s)
   const noteLines = blockNote ? [...notes, blockNote] : notes
   const offer = upgradeOffer(s)
@@ -220,6 +222,9 @@ function ServerCard({
           <span className={css.faint}>没有在役节点</span>
         )}
       </div>
+      {nextStep ? (
+        <div className={x.note}>{nextStep}</div>
+      ) : null}
       {noteLines.map((n) => (
         <div key={n} className={x.note}>
           {n}
@@ -236,10 +241,20 @@ function ServerCard({
         </span>
         <span className={css.spacer} />
         {s.status !== 'retired' && (
-          <Button size="sm" variant="secondary" disabled={busy} onClick={onToken}>
+          <Button
+            size="sm"
+            variant={s.status === 'draft' && !s.enrolled ? 'primary' : 'secondary'}
+            disabled={busy}
+            onClick={onToken}
+          >
             安装令牌
           </Button>
         )}
+        {s.status === 'draft' && s.enrolled ? (
+          <Button size="sm" variant="secondary" onClick={() => navigate('/nodes/nodes', { query: { new: s.id } })}>
+            新建节点
+          </Button>
+        ) : null}
         {toggle && (
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => onToggle(toggle)}>
             {toggle.label}
@@ -250,59 +265,6 @@ function ServerCard({
         </Button>
       </div>
     </section>
-  )
-}
-
-/** 安装 agent 弹窗：一条安装命令（含一次性令牌，脚本不再另要令牌）；关掉就再也看不到 */
-function InstallModal({ secret, onClose }: { secret: InstallSecret; onClose: () => void }) {
-  const toast = useToast()
-  const [copied, setCopied] = useState(false)
-
-  const copy = () =>
-    navigator.clipboard.writeText(secret.command).then(
-      () => {
-        setCopied(true)
-        toast('安装命令已复制')
-      },
-      () => toast('浏览器不允许写剪贴板，请手动选中复制', 'danger'),
-    )
-
-  return (
-    <Modal
-      open={true}
-      onClose={onClose}
-      size={560}
-      eyebrow="安装 agent · 接入面板"
-      title={secret.title}
-      footerStart={
-        <span className={x.installFooterNotice}>
-          命令 {formatDateTime(secret.expiresAt)} 前有效，关闭后不再显示；过期或丢失可重新签发。
-        </span>
-      }
-      actions={
-        <Button size="dialog" variant="primary" onClick={onClose}>
-          完成
-        </Button>
-      }
-    >
-      <div className={x.installSteps}>
-        <div className={x.installStep}>
-          <span className={x.installNo}>1</span>
-          <div className={x.installContent}>
-            <span className={x.installStepTitle}>登录服务器，用 root 执行安装命令</span>
-            <div className={x.installBox}>
-              <code className={x.installCode}>{secret.command}</code>
-              <button type="button" className={`${x.installCopyBtn} ${copied ? x.installCopied : ''}`} onClick={() => void copy()}>
-                {copied ? '已复制 ✓' : '复制'}
-              </button>
-            </div>
-            <span className={x.installHint}>
-              脚本会下载 agent、注册为系统服务，并用命令里的一次性令牌接入面板（接入一次即作废）。接入后地区、IP、系统与规格自动回填。
-            </span>
-          </div>
-        </div>
-      </div>
-    </Modal>
   )
 }
 

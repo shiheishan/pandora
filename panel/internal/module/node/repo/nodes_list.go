@@ -13,14 +13,16 @@ import (
 
 // NodeListFilter 是后台节点列表的筛选（service 已校验）。
 type NodeListFilter struct {
-	IncludeRetired bool
-	State          string // ''/all/online/offline/disabled/retired
-	Search         string
-	ID             *uuid.UUID
-	Tag            string
-	Limit          int
-	Offset         int
-	Detail         bool // true 时读 protocol_config，否则该列给 NULL
+	IncludeRetired     bool
+	State              string    // ''/all/online/offline/disabled/retired/cert
+	CertIPDeadline     time.Time // State 为 cert 时由 service 按 now 算好：IP 证书快到期的门槛
+	CertDomainDeadline time.Time // 同上：域名证书快到期的门槛
+	Search             string
+	ID                 *uuid.UUID
+	Tag                string
+	Limit              int
+	Offset             int
+	Detail             bool // true 时读 protocol_config，否则该列给 NULL
 }
 
 // NodeListRow 是后台节点列表的一行读模型：节点本身加所在服务器、节点池的展示字段。
@@ -101,6 +103,9 @@ func nodeListFilterSQL(f NodeListFilter) (string, []any) {
 		conds = append(conds, "n.serving_status IN ('draft', 'disabled')")
 	case "retired":
 		conds = append(conds, "n.serving_status = 'retired'")
+	case "cert":
+		conds = append(conds, CertAttentionBaseCond+" AND ("+CertFailingCond+" OR ("+CertExpiringCond+"))")
+		args = append(args, f.CertIPDeadline, f.CertDomainDeadline)
 	}
 	if f.Search != "" {
 		conds = append(conds, `strpos(lower(concat_ws(' ', n.name, n.display_name, s.name, n.country_code, n.node_type, n.server_host, n.node_no::text)), lower(?::text)) > 0`)

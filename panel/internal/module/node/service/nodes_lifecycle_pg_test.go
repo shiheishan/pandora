@@ -321,3 +321,35 @@ func TestNodeLifecycleEpochs(t *testing.T) {
 		t.Fatal("强制重新下发应推进配置纪元")
 	}
 }
+
+// 上线成功但所在池没被在用套餐绑定：带「池没绑套餐」提示（与列表下发说明同一口径）；池绑了套餐不提示。
+func TestActivateNodePoolUnboundWarningPG(t *testing.T) {
+	e, cat, ctx := newInvListEnv(t)
+	srv := e.server(t, ctx, "act-pu")
+	e.enroll(t, ctx, srv.ID)
+	activate := func(name string, port int, pool uuid.UUID) AdminNode {
+		t.Helper()
+		n := e.ssNode(t, ctx, srv.ID, name, port)
+		n, err := e.svc.PatchNode(ctx, n.ID, NodePatch{RowVersion: n.RowVersion, PoolID: OptionalUUID{Set: true, Value: &pool}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	unbound := e.pool(t, ctx, "active")
+	cat.unbound[unbound] = true
+	got := activate("pu", 21031, unbound)
+	if len(got.Warnings) != 1 || got.Warnings[0] != nodePoolUnboundWarning {
+		t.Fatalf("池没绑套餐应提示：%v", got.Warnings)
+	}
+
+	bound := e.pool(t, ctx, "active")
+	if got := activate("pb", 21032, bound); len(got.Warnings) != 0 {
+		t.Fatalf("池绑了套餐不应提示：%v", got.Warnings)
+	}
+}

@@ -233,7 +233,7 @@ func stableSchemas() []Schema {
 			},
 			PropertyTypes: cloneStringMap(streamPropertyTypes),
 			Hints: withCertHints(map[string]string{
-				"network": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+				"network": "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
 			}),
 		},
 	}

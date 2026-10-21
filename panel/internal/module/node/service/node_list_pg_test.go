@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -208,5 +209,79 @@ func TestQueryNodesServerColumns(t *testing.T) {
 	}
 	if r.PublicIPv4 == nil || *r.PublicIPv4 != "203.0.113.10" {
 		t.Fatalf("public_ipv4 应是纯地址：%v", r.PublicIPv4)
+	}
+}
+
+// TestQueryNodesCertStatePG 守节点列表 State="cert" 的筛选口径：
+// 只取未删除、在役、报过证书状态且处于 failing（失败）或 expiring（快到期/已过期）的节点；
+// 草稿节点即使有证书错误也不返回，未临期的在役节点不返回。
+func TestQueryNodesCertStatePG(t *testing.T) {
+	e, _, ctx := newInvListEnv(t)
+	now := time.Now().UTC()
+
+	srv := e.readyServer(t, ctx, "list-cert")
+	e.enroll(t, ctx, srv.ID)
+	pool := e.pool(t, ctx, "active")
+
+	makeActiveNode := func(name string, port int) AdminNode {
+		n := e.ssNode(t, ctx, srv.ID, name, port)
+		n, err := e.svc.PatchNode(ctx, n.ID, NodePatch{RowVersion: n.RowVersion, PoolID: OptionalUUID{Set: true, Value: &pool}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err = e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	nodeA := makeActiveNode("cert-fail", 23101)
+	nodeB := makeActiveNode("cert-ip-exp", 23102)
+	nodeC := makeActiveNode("cert-dom-exp", 23103)
+	nodeD := makeActiveNode("cert-dom-ok", 23104)
+	nodeDraft := e.ssNode(t, ctx, srv.ID, "cert-draft", 23105)
+
+	setCert := func(nodeID uuid.UUID, identifier *string, notAfter *time.Time, errCode, errDetail *string) {
+		if err := e.exec(ctx, `UPDATE nodes SET cert_identifier = CAST(? AS text), cert_not_after = CAST(? AS timestamptz),
+			cert_error_code = CAST(? AS text), cert_error_detail = CAST(? AS text),
+			cert_next_attempt_at = NULL, cert_state_at = now() WHERE id = ?`,
+			identifier, notAfter, errCode, errDetail, nodeID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// a. 在役、cert_error_code='dns_failed'、cert_error_detail='test'、cert_identifier='fail.example.test'、cert_not_after=现在+30 天 → 应命中（failing）
+	setCert(nodeA.ID, ptr("fail.example.test"), ptr(now.Add(30*24*time.Hour)), ptr("dns_failed"), ptr("test"))
+	// b. 在役、cert_identifier='203.0.113.10'、cert_not_after=现在+1 天 → 应命中（IP 证书 2 天内）
+	setCert(nodeB.ID, ptr("203.0.113.10"), ptr(now.Add(24*time.Hour)), nil, nil)
+	// c. 在役、cert_identifier='soon.example.test'、cert_not_after=现在+10 天 → 应命中（域名证书 14 天内）
+	setCert(nodeC.ID, ptr("soon.example.test"), ptr(now.Add(10*24*time.Hour)), nil, nil)
+	// d. 在役、cert_identifier='later.example.test'、cert_not_after=现在+30 天 → 不命中
+	setCert(nodeD.ID, ptr("later.example.test"), ptr(now.Add(30*24*time.Hour)), nil, nil)
+	// e. 草稿节点、cert_error_code 有值（同 a 的写法）→ 不命中（只算在役）
+	setCert(nodeDraft.ID, ptr("fail.example.test"), ptr(now.Add(30*24*time.Hour)), ptr("dns_failed"), ptr("test"))
+
+	rows, total, err := e.svc.QueryNodes(ctx, NodeQuery{Search: e.tag, State: "cert", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(rows) != 3 {
+		t.Fatalf("State=cert 期望 3 条，实际 total=%d len=%d", total, len(rows))
+	}
+	gotIDs := make(map[uuid.UUID]bool, len(rows))
+	for _, r := range rows {
+		gotIDs[r.ID] = true
+	}
+	if !gotIDs[nodeA.ID] || !gotIDs[nodeB.ID] || !gotIDs[nodeC.ID] {
+		t.Fatalf("State=cert 缺少应命中的节点 a/b/c: got=%v", gotIDs)
+	}
+	if gotIDs[nodeD.ID] || gotIDs[nodeDraft.ID] {
+		t.Fatalf("State=cert 命中了不该命中的节点 d/draft: got=%v", gotIDs)
+	}
+
+	// 校验非法状态
+	if _, _, err := e.svc.QueryNodes(ctx, NodeQuery{State: "bogus", Limit: 10}); err == nil {
+		t.Fatal("State=bogus 期望校验报错")
 	}
 }

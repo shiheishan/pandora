@@ -1,8 +1,11 @@
 package protocol
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -54,7 +57,8 @@ func TestSchemaFormSpotChecks(t *testing.T) {
 	}
 	vless := byType["vless"]
 	assertFieldDefault(t, vless, "network", "tcp")
-	assertFieldNoDefault(t, vless, "tls")
+	assertFieldDefault(t, vless, "tls", 2)
+	assertFieldDefault(t, vless, "flow", "xtls-rprx-vision")
 
 	st := byType["shadowtls"]
 	assertFieldDefault(t, st, "method", "aes-256-gcm")
@@ -75,6 +79,7 @@ func TestSchemaFormSpotChecks(t *testing.T) {
 	assertFieldShowIf(t, hy2, "tls_settings.allow_insecure", map[string][]string{"cert_mode": {"file"}})
 
 	trojan := byType["trojan"]
+	assertFieldDefault(t, trojan, "tls", 1)
 	assertFieldShowIf(t, trojan, "cert_mode", map[string][]string{"tls": {"1"}})
 	assertFieldShowIf(t, trojan, "cert_path", map[string][]string{"tls": {"1"}, "cert_mode": {"file"}})
 	assertFieldShowIf(t, trojan, "tls_settings.server_name", map[string][]string{"tls": {"1"}})
@@ -278,4 +283,108 @@ func assertFieldShowIf(t *testing.T, schema Schema, path string, want map[string
 	if !reflect.DeepEqual(f.ShowIf, want) {
 		t.Fatalf("协议 %s 字段 %s：show_if=%#v，期望 %#v", schema.NodeType, path, f.ShowIf, want)
 	}
+}
+
+// TestSchemaFormDefaultsValidate 守卫各稳定协议的推荐缺省值：照表单缺省预填并折叠隐藏字段后，
+// 后端校验不得拒绝整个 protocol_config，也不得在任何带 Default 的字段上报错；
+// 校验只允许在没有缺省、必须由管理员填写的字段（如 REALITY 密钥、Shadowsocks 加密方式）上报错。
+func TestSchemaFormDefaultsValidate(t *testing.T) {
+	for _, schema := range Schemas() {
+		if schema.Status != "stable" {
+			continue
+		}
+		t.Run(schema.NodeType, func(t *testing.T) {
+			fieldsByPath := make(map[string]FormField, len(schema.Fields))
+			defaults := make(map[string]any)
+			for _, f := range schema.Fields {
+				fieldsByPath[f.Path] = f
+				if f.Default != nil {
+					defaults[f.Path] = f.Default
+				}
+			}
+
+			visibleDefaults := make(map[string]any)
+			for path, val := range defaults {
+				f := fieldsByPath[path]
+				if isFieldVisibleUnderDefaults(f, defaults) {
+					visibleDefaults[path] = val
+				}
+			}
+
+			nestedConfig := make(map[string]any)
+			for path, val := range visibleDefaults {
+				setNestedMapValue(nestedConfig, path, val)
+			}
+			raw, err := json.Marshal(nestedConfig)
+			if err != nil {
+				t.Fatalf("协议 %s 序列化缺省配置失败: %v", schema.NodeType, err)
+			}
+			_, fields := Validate(schema.NodeType, 443, raw)
+
+			for errKey, errMsg := range fields {
+				if errKey == "protocol_config" {
+					t.Errorf("协议 %s 整体配置报错 (键 %s): %s", schema.NodeType, errKey, errMsg)
+					continue
+				}
+				bareKey, ok := strings.CutPrefix(errKey, "protocol_config.")
+				if !ok {
+					t.Errorf("协议 %s 错误键 %s 未带 protocol_config. 前缀: %s", schema.NodeType, errKey, errMsg)
+					continue
+				}
+				f, exists := fieldsByPath[bareKey]
+				if !exists {
+					t.Errorf("协议 %s 错误键 %s (字段 %s) 不在表单字段中: %s", schema.NodeType, errKey, bareKey, errMsg)
+				} else if f.Default != nil {
+					t.Errorf("协议 %s 错误键 %s 指向了具有 Default 的字段: %s", schema.NodeType, errKey, errMsg)
+				}
+			}
+		})
+	}
+}
+
+func isFieldVisibleUnderDefaults(f FormField, defaults map[string]any) bool {
+	if len(f.ShowIf) == 0 {
+		return true
+	}
+	for depKey, allowed := range f.ShowIf {
+		valStr := defaultValToString(defaults[depKey])
+		if !slices.Contains(allowed, valStr) {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultValToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case int:
+		return strconv.Itoa(val)
+	case string:
+		return val
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+func setNestedMapValue(m map[string]any, path string, val any) {
+	parts := strings.Split(path, ".")
+	cur := m
+	for _, p := range parts[:len(parts)-1] {
+		if next, ok := cur[p].(map[string]any); ok {
+			cur = next
+		} else {
+			next = make(map[string]any)
+			cur[p] = next
+			cur = next
+		}
+	}
+	cur[parts[len(parts)-1]] = val
 }

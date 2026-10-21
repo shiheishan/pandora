@@ -406,3 +406,34 @@ func TestQueryNodesNeedsCatalogPG(t *testing.T) {
 	_, _, err := e.svc.QueryNodes(ctx, NodeQuery{Limit: 10})
 	_ = invWantCode(t, err, errs.Unavailable)
 }
+
+// 服务器的 Enrolled 照 HasActiveIdentity：没接入为 false，接入后列表与单取都为 true。
+func TestServerEnrolledFieldPG(t *testing.T) {
+	e, ctx := newInvEnv(t)
+	srv := e.server(t, ctx, "enr-f")
+	enrolled := func() (get, list bool) {
+		t.Helper()
+		one, err := e.svc.GetServer(ctx, srv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all, err := e.svc.ListServers(ctx, ServerFilter{Query: e.tag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range all {
+			if s.ID == srv.ID {
+				return one.Enrolled, s.Enrolled
+			}
+		}
+		t.Fatalf("列表里没有服务器 %s", srv.ID)
+		return false, false
+	}
+	if g, l := enrolled(); g || l {
+		t.Fatalf("没接入应为 false：单取 %v 列表 %v", g, l)
+	}
+	e.enroll(t, ctx, srv.ID)
+	if g, l := enrolled(); !g || !l {
+		t.Fatalf("接入后应为 true：单取 %v 列表 %v", g, l)
+	}
+}
