@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatMoney } from '../../../core/format'
 import { Input } from '../../../ui'
 import { Btn, cx, Num, Sheet } from '../../kit'
-import { methodKey, usePaymentMethods } from '../common/catalog'
+import { methodKey, usableMethods, usePaymentMethods } from '../common/catalog'
 import { endsIntent, recallPayable, useIntentKey, usePlacedOrder } from '../common/intent'
 import { useOrderPayable } from '../common/orders'
 import { PaymentModal, PayMethodPicker, pickMethod, type PayState } from '../common/PayFlow'
@@ -12,6 +12,7 @@ import { parseTopupAmount, TOPUP_PRESETS } from './model'
 import css from './Wallet.module.css'
 
 const FEE_QUOTE_DEBOUNCE_MS = 300
+const yuan = (c: number) => (c % 100 === 0 ? `¥${c / 100}` : formatMoney(c))
 
 export function TopupSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const topup = useTopup()
@@ -27,10 +28,14 @@ export function TopupSheet({ open, onClose }: { open: boolean; onClose: () => vo
 
   const amountText = preset === 'other' ? custom : String(preset)
   const parsed = parseTopupAmount(amountText)
+  const amountCents = 'error' in parsed ? undefined : parsed.cents
   const settledAmount = useDebounced(amountText, FEE_QUOTE_DEBOUNCE_MS)
   const quotedAmount = parseTopupAmount(settledAmount)
   const methods = usePaymentMethods(!('error' in quotedAmount) ? quotedAmount.cents : undefined)
-  const method = pickMethod(methods.data, methodChoice)
+  const method = pickMethod(methods.data, methodChoice, amountCents)
+  const list = methods.data ?? []
+  const floor = list.length > 0 ? Math.max(100, Math.min(...list.map((m) => m.min_amount))) : 100
+  const belowMin = !('error' in parsed) && list.length > 0 && usableMethods(list, amountCents).length === 0
 
   async function recharge() {
     const p = parseTopupAmount(amountText)
@@ -107,15 +112,15 @@ export function TopupSheet({ open, onClose }: { open: boolean; onClose: () => vo
               error={error ?? undefined}
             />
           )}
-          <p className={css.faint}>最少 ¥1，单次最多 ¥50,000</p>
+          <p className={css.faint}>{`最少 ${yuan(floor)}，单次最多 ¥50,000`}</p>
           {error && preset !== 'other' && (
             <p className={css.error} role="alert">
               {error}
             </p>
           )}
-          <PayMethodPicker methods={methods} selected={method} onSelect={(m) => setMethodChoice(methodKey(m))} />
+          <PayMethodPicker methods={methods} selected={method} onSelect={(m) => setMethodChoice(methodKey(m))} amount={amountCents} />
           <Btn tone="hot" full busy={topup.isPending || reopening} disabled={!method} onClick={() => void recharge()}>
-            {'error' in parsed ? '充值' : <>充值 <Num>{formatMoney(parsed.cents)}</Num></>}
+            {belowMin ? `至少充 ${yuan(floor)}` : 'error' in parsed ? '充值' : <>充值 <Num>{formatMoney(parsed.cents)}</Num></>}
           </Btn>
         </div>
       </Sheet>

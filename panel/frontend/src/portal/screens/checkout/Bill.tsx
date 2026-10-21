@@ -20,6 +20,8 @@ export interface BillProps {
   /** 优惠码框（重置单不收券时为 null） */
   coupon: ReactNode
   onUseBalance: (v: boolean) => void
+  /** 这单在线要付多少（分，不含手续费），付款方式据此置灰 */
+  amount: number
   methods: {
     data?: readonly PaymentMethod[]
     isPending: boolean
@@ -41,6 +43,7 @@ export function Bill({
   pay,
   coupon,
   onUseBalance,
+  amount,
   methods,
   methodChoice,
   onMethodChoice,
@@ -51,7 +54,7 @@ export function Bill({
   blocked,
   onSubmit,
 }: BillProps) {
-  const method = pickMethod(methods.data, methodChoice ?? '')
+  const method = pickMethod(methods.data, methodChoice ?? '', amount)
 
   return (
     <aside className={css.bill} aria-label="账单">
@@ -110,6 +113,7 @@ export function Bill({
             selected={method}
             onSelect={(m) => onMethodChoice(methodKey(m))}
             label="付款方式"
+            amount={amount}
           />
           {method && method.fee !== undefined && method.fee > 0 && method.total !== undefined && (
             <p className={css.dueN}>

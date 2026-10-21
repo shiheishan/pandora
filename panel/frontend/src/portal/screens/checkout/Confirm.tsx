@@ -6,14 +6,14 @@ import { Empty, Input, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
 import { Btn, Icon, Sticker } from '../../kit'
 import { LoadError } from '../common/Blocks'
-import { methodKey, usePaymentMethods, type Plan } from '../common/catalog'
+import { methodKey, usableMethods, usePaymentMethods, type Plan } from '../common/catalog'
 import { Callout } from '../common/Flow'
 import type { Holdings } from '../common/holdings'
 import { endsIntent, recallPayable, useIntentKey } from '../common/intent'
 import { orderCreatedSchema, useOrderPayable } from '../common/orders'
 import { daysLeft, money, nameIdeas, nameRequired, NEW_COPY_IDEAS, periodLabel, profileName } from '../common/purchase'
 import { pickMethod } from '../common/PayFlow'
-import { balanceSplit, purchaseRefusal, refusalOf, useQuote, type Quote, type RefusalInfo } from '../common/quote'
+import { balanceSplit, isSubscriptionLimit, purchaseRefusal, refusalOf, useQuote, type Quote, type RefusalInfo } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { Bill, CouponBox, NoteLine, Refusal } from './Bill'
 import css from './Checkout.module.css'
@@ -73,6 +73,13 @@ export function ConfirmForm({ target, h, plans, requested }: { target: Target; h
       ) : quote.isError && purchaseRefusal(quote.error) === 'order_pending' ? (
         // 同款已有一张没付的新购单：报价阶段就拦（建单也拦），这里直接给「取消它 / 去付款」，不当加载失败
         <Refusal refusal={refusalOf(quote.error, 'order_pending')} onCleared={() => void quote.refetch()} />
+      ) : quote.isError && isSubscriptionLimit(quote.error) ? (
+        <Empty
+          bare
+          title="不能再开一份了"
+          description={quote.error.message}
+          action={<Btn href={href('/subs')} tone="soft">去我的套餐</Btn>}
+        />
       ) : quote.isError ? (
         <LoadError error={quote.error} onRetry={() => void quote.refetch()} what="价格" />
       ) : quote.data.quotes.length === 0 ? (
@@ -208,8 +215,8 @@ function Priced({
   const methods = usePaymentMethods(split.payable > 0 ? split.payable : undefined)
   const copy = confirmCopy({ target, sub, plan, oldPlan, row, naming: h.naming, held: h.held, now: new Date() })
   const methodList = methods.data ?? []
-  const method = pickMethod(methodList, methodChoice ?? '')
-  const pay = payCopy(quote, row, split, useBalance, copy.verb, methodList.map((m) => m.label).join('、'))
+  const method = pickMethod(methodList, methodChoice ?? '', split.payable)
+  const pay = payCopy(quote, row, split, useBalance, copy.verb, usableMethods(methodList, split.payable).map((m) => m.label).join('、'))
   const blocked = pay.tooSmall ? pay.button : required && !name.trim() ? '先给它起个名字' : pay.needsMethod && !method ? '暂时没有能用的付款方式' : null
   const periods = target.kind !== 'reset' && tiers.length > 1
 
@@ -344,6 +351,7 @@ function Priced({
         pay={pay}
         coupon={couponNode}
         onUseBalance={setUseBalance}
+        amount={split.payable}
         methods={methods}
         methodChoice={methodChoice}
         onMethodChoice={setMethodChoice}

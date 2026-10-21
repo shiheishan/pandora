@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { feeLine, feeRule, hasFee, surchargeNote } from './fee'
+import { feeLine, feeRule, hasFee, minLine, surchargeNote } from './fee'
 
 describe('hasFee', () => {
   it('判断是否有手续费', () => {
@@ -65,5 +65,11 @@ describe('surchargeNote', () => {
   it('surcharge <= 0 时返回空字符串', () => {
     expect(surchargeNote(0, 1000)).toBe('')
     expect(surchargeNote(-10, 1000)).toBe('')
+  })
+})
+
+describe('minLine', () => {
+  it('格式化为最低付款额提示', () => {
+    expect(minLine({ min_amount: 2000 })).toBe('这个付款方式最低 ¥20.00')
   })
 })

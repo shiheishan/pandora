@@ -27,6 +27,10 @@ describe('payFailureAction', () => {
     expect(payFailureAction(apiError('order_lapsed'), 0)).toEqual({ kind: 'unpayable' })
   })
 
+  it('below_method_minimum → show（不当成被取代去刷新订单）', () => {
+    expect(payFailureAction(apiError('below_method_minimum'), 0)).toEqual({ kind: 'show' })
+  })
+
   it('network_error 或普通 Error → show', () => {
     expect(payFailureAction(apiError('network_error', 0), 0)).toEqual({ kind: 'show' })
     expect(payFailureAction(new Error('x'), 0)).toEqual({ kind: 'show' })

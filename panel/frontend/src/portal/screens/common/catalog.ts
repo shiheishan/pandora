@@ -31,7 +31,8 @@ export function usePlans() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/payment-methods：只有人民币，没有币种字段；fee / total 只在带了 amount 时回（Go omitempty）
+// GET v1/payment-methods：只有人民币，没有币种字段；fee / total 只在带了 amount 时回（Go omitempty）；
+// min_amount 恒在：渠道最低付款额（分），订单应付（不含手续费）低于它这个方式付不了
 // ---------------------------------------------------------------------------
 export const paymentMethodSchema = z.object({
   provider: z.string(),
@@ -41,10 +42,18 @@ export const paymentMethodSchema = z.object({
   fee_percent: z.string(),
   fee: z.number().int().nonnegative().optional(),
   total: z.number().int().nonnegative().optional(),
+  min_amount: z.number().int().nonnegative(),
 })
 export type PaymentMethod = z.output<typeof paymentMethodSchema>
 
 export const methodKey = (m: Pick<PaymentMethod, 'provider' | 'method'>) => `${m.provider}:${m.method}`
+
+/** 这个方式付不了这笔钱：应付（分，不含手续费）低于它的最低额。应付未知或为 0 时不算付不了 */
+export const belowMethodMinimum = (m: Pick<PaymentMethod, 'min_amount'>, amount: number | undefined): boolean =>
+  amount !== undefined && amount > 0 && amount < m.min_amount
+/** 付得了这笔钱的方式（顺序不变） */
+export const usableMethods = <T extends Pick<PaymentMethod, 'min_amount'>>(list: readonly T[], amount: number | undefined): T[] =>
+  list.filter((m) => !belowMethodMinimum(m, amount))
 
 export function usePaymentMethods(amount?: number) {
   const api = useApi()
