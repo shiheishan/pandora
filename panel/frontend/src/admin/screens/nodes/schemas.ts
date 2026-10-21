@@ -202,6 +202,8 @@ export const serverSchema = z.object({
   agent_version: z.string().nullable(),
   last_heartbeat_at: iso.nullable(),
   heartbeat_online: z.boolean(),
+  /** 服务器有有效的接入身份（node/service 的 HasActiveIdentity 口径）：签发令牌、在机器上装好节点端后为 true，吊销或退役后为 false */
+  enrolled: z.boolean(),
   cpu_cores: z.number().nullable(),
   memory_mb: z.number().nullable(),
   disk_gb: z.number().nullable(),

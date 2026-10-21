@@ -60,6 +60,7 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     agent_version: 'core r53',
     last_heartbeat_at: '2026-09-24T10:00:00Z',
     heartbeat_online: true,
+    enrolled: true,
     cpu_cores: 4,
     memory_mb: 4096,
     disk_gb: 80,

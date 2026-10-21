@@ -88,6 +88,7 @@ type serverResponse struct {
 	AgentVersion       *string                     `json:"agent_version"`
 	LastHeartbeatAt    *time.Time                  `json:"last_heartbeat_at"`
 	HeartbeatOnline    bool                        `json:"heartbeat_online"`
+	Enrolled           bool                        `json:"enrolled"`
 	CPUCores           *int                        `json:"cpu_cores"`
 	MemoryMB           *int                        `json:"memory_mb"`
 	DiskGB             *int                        `json:"disk_gb"`
@@ -167,6 +168,7 @@ func serverFrom(s service.Server) serverResponse {
 		AgentVersion:       s.AgentVersion,
 		LastHeartbeatAt:    s.LastHeartbeatAt,
 		HeartbeatOnline:    s.HeartbeatOnline,
+		Enrolled:           s.Enrolled,
 		CPUCores:           s.CPUCores,
 		MemoryMB:           s.MemoryMB,
 		DiskGB:             s.DiskGB,
