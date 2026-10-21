@@ -49,6 +49,7 @@
 | 内存 | 建议 2 GB 起。安装器给各服务设的内存上限合计约 1.7 GB：面板 512 MB、后台任务 256 MB、PostgreSQL 512 MB、Redis 384 MB |
 | 磁盘 | 留出数据库和每日备份的空间（备份在 `/var/backups/pandora/`） |
 | 网络 | 能访问 GitHub（下载安装包）、系统软件源、Let's Encrypt |
+| 独占 | 面板要独占这台机器：nginx 的 80、443 归它。已经装了 1Panel、宝塔或别的网站的机器不要拿来装，另开一台干净的 |
 
 想用公网 IP 直接装（不用域名），**选 Debian**。原因见第 2 步。
 
@@ -201,7 +202,7 @@ curl -fsSL https://github.com/shiheishan/pandora/releases/latest/download/get.sh
 
 它会下载最新正式版、核对校验和，然后跑安装器。安装器分 8 步，屏幕上会依次出现 `[1/8] 安装系统依赖` 到 `[8/8] 管理员与 HTTPS`。任何一步失败都会停下，并说明停在哪、怎么办。
 
-已经有 Docker 或 1Panel 环境的，也可以用容器装，见 [panel/deploy/docker/README.md](../panel/deploy/docker/README.md)。本教程按上面的一条命令写。
+面板只有这一种装法，没有 Docker / 1Panel 版。
 
 ### 会问什么、怎么答
 

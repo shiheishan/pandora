@@ -46,7 +46,7 @@ GOTOOLCHAIN=go1.26.10 go test -p 4 -count=1 ./internal/module/order/... ./db/mig
 本地仍跑不了的（本机没有 docker）：
 
 - `panel/tests/*.sh` 与 `invariants.sql`：要先起真面板，按需；冒烟栈、Playwright 购买路径：只在 GitHub。
-- 部署脚本里 `db-roles_pg18_test.sh`（要 PG18）、`redis-hardening_versions_docker_test.sh`（要 Docker）、`backup-provenance_mock_test.sh`（要 Linux root）只在 GitHub 的对应 job 跑。
+- 部署脚本里 `db-roles_pg18_test.sh`（要 PG18）、`redis-hardening_versions_docker_test.sh`（要 Docker）、`backup-provenance_mock_test.sh`（要 Linux root）、`nginx-error-pages_real_test.sh`（要 Linux root 与系统 nginx）只在 GitHub 的对应 job 跑。
 - `build-release.sh` 要 GNU tar。
 
 ## 远端层：推送后等什么
@@ -65,7 +65,7 @@ GOTOOLCHAIN=go1.26.10 go test -p 4 -count=1 ./internal/module/order/... ./db/mig
 | panel-newstack.yml / node-e2e | nodesim 冒烟、到期、真 pdnd 的删人断线 | 改了 node 模块、节点通道、`nodeapi`、pdnd 的 node / panel / kernel |
 | panel-smoke.yml / smoke | `run-smoke-stack.sh` 起 pandora，页面 schema 解析真响应，Playwright 购买路径（`panel/frontend/tests/browser/`） | 改了前端 `src/`、接口形状、购买与支付流程 |
 | pandora-native.yml | pdnd 的 lint（pdnd-lint：golangci-lint 与 deadcode，误报在 `pdnd/.deadcode-ignore`）、vet / race / 双架构构建、interop、ARM64 race；面板与 pdnd 的协议对照；面板内嵌前端契约；panel-frontend 的 lint（eslint + knip）/ typecheck / vitest / 构建与嵌入 | 改了 pdnd 内核或协议、前端 |
-| panel-deploy.yml | 部署脚本桩测试；Redis 加固块在各支持版本上起得来；PG18 上属主迁移、收权限、以 pandora_app 跑 serve；备份链（root） | 改了 `panel/deploy`、`configure-app-role.sql`、迁移里的授权或 SECURITY DEFINER 函数 |
+| panel-deploy.yml | 部署脚本桩测试；Redis 加固块在各支持版本上起得来；PG18 上属主迁移、收权限、以 pandora_app 跑 serve；备份链（root）；真 nginx 上面板不可用时 API 路径回 502 JSON 信封（root） | 改了 `panel/deploy`（尤其 `nginx-pandora.conf`、`render-nginx.sh`）、`configure-app-role.sql`、迁移里的授权或 SECURITY DEFINER 函数 |
 | nodeapi.yml | buf lint、格式、生成代码一致、对上一提交不破坏兼容 | 改了 `nodeapi/` |
 | go-vulncheck.yml | govulncheck 扫 panel、pdnd、subscription-e2e/tools。**只报告、不挡合并**：结论在 job summary 与 warning 注解里 | 改了 go.mod / go.sum 后看 summary；怎么读见 deps-upgrade |
 

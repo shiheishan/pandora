@@ -22,6 +22,8 @@ for c in nginx curl python3 openssl systemctl; do
 done
 [[ ! -e /etc/pandora ]] || die "/etc/pandora 已存在：本测试只在一次性的 CI runner 上跑，不碰已有安装"
 [[ ! -e /etc/nginx/conf.d/pandora.conf ]] || die "/etc/nginx/conf.d/pandora.conf 已存在"
+# 模板听 [::]:80 与 [::]:443：内核没开 IPv6 时 nginx 起不来，先说清楚
+[[ -s /proc/net/if_inet6 ]] || die "内核没开 IPv6（/proc/net/if_inet6 为空），模板的 [::] 监听起不来"
 # 上游端口上有人在听就测不到 502
 for port in 9000 9001; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then

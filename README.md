@@ -255,7 +255,7 @@ pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-25
 
 第一次装、想照着一步一步做的，看 [上手教程](docs/quickstart.md)；本节是参考说明。
 
-一条命令装完。提供两种装法：裸机部署（第 1–4 节，`install.sh` 脚本托管于 systemd）与 Docker / Compose / 1Panel 部署（第 5 节）；两套方案共用同一个二进制、同一套 `PANDORA_*` 配置键与数据库迁移，根据机器条件选一种装即可。
+一条命令装完。只有一种装法：裸机部署，`install.sh` 把面板装成 systemd 服务，PostgreSQL、Redis、nginx 用系统包。面板要独占一台机器：系统 nginx 的 80、443 归它（80 端口的默认站点也是它的），节点 gRPC 另占 9443。不提供 Docker / Compose / 1Panel 装法；已装了 1Panel、宝塔或别的站点的机器没有合适的装法，另开一台。
 
 目标机器：Debian 12–14 / Ubuntu 22.04–26.04（x86_64 或 aarch64）、systemd、root，外加 `curl` 与 `openssl`；安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
 
@@ -409,24 +409,9 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 
 排障按症状查 [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)。
 
-### 5. Docker / Compose / 1Panel
-
-适用于已有 Docker / 1Panel 环境、与其他站点共用机器、或希望由外部反代统一处理证书的场景。
-支持两种 TLS 方式：由内置 Nginx 直面公网终结 TLS（方式一，放行 80/443/9443）；或由外部反代（1Panel OpenResty / Caddy 等）终结 TLS，面板仅在宿主回环 9080 承接明文反代（方式二，只放行 9443）。
-
-首装三步命令：
-```bash
-mkdir -p /opt/pandora-docker && cd /opt/pandora-docker && V=v1.2.3   # 替换为 Release 版本号
-curl -fsSLo compose.yaml https://raw.githubusercontent.com/shiheishan/pandora/$V/panel/deploy/docker/compose.yaml
-(umask 077 && docker run --rm -e PANDORA_PUBLIC_BASE_URL=https://panel.example.test ghcr.io/shiheishan/pandora-ops:$V gen-env > .env)
-docker compose up -d
-```
-
-完整配置、证书申请、前置反代覆写 X-Real-IP、1Panel 导入与定时备份说明详见 [panel/deploy/docker/README.md](panel/deploy/docker/README.md)。
-
 ### 回归测试
 
-安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。Docker 装法由 `.github/workflows/panel-docker.yml` 从源码构建镜像、真起 compose 验证。
+安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。
 
 ### 上线前检查
 
