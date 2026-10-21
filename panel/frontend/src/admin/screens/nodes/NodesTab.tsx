@@ -21,6 +21,7 @@ import {
   type NodeFilter,
   type NodeLineData,
 } from './logic'
+import { useNow } from '../tickets/Queue'
 import { runState, certBadge, sameRunState, type RunState } from './runtime'
 import { NodeBatchEdit } from './NodeBatchEdit'
 import { NodeCreateWizard } from './NodeForm'
@@ -66,6 +67,8 @@ export function NodesTab() {
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const batchIntent = useIntentKey()
+  // 证书剩余天数按分钟走，不在渲染里读时钟
+  const now = useNow().getTime()
 
   const filter = parseNodeFilter(location.query.get('f'))
   const urlQuery = location.query.get('q') ?? ''
@@ -310,6 +313,7 @@ export function NodesTab() {
                 key={n.id}
                 node={n}
                 run={runState(n)}
+                now={now}
                 index={i}
                 picked={picked.has(n.id)}
                 sorting={!!sorting}
@@ -364,6 +368,7 @@ export function NodesTab() {
 interface NodeLineProps {
   node: NodeLineData
   run: RunState | null
+  now: number
   index: number
   picked: boolean
   sorting: boolean
@@ -374,11 +379,15 @@ interface NodeLineProps {
   last: boolean
 }
 
-const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
+const NodeLine = memo(function NodeLine({ node: n, run, now, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
   const state = nodeState(n)
-  const cert = certBadge(n.cert, Date.now())
-  // 运行状态已是「等待证书」时，「证书申请中」重复，不再显示；申请失败照样标出来
-  const showCertTag = cert && cert.tone !== 'ok' && !(run?.label === '等待证书' && cert.label === '证书申请中')
+  const cert = certBadge(n.cert, now)
+  // 运行状态已说清的不重复：「等待证书」配「证书申请中」、两边都是「证书已过期」；申请失败照样标出来
+  const showCertTag =
+    cert &&
+    cert.tone !== 'ok' &&
+    !(run?.label === '等待证书' && cert.label === '证书申请中') &&
+    !(run?.label === '证书已过期' && cert.label === '证书已过期')
   const cpu = n.cpu_percent
   const tagList = n.tags
   const visibleTags = tagList.slice(0, 3)
@@ -488,6 +497,7 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
 function sameLineProps(a: NodeLineProps, b: NodeLineProps): boolean {
   return (
     a.index === b.index &&
+    a.now === b.now &&
     a.picked === b.picked &&
     a.sorting === b.sorting &&
     a.first === b.first &&

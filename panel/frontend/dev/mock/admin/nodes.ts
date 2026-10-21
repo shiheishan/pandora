@@ -472,7 +472,12 @@ function validateProtocol(nodeType: string, config: unknown): Record<string, str
     const options = s.enums?.[path] ?? (path === 'cipher' ? s.methods : undefined)
     if (options && !options.includes(String(value))) fields[`protocol_config.${path}`] = `只能是 ${options.join(' / ')}`
   }
-  for (const path of s.required ?? []) if (!flat.has(path)) fields[`protocol_config.${path}`] = '必填'
+  // 与真后端一致：cert_mode 缺省按 file，不必填；acme 时不要 cert_path / key_path（required 只是表单在显示时的必填标记）
+  const acme = flat.get('cert_mode') === 'acme'
+  for (const path of s.required ?? []) {
+    if (path === 'cert_mode' || (acme && (path === 'cert_path' || path === 'key_path'))) continue
+    if (!flat.has(path)) fields[`protocol_config.${path}`] = '必填'
+  }
   if (nodeType === 'vless' && String(flat.get('tls')) === '2') {
     for (const key of ['dest', 'server_name', 'private_key', 'short_id']) {
       if (!flat.get(`reality_settings.${key}`)) fields[`protocol_config.${key}`] = `REALITY 需要 ${key}`

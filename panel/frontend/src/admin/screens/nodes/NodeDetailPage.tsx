@@ -9,6 +9,7 @@ import { NodeMonitor } from './NodeMonitor'
 import { NodeHeaderAction, NodeOps } from './NodeOps'
 import { NodeProtocol } from './NodeProtocol'
 import { NodeSettings } from './NodeSettings'
+import { useNow } from '../tickets/Queue'
 import { runState, certBadge } from './runtime'
 import { useNodeDetail, useNodes } from './queries'
 import type { NodeRow } from './schemas'
@@ -44,6 +45,8 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
   const list = useNodes()
   const detail = useNodeDetail(id)
   const location = useHashLocation()
+  // 证书剩余天数按分钟走，不在渲染里读时钟
+  const now = useNow().getTime()
   // 列表页带来的筛选查询串原样带着走，返回时还原
   const listQuery = Object.fromEntries(location.query)
   const back = { href: href('/nodes/nodes', listQuery), label: '节点' }
@@ -62,7 +65,7 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
 
   const state = nodeState(row)
   const run = runState(row)
-  const cert = certBadge(row.cert, Date.now())
+  const cert = certBadge(row.cert, now)
 
   return (
     <DetailPage

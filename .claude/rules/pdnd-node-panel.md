@@ -114,10 +114,12 @@ paths:
 - `certs.Manager` 用 lego v5 向 Let's Encrypt 申请（HTTP-01，本机 80 端口；IP 标识符带 `shortlived` 档，续期带 ARI 的 replaces），单 goroutine `Run` 逐件办：
   申请 / 续期 > 7 天闲置回收 > 每 6 小时查 ARI。失败退避 15 分钟起翻倍到 4 小时（±10%），`rate_limited` 按 Retry-After，80 被占每 5 分钟。
   原因码表在 `certs/reason.go`，面板前端 `runtime.ts` 的 `certReasonText` 与 RUNBOOK 11.5 跟着它改。
-- 落盘 `<cache_dir>/acme/`（目录 0700、文件 0600，原子写）：`account.json` 与 `certs/<规整后的标识符>/`。账户无邮箱、注册即同意订户协议。
+- 落盘 `<cache_dir>/acme/`（目录 0700、文件 0600，原子写）：`account.json` 与 `certs/<规整后的标识符>/`（`meta.json` 与 `bundle.pem`；私钥在前、证书链在后合成一个文件一次 rename，续期中途被杀不留不配对的一对）。账户无邮箱、注册即同意订户协议。
+  回收在锁内复核「仍闲置满 7 天」再删；注册账户期间被 `Purge`（gen 变了）就不挂回账户、删掉写回的 account.json。
   读盘的证书冷启动即可用；`Certificate` 只做原子读（写时复制的 map），内核握手路径上不加锁。
 - 编排（`node/certs.go`）：每次 ServerConfig（与冷启动的缓存）先把全部 acme 标识符整体交给 `Want`，不论这次能不能装上；
   装之前 `certPrecheck`：证书没到返回 `*core.CertPendingError`、不碰内核，走坏版本台账；`Updates()` 一到，因这个标识符 cert_pending 的节点立刻重装。
+  `Want` 的集合 = 本次下发的标识符 ∪ 正在服务的旧版本的标识符（换标识符时新证书没到前旧证书不被回收），装上新版本后再同步一次。冷启动缓存装不上也记进坏版本台账，证书一到即装、不等面板。
   在服务的证书过期报 DEGRADED `cert_expired`。Tombstone 时 `Purge` 删掉账户与全部证书。node 包只认 `CertManager` 接口，不 import `certs` 与 `kernel`。
 - 装配（`main.go`）：内核 `SetCertSource` 与 `node.Options.Certs` 在冷启动之前就位；Manager 建不起来只记错，手填证书的节点照常服务。
   config.json 的 `acme` 段（`directory_url` 只收 https、`http_port`、`ca_file`）只给验收与测试，生产不写。Hello 声明 `cert_acme_v1`。
@@ -153,7 +155,7 @@ paths:
     `write_buffer_size`、`seed`、`header.type`、`mask` / `mask_password`，或 mask 数组每项的 `type` 与 `settings.password`）。
 - TLS 证书：`cert_mode` 为 `acme` 时要 `cert_identifier`（面板算好的证书名字，域名或 IP，已规整），不许带 `cert_path` / `key_path`；
   否则（`file` 或缺省）`tls`（布尔）为真时要 `cert_path`、`key_path`（节点机上的文件路径）。检查与取证书在 `kernel/inbound_cert.go`，规整口径
-  `core.NormalizeCertIdentifier` 与面板 `protocol.NormalizeCertIdentifier` 必须一致。vless / vmess 不收 acme（普通 TLS 未开放，xhttp-h3 只手填）。
+  `core.NormalizeCertIdentifier` 与面板 `protocol.NormalizeCertIdentifier` 必须一致。vless / vmess 的 acme 由面板不开放（普通 TLS 未开放，xhttp-h3 只手填）；内核 `checkInboundCertificate` 本身接受，口径以面板 schema 为准。
 - `security`：vless 是 none / reality（TLS 用 `tls` 键）；trojan 是 tls / reality；vmess 里是加密方式。
 - REALITY（`security: reality`）：`dest`、`server_names`、`private_key`、`short_ids`、`max_time_diff`、`xver`。
 - 探测回落 `fallback`：`"host:port"` 字符串（trojan、anytls、naive）。

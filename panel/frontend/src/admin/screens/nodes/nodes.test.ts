@@ -119,7 +119,8 @@ describe('schemas', () => {
     expect(SCHEMAS).toHaveLength(13)
     expect(SCHEMAS.filter(isStable)).toHaveLength(13)
     expect(SCHEMAS.some((s) => s.status === 'legacy-read-compatible' || s.node_type === 'v2ray' || s.node_type === 'hysteria')).toBe(false)
-    expect(schemaOf('socks').required).toEqual([])
+    // Go 的 nil required 归一成 []（mieru 没有必填项）
+    expect(schemaOf('mieru').required).toEqual([])
     expect(row().granted_plans).toEqual([])
     // 标签与时段倍率：Go 的 nil 切片按 null 来也归一成 []
     expect(row().tags).toEqual([])

@@ -101,14 +101,8 @@ func heartbeatFromProto(hb *nodev1.Heartbeat) service.Heartbeat {
 				ErrorCode:   c.GetErrorCode(),
 				ErrorDetail: c.GetErrorDetail(),
 			}
-			if u := c.GetNotAfterUnix(); u != 0 {
-				t := time.Unix(u, 0).UTC()
-				cert.NotAfter = &t
-			}
-			if u := c.GetNextAttemptUnix(); u != 0 {
-				t := time.Unix(u, 0).UTC()
-				cert.NextAttempt = &t
-			}
+			cert.NotAfter = certUnixTime(c.GetNotAfterUnix())
+			cert.NextAttempt = certUnixTime(c.GetNextAttemptUnix())
 			rt.Cert = cert
 		}
 		out.Nodes = append(out.Nodes, rt)
@@ -315,3 +309,18 @@ func outboundToProto(o service.Outbound) []*nodev1.SessionResponse {
 	}
 	return nil
 }
+
+// certUnixTime 把节点端自报的秒级时间戳转成时间；0 与 2000–2200 年以外的值当没报（nil）。
+// 节点端内容按不可信输入处理：毫秒误写成秒或 int64 极值会让整拍运行状态 json.Marshal 失败（certs 审查 S6）。
+func certUnixTime(u int64) *time.Time {
+	if u < certUnixMin || u > certUnixMax {
+		return nil
+	}
+	t := time.Unix(u, 0).UTC()
+	return &t
+}
+
+var (
+	certUnixMin = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	certUnixMax = time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+)

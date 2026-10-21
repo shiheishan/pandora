@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -161,6 +162,27 @@ func TestHeartbeatFromProtoCert(t *testing.T) {
 	}
 	if hb0.Nodes[0].Cert.NotAfter != nil || hb0.Nodes[0].Cert.NextAttempt != nil {
 		t.Fatalf("0 应转 nil: NotAfter=%v NextAttempt=%v", hb0.Nodes[0].Cert.NotAfter, hb0.Nodes[0].Cert.NextAttempt)
+	}
+}
+
+// 节点端自报的时间戳越界（毫秒误写成秒、int64 极值、负数）当没报，整拍运行状态仍能序列化（certs 审查 S6）。
+func TestHeartbeatFromProtoCertClampsTimestamps(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	for _, u := range []int64{math.MaxInt64, math.MinInt64, -1, time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(1999, 12, 31, 0, 0, 0, 0, time.UTC).Unix()} {
+		hb := heartbeatFromProto(&nodev1.Heartbeat{
+			Nodes: []*nodev1.NodeRuntime{{
+				NodeId: id.String(),
+				Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING,
+				Cert:   &nodev1.CertStatus{Identifier: "node.example.com", NotAfterUnix: u, NextAttemptUnix: u},
+			}},
+		})
+		c := hb.Nodes[0].Cert
+		if c == nil || c.NotAfter != nil || c.NextAttempt != nil {
+			t.Fatalf("u=%d 应转 nil: %+v", u, c)
+		}
+		if _, err := json.Marshal(hb.Nodes); err != nil {
+			t.Fatalf("u=%d 序列化失败: %v", u, err)
+		}
 	}
 }
 
