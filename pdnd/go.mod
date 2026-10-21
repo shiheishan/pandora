@@ -10,6 +10,7 @@ require (
 	github.com/go-acme/lego/v5 v5.5.2
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/google/uuid v1.6.0
+	github.com/letsencrypt/pebble/v2 v2.10.1
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/sagernet/sing v0.8.14
 	github.com/sagernet/sing-quic v0.6.1
@@ -27,14 +28,17 @@ require (
 	github.com/awnumar/fastrand v0.0.0-20210315215012-30ee0990fa2d // indirect
 	github.com/awnumar/memcall v0.0.0-20190816154910-db5ea08008a3 // indirect
 	github.com/awnumar/memguard v0.19.1 // indirect
+	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/daeuniverse/quic-go v0.0.0-20250210145620-2083199a7851 // indirect
 	github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d // indirect
 	github.com/dgryski/go-idea v0.0.0-20170306091226-d2fb45a411fb // indirect
 	github.com/dgryski/go-rc2 v0.0.0-20150621095337-8a9021637152 // indirect
 	github.com/eknkc/basex v1.0.1 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/pprof v0.0.0-20250208200701-d0013a598941 // indirect
+	github.com/letsencrypt/challtestsrv v1.4.2 // indirect
 	github.com/mzz2017/disk-bloom v1.0.1 // indirect
 	github.com/onsi/ginkgo/v2 v2.23.3 // indirect
 	github.com/onsi/gomega v1.37.0 // indirect
@@ -45,6 +49,7 @@ require (
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
 
 require (
@@ -57,7 +62,7 @@ require (
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/metacubex/utls v1.8.8
-	github.com/miekg/dns v1.1.73 // indirect
+	github.com/miekg/dns v1.1.73
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/quic-go/qpack v0.6.0
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4

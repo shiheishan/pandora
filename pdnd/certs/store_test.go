@@ -58,7 +58,7 @@ func TestStoreSaveLoadAndPermissions(t *testing.T) {
 	}
 	id := "192.0.2.10"
 	certPEM, keyPEM, wantAfter := testSelfSigned(t, id)
-	meta := certMeta{Identifier: id, Profile: ProfileShortlived, LastUsedAt: time.Now().UTC()}
+	meta := certMeta{Identifier: id, Profile: ProfileShortlived}
 	sc, err := st.saveCert(id, certPEM, keyPEM, meta)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestStoreAccount(t *testing.T) {
 	}
 }
 
-func TestStoreTouchRemovePurge(t *testing.T) {
+func TestStoreRemovePurge(t *testing.T) {
 	root := t.TempDir()
 	st, err := newStore(root)
 	if err != nil {
@@ -207,14 +207,6 @@ func TestStoreTouchRemovePurge(t *testing.T) {
 	certPEM, keyPEM, _ := testSelfSigned(t, id)
 	if _, err := st.saveCert(id, certPEM, keyPEM, certMeta{Identifier: id}); err != nil {
 		t.Fatal(err)
-	}
-	touchAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	if err := st.touch(id, touchAt); err != nil {
-		t.Fatal(err)
-	}
-	loaded, _ := st.loadCerts()
-	if !loaded[id].meta.LastUsedAt.Equal(touchAt) {
-		t.Fatalf("LastUsedAt %v want %v", loaded[id].meta.LastUsedAt, touchAt)
 	}
 	if err := st.remove(id); err != nil {
 		t.Fatal(err)

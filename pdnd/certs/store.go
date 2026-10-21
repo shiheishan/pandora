@@ -29,7 +29,6 @@ type certMeta struct {
 	Profile    string    `json:"profile,omitempty"`
 	NotBefore  time.Time `json:"not_before"`
 	NotAfter   time.Time `json:"not_after"`
-	LastUsedAt time.Time `json:"last_used_at"`
 }
 
 type storedCert struct {
@@ -236,29 +235,6 @@ func (s *store) saveCert(id string, certPEM, keyPEM []byte, meta certMeta) (*sto
 		return nil, fmt.Errorf("写入 %s 失败: %w", metaPath, err)
 	}
 	return sc, nil
-}
-
-func (s *store) touch(id string, at time.Time) error {
-	id = core.NormalizeCertIdentifier(id)
-	dir := s.certDir(id)
-	metaPath := filepath.Join(dir, "meta.json")
-	body, err := os.ReadFile(metaPath)
-	if err != nil {
-		return fmt.Errorf("读取 %s 失败: %w", metaPath, err)
-	}
-	var meta certMeta
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return fmt.Errorf("解析 %s 失败: %w", metaPath, err)
-	}
-	meta.LastUsedAt = at.UTC()
-	out, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("序列化 %s 失败: %w", metaPath, err)
-	}
-	if err := writeFileAtomic(metaPath, out); err != nil {
-		return fmt.Errorf("写入 %s 失败: %w", metaPath, err)
-	}
-	return nil
 }
 
 func (s *store) remove(id string) error {
