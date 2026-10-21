@@ -15,7 +15,7 @@ const (
 	EventRetentionDays = 400
 )
 
-// preferenceCatalog 是固定 5 项通知偏好目录（顺序固定）。营销类只有后台群发邮件（registry 的 admin.broadcast），没有 Telegram 一格；库里有 CHECK notification_preferences_marketing_email_only 兜底（迁移 00064）。
+// preferenceCatalog 是固定 5 项通知偏好目录（顺序固定）。营销类只有后台群发邮件（registry 的 admin.broadcast），没有 Telegram 一格；库里有 CHECK notification_preferences_marketing_email_only 兜底（迁移 00065）。
 var preferenceCatalog = []Preference{
 	{Category: "transactional", Channel: "email", Enabled: true, Locked: true},
 	{Category: "transactional", Channel: "telegram", Enabled: true, Locked: true},

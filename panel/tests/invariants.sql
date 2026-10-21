@@ -812,7 +812,7 @@ SELECT _accept('NFR-008', '开关填了原因可关闭', $sql$
 $sql$);
 
 --------------------------------------------------------------------------------
--- OPS-005 事务类通知不可退订、营销类只发邮件（00026_notify_inbox.sql、00064）
+-- OPS-005 事务类通知不可退订、营销类只发邮件（00026_notify_inbox.sql、00065）
 --------------------------------------------------------------------------------
 
 -- notification_preferences_transactional_always_on
@@ -826,7 +826,7 @@ SELECT _accept('OPS-005', '营销类通知可以关闭', $sql$
   VALUES ('00000000-0000-7000-8000-000000000101', 'marketing', 'email', false);
 $sql$);
 
--- notification_preferences_marketing_email_only（00064：营销类只发邮件）
+-- notification_preferences_marketing_email_only（00065：营销类只发邮件）
 SELECT _reject('OPS-005', '营销类没有 Telegram 偏好', $sql$
   INSERT INTO notification_preferences (user_id, category, channel, enabled)
   VALUES ('00000000-0000-7000-8000-000000000101', 'marketing', 'telegram', false);
