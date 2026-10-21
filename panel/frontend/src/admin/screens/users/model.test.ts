@@ -14,6 +14,7 @@ import {
   isPermanent,
   isRescue,
   listParams,
+  ORDER_STATUS_VIEW,
   loginIps7d,
   orderWhat,
   parseExtendDays,
@@ -289,3 +290,11 @@ describe('schema', () => {
   })
 })
 
+
+describe('订单状态叫法（报告 2.3-13）', () => {
+  it('与用户端一致：超时未付归「已取消」一类，后台写「超时取消」区分', () => {
+    expect(ORDER_STATUS_VIEW.cancelled.label).toBe('已取消')
+    expect(ORDER_STATUS_VIEW.expired.label).toBe('超时取消')
+    expect(Object.values(ORDER_STATUS_VIEW).map((v) => v.label)).not.toContain('已过期')
+  })
+})

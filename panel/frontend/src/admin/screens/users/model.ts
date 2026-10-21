@@ -54,13 +54,17 @@ export const SUB_STATUS_VIEW: Record<SubStatus, { label: string; tone: Tone }> =
   expired: { label: '已过期', tone: 'danger' },
 }
 
-/** 库里 5 个状态 → 设计 3 个 + 已过期 */
+/**
+ * 库里 5 个状态 → 与用户端同一套叫法（用户端把超时未付归进「已取消」、结果写「超时未支付，已自动取消」，
+ * `portal/screens/common/orders.ts` 的 `orderResult`）；后台要分得清，超时那种写「超时取消」
+ * （订单页「已取消」筛选同样含 cancelled 与 expired；表格状态列只有 80px、标签不换行，所以不写长的「已取消（超时未支付）」）
+ */
 export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone }> = {
   pending_payment: { label: '待支付', tone: 'warn' },
   paid: { label: '已支付', tone: 'ok' },
   fulfilled: { label: '已支付', tone: 'ok' },
   cancelled: { label: '已取消', tone: 'neutral' },
-  expired: { label: '已过期', tone: 'neutral' },
+  expired: { label: '超时取消', tone: 'neutral' },
 }
 
 /** 画像风险：后端按共用 IP 推出（identity clusterRisk，与「安全与运维 › 风控」同一条规则）；空串 = 没有和别的账号共用 IP */
