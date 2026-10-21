@@ -22,7 +22,7 @@ paths:
 - 样式一律用 CSS Modules；React 的 `style` 属性只用于真正动态的尺寸（列宽、抽屉宽度、骨架尺寸）
 - 弹层用浏览器原生能力，不自己造
   - `Modal` / `Drawer` 基于 `<dialog>.showModal()`
-  - 例外：`Select` 是自绘的 listbox（10-16 设计稿），列表 `position: fixed` 就地渲染在组件里、不 portal 到 body（在 `<dialog>` 里才留在顶层）；Esc 收起时拦住事件，不让外层弹窗跟着关
+  - 例外：`Select` 是自绘的 listbox（10-16 设计稿），列表 `position: fixed` 就地渲染在组件里、不 portal 到 body（在 `<dialog>` 里才留在顶层）；Esc 收起时拦住事件，不让外层弹窗跟着关；外层滚动即收起，列表自身 `overscroll-behavior: contain`，滚到头不把滚轮传给外层（10-21）
   - Toast 容器是 popover，每条提示都要重新推到顶层，否则会被已打开的 dialog 盖住
 - 10-16 新增的共用组件：`FilterTabs`（radiogroup + 可移动 tabindex）、`Toolbar` / `SearchField`、`Table` 的排序与表尾、`Modal` 的定宽与头体底结构；`Select` 的纯逻辑（方向键、首字母、定位）在 `ui/select-logic.ts`，配单测，组件只管摆放与事件
 - av4 新增 / 改接口的组件：`IconButton`（`label` 必填，同时是 aria-label 与 title）、`Switch` 的 `tone="danger"`、`Card` 的 `subtitle` / `footer`（头 48 高带底线、底栏带顶线，不再 `overflow: hidden`，免得裁掉菜单）、`Table` 的 `boxed` / `rowClassName`、`Menu` 条目的 `icon` 与 `kind: 'choice'`（一行小分段单选，选项是 menuitemradio，点了不收起）与 `placement="top"`；后台专用的页面级组件不进 ui，放 `admin/kit/`（见 screens-admin.md）

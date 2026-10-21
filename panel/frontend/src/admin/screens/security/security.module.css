@@ -218,7 +218,8 @@
 
 .logRow {
   display: grid;
-  grid-template-columns: 72px 64px 72px 128px minmax(0, 1fr);
+  /* 时间列放得下跨天的「MM-DD HH:mm:ss」（等宽 12px 约 101px）；当天只有 HH:mm:ss */
+  grid-template-columns: 104px 64px 72px 128px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   height: 38px;
@@ -229,6 +230,20 @@
 
 .logRow:last-child {
   border-bottom: 0;
+}
+
+/* 手机：五列挤不下（账号列被压成 0、IP 被裁），分两行——时间、分类、结果、IP / 账号 · 动作占满一行 */
+@media (max-width: 639px) {
+  .logRow {
+    grid-template-columns: auto auto auto minmax(0, 1fr);
+    row-gap: 2px;
+    height: auto;
+    padding: 8px 16px;
+  }
+
+  .logAccount {
+    grid-column: 1 / -1;
+  }
 }
 
 .logTime {
