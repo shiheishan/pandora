@@ -8,6 +8,7 @@ import { pickAdminEvent } from './mock/admin/events.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
 import { MOCK_SITE } from './mock/portal/fixtures.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
+import { effectiveRegistrationMode, patchPortalSignup, portalSignup } from './mock/portal/signup.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
 import { allowMailLinkSend, consumeMailLink, issueMailLink, lastMailLink } from './mock/mail-link.ts'
 import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
@@ -17,11 +18,15 @@ import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, typ
 // 会话与 rat、reauth 窗口、幂等表、错误信封；模块接口写在 mock/<入口>/<模块>.ts，
 // 一个模块一个文件、各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
+// POST /__mock/portal-signup 改门户的注册方式、邮箱验证、降级开关等（dev/mock/portal/signup.ts），缺省与 Go 一致。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
   admin: { email: 'admin@example.test', password: 'pandora-dev-pass' },
   portal: { email: 'user@example.test', password: 'pandora-dev-pass' },
 } as const
+
+/** 门户演示用的停用账号：口令对时登录回 403「账号已停用」，口令错照旧 401（与 Go 一致）；不在用户表里，拿不到会话 */
+export const MOCK_DISABLED_ACCOUNT = { email: 'disabled@example.test', password: 'pandora-dev-pass' } as const
 
 const REAUTH_WINDOW_MS = 15 * 60 * 1000
 /** 与 Go auth/service/store.go 的 refreshGrace 一致 */
@@ -171,7 +176,7 @@ function initialUsers(app: MockApp): MockUser[] {
 export function mockApi(app: MockApp): Plugin {
   const users = new Map<string, MockUser>(initialUsers(app).map((u) => [u.email, u]))
   const sessions = new Map<string, Session>()
-  const registrations = new Map<string, { email: string; code: string }>()
+  const registrations = new Map<string, { email: string; code: string | null }>()
   const resets = new Map<string, { code: string; attempts: number }>()
   const replays = new Map<string, Replay>()
   const refreshFamilies = new Set<RefreshFamily>()
@@ -236,7 +241,13 @@ export function mockApi(app: MockApp): Plugin {
     if (route === 'POST /v1/auth/login') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
-      const user = users.get(str(body.email).trim().toLowerCase())
+      const email = str(body.email).trim().toLowerCase()
+      if (app === 'portal' && email === MOCK_DISABLED_ACCOUNT.email) {
+        // 停用账号：口令对才明确提示，口令错与不存在的账号一样
+        if (str(body.password) === MOCK_DISABLED_ACCOUNT.password) return fail(res, 403, 'forbidden', '账号已停用')
+        return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
+      }
+      const user = users.get(email)
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
       const token = issue(user.userId, req)
       bindRefresh(res, user.userId)
@@ -277,12 +288,15 @@ export function mockApi(app: MockApp): Plugin {
       clearRefreshCookie(res, app)
       return fail(res, 401, 'unauthorized', '需要登录')
     }
+    // 同 Go settings/handler 的 siteConfig：演示环境当作已配好发信，password_reset 只看 notify.email 有没有停用
     if (app === 'portal' && route === 'GET /v1/site-config') {
-      return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
+      const cfg = portalSignup()
+      return send(res, 200, { registration_mode: effectiveRegistrationMode(), email_verification: cfg.email_verification, password_reset: !cfg.mail_paused })
     }
-    // 演示环境不连第三方人机验证；真实环境由后台设置决定 mail_link_login / captcha / email_suffixes
+    // 演示环境不连第三方人机验证；mail_link_login 同 Go：设置开了且 notify.email 没停用
     if (app === 'portal' && route === 'GET /v1/signup-config') {
-      return send(res, 200, { captcha: null, email_suffixes: [], mail_link_login: true })
+      const cfg = portalSignup()
+      return send(res, 200, { captcha: null, email_suffixes: [], mail_link_login: cfg.mail_link_login && !cfg.mail_paused })
     }
     if (app === 'portal' && route === 'GET /v1/appearance') {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
@@ -300,25 +314,34 @@ export function mockApi(app: MockApp): Plugin {
       if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
-      if (str(body.invite_code).toUpperCase() !== 'PANDORA') return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
+      const cfg = portalSignup()
+      const mode = effectiveRegistrationMode()
+      if (mode === 'closed') return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
+      if (cfg.email_verification && cfg.mail_paused) return fail(res, 503, 'service_unavailable', '邮件发送暂停，暂时无法注册，请稍后再试')
+      const invite = str(body.invite_code).trim().toUpperCase()
+      // 仅邀请时必填；开放注册时选填，填了也要有效（同 Go resolveInviteAtStart）。演示里唯一有效的邀请码是 PANDORA
+      if ((mode === 'invite_only' && !invite) || (invite && invite !== 'PANDORA')) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
       const token = randomUUID()
-      registrations.set(token, { email, code: '123456' })
+      const taken = users.has(email)
+      registrations.set(token, { email, code: cfg.email_verification ? '123456' : null })
       return send(res, 200, {
         registration_token: token,
-        verification_required: true,
+        verification_required: cfg.email_verification,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
-        message: '验证码已发送',
-        dev_code: '123456',
+        message: '若该邮箱可用于注册，验证码已发送',
+        // 同 Go 开发模式：只在要验证、且邮箱还没注册过时带
+        ...(cfg.email_verification && !taken ? { dev_code: '123456' } : {}),
       })
     }
     if (app === 'portal' && route === 'POST /v1/auth/register/complete') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
       const reg = registrations.get(str(body.registration_token))
-      if (!reg || reg.code !== str(body.code)) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
+      if (!reg || (reg.code !== null && reg.code !== str(body.code))) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
       const password = str(body.password)
       if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
       if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
+      if (users.has(reg.email)) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
       registrations.delete(str(body.registration_token))
       const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null }
       users.set(reg.email, user)
@@ -333,6 +356,7 @@ export function mockApi(app: MockApp): Plugin {
       if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
+      if (portalSignup().mail_paused) return fail(res, 503, 'service_unavailable', '邮件发送暂停，暂时无法找回密码，请稍后再试')
       const known = users.has(email)
       if (known) resets.set(email, { code: '123456', attempts: 0 })
       return send(res, 200, {
@@ -375,6 +399,9 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'POST /v1/auth/mail-link/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      // 同 Go StartMailLogin：先看设置开没开，再看 notify.email，最后才校验邮箱
+      if (!portalSignup().mail_link_login) return fail(res, 403, 'forbidden', '邮件链接登录未开启')
+      if (portalSignup().mail_paused) return fail(res, 503, 'service_unavailable', '邮件发送暂停，暂时无法用邮件登录，请稍后再试')
       // 与找回第 1 步同口径：开了人机验证时带 captcha_token（演示环境不连第三方，只校验类型）
       const capErr = captchaFieldError(body)
       if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
@@ -411,6 +438,14 @@ export function mockApi(app: MockApp): Plugin {
     // 只有假后端有：让测试与演示拿到刚发的登录链接
     if (app === 'portal' && route === 'GET /__mock/mail-link') {
       return send(res, 200, { token: lastMailLink() })
+    }
+    // 只有假后端有：改门户的注册与发信配置（后台假后端是另一个进程，改不到这里）。只改给出的键，reset: true 先恢复缺省
+    if (app === 'portal' && route === 'POST /__mock/portal-signup') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const fields = patchPortalSignup(body)
+      if (fields) return fail(res, 422, 'validation_failed', '请求参数校验未通过', fields)
+      return send(res, 200, portalSignup())
     }
 
     // --- admin.writes 只读门：Go 挂在整棵 /v1 上、先于认证 ----------------------
