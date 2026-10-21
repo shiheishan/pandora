@@ -40,7 +40,7 @@ paths:
   - 守卫：`tests/mock-admin-security.test.ts`、`tests/mock-admin-security-profile.test.ts`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - 种子只造库里真有的状态与字段（迁移里的 CHECK）：订阅 active / expired，订单 5 态（不做退款，没有退款态与 refunded_amount），意图 requires_action / succeeded / cancelled / expired，收款只有 succeeded，节点服务状态没有 draining；Go 已删的键不吐。种子里的域名一律用保留域（`example.test`、`example.com`），IP 用文档段
-  - 邮箱（含打码的 `k***@…`）只用 RFC 2606 / 6761 保留域：`example.com` / `.net` / `.org` 及其子域、`.example`、`.test`、`.invalid`、`.localhost`；dev/ 与 tests/ 下（含 `dev/prototype` 样稿）一律适用，守卫 `tests/seed-emails.test.ts`（白名单 `RESERVED`；例外表 `EXCEPTIONS` 只有样稿里「禁止 Gmail 别名」的说明示例）。注册邮箱后缀白名单（`signup-settings.ts` 的 `email_suffixes`）是照 Go `defaultSignupEmailSuffixes` 的产品缺省，不是邮箱，不在此列
+  - 邮箱（含打码的 `k***@…`）只用 RFC 2606 / 6761 保留域：`example.com` / `.net` / `.org` 及其子域、`.example`、`.test`、`.invalid`、`.localhost`；dev/ 与 tests/ 下（含 `dev/prototype` 样稿）以及 src/ 下的单测（`*.test.ts(x)`）一律适用，守卫 `tests/seed-emails.test.ts`（白名单 `RESERVED`；例外表 `EXCEPTIONS` 只有样稿里「禁止 Gmail 别名」的说明示例）。注册邮箱后缀白名单（`signup-settings.ts` 的 `email_suffixes`）是照 Go `defaultSignupEmailSuffixes` 的产品缺省，不是邮箱，不在此列
 - 节点补齐 Xboard 的部分（标签、流量上限与重置、时段倍率、中转、ECH、批量修改）在 `admin/nodes-xb.ts`：状态挂在 `Node.xb` 上，路由由 `xbRoutes(deps)` 生成、经 nodes.ts 展开；它只被 nodes.ts import（不反向 import，避免成环），要用 nodes.ts 的校验与写入（池、倍率、状态边）就经 `deps` 传进来
   - 中转、ECH、手动重置都不动节点的 `row_version`（Go 里中转与 ECH 是别的表，重置只改用量列）；批量修改先把所有节点校验完再一起写，模拟整批回滚
   - 种子演示：「香港 02 · IPLC」两条中转与时段倍率，「洛杉矶 01」超限（不下发），末尾「法兰克福 01 · ECH」已开 ECH；「新加坡 02」保持「心跳超时仍下发」的演示，不叠超限

@@ -207,8 +207,8 @@ describe('portalBranding', () => {
 
 describe('displayName', () => {
   it('prefers display_name, then the email local part', () => {
-    expect(displayName({ email: 'zhang.wei@qq.com', display_name: '张伟' })).toBe('张伟')
-    expect(displayName({ email: 'zhang.wei@qq.com', display_name: null })).toBe('zhang.wei')
+    expect(displayName({ email: 'zhang.wei@example.net', display_name: '张伟' })).toBe('张伟')
+    expect(displayName({ email: 'zhang.wei@example.net', display_name: null })).toBe('zhang.wei')
     expect(displayName(undefined)).toBe('')
   })
 })

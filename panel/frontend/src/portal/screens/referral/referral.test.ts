@@ -244,7 +244,7 @@ describe('佣金记录', () => {
     frozen_until,
     created_at,
     order_no: 'PD-24101',
-    from: 'me***@gmail.com',
+    from: 'me***@example.com',
   })
   const withdrawal = (status: Commission['withdrawals'][number]['status'], requested_at: string, reject_reason = '', method = 'alipay', tx_hash = '') => ({
     id: status,
@@ -287,7 +287,7 @@ describe('佣金记录', () => {
     expect(rows[1]!.meta).toBe('09-01')
     expect(rows[1]!.ref).toBeUndefined()
     const level1 = commissionRecords(commission({ entries: [entry('available', '2026-09-20T02:00:00Z')] }))[0]!
-    expect(level1.meta).toContain('me***@gmail.com')
+    expect(level1.meta).toContain('me***@example.com')
   })
 
   it('待复核显示审核中，不写已过的冻结日期', () => {

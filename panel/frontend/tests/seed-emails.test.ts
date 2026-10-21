@@ -1,4 +1,4 @@
-// 仓库公开：dev/ 与 tests/ 里的种子、样稿与夹具邮箱只用 RFC 2606 / 6761 保留域；
+// 仓库公开：dev/、tests/ 与 src/ 下单测里的种子、样稿与夹具邮箱只用 RFC 2606 / 6761 保留域；
 // 若写入真实服务商域名（gmail、qq、163 等），本守卫会失败。
 import { readFile, readdir } from 'node:fs/promises'
 import { join, relative } from 'node:path'
@@ -22,6 +22,9 @@ const SCAN_ROOTS = [
   fileURLToPath(new URL('../dev', import.meta.url)),
   fileURLToPath(new URL('.', import.meta.url)),
 ]
+// src/ 只扫单测：产品代码里的 gmail.com 等是功能本身（Gmail 别名拦截的说明、注册后缀缺省），不是夹具
+const SRC_ROOT = fileURLToPath(new URL('../src', import.meta.url))
+const isSrcTest = (name: string) => /\.test\.tsx?$/.test(name)
 
 function domainAllowed(domain: string): boolean {
   const d = domain.toLowerCase()
@@ -40,7 +43,9 @@ async function collectFiles(dir: string, out: string[]): Promise<void> {
     if (!ent.isFile()) continue
     const dot = ent.name.lastIndexOf('.')
     const ext = dot >= 0 ? ent.name.slice(dot) : ''
-    if (SCAN_EXT.has(ext)) out.push(full)
+    if (!SCAN_EXT.has(ext)) continue
+    if (full.startsWith(SRC_ROOT) && !isSrcTest(ent.name)) continue
+    out.push(full)
   }
 }
 
@@ -58,9 +63,9 @@ function scanText(relPath: string, text: string, bad: string[]): void {
 }
 
 describe('seed emails · reserved domains only', () => {
-  it('dev/ and tests/ sources use only reserved email domains', async () => {
+  it('dev/, tests/ and src/ unit tests use only reserved email domains', async () => {
     const bad: string[] = []
-    for (const root of SCAN_ROOTS) {
+    for (const root of [...SCAN_ROOTS, SRC_ROOT]) {
       const files: string[] = []
       await collectFiles(root, files)
       for (const file of files) {

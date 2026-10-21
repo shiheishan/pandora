@@ -71,7 +71,7 @@ describe('SideFact', () => {
   it('renders an extra dd for action', () => {
     const out = html(
       <SideFact label="用户" action={<button type="button">编辑</button>}>
-        zhang@qq.com
+        zhang@example.net
       </SideFact>,
     )
     expect(out.match(/<dd/g)?.length).toBe(2)
