@@ -204,7 +204,10 @@ func (s *Service) Public(ctx context.Context) (PublicAppearance, error) {
 		return PublicAppearance{}, err
 	}
 	for _, sl := range slots {
-		out.Slots[sl.Key] = sl.Content
+		// 读出再净化：库里被手工改过、或净化规则收紧前存的内容也按现行规则出去
+		if clean := s.slots.clean(sl.Key, sl.Content); clean != "" {
+			out.Slots[sl.Key] = clean
+		}
 	}
 	out.SiteName = s.PageMeta(ctx).SiteName
 	return out, nil

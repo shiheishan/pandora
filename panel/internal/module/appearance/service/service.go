@@ -3,7 +3,7 @@
 //
 // 主题与插槽都会渲染进门户、被所有访客看到，所以写入一律走白名单：令牌只收设计稿的 CSS 变量（tokens.go），
 // 品牌只收标语与 data: 形式的 Logo（站点名只认系统设置 site.name），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
-// 门户读取时再按同一套白名单过滤一次，库里被手工改过的行也出不去。
+// 门户读取时再按同一套白名单过滤一次（插槽再过一次 SanitizeHTML，结果按原文备忘在进程内），库里被手工改过的行也出不去。
 package service
 
 import (
@@ -46,6 +46,8 @@ type Service struct {
 	// meta 是 PageMeta 的进程内缓存；metaGen 是它的失效代号，保存或激活主题后加一。
 	meta    pageMetaCache
 	metaGen atomic.Uint64
+	// slots 是门户读插槽时再净化的备忘（slot_memo.go），保存插槽提交后清空。
+	slots slotMemo
 	// now 是测试用的时钟，nil 表示 time.Now。
 	now func() time.Time
 }

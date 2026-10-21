@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../core/api'
 import { navigate, parseHash, useHashLocation } from '../core/router'
-import { RuntimeProvider, useRuntime, useSignedIn, type AppRuntime } from '../shell/runtime'
+import { RuntimeProvider, useRuntime, useSession, type AppRuntime } from '../shell/runtime'
+import { SessionPending } from '../shell/SessionGate'
 import { useAppearanceTheme } from './appearance'
 import { AuthPage, consumeQuickLogin } from './AuthPage'
 import { authTabFromPath, isHomePath, LOGIN_PATH, mailLoginTokenFromHash, quickLoginTokenFromHash } from './entry-links'
@@ -25,7 +26,8 @@ function Root({ invite }: { invite: string | null }) {
   const { api } = useRuntime()
   const quick = useQuickLoginFromUrl()
   const mail = useMailLoginFromUrl()
-  const signedIn = useSignedIn()
+  const session = useSession()
+  const signedIn = session === 'signed-in'
   const inviteVisitStarted = useRef(false)
 
   // 访问量按码计数，后端按 IP 去重，失败不影响页面
@@ -39,14 +41,15 @@ function Root({ invite }: { invite: string | null }) {
   const [serverHome] = useState(() => hasServerHome())
   const hashTab = authTabFromPath(path)
   // 未登录、地址没有页面、不是邀请或链接登录、服务端给了首页片段：#root 不渲染，露出首页
-  const showHome = serverHome && !signedIn && !invite && quick.phase === 'idle' && mail.phase === 'idle' && isHomePath(path)
+  const showHome = serverHome && session === 'signed-out' && !invite && quick.phase === 'idle' && mail.phase === 'idle' && isHomePath(path)
 
   useLayoutEffect(() => {
     setHomeHidden(!showHome)
   }, [showHome])
 
   // 退出登录（含令牌失效被清掉）时地址停在空地址上就换成登录页，免得一退出就露出首页；
-  // 停在别的页面地址上不动：登录页照常显示，重新登录后回到原来要去的页面（邮件里的深链）
+  // 停在别的页面地址上不动：登录页照常显示，重新登录后回到原来要去的页面（邮件里的深链）。
+  // wasSignedIn 初值是 signedIn，开机 unknown 算 false，所以 unknown → signed-out 不会触发跳转，只有 signed-in → signed-out 才跳。
   const wasSignedIn = useRef(signedIn)
   useEffect(() => {
     if (wasSignedIn.current && !signedIn && isHomePath(parseHash(window.location.hash).path)) {
@@ -57,6 +60,7 @@ function Root({ invite }: { invite: string | null }) {
 
   if (quick.phase === 'pending' || mail.phase === 'pending') return null
   if (signedIn) return <ShellLoader />
+  if (session === 'unknown' || session === 'unavailable') return <SessionPending state={session} />
   if (mail.phase === 'failed') return <AuthPage initialTab="mail" notice={mail.message} />
   if (quick.phase === 'failed') return <AuthPage initialTab="quick" notice={quick.message} />
   if (showHome) return null

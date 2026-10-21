@@ -166,7 +166,7 @@ jobs:
             echo "每步一张 1280 宽截图、关键页面另有 375 宽，失败的 trace 与 HTML 报告都在产物 browser-paths 里"
           } >> "$GITHUB_STEP_SUMMARY"
           cat "$d/results.md"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: browser-paths

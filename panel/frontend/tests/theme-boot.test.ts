@@ -3,7 +3,7 @@ import { runInNewContext } from 'node:vm'
 import type { ConfigEnv, UserConfig } from 'vite'
 import { describe, expect, it } from 'vitest'
 import { THEME_STORAGE_KEY } from '../src/core/theme'
-import { tokenStorageKey } from '../src/core/token'
+import { sessionHintKey } from '../src/core/token'
 import { COLOR_TOKENS } from '../src/styles/design-tokens'
 import viteConfig, { themeBootFileName } from '../vite.config'
 
@@ -98,31 +98,40 @@ describe('theme-boot.js cached portal theme', () => {
 })
 
 describe('theme-boot.js portal home', () => {
-  const portalKey = tokenStorageKey('portal')
-  const withToken = (token: string | null) => (key: string) => (key === portalKey ? token : null)
+  const portalKey = sessionHintKey('portal')
+  const withHint = (value: string | null) => (key: string) => (key === portalKey ? value : null)
 
-  it('reads the same portal token key as token.ts', () => {
+  it('reads the same portal session hint key as token.ts', () => {
     expect(source).toContain(`'${portalKey}'`)
   })
 
   it.each(['', '#', '#/', '#/?x=1'] as const)('portal without token and empty hash %j leaves home unset', (hash) => {
-    expect(run(withToken(null), 'portal', { hash }).home).toBeUndefined()
+    expect(run(withHint(null), 'portal', { hash }).home).toBeUndefined()
   })
 
-  it('portal with token sets data-home off', () => {
-    expect(run(withToken('x'), 'portal').home).toBe('off')
+  it('portal with the session hint sets data-home off', () => {
+    expect(run(withHint('1'), 'portal').home).toBe('off')
+  })
+
+  it('a hint value other than "1" does not count', () => {
+    expect(run(withHint('x'), 'portal').home).toBeUndefined()
+  })
+
+  it('never reads the old token keys', () => {
+    expect(source).not.toContain('pandora-portal-token')
+    expect(source).not.toContain('pandora-admin-token')
   })
 
   it.each(['#/login', '#/register', '#/subs'] as const)('portal with hash %s sets data-home off', (hash) => {
-    expect(run(withToken(null), 'portal', { hash }).home).toBe('off')
+    expect(run(withHint(null), 'portal', { hash }).home).toBe('off')
   })
 
   it('portal with invite query sets data-home off', () => {
-    expect(run(withToken(null), 'portal', { search: '?invite=ABC' }).home).toBe('off')
+    expect(run(withHint(null), 'portal', { search: '?invite=ABC' }).home).toBe('off')
   })
 
-  it('admin entry does not set data-home even with token and hash', () => {
-    expect(run(withToken('x'), 'admin', { hash: '#/login' }).home).toBeUndefined()
+  it('admin entry does not set data-home even with the hint and hash', () => {
+    expect(run(withHint('1'), 'admin', { hash: '#/login' }).home).toBeUndefined()
   })
 
   it('still hides home by the address when storage throws; theme stays light', () => {

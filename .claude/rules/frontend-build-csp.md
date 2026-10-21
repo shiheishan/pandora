@@ -10,7 +10,7 @@ paths:
   - `index.html` 里不写内联 `<script>`、`<style>` 或 `style=""`。守卫：`tests/entries.test.ts`，以及嵌入后由 `panel/web/app_test.go` 的 `TestEmbeddedAppsHaveEntryForTheirDomain` 检查
   - 不用 CSS-in-JS，也不在运行时注入 `<style>`。样式只写 `.css` 或 CSS Modules。运行时要改样式就走 CSSOM（`element.style` / `setProperty`，React 的 `style` 属性也算），它不受 style-src 约束，先例是 `src/portal/appearance.ts` 的 `useAppearanceTheme`
   - 首帧前必须执行的脚本只能做成外链经典脚本，参照 `src/core/theme-boot.js` 加 `vite.config.ts` 的 `themeBoot` 插件
-  - 门户首页片段是服务端在入口页 `#root` 前输出的 HTML（`panel/internal/pkg/webapp/home.go`），同样不许内联脚本、样式与事件属性（守卫是那里的 `home_test.go`）；它的样式只能写在全局样式 `src/portal/home.css`（服务端拿不到 CSS Modules 的哈希类名，类名统一 `ph-` 前缀），显隐只经 `<html data-home="off">`：`theme-boot.js` 首帧前按门户令牌、hash 与邀请码先打，`portal/App.tsx` 挂载后按登录状态与地址再定（`portal/home.ts`）
+  - 门户首页片段是服务端在入口页 `#root` 前输出的 HTML（`panel/internal/pkg/webapp/home.go`），同样不许内联脚本、样式与事件属性（守卫是那里的 `home_test.go`）；它的样式只能写在全局样式 `src/portal/home.css`（服务端拿不到 CSS Modules 的哈希类名，类名统一 `ph-` 前缀），显隐只经 `<html data-home="off">`：`theme-boot.js` 首帧前按门户登录标志（`pandora-portal-session`）、hash 与邀请码先打，`portal/App.tsx` 挂载后按登录状态与地址再定（`portal/home.ts`）
   - 不引入运行时要 `eval` / `new Function` 的库；zod 必须保持 `z.config({ jitless: true })`（在 `src/core/api.ts`），守卫是 `src/core/api.test.ts` 的 "turns off zod JIT…"
   - 资源一律不内联成 `data:`（`assetsInlineLimit: 0`）。字体随包自带，样式不引外部来源。守卫：`tests/theme-boot.test.ts` 与 `tests/tokens.test.ts` 的 "stylesheets stay self-contained"
   - 产物里要带新的资源类型（如 wasm）时，`panel/internal/pkg/webapp/webapp.go` 的 `contentTypes` 与 `indexCSP` 要一起改
