@@ -51,12 +51,6 @@ html[data-home='off'] #ph-home {
   font-weight: 700;
 }
 
-.ph-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-}
-
 .ph-nav {
   display: flex;
   align-items: center;
@@ -114,6 +108,13 @@ html[data-home='off'] #ph-home {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 28px;
+}
+
+/* 首屏按钮下的一行说明：仅凭邀请码注册、注册已关闭（home.go 按注册方式出） */
+.ph-cta-note {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
 }
 
 /* 按钮 */

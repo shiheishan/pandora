@@ -7,7 +7,6 @@ export function SiteBrand({ size, className, withTagline = false }: { size: numb
   const b = portalBranding(useAppearance().data)
   const mark = (
     <span className={cx(css.brand, className)} style={{ fontSize: size }}>
-      {b.logo ? <img className={css.img} src={b.logo} alt="" style={{ height: size }} /> : null}
       <span className={css.word}>{b.siteName ?? 'pandora'}</span>
       <span className={css.dot} aria-hidden="true" />
     </span>

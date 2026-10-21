@@ -29,7 +29,7 @@ export const appearanceSchema = z.object({
         .object({ light: z.record(z.string(), z.string()).optional(), dark: z.record(z.string(), z.string()).optional() })
         .partial()
         .catch({}),
-      branding: z.object({ tagline: z.string().optional(), logo: z.string().optional() }).catch({}),
+      branding: z.object({ tagline: z.string().optional() }).catch({}),
     })
     .nullable(),
   slots: z.record(z.string(), z.string()).catch({}),
