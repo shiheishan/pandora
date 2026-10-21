@@ -211,7 +211,7 @@ func TestStoreRemovePurge(t *testing.T) {
 	if err := st.remove(id); err != nil {
 		t.Fatal(err)
 	}
-	loaded, _ = st.loadCerts()
+	loaded, _ := st.loadCerts()
 	if len(loaded) != 0 {
 		t.Fatal("after remove")
 	}
