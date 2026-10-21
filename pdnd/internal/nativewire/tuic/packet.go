@@ -458,11 +458,16 @@ func (c *udpPacketConn) writePacket(message *udpMessage) error {
 	if err != nil {
 		return err
 	}
+	// 上游 55132c73：会话关闭时解开被流控卡住的写。
+	stopWatch := context.AfterFunc(c.ctx, func() {
+		_ = stream.SetWriteDeadline(time.Now())
+	})
 	packet, err := message.appendTo(make([]byte, 0, message.headerSize()+message.data.Len()))
 	if err == nil {
 		_, err = stream.Write(packet)
 	}
 	stream.Close()
+	stopWatch()
 	return err
 }
 

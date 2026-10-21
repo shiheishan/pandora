@@ -27,14 +27,14 @@ func NewSalamanderConn(conn net.PacketConn, password []byte) net.PacketConn {
 		return &VectorisedSalamanderPacketConn{
 			SalamanderPacketConn: SalamanderPacketConn{
 				PacketConn: conn,
-				password:   password,
+				password:   password[:len(password):len(password)], // 上游 2afc335e：封住容量，并发 append 不会写进同一块内存
 			},
 			writer: writer,
 		}
 	} else {
 		return &SalamanderPacketConn{
 			PacketConn: conn,
-			password:   password,
+			password:   password[:len(password):len(password)],
 		}
 	}
 }
