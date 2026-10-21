@@ -98,6 +98,16 @@ func TestQuoteNewSubscriptionCap(t *testing.T) {
 		t.Fatalf("文案: %v", err)
 	}
 
+	// 上限放宽到 2、手里 1 份：新购报价照常回价格行
+	e.svc.UsePurchaseLimits(&fakeLimits{v: settingssvc.PurchaseLimits{MaxSubscriptions: 2}})
+	fresh, err := e.svc.Quote(uctx, QuoteInput{Action: QuoteNew, PlanID: &planB})
+	if err != nil {
+		t.Fatalf("没到上限的新购报价: %v", err)
+	}
+	if len(fresh.Quotes) == 0 {
+		t.Fatal("没到上限的新购报价应至少一条")
+	}
+
 	res, err := e.svc.Quote(uctx, QuoteInput{Action: QuoteRenew, SubscriptionID: &sub.ID})
 	if err != nil {
 		t.Fatalf("续费报价: %v", err)
@@ -129,5 +139,8 @@ func TestQuoteNewSubscriptionCapCountsPendingNew(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "（含 1 张没付款的新买订单）") {
 		t.Fatalf("文案应含待付新购提示: %v", err)
+	}
+	if !strings.Contains(err.Error(), "或先付掉、取消没付款的订单") {
+		t.Fatalf("文案应指向付掉或取消待付单: %v", err)
 	}
 }

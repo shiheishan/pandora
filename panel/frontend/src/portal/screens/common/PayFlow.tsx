@@ -72,7 +72,18 @@ const TITLES: Record<PayState['phase'], string> = { redirect: '付款', done: '�
  * 结账与充值借它 forget() 记下的待支付单，下次同样的请求重新下单。
  * 409 conflict 会先刷新订单，只有确认不是待付才调；payment_in_progress 从不调。
  */
-export function PaymentModal({ state: given, onClose, onUnpayable }: { state: PayState | null; onClose: () => void; onUnpayable?: () => void }) {
+/** onOtherMethod：调用方自己选付款方式时（如充值弹层），付款面板里「换个付款方式」回到调用方 */
+export function PaymentModal({
+  state: given,
+  onClose,
+  onUnpayable,
+  onOtherMethod,
+}: {
+  state: PayState | null
+  onClose: () => void
+  onUnpayable?: () => void
+  onOtherMethod?: () => void
+}) {
   // choose 态选定后在弹窗内部转成 redirect；换了订单或关掉就作废
   const [picked, setPicked] = useState<{ orderId: string; method: PaymentMethod } | null>(null)
   const state: PayState | null =
@@ -101,7 +112,7 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
             returnUrl={payReturnUrl(state.orderId)}
             onPaid={() => setPaidHere(state.orderId)}
             onUnpayable={onUnpayable}
-            onOtherMethod={picked ? () => setPicked(null) : undefined}
+            onOtherMethod={picked ? () => setPicked(null) : onOtherMethod}
             onLater={() => {
               close()
               navigate('/orders')
@@ -271,7 +282,7 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
       </div>
       <PayMethodPicker methods={methods} selected={method} amount={state.amount} onSelect={(m) => setKey(methodKey(m))} />
       {noUsable && (
-        <p className={css.hint}>这张单的金额低于现在所有付款方式的最低额，在线付不了；可以取消后改用余额付。</p>
+        <p className={css.hint}>这张单的金额低于现在所有付款方式的最低额，在线付不了；可以取消这张单，再重新下单。</p>
       )}
       <Btn tone="hot" full disabled={!method} onClick={() => method && onPick(method)}>
         去支付 <Num>{formatMoney(method?.total ?? state.amount)}</Num>

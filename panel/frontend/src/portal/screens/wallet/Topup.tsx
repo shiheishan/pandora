@@ -131,6 +131,7 @@ export function TopupSheet({ open, onClose }: { open: boolean; onClose: () => vo
           onClose()
         }}
         onUnpayable={placed.forget}
+        onOtherMethod={() => setPay(null)}
       />
     </>
   )

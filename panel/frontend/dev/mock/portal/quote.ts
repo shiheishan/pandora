@@ -194,6 +194,7 @@ export function subscriptionCapRefusal(state: PortalState, at: number): string |
   let msg = `每人最多 ${max} 份套餐（过期不到 30 天、还能续费的也算），你已经有 ${have} 份`
   if (pendingNew > 0) msg += `（含 ${pendingNew} 张没付款的新买订单）`
   msg += '。可以给已有的一份续费或换套餐'
+  if (pendingNew > 0) msg += '，或先付掉、取消没付款的订单'
   return msg
 }
 

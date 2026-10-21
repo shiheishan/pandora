@@ -118,5 +118,8 @@ func errTooManySubscriptions(max, have, pendingNew int) *errs.Error {
 		msg += fmt.Sprintf("（含 %d 张没付款的新买订单）", pendingNew)
 	}
 	msg += "。可以给已有的一份续费或换套餐"
+	if pendingNew > 0 {
+		msg += "，或先付掉、取消没付款的订单"
+	}
 	return errs.Newf(errs.SubscriptionLimitReached, msg)
 }
