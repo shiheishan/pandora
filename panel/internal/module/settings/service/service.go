@@ -43,7 +43,7 @@ type store interface {
 	// Delete 删除给定键；不存在不算错。
 	Delete(ctx context.Context, keys ...string) error
 
-	// ListSwitches 按 essential 降序、code 升序返回全部开关。
+	// ListSwitches 按 code 升序返回全部开关。
 	ListSwitches(ctx context.Context) ([]model.FeatureSwitch, error)
 	// GetSwitch 读一个开关；缺行 ok 为 false。
 	GetSwitch(ctx context.Context, code string) (sw model.FeatureSwitch, ok bool, err error)

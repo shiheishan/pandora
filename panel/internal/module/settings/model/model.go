@@ -26,7 +26,6 @@ type FeatureSwitch struct {
 	ID        uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
 	Code      string     `gorm:"column:code"`
 	Enabled   bool       `gorm:"column:enabled"`
-	Essential bool       `gorm:"column:essential"`
 	Reason    *string    `gorm:"column:reason"`
 	ChangedBy *uuid.UUID `gorm:"column:changed_by;type:uuid"`
 	CreatedAt time.Time  `gorm:"column:created_at;autoCreateTime"`

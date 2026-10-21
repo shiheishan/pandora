@@ -106,35 +106,28 @@ type MailUpdate struct {
 
 // 降级开关码。
 const (
-	SwitchAuthLogin           = "auth.login"
-	SwitchSubscriptionRenewal = "subscription.renewal"
-	SwitchClientConfigSync    = "client.config_sync"
-	SwitchAuthRegistration    = "auth.registration"
-	SwitchBillingCheckout     = "billing.checkout"
-	SwitchGiftCardRedeem      = "marketing.giftcard.redeem"
-	SwitchNotifyEmail         = "notify.email"
+	SwitchAuthRegistration = "auth.registration"
+	SwitchBillingCheckout  = "billing.checkout"
+	SwitchGiftCardRedeem   = "marketing.giftcard.redeem"
+	SwitchNotifyEmail      = "notify.email"
 	// SwitchAdminWrites 关闭时后台进入只读模式。
 	SwitchAdminWrites = "admin.writes"
 )
 
-// SeedSwitches 是迁移 00002 种下的开关（值为 essential）；测试对照迁移与本表。
-var SeedSwitches = map[string]bool{
-	SwitchAuthLogin:           true,
-	SwitchSubscriptionRenewal: true,
-	SwitchClientConfigSync:    true,
-	SwitchAuthRegistration:    false,
-	SwitchBillingCheckout:     false,
-	SwitchGiftCardRedeem:      false,
-	SwitchNotifyEmail:         false,
-	SwitchAdminWrites:         false,
+// SeedSwitches 是迁移种下的全部开关（00002 种、00064 删去三个核心项后剩下的），按 code 升序；TestSeedSwitchesMatchMigration 对照。
+var SeedSwitches = []string{
+	SwitchAdminWrites,
+	SwitchAuthRegistration,
+	SwitchBillingCheckout,
+	SwitchGiftCardRedeem,
+	SwitchNotifyEmail,
 }
 
 // Switch 是一个降级开关；Enabled 为 true 表示功能可用。
 type Switch struct {
-	Code      string
-	Enabled   bool
-	Essential bool
-	Reason    *string
+	Code    string
+	Enabled bool
+	Reason  *string
 }
 
 // 审计动作。

@@ -387,7 +387,7 @@ func TestListSwitchesJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeSettings{
 		switches: []service.Switch{
-			{Code: "a", Enabled: true, Essential: false, Reason: nil},
+			{Code: "a", Enabled: true, Reason: nil},
 		},
 	}
 	h := New(fake)
@@ -398,6 +398,9 @@ func TestListSwitchesJSON(t *testing.T) {
 	rec := do(e, http.MethodGet, "/v1/switches", "", map[string]string{"X-Test-Auth": "1"})
 	if !strings.Contains(rec.Body.String(), `"reason":null`) {
 		t.Fatalf("body %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "essential") {
+		t.Fatalf("response must not contain essential: %s", rec.Body.String())
 	}
 
 	fake.switches = nil

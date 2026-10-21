@@ -799,25 +799,20 @@ SELECT _reject('MKT-001', '百分比折扣超过 100% 必须拒绝', $sql$
 $sql$);
 
 --------------------------------------------------------------------------------
--- NFR-008 降级开关（00002_settings.sql 种好的开关行）
+-- NFR-008 降级开关（00002_settings.sql 种好、00064 删去三个核心项后的开关行）
 --------------------------------------------------------------------------------
-
--- feature_switches_essential_stays_on
-SELECT _reject('NFR-008', 'essential 开关不可被关闭', $sql$
-  UPDATE feature_switches SET enabled = false, reason = '演练' WHERE code = 'auth.login';
-$sql$);
 
 -- feature_switches_disable_needs_reason
 SELECT _reject('NFR-008', '关闭开关但不填原因必须拒绝', $sql$
   UPDATE feature_switches SET enabled = false, reason = NULL WHERE code = 'billing.checkout';
 $sql$);
 
-SELECT _accept('NFR-008', '非 essential 开关填了原因可关闭', $sql$
+SELECT _accept('NFR-008', '开关填了原因可关闭', $sql$
   UPDATE feature_switches SET enabled = false, reason = '遭遇注册洪峰，临时关闭' WHERE code = 'auth.registration';
 $sql$);
 
 --------------------------------------------------------------------------------
--- OPS-005 事务类通知不可退订（00026_notify_inbox.sql）
+-- OPS-005 事务类通知不可退订、营销类只发邮件（00026_notify_inbox.sql、00064）
 --------------------------------------------------------------------------------
 
 -- notification_preferences_transactional_always_on
@@ -829,6 +824,12 @@ $sql$);
 SELECT _accept('OPS-005', '营销类通知可以关闭', $sql$
   INSERT INTO notification_preferences (user_id, category, channel, enabled)
   VALUES ('00000000-0000-7000-8000-000000000101', 'marketing', 'email', false);
+$sql$);
+
+-- notification_preferences_marketing_email_only（00064：营销类只发邮件）
+SELECT _reject('OPS-005', '营销类没有 Telegram 偏好', $sql$
+  INSERT INTO notification_preferences (user_id, category, channel, enabled)
+  VALUES ('00000000-0000-7000-8000-000000000101', 'marketing', 'telegram', false);
 $sql$);
 
 --------------------------------------------------------------------------------

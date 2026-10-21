@@ -546,18 +546,18 @@ SW=$(curl -s "$ADM/v1/switches" -H "$AH")
 NSW=$(echo "$SW" | python3 -c "import sys,json;print(len(json.load(sys.stdin)['switches']))" 2>/dev/null)
 [ -n "$NSW" ] && ok "降级开关可读，共 $NSW 项" || bad "开关列表异常" "API 响应已隐藏"
 
-C=$(code -X POST "$ADM/v1/switches/auth.login" -H "$AH" -H 'Content-Type: application/json' \
-      -d '{"enabled":false,"reason":"测试：核心开关应当关不掉"}')
-[ "$C" = "409" ] && ok "核心开关 auth.login 不可关闭（409）" || bad "核心开关竟被关闭" "HTTP $C"
-EN=$(boolq "SELECT enabled FROM feature_switches WHERE code='auth.login'")
-[ "$EN" = "true" ] && ok "auth.login 仍处于启用状态" || bad "核心开关已被关闭" "$EN"
+C=$(code -X POST "$ADM/v1/switches/billing.checkout" -H "$AH" -H 'Content-Type: application/json' \
+      -d '{"enabled":false,"reason":"  "}')
+[ "$C" = "409" ] && ok "关闭开关不填原因被拒（409）" || bad "不填原因竟能关闭开关" "HTTP $C"
+EN=$(boolq "SELECT enabled FROM feature_switches WHERE code='billing.checkout'")
+[ "$EN" = "true" ] && ok "billing.checkout 仍处于启用状态" || bad "开关已被关闭" "$EN"
 
 REGISTRATION_TOUCHED=1
 C=$(code -X POST "$ADM/v1/switches/auth.registration" -H "$AH" -H 'Content-Type: application/json' \
   -d '{"enabled":false,"reason":"admin E2E temporary registration disable"}')
 [ "$C" = 200 ] || { bad "registration switch mutation failed" "HTTP $C"; exit 1; }
 EN=$(boolq "SELECT enabled FROM feature_switches WHERE code='auth.registration'")
-[ "$EN" = "false" ] && ok "非核心开关 auth.registration 已关闭" || bad "关闭失败" "$EN"
+[ "$EN" = "false" ] && ok "开关 auth.registration 已关闭" || bad "关闭失败" "$EN"
 
 restore_registration || { RESTORE_FAILED=1; bad "registration switch exact-state restore failed" ""; exit 1; }
 EN=$(db_scalar bool "SELECT enabled FROM feature_switches WHERE code='auth.registration'")
