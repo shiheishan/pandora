@@ -53,6 +53,10 @@ paths:
   - 测试用的两个接口（都只在假后端里，不进 Go）：
     - `GET /v1/__mock/proto?s=<proto-场景>&to=<门户地址>`：匿名可调，切到该场景（重建状态）后 302 跳到 `/#<to>`，不带 `to` 跳场景的起始页；`to` 只收 `/` 开头的门户地址。登录态在浏览器里，切场景不登出，测试员每个任务开一次这个地址就从头来
     - `POST /v1/__mock/expire-orders`：要登录，把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409：发起支付回 `order_lapsed`，同款再买回 `order_pending` 带 `fields.lapsed`
+    - `POST /v1/__mock/purchase-limits` `{max_subscriptions}`：要登录，设本人的每人份数上限（`PortalState.maxSubscriptions`，缺席或 0 = 不限，缺省不限；切场景复原）；测试里也可直接改 `portalState(userId).maxSubscriptions`
+  - 付款方式各带 `min_amount`（`catalog.ts` 的 `PAY_METHODS`：易支付两种与 QQ 钱包 ¥1、BTCPay ¥20）；`MIN_PAYMENT` 是其中最小的（Go `MinAcceptingAmount` 取最小，不是最大），报价的 `min_payment` 与建单按它判；发起支付按所选方式自己的 `min_amount` 判，低于回 409 `below_method_minimum`（原话同 Go）。`proto-s3` 里 ¥15 的基础版选 BTCPay 就能走到这条
+  - 每人份数上限照 Go `subscriptionCap` 计数（手里的份：生效的加过期但还能续费的，再加全部待付新购单），`quote.ts` 的 `subscriptionCapRefusal` 一份给三处用：落点新开那项带 `disabled_reason`，报价 `action: 'new'` 与新购建单回 409 `subscription_limit_reached`
+  - 后端会原样显示给门户用户的错误原话（同款再买、续费窗口关了、过期换链接等），假后端里的副本跟 Go 逐字同步
   - 发起支付：渠道是 `btcpay` 且这张单还没有它的意图时，第一次 `POST /v1/orders/{id}/pay` 回 409 `payment_in_progress`（模拟真后端 30 秒建单窗口），紧接着再发就建好（`checkout.ts` 的 `creatingByState`，按 PortalState 挂在 WeakMap 上）
   - 新增响应字段时照 Go 有没有 omitempty，决定 `legacy` 场景里它是否缺席
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
