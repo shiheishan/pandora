@@ -55,3 +55,4 @@ paths:
 - 边界与 `dgram/` 等自研包的区别见 `internal/nativewire/README.md`；生产调用方是 `kernel/` 里对应的适配器。
 - 共同的本仓库改动是用户表的同步发布（热更新用户与认证读不竞争）；hysteria2 / tuic 的 UDP 路径改动多，合上游时冲突主要在 `packet.go`、`service_packet.go`。
 - 改完要跑 `internal/nativewire/...`、`-tags interop` 的 AnyTLS 组（`TestAnyTLSNativeClientTCPAndUOTUDP`），hysteria2 / tuic 还要在 Linux 测试机上复测 UDP。
+- 这几个目录不进 lint 与死代码检查：`pdnd/.golangci.yml` 的 `exclusions.paths`、`pdnd/.deadcode-ignore` 与本文件头的 `paths:` 各有一份同样的清单，新 fork 一个目录三处一起加。

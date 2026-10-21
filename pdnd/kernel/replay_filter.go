@@ -85,17 +85,6 @@ func (f *replayFilter) shiftLocked() {
 	f.gens[0] = make(map[string]struct{})
 }
 
-// size 返回所有保留代里的条目数（测试与诊断用）。
-func (f *replayFilter) size() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	total := 0
-	for _, gen := range f.gens {
-		total += len(gen)
-	}
-	return total
-}
-
 // drainUntilPeerClose 在认证失败（含 salt / authID 重放、请求头没读全就撞上
 // 读请求头截止）后把连接一直读空，直到对端关闭，然后才由调用方关闭。
 //

@@ -32,3 +32,8 @@ paths:
 - `release/runtime-acceptance.sh` 的模拟面板是 `release/acceptancepanel`（Go 写的假 gRPC 面板：自签 CA、Enroll 与 Session），按 pdnd-node-panel 规则文件的通道契约独立实现，不 import 节点代码。
 - `main_test.go` 钉住缺省配置路径与 `release/pandora-native.service` 一致、身份路径缺省值，以及配置严格解析（已删除的字段报错）；改 systemd 单元或安装路径要一起改。
 - `build.sh` 写的 `manifest.json` 由 `verify.sh` 校验（`runtime` 必须是 `pandora-native`、Go 工具链与 go.mod 一致、各产物 SHA-256）。
+
+## lint 与死代码
+
+- golangci-lint 配置在 `pdnd/.golangci.yml`（手写，与面板同版本 v2.5.0）：bodyclose、errcheck、govet、ineffassign、staticcheck、unused；不开 gosec（协议实现里整型转换、TLS 选项是常态，噪音盖过信号），依赖边界仍由上面的 `go list -deps` 检查管。fork 来的目录整目录排除（pdnd-forks 规则文件）。CI 是 pandora-native.yml 的 pdnd-lint，只跑 linux 缺省 tag；改了带 build tag（interop、interop_external、interop_mihomo、race）的测试，本机加 `--build-tags=<tag>` 自查。
+- 死代码：pdnd-lint 在仓库根跑 `bash .github/scripts/deadcode.sh pdnd . ./cmd/... ./release/...`，从节点端、h3 探测、发布工具与模拟器的 main 出发，只剩测试在调的函数也算死代码。给测试用的构造函数、访问器写在同包 `_test.go`；别的包的测试要用，走生产 API（如 `NewNativeCoreWithLogger`、`upgrade.LoadKeyring`）。误报写进 `pdnd/.deadcode-ignore` 并注明理由。

@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// renderPlain 是不带后台模板、过滤参数与信息节点的 RenderRequest，测试里按格式逐个渲染时用。
+func renderPlain(f Format, nodes []Node, proxyUUID, ua string, opt Options) ([]byte, string, int) {
+	return RenderRequest(Request{Format: f, Nodes: nodes, ProxyUUID: proxyUUID, UA: ua, Options: opt})
+}
+
 // 节点缓存里的 []Node 由所有命中者共享：RenderRequest 不能改它（包括协议配置 map 里嵌套的
 // 切片与 map），并发渲染同一份也必须得到相同的输出。覆盖全部格式与带前处理的 RenderRequest。
 // 检查机的 race 跑这条。

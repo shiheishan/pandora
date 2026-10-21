@@ -271,15 +271,10 @@ func TestParseInstallCommand(t *testing.T) {
 	}
 }
 
-func TestNodesimEnvRoundtrip(t *testing.T) {
-	b := formatNodesimEnv("10.0.0.1:9443", "sha256:deadbeef")
-	panel, ca, err := parseNodesimEnv(b)
-	if err != nil || panel != "10.0.0.1:9443" || ca != "sha256:deadbeef" {
-		t.Fatalf("roundtrip: %q %q err=%v", panel, ca, err)
-	}
-	_, _, err = parseNodesimEnv([]byte("PANEL=x\n"))
-	if err == nil {
-		t.Fatal("missing CA")
+func TestFormatNodesimEnv(t *testing.T) {
+	got := string(formatNodesimEnv("10.0.0.1:9443", "sha256:deadbeef"))
+	if want := "PANEL=10.0.0.1:9443\nCA_SHA256=sha256:deadbeef\n"; got != want {
+		t.Fatalf("nodesim.env = %q, want %q", got, want)
 	}
 }
 

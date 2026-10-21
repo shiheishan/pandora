@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rand"
-	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -20,7 +19,6 @@ import (
 
 	M "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/route"
@@ -545,13 +543,6 @@ func deriveSSMasterKey(password string, length int) []byte {
 	return out[:length]
 }
 
-func deriveSSSubkey(master, salt []byte, length int) ([]byte, error) {
-	reader := hkdf.New(sha1.New, master, salt, []byte("ss-subkey"))
-	key := make([]byte, length)
-	_, err := io.ReadFull(reader, key)
-	return key, err
-}
-
 func makeSSNonce(value uint64) []byte {
 	nonce := make([]byte, 12)
 	for i := 0; i < len(nonce) && value != 0; i++ {
@@ -640,10 +631,6 @@ func (a *shadowsocksAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 }
 
 func (a *shadowsocksAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
-
-func (a *shadowsocksAdapter) addTraffic(user core.User, upload, download int64) {
-	a.sessions.add(user.ID, upload, download)
-}
 
 func (a *shadowsocksAdapter) Close() error {
 	a.mu.Lock()

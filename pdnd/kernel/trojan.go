@@ -3,7 +3,6 @@ package kernel
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
@@ -666,8 +665,4 @@ func (a *trojanAdapter) removeActive(conn net.Conn) {
 func trojanPasswordProof(password string) string {
 	sum := sha256.Sum224([]byte(password))
 	return strings.ToLower(hex.EncodeToString(sum[:]))
-}
-
-func trojanProofEqual(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

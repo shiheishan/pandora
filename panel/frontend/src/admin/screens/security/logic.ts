@@ -134,10 +134,6 @@ export const CATEGORY_LABEL: Record<AccessCategory, string> = {
 /** 订阅拉取的 result（00018）：ok / not_found / revoked / expired / rate_limited */
 const FETCH_RESULT: Record<string, string> = { ok: '成功', not_found: '链接无效', revoked: '已吊销', expired: '已过期', rate_limited: '限流' }
 
-export function isAccessError(item: Pick<AccessItem, 'outcome'>): boolean {
-  return item.outcome !== undefined && item.outcome !== 'success' && item.outcome !== 'ok'
-}
-
 export type AccessTone = 'ok' | 'warn' | 'bad' | 'none'
 
 /** 结果色：成功绿；订阅拉取被限流（rate_limited）黄；其余非成功红；没有结果 none */
@@ -155,19 +151,9 @@ export function accessOutcomeLabel(item: Pick<AccessItem, 'outcome'>): string {
   return OUTCOME_LABEL[o as Outcome] ?? FETCH_RESULT[o] ?? o
 }
 
-export function ipLabel(item: Pick<AccessItem, 'ip' | 'geo'>): string {
-  if (!item.ip) return '—'
-  return item.geo ? `${item.ip} · ${item.geo}` : item.ip
-}
-
 /** 行里的账号：邮箱 > 短用户 id > 匿名 */
 export function accessUser(item: Pick<AccessItem, 'user_email' | 'user_id'>): string {
   return item.user_email ?? (item.user_id ? `用户 ${item.user_id.slice(0, 8)}` : '匿名')
-}
-
-/** 行末的明细（设计稿「账号 · 明细」）：账号 · 动作；没有动作只给账号 */
-export function accessDetail(item: Pick<AccessItem, 'user_email' | 'user_id' | 'action'>): string {
-  return item.action ? `${accessUser(item)} · ${item.action}` : accessUser(item)
 }
 
 /** 行提示：账号、客户端与网络类型（契约：邮箱与 UA 放 tooltip） */

@@ -3,6 +3,7 @@ package kernel
 import (
 	"encoding/json"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -165,4 +166,15 @@ func TestDefaultAdapterRegistryCoversNativeCapabilityMatrix(t *testing.T) {
 	if !types["ss"] {
 		t.Fatal("default adapter registry is missing the stable shadowsocks alias ss")
 	}
+}
+
+// NativeProtocolNames returns the canonical protocol names in stable order.
+func NativeProtocolNames() []string {
+	capabilities := NativeCapabilities()
+	names := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		names = append(names, capability.Protocol)
+	}
+	sort.Strings(names)
+	return names
 }

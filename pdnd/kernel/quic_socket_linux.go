@@ -8,6 +8,10 @@ import (
 	"syscall"
 )
 
+// quicSocketBufferWant 是 quic-go 给监听 socket 要的 UDP 收发缓冲（sagernet/quic-go 的
+// protocol.DesiredReceiveBufferSize 与 DesiredSendBufferSize，各 8MB）。
+const quicSocketBufferWant = 8 << 20
+
 // warnSmallQUICSocketBuffers 在 hy2 / TUIC 入站起来后检查 quic-go 实际拿到的 UDP
 // 缓冲，太小就告警一次。
 //

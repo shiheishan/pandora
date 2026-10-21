@@ -166,25 +166,6 @@ func (b *saltBloom) testLocked(h1, h2 uint32) bool {
 	return false
 }
 
-// contains 只查不写（测试量误报与保留期用）。
-func (b *saltBloom) contains(key []byte) bool {
-	h1, h2 := b.hashes(key)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.testLocked(h1, h2)
-}
-
-// residentBytes 是链上全部位图的字节数（测试与诊断用）。
-func (b *saltBloom) residentBytes() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	total := 0
-	for _, block := range b.blocks {
-		total += block.bytes()
-	}
-	return total
-}
-
 // hashes 取两个 32 位哈希做双重哈希（Kirsch–Mitzenmacher）：第 i 个位置是
 // h1 + i·h2。种子按进程随机，外人无法挑选落在同一组位上的 salt。
 func (b *saltBloom) hashes(key []byte) (uint32, uint32) {
@@ -237,11 +218,4 @@ func (b *bloomBlock) add(h1, h2 uint32) {
 		b.bits[bit/64] |= 1 << (bit % 64)
 	}
 	b.count++
-}
-
-func (b *bloomBlock) bytes() int {
-	if b == nil {
-		return 0
-	}
-	return len(b.bits) * 8
 }

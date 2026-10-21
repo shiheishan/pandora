@@ -12,7 +12,6 @@ import { useApi } from '../../../shell/runtime'
 // 挂着未完结续费、叠加或换套餐单的那份不列；套餐关闭新购时回 409（原话显示）。
 // ---------------------------------------------------------------------------
 export const LANDING_MODES = ['new', 'renew', 'stack', 'change'] as const
-export type LandingMode = (typeof LANDING_MODES)[number]
 
 const landingSchema = z.object({ mode: z.enum(LANDING_MODES), subscription_id: z.string().optional() })
 export type Landing = z.output<typeof landingSchema>

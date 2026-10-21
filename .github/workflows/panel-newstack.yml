@@ -1,6 +1,6 @@
 name: Panel new stack
 
-# 面板的门禁：lint（含 depguard 分层）、生成的 lint 配置不漂移、真库与真 Redis 上的 go test，
+# 面板的门禁：lint（含 depguard 分层与 deadcode）、生成的 lint 配置不漂移、真库与真 Redis 上的 go test，
 # 以及新二进制上的 e2e 脚本、节点通道 e2e。
 
 on:
@@ -15,6 +15,7 @@ on:
       - "!panel/**/*.md"
       - "nodeapi/**"
       - ".github/workflows/panel-newstack.yml"
+      - ".github/scripts/deadcode.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
       # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
@@ -31,6 +32,7 @@ on:
       - "!panel/**/*.md"
       - "nodeapi/**"
       - ".github/workflows/panel-newstack.yml"
+      - ".github/scripts/deadcode.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
       # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
@@ -67,6 +69,10 @@ jobs:
           verify: false
           working-directory: panel
           args: ./internal/pkg/... ./internal/app/... ./internal/module/... ./cmd/pandora/... ./db/...
+      # 从 cmd/pandora 与 tools/ 下的各个 main 出发，只剩测试在调的函数也算死代码；误报写进 panel/.deadcode-ignore
+      - name: Dead code
+        working-directory: .
+        run: bash .github/scripts/deadcode.sh panel ./cmd/pandora ./tools/...
 
   test:
     name: Tests on PostgreSQL 18 and Redis

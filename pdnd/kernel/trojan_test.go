@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
@@ -267,4 +268,8 @@ func TestTrojanAdapterRealityXrayInterop(t *testing.T) {
 	if len(traffic) != 1 || traffic[0].ID != 904 || traffic[0].Upload == 0 || traffic[0].Download == 0 {
 		t.Fatalf("traffic=%+v", traffic)
 	}
+}
+
+func trojanProofEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

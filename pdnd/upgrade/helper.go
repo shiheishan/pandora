@@ -408,7 +408,7 @@ func (h *Helper) rollbackWith(ctx context.Context, state *os.Root, rec workRecor
 	if cur != rec.PrevSHA256 {
 		prevSum, err := sha256File(h.prevPath())
 		if err != nil || prevSum != rec.PrevSHA256 {
-			d := detail
+			var d string
 			if err != nil {
 				d = fmt.Sprintf(".prev 不可用：%v（原因：%s）", err, detail)
 			} else {

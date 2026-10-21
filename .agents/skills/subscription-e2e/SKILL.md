@@ -100,7 +100,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
   - 修前 naive「通」就是这个原因：面板根本没下发 insecure。上线前仍要上真节点验。
 - **clash、premium、uri 三列只是静态核对**：Clash 订阅的真连看 mihomo E2E 列（只测 `.clash`，即 Meta 格式，mihomo 客户端按 UA 拿到的就是它；`.clash-premium` 是 Premium 内核的子集，Premium 内核闭源停更，这里只做静态核对）。
   - mihomo 对空的 `proxies` 组会整份拒载，`yamlcheck` 查这条。
-- **overlay 依赖包内的名字**：`node/protocol` 的 `parityFixtures`、`parityRealityPri/Pub`、`Validate`、`KernelConfig`、`CanonicalType`、`schemaVersion`；`subscription/render` 的 `Render`、`Node`、`Options`、`fixtureUUID`、`fixtureHost`；`node/service` 的 `buildNodeConfigDoc`。这些改名后 overlay 要同步改，否则第 1 步编译失败。overlay 的路径必须是绝对路径；测试读环境变量和文件，所以一律 `-count=1`。
+- **overlay 依赖包内的名字**：`node/protocol` 的 `parityFixtures`、`parityRealityPri/Pub`、`Validate`、`KernelConfig`、`CanonicalType`、`schemaVersion`；`subscription/render` 的 `RenderRequest`、`Request`、`Node`、`fixtureUUID`、`fixtureHost`；`node/service` 的 `buildNodeConfigDoc`。这些改名后 overlay 要同步改，否则第 1 步编译失败。overlay 的路径必须是绝对路径；测试读环境变量和文件，所以一律 `-count=1`。
 - **夹具 id 不能叫 ALL 或 EMPTY，也不能重复**。端口加 20000 后不能超过 65535。用例串行跑，上一个用例是异步关闭的，所以端口别复用。
 - **夹具里不写密钥**：REALITY 用占位符 `@REALITY_PRIVATE@` / `@REALITY_PUBLIC@`，注入的测试把它换成 `node/protocol` 包里那对测试专用的虚构密钥。要加新密钥，用 `kp` 生成，再按完整值登记进 `.gitleaks.toml` 的放行清单。
 - **skip 本身不算失败**，但每个 skip 都要在 `render/matrix_test.go` 有原因。渲染矩阵测试是事实清单，这张矩阵是它的实连旁证。

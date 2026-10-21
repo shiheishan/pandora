@@ -46,11 +46,6 @@ func CanonicalType(nodeType string) string {
 	return strings.ToLower(strings.TrimSpace(nodeType))
 }
 
-// StableTypes 返回可下发的稳定协议（与 pdnd kernel/capabilities.go、Schemas 三份名单相同）。
-func StableTypes() []string {
-	return append([]string(nil), stableTypes[:]...)
-}
-
 // Schemas 返回全部稳定协议的 schema，按 node_type 排序。
 func Schemas() []Schema {
 	return withForms(stableSchemas())

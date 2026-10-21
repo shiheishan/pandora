@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { THEME_STORAGE_KEY, currentTheme, parseTheme, setTheme, subscribeTheme, toggleTheme } from './theme'
+import { THEME_STORAGE_KEY, currentTheme, parseTheme, setTheme, subscribeTheme } from './theme'
 
 let attrs: Map<string, string>
 let stored: Map<string, string>
@@ -40,13 +40,6 @@ describe('theme', () => {
     expect(attrs.get('data-theme')).toBe('dark')
     expect(stored.get(THEME_STORAGE_KEY)).toBe('dark')
     expect(currentTheme()).toBe('dark')
-  })
-
-  it('toggleTheme flips between the two themes', () => {
-    toggleTheme()
-    expect(currentTheme()).toBe('dark')
-    toggleTheme()
-    expect(currentTheme()).toBe('light')
   })
 
   it('still switches when storage is unavailable', () => {

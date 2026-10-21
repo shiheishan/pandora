@@ -28,7 +28,7 @@ paths:
   - 自画页头：`ownHead: true`（只有仪表盘）——外框不画标题行，页面自己画问候语与「?」（可直接用 `admin/PageHelp.tsx` 的 `PageHelpTip` + `pageHelp('dash', null)`）。
 - `admin/modules.ts` 的 `PENDING_TABS` 是「还没按新设计做出来」的页签，外壳给它们显示空状态；页面接好后从集合里删掉那一项。套餐模块没有页签，详情路径是 `/plans/<id>`（详情整页的页签接在后面：`/plans/<id>/<prices|pools|versions>`）。
 - 颜色：后台没有品牌色。`--brand` / `--accent` 在后台都是墨色（主按钮、选中、批量条），蓝色是 `--info`（链接、聚焦环、「进行中」）；成功 / 警告 / 危险用 `--ok` / `--warn` / `--danger` 及其 `-soft` / `-line`。新代码不要写 `--brand*`，要墨色写 `--text` 或 `--accent`，要蓝写 `--info`。层次：页面 `--bg`、卡片 `--surface`、悬停 `--surface-2`、选中 `--surface-3`；线 `--border` / `--border-strong` / `--border-hover`；圆角 `--radius-tag` 4 / `-sm` 7 / `-md` 10 / `-lg` 12 / `-pill`。
-- kit 组件（后台专用，`admin/kit/index.ts`，页面 `import { … } from '../../kit'`；样稿类名写在各组件注释里）：
+- kit 组件（后台专用，`admin/kit/index.ts`，页面 `import { … } from '../../kit'`；样稿类名写在各组件注释里；index 只导出页面用到的，props 类型要用时再加，否则 knip 报未用导出）：
   - `DetailPage<T>({ back: {href, label}, title, lead?, meta?, actions?, tabs?: {label, items: {value, label, badge?}[], value, onChange}, side?, children })`：详情页骨架。返回链接 + 标题行（`lead` 是标题前的头像 / 地区码，`meta` 是标题下一行的状态、ID、复制按钮），右侧 `actions`；有 `side` 时两栏（右栏 300 宽、贴顶），窄于 960 变单栏
   - `SideFacts({ label?, children })` + `SideFact({ label, children, action? })`：详情右栏的条目（dl）
   - `KvList({ boxed?, labelWidth = 120, children })` + `KvRow({ label, children, action?, muted? })`：左标签右值的键值行；`boxed` 装进带框盒子
@@ -38,7 +38,7 @@ paths:
   - `Callout({ children, action? })`：灰底提示条；`DangerRow({ title, description?, actionLabel, onAction, busy?, disabled? })`：红框危险操作行；`CopyButton({ value, label })`：复制图标按钮（成功 toast「已复制」）
   - `SettingRow({ icon?, title, description?, checked, onChange, disabled?, tone?, children? })`：（图标 +）说明 + 开关的设置行，不传 `icon` 就不画图标列；`children` 是打开后展开的子设置
   - `RadioCards<T>({ label, options: {value, title, description?, disabled?}[], value, onChange, columns?: 2|3 })`：单选卡片（radiogroup，方向键跳过禁用项）
-  - `TagInput({ label, values, onChange, max = 100, placeholder?, normalize?, validate?, hint?, disabled? })`：标签输入（回车、逗号、粘贴多行拆分，去重、上限）；纯函数 `splitTagInput` / `mergeTags` 也导出
+  - `TagInput({ label, values, onChange, max = 100, placeholder?, normalize?, validate?, hint?, disabled? })`：标签输入（回车、逗号、粘贴多行拆分，去重、上限）；纯函数 `splitTagInput` / `mergeTags` 在 `kit/tag-input.ts`，不经 `kit/index.ts` 导出（只有它自己和测试用）
   - `RowList({ label?, children })` + `Row({ lead?, title, meta?, extra?, value?, actions?, onClick?, align? })`：表格之外的逐行列表；给 `onClick` 整行可点（键盘 Enter / 空格），行里就不要再放按钮
   - `BulkBar({ count, onClear, children })` + `BulkAction({ onClick, disabled?, busy?, children })`：勾选后出现的墨色批量条，`count` 为 0 不渲染
   - `SaveBar({ dirty, onSave, onReset, busy?, message?, hint?, saveLabel?, resetLabel? })`：有未保存改动时吸底的保存条

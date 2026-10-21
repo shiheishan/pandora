@@ -72,7 +72,9 @@ function memoryTokens(): TokenStore {
     get: () => token,
     set: (t) => (token = t),
     clear: () => (token = null),
+    hasSessionHint: () => token !== null,
     subscribe: () => () => {},
+    onPeerSignIn: () => () => {},
   }
 }
 
@@ -146,8 +148,6 @@ export function pageClient(app: App, opts: { token?: string; requestReauth?: () 
     },
   })
 }
-
-export const loginToken = (app: App): string => tokens[app]
 
 /** 不经 schema 取一个列表，只用来拿种子里没有的 id */
 export async function rawGet(base: string, path: string): Promise<unknown> {

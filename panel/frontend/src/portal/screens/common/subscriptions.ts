@@ -8,10 +8,7 @@ import { pickTrafficQuota, resetAtOf, trafficSummary, type TrafficSummary } from
 // GET v1/me/subscriptions 的 schema 与查询在外框 queries.ts（外框徽标与页面同键共用），
 // 这里转出，页面照旧从 common 取
 // ---------------------------------------------------------------------------
-export { isLive, pickPrimary, subscriptionSchema, useSubscriptions, type Subscription } from '../../queries'
-
-/** 能否续费：取服务端的 renewable（生效状态且套餐允许续费，与续费下单同一口径）。 */
-export const canRenew = (s: Subscription) => s.renewable
+export { isLive, subscriptionSchema, useSubscriptions, type Subscription } from '../../queries'
 
 // ---------------------------------------------------------------------------
 // GET v1/me/subscription-links：active 凭据，含过期 30 天内订阅的（expired 为真、只读），按 subscription_id 配对

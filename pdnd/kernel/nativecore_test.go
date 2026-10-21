@@ -248,3 +248,8 @@ func (a *nativeCoreTestAdapter) UpsertUsers(users []core.User) error {
 func (*nativeCoreTestAdapter) DelUsers([]string) error                      { return nil }
 func (*nativeCoreTestAdapter) SnapshotTraffic() ([]core.UserTraffic, error) { return nil, nil }
 func (*nativeCoreTestAdapter) OnlineIPs() map[int64][]string                { return nil }
+
+// NewNativeCore 用 slog.Default() 记连接失败，给测试与不关心日志的调用方。
+func NewNativeCore(registry *AdapterRegistry) *NativeCore {
+	return NewNativeCoreWithLogger(registry, nil)
+}

@@ -296,3 +296,29 @@ func BenchmarkSSSaltReplay(b *testing.B) {
 		}
 	})
 }
+
+// contains 只查不写（测试量误报与保留期用）。
+func (b *saltBloom) contains(key []byte) bool {
+	h1, h2 := b.hashes(key)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.testLocked(h1, h2)
+}
+
+// residentBytes 是链上全部位图的字节数（测试与诊断用）。
+func (b *saltBloom) residentBytes() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	total := 0
+	for _, block := range b.blocks {
+		total += block.bytes()
+	}
+	return total
+}
+
+func (b *bloomBlock) bytes() int {
+	if b == nil {
+		return 0
+	}
+	return len(b.bits) * 8
+}

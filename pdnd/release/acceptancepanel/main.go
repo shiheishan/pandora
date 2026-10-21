@@ -381,17 +381,6 @@ func (p *fakePanel) record(change func(*State)) {
 	p.saveLocked()
 }
 
-// snapshot 返回状态的一份拷贝（测试用）。
-func (p *fakePanel) snapshot() State {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	s := p.state
-	s.ConfigPhases = append([]string(nil), s.ConfigPhases...)
-	s.LastRuntime = append([]string(nil), s.LastRuntime...)
-	s.UpgradeReports = append([]string(nil), s.UpgradeReports...)
-	return s
-}
-
 // saveLocked 原子写状态文件（写临时文件再 rename）；statePath 为空不写。
 func (p *fakePanel) saveLocked() {
 	if p.statePath == "" {

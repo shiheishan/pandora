@@ -25,4 +25,5 @@ paths:
   - 装依赖只走 `npm ci`（`panel/Makefile` 的 `frontend-check` / `frontend-embed`）
 - typescript 停在 6.0.x：typescript-eslint 8 的 peer 要求是 `<6.1.0`（见 `package-lock.json`）
 - 只在开发期存在的东西不能进产物：showcase 的 mode 在 build 时会被拒绝，`dev/` 假后端只在 serve 时挂上。守卫：`tests/theme-boot.test.ts`
+- 死代码由 knip 钉住（`npm run lint` = eslint + knip，配置 `knip.jsonc`）：没人用的文件、导出、类型、依赖都报，只给测试用的不算没人用。新加入口（新的 vite mode、node 直接跑的脚本、被 spawn 的文件）要加进 `entry`，否则它和它引的东西全报未使用；误报写进忽略项并注明理由
 - 验证：`make frontend-check` 跑 lint、typecheck、vitest 和两次构建；`make frontend-embed` 把产物同步进 `panel/web/{admin,portal}`，最后由 `panel/web/app_test.go` 对真实产物裁决

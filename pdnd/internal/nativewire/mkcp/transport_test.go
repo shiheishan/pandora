@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -384,3 +385,95 @@ func TestPacketWriterClearsBufferOnSendError(t *testing.T) {
 		t.Errorf("第二个包 %d 字节，期望 %d——失败的那批没被清掉", sizes[1], sizes[0]+1)
 	}
 }
+
+//------------------------------------------------------------------------------
+// 测试用的监听与拨号：生产只用 NewListener（kernel/mkcp_transport.go 自己开 socket、
+// 先调缓冲再套掩码）；客户端侧只给这里和 Xray 互通测试（-tags interop）当对端
+//------------------------------------------------------------------------------
+
+// Listen 在给定地址上开始接受 mKCP 连接。
+func Listen(network, address string, config *Config) (*Listener, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+	pc, err := net.ListenPacket(network, address)
+	if err != nil {
+		return nil, err
+	}
+	tuneSocketBuffer(pc, config.SocketBuffer)
+	return NewListener(pc, config), nil
+}
+
+// Dial 向远端发起一条 mKCP 连接。
+func Dial(network, address string, config *Config) (*Connection, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+	udpConn, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	tuneSocketBuffer(udpConn, config.SocketBuffer)
+	return NewClientConn(udpConn, config), nil
+}
+
+// NewClientConn 在一个已连接的 UDP socket 上跑客户端侧 mKCP。
+func NewClientConn(udpConn net.Conn, config *Config) *Connection {
+	if config == nil {
+		config = DefaultConfig()
+	}
+	conv := uint16(globalConv.Add(1))
+	writer := newPacketWriter(config.MTU, func(b []byte) error {
+		_, err := udpConn.Write(b)
+		return err
+	})
+	conn := NewConnection(ConnMetadata{
+		LocalAddr:    udpConn.LocalAddr(),
+		RemoteAddr:   udpConn.RemoteAddr(),
+		Conversation: conv,
+	}, writer, udpConn, config)
+
+	go func() {
+		buf := make([]byte, config.MTU+512)
+		for {
+			n, err := udpConn.Read(buf)
+			if n > 0 {
+				if segments := ReadSegments(buf[:n]); len(segments) > 0 {
+					conn.Input(segments)
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return conn
+}
+
+// tuneSocketBuffer 放大 UDP socket 的收发缓冲区。
+//
+// 失败不算错误：很多系统会把请求值静默截到 net.core.rmem_max，容器里
+// 甚至可能完全改不动。缓冲区小只是慢，不是不能用。
+func tuneSocketBuffer(conn any, size int) {
+	if size <= 0 {
+		return
+	}
+	type bufferedConn interface {
+		SetReadBuffer(int) error
+		SetWriteBuffer(int) error
+	}
+	if c, ok := conn.(bufferedConn); ok {
+		_ = c.SetReadBuffer(size)
+		_ = c.SetWriteBuffer(size)
+	}
+}
+
+// globalConv 给本进程发起的每条连接分配会话号。
+//
+// 从随机值起步而不是从 0：固定起点会让每次重启后的头几条连接用同样的
+// 号，对着同一个服务端时容易撞上它那边还没回收干净的旧会话。
+var globalConv = func() *atomic.Uint32 {
+	var v atomic.Uint32
+	v.Store(uint32(time.Now().UnixNano()) & 0xFFFF)
+	return &v
+}()

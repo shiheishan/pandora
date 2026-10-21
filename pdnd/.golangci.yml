@@ -1,0 +1,63 @@
+# pdnd 的 golangci-lint 配置（手写；面板的 panel/.golangci.yml 由 depguardgen 生成，规则不通用）。
+# 跑法：在 pdnd/ 下 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...
+version: "2"
+
+run:
+  timeout: 10m
+
+linters:
+  default: none
+  # 与面板同一套基础 linter。不开 gosec：内核是代理协议实现，整型转换、TLS 选项、
+  # 端口与地址拼接是常态，开了是几百条要逐条豁免的 G115 / G402，噪音盖过信号。
+  # depguard 也不开：依赖边界（不链 sing-box）由 pandora-native.yml 的 go list -deps 检查管。
+  enable:
+    - bodyclose
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      checks:
+        # 社区缺省（golangci-lint v2 的 staticcheck 缺省值）
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # 德摩根改写：!(a && b) 改成 !a || !b 常常更难读（如「不是 Windows 上的权限错误」），保留原写法
+        - -QF1001
+  exclusions:
+    # 社区通用预设：不强制检查写终端、Close、Unsetenv 一类的错误
+    presets:
+      - std-error-handling
+    # fork 来的第三方代码保持上游原样，便于对照、合上游（.claude/rules/pdnd-forks.md）
+    paths:
+      - internal/reality
+      - internal/realityquic
+      - internal/nativewire/shadowtls
+      - internal/nativewire/anytls
+      - internal/nativewire/hysteria2
+      - internal/nativewire/tuic
+    rules:
+      # golang.org/x/net/http2 与 h2c 在新版 x/net 里标了弃用（让位给 net/http 的 Protocols）。
+      # 内核的 gRPC / XHTTP / naive 入站与探测回落、测试里的客户端都还用它；换成 net/http 会改
+      # HTTP/2 的握手与设置帧，牵涉防探测的指纹，单独做、单独验证（防探测回落、interop），不在 lint 里顺手改
+      - linters:
+          - staticcheck
+        text: 'SA1019: .*(golang\.org/x/net/http2|\[http\.(Transport|Server)[].]|http2\.ServeConnOpts)'
+      # 测试里的 xhttp / gRPC / naive 响应体是长连接流，由对端或辅助函数关，bodyclose 认不出这类写法
+      - path: _test\.go
+        linters:
+          - bodyclose
+      # HTTP CONNECT 成功后响应体就是隧道本身：连接交给 bufferedConn 接管，失败路径直接关连接
+      - path: outbound/relay_socks\.go
+        linters:
+          - bodyclose
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

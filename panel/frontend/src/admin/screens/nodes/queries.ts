@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serversResponse } from './schemas'
+import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeDetailResponse, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serversResponse } from './schemas'
 
 export { endsIntent, useFailure, useIntentKey } from '../../actions'
 
@@ -94,15 +94,6 @@ export function useServers() {
     queryFn: ({ signal }) => api.get('v1/servers', serversResponse, { signal }).then((r) => r.servers),
     meta: { topics: ['nodes.changed'] },
     staleTime: 30_000,
-  })
-}
-
-export function useServerNodes(id: string) {
-  const api = useApi()
-  return useQuery({
-    queryKey: [...NK, 'server-nodes', id],
-    queryFn: ({ signal }) => api.get(`v1/servers/${id}/nodes`, serverNodesResponse, { signal }).then((r) => r.nodes),
-    meta: { topics: ['nodes.changed'] },
   })
 }
 

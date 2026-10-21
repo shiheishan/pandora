@@ -122,7 +122,7 @@ func realityNode() Node {
 }
 
 func TestRealityURICarriesAllParams(t *testing.T) {
-	body, _, n := Render(FormatURI, []Node{realityNode()}, "u-1", "", Options{})
+	body, _, n := renderPlain(FormatURI, []Node{realityNode()}, "u-1", "", Options{})
 	if n != 1 {
 		t.Fatalf("应当渲染出 1 条，得到 %d", n)
 	}
@@ -145,7 +145,7 @@ func TestRealityURICarriesAllParams(t *testing.T) {
 }
 
 func TestRealityClashCarriesAllParams(t *testing.T) {
-	body, _, _ := Render(FormatClash, []Node{realityNode()}, "u-1", "", Options{})
+	body, _, _ := renderPlain(FormatClash, []Node{realityNode()}, "u-1", "", Options{})
 	y := string(body)
 	// 字段名按 mihomo 的 vless adapter：带连字符。
 	// 写成下划线不会报错，只会被静默忽略。
@@ -167,7 +167,7 @@ func TestRealityClashCarriesAllParams(t *testing.T) {
 }
 
 func TestRealitySingboxCarriesAllParams(t *testing.T) {
-	body, _, _ := Render(FormatSingbox, []Node{realityNode()}, "u-1", "", Options{})
+	body, _, _ := renderPlain(FormatSingbox, []Node{realityNode()}, "u-1", "", Options{})
 	var cfg struct {
 		Outbounds []map[string]any `json:"outbounds"`
 	}
@@ -214,16 +214,16 @@ func TestRealityLeavesPlainNodesAlone(t *testing.T) {
 	plain := Node{Name: "plain", Type: "vless", Host: "203.0.113.20", Port: 443,
 		Config: map[string]any{"network": "tcp", "security": "none"}}
 
-	body, _, _ := Render(FormatClash, []Node{plain}, "u-1", "", Options{})
+	body, _, _ := renderPlain(FormatClash, []Node{plain}, "u-1", "", Options{})
 	if strings.Contains(string(body), "reality") {
 		t.Errorf("普通节点被加了 reality 字段:\n%s", body)
 	}
-	body, _, _ = Render(FormatSingbox, []Node{plain}, "u-1", "", Options{})
+	body, _, _ = renderPlain(FormatSingbox, []Node{plain}, "u-1", "", Options{})
 	if strings.Contains(string(body), "reality") {
 		t.Errorf("普通节点被加了 reality 字段:\n%s", body)
 	}
 	raw, _ := base64.StdEncoding.DecodeString(func() string {
-		b, _, _ := Render(FormatURI, []Node{plain}, "u-1", "", Options{})
+		b, _, _ := renderPlain(FormatURI, []Node{plain}, "u-1", "", Options{})
 		return string(b)
 	}())
 	if strings.Contains(string(raw), "security=reality") {
@@ -238,11 +238,11 @@ func TestRealitySingleStringServerNames(t *testing.T) {
 	n.Config["server_names"] = "www.example.com"
 	n.Config["short_ids"] = "0a1b2c3d"
 
-	body, _, _ := Render(FormatClash, []Node{n}, "u-1", "", Options{})
+	body, _, _ := renderPlain(FormatClash, []Node{n}, "u-1", "", Options{})
 	if !strings.Contains(string(body), "www.example.com") {
 		t.Errorf("Clash 丢了 SNI:\n%s", body)
 	}
-	body, _, _ = Render(FormatSingbox, []Node{n}, "u-1", "", Options{})
+	body, _, _ = renderPlain(FormatSingbox, []Node{n}, "u-1", "", Options{})
 	if !strings.Contains(string(body), "www.example.com") {
 		t.Errorf("sing-box 丢了 SNI:\n%s", body)
 	}

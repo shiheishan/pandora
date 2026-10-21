@@ -140,7 +140,7 @@ func runTUICLoadClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(nil)
+	defer func() { _ = client.CloseWithError(nil) }()
 	tunnel, err := client.ListenPacket(ctx)
 	if err != nil {
 		t.Fatal(err)

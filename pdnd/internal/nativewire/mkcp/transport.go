@@ -4,8 +4,6 @@ import (
 	"errors"
 	"net"
 	"sync"
-	"sync/atomic"
-	"time"
 )
 
 // 监听器与拨号器：把 Connection 接到真的 UDP socket 上。
@@ -111,19 +109,6 @@ type Listener struct {
 
 	accepted chan *Connection
 	done     chan struct{}
-}
-
-// Listen 在给定地址上开始接受 mKCP 连接。
-func Listen(network, address string, config *Config) (*Listener, error) {
-	if config == nil {
-		config = DefaultConfig()
-	}
-	pc, err := net.ListenPacket(network, address)
-	if err != nil {
-		return nil, err
-	}
-	tuneSocketBuffer(pc, config.SocketBuffer)
-	return NewListener(pc, config), nil
 }
 
 // NewListener 在一个已有的 PacketConn 上接受连接。分开一层是为了让上面
@@ -277,64 +262,8 @@ type closerFunc func() error
 func (f closerFunc) Close() error { return f() }
 
 //------------------------------------------------------------------------------
-// 拨号器
+// 解包
 //------------------------------------------------------------------------------
-
-// globalConv 给本进程发起的每条连接分配会话号。
-//
-// 从随机值起步而不是从 0：固定起点会让每次重启后的头几条连接用同样的
-// 号，对着同一个服务端时容易撞上它那边还没回收干净的旧会话。
-var globalConv = func() *atomic.Uint32 {
-	var v atomic.Uint32
-	v.Store(uint32(time.Now().UnixNano()) & 0xFFFF)
-	return &v
-}()
-
-// Dial 向远端发起一条 mKCP 连接。
-func Dial(network, address string, config *Config) (*Connection, error) {
-	if config == nil {
-		config = DefaultConfig()
-	}
-	udpConn, err := net.Dial(network, address)
-	if err != nil {
-		return nil, err
-	}
-	tuneSocketBuffer(udpConn, config.SocketBuffer)
-	return NewClientConn(udpConn, config), nil
-}
-
-// NewClientConn 在一个已连接的 UDP socket 上跑客户端侧 mKCP。
-func NewClientConn(udpConn net.Conn, config *Config) *Connection {
-	if config == nil {
-		config = DefaultConfig()
-	}
-	conv := uint16(globalConv.Add(1))
-	writer := newPacketWriter(config.MTU, func(b []byte) error {
-		_, err := udpConn.Write(b)
-		return err
-	})
-	conn := NewConnection(ConnMetadata{
-		LocalAddr:    udpConn.LocalAddr(),
-		RemoteAddr:   udpConn.RemoteAddr(),
-		Conversation: conv,
-	}, writer, udpConn, config)
-
-	go func() {
-		buf := make([]byte, config.MTU+512)
-		for {
-			n, err := udpConn.Read(buf)
-			if n > 0 {
-				if segments := ReadSegments(buf[:n]); len(segments) > 0 {
-					conn.Input(segments)
-				}
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return conn
-}
 
 // ReadSegments 把一个 UDP 包拆成它承载的所有段。
 //
@@ -352,22 +281,4 @@ func ReadSegments(payload []byte) []Segment {
 		payload = rest
 	}
 	return segments
-}
-
-// tuneSocketBuffer 放大 UDP socket 的收发缓冲区。
-//
-// 失败不算错误：很多系统会把请求值静默截到 net.core.rmem_max，容器里
-// 甚至可能完全改不动。缓冲区小只是慢，不是不能用。
-func tuneSocketBuffer(conn any, size int) {
-	if size <= 0 {
-		return
-	}
-	type bufferedConn interface {
-		SetReadBuffer(int) error
-		SetWriteBuffer(int) error
-	}
-	if c, ok := conn.(bufferedConn); ok {
-		_ = c.SetReadBuffer(size)
-		_ = c.SetWriteBuffer(size)
-	}
 }

@@ -1,7 +1,6 @@
 package kernel
 
 import (
-	"sort"
 	"strings"
 )
 
@@ -55,17 +54,6 @@ func NativeCapabilities() []Capability {
 		capabilities[i].Boundaries = append([]string(nil), capabilities[i].Boundaries...)
 	}
 	return capabilities
-}
-
-// NativeProtocolNames returns the canonical protocol names in stable order.
-func NativeProtocolNames() []string {
-	capabilities := NativeCapabilities()
-	names := make([]string, 0, len(capabilities))
-	for _, capability := range capabilities {
-		names = append(names, capability.Protocol)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // NativeCapabilityFor returns the capability for a protocol, accepting the

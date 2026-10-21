@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
-import { classifyFailure, createIntentKey, handleFailure } from './actions'
+import { classifyFailure, handleFailure } from './actions'
+import { createIntentKey } from '../core/intent'
 import { passwordStrength } from './ChangePasswordDialog'
 import { hasOwnHead, isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
 import { PAGE_HELP, pageHelp } from './page-help'

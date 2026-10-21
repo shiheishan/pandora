@@ -18,7 +18,7 @@ func TestSS2022KeyLenParityProtocolRender(t *testing.T) {
 	rendered := func(method string, keyLen int) bool {
 		cfg := map[string]any{"method": method, "password": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x11}, keyLen))}
 		nodes := []render.Node{{Name: "ss2022", Type: "shadowsocks", Host: "node.example.com", Port: 8390, Config: cfg}}
-		_, _, n := render.Render(render.FormatSingbox, nodes, proxyUUID, "", render.Options{})
+		_, _, n := render.RenderRequest(render.Request{Format: render.FormatSingbox, Nodes: nodes, ProxyUUID: proxyUUID})
 		return n == 1
 	}
 	open := 0

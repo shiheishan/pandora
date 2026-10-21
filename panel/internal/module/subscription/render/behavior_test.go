@@ -13,7 +13,7 @@ func TestClashWithoutNodesStaysLoadable(t *testing.T) {
 	onlySkipped := []Node{{Name: "juicity", Type: "juicity", Host: fixtureHost, Port: 1, Config: map[string]any{"cert_path": "/c", "key_path": "/k"}}}
 	for _, nodes := range [][]Node{nil, onlySkipped} {
 		for _, f := range []Format{FormatClash, FormatClashPremium} {
-			body, _, count := Render(f, nodes, fixtureUUID, "", Options{})
+			body, _, count := renderPlain(f, nodes, fixtureUUID, "", Options{})
 			text := string(body)
 			if count != 0 || !strings.Contains(text, "proxies: []") ||
 				!strings.Contains(text, "{name: 节点选择, type: select, proxies: [DIRECT]}") ||
@@ -27,7 +27,7 @@ func TestClashWithoutNodesStaysLoadable(t *testing.T) {
 // Premium 内核只认 ss / vmess / trojan / socks5 / http 与 ws / grpc：
 // 整份订阅里不能出现任何它不认识的类型或字段。
 func TestClashPremiumOnlyGetsProxiesItUnderstands(t *testing.T) {
-	body, _, count := Render(FormatClashPremium, loadGroup(t, groupForm), fixtureUUID, "", Options{})
+	body, _, count := renderPlain(FormatClashPremium, loadGroup(t, groupForm), fixtureUUID, "", Options{})
 	text := string(body)
 	if count == 0 {
 		t.Fatal("premium got no nodes at all")
@@ -40,7 +40,7 @@ func TestClashPremiumOnlyGetsProxiesItUnderstands(t *testing.T) {
 			t.Errorf("premium config contains %s:\n%s", banned, text)
 		}
 	}
-	meta, _, metaCount := Render(FormatClash, loadGroup(t, groupForm), fixtureUUID, "", Options{})
+	meta, _, metaCount := renderPlain(FormatClash, loadGroup(t, groupForm), fixtureUUID, "", Options{})
 	if metaCount <= count || !strings.Contains(string(meta), `type: "vless"`) {
 		t.Fatalf("meta should get more nodes than premium (%d vs %d)", metaCount, count)
 	}
@@ -51,7 +51,7 @@ func TestClashPremiumOnlyGetsProxiesItUnderstands(t *testing.T) {
 func TestSingboxShadowTLSEmitsBothOutbounds(t *testing.T) {
 	// nodes.json 的 extra 组里有一个名字正好撞上外层 tag 的节点（「shadowtls · shadowtls」），tag 仍须唯一
 	nodes := loadNodes(t)
-	body, _, _ := Render(FormatSingbox, nodes, fixtureUUID, "", Options{})
+	body, _, _ := renderPlain(FormatSingbox, nodes, fixtureUUID, "", Options{})
 	var cfg struct {
 		Outbounds []map[string]any `json:"outbounds"`
 	}
@@ -101,7 +101,7 @@ func TestSingboxShadowTLSEmitsBothOutbounds(t *testing.T) {
 func TestAnyTLSWithoutCertificateIsSkipped(t *testing.T) {
 	node := Node{Name: "plain-anytls", Type: "anytls", Host: fixtureHost, Port: 1, Config: map[string]any{}}
 	for _, f := range []Format{FormatClash, FormatSingbox, FormatURI} {
-		if _, _, count := Render(f, []Node{node}, fixtureUUID, "", Options{}); count != 0 {
+		if _, _, count := renderPlain(f, []Node{node}, fixtureUUID, "", Options{}); count != 0 {
 			t.Errorf("%s rendered a plaintext AnyTLS node that no client can reach", f)
 		}
 	}
@@ -150,17 +150,17 @@ func TestNumericConfigTypesRenderTheSame(t *testing.T) {
 		}}}
 	}
 	for _, f := range []Format{FormatClash, FormatClashPremium, FormatSingbox, FormatURI} {
-		fromJSON, _, n := Render(f, build(float64(1), float64(0)), fixtureUUID, "", Options{})
-		fromInt, _, _ := Render(f, build(1, 0), fixtureUUID, "", Options{})
-		fromBool, _, _ := Render(f, build(true, false), fixtureUUID, "", Options{})
+		fromJSON, _, n := renderPlain(f, build(float64(1), float64(0)), fixtureUUID, "", Options{})
+		fromInt, _, _ := renderPlain(f, build(1, 0), fixtureUUID, "", Options{})
+		fromBool, _, _ := renderPlain(f, build(true, false), fixtureUUID, "", Options{})
 		if n == 0 {
 			t.Fatalf("%s rendered no nodes", f)
 		}
 		if !bytes.Equal(fromJSON, fromInt) || !bytes.Equal(fromJSON, fromBool) {
 			t.Errorf("%s: float64 / int / bool configs render differently\nfloat64: %s\nint: %s\nbool: %s", f, fromJSON, fromInt, fromBool)
 		}
-		anyList, _, _ := Render(f, reality([]any{"a.example.com", "b.example.com"}, []any{"01ab", "02cd"}), fixtureUUID, "", Options{})
-		strList, _, _ := Render(f, reality([]string{"a.example.com", "b.example.com"}, []string{"01ab", "02cd"}), fixtureUUID, "", Options{})
+		anyList, _, _ := renderPlain(f, reality([]any{"a.example.com", "b.example.com"}, []any{"01ab", "02cd"}), fixtureUUID, "", Options{})
+		strList, _, _ := renderPlain(f, reality([]string{"a.example.com", "b.example.com"}, []string{"01ab", "02cd"}), fixtureUUID, "", Options{})
 		if !bytes.Equal(anyList, strList) {
 			t.Errorf("%s: []any and []string server_names render differently\n%s\n%s", f, anyList, strList)
 		}

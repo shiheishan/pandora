@@ -378,9 +378,6 @@ export const LATE_FILTERS = [
   ['applied', '已转入余额', 'applied'],
 ] as const
 export type LateFilter = (typeof LATE_FILTERS)[number][0]
-export function isLateFilter(v: string | null): v is LateFilter {
-  return LATE_FILTERS.some(([k]) => k === v)
-}
 
 /** 地址上的 s → 筛选；不认识或没有时默认只看待处理 */
 export function lateFilterOf(v: string | null): LateFilter {

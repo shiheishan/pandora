@@ -168,7 +168,7 @@ func TestECH_DoesNotMutateSharedList(t *testing.T) {
 	_, _ = nodeToClash(n, fixtureUUID, false)
 	_, _ = nodeToStash(n, fixtureUUID)
 	_, _ = nodeToSingbox(n, fixtureUUID)
-	_, _, _ = Render(FormatClash, []Node{n}, fixtureUUID, "", Options{})
+	_, _, _ = renderPlain(FormatClash, []Node{n}, fixtureUUID, "", Options{})
 
 	if !bytes.Equal(shared, snapshot) {
 		t.Fatalf("shared ECHConfigList changed: %v vs %v", shared, snapshot)

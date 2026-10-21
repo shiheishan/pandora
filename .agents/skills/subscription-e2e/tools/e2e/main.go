@@ -146,7 +146,7 @@ func startNode(id, typ string, port int, kcfg map[string]any, kcfgErr string, en
 		}
 		rawCfg["server"] = env.dest
 	}
-	nc := kernel.NewNativeCore(nil)
+	nc := kernel.NewNativeCoreWithLogger(nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cleanup = append(cleanup, cancel)
 	must(nc.Start(ctx))

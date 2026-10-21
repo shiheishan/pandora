@@ -4,8 +4,6 @@ import { useApi } from '../shell/runtime'
 import { siteSettingsSchema } from './screens/content/schemas'
 import { documentSiteName } from './site-name'
 
-export { DEFAULT_SITE_NAME, documentSiteName } from './site-name'
-
 // ---------------------------------------------------------------------------
 // 站点设置（GET/POST v1/settings/site）：站点名只有这一个来源（系统设置 site.name），
 // 门户标题、入口页 <title>、邮件里的站点名与发件人名、订阅配置名都取它；主题只管标语与 Logo。

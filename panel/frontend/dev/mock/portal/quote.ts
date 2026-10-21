@@ -13,8 +13,6 @@ const DAY_MS = 86_400_000
 const AS_OF_WINDOW_MS = 10 * 60_000
 const MAX_ROWS = 20
 
-export type QuoteAction = 'renew' | 'change' | 'new' | 'stack' | 'reset'
-
 export interface CreditDetail {
   paid: number
   days_left: number

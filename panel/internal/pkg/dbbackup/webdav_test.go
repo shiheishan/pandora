@@ -13,6 +13,11 @@ import (
 	"testing"
 )
 
+// uploadNoDigest 上传文件、不带预期摘要（生产路径都带摘要：UploadVerifiedDigest / UploadVerifiedBytes）。
+func uploadNoDigest(ctx context.Context, c *WebDAVClient, localPath, objectName string) (UploadResult, error) {
+	return c.uploadVerified(ctx, localPath, objectName, "")
+}
+
 type memoryWebDAV struct {
 	mu           sync.Mutex
 	objects      map[string][]byte
@@ -104,7 +109,7 @@ func TestUploadVerifiedPublishesAfterRemoteReadback(t *testing.T) {
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.UploadVerified(context.Background(), path, name)
+	result, err := uploadNoDigest(context.Background(), client, path, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +138,7 @@ func TestUploadVerifiedRejectsTamperAndCleansPartial(t *testing.T) {
 	if err := os.WriteFile(path, []byte("age-encrypted-backup"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UploadVerified(context.Background(), path, name); err == nil {
+	if _, err := uploadNoDigest(context.Background(), client, path, name); err == nil {
 		t.Fatal("tampered readback succeeded")
 	}
 	for key := range server.objects {
@@ -155,7 +160,7 @@ func TestUploadVerifiedTreatsExactExistingFinalAsIdempotentSuccess(t *testing.T)
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UploadVerified(context.Background(), path, name); err != nil {
+	if _, err := uploadNoDigest(context.Background(), client, path, name); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(server.methods, ","); got != "GET" {
@@ -171,7 +176,7 @@ func TestUploadVerifiedRejectsConflictingExistingFinal(t *testing.T) {
 	if err := os.WriteFile(path, []byte("age-encrypted-backup"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UploadVerified(context.Background(), path, name); err == nil {
+	if _, err := uploadNoDigest(context.Background(), client, path, name); err == nil {
 		t.Fatal("conflicting final succeeded")
 	}
 	if got := strings.Join(server.methods, ","); got != "GET" {
@@ -188,7 +193,7 @@ func TestUploadVerifiedRechecksMoveConflictAndAcceptsExactFinal(t *testing.T) {
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UploadVerified(context.Background(), path, name); err != nil {
+	if _, err := uploadNoDigest(context.Background(), client, path, name); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(server.methods, ","); got != "GET,PUT,GET,MOVE,GET,DELETE" {
@@ -204,7 +209,7 @@ func TestUploadVerifiedDeletesFinalCreatedByThisRunWhenReadbackFails(t *testing.
 	if err := os.WriteFile(path, []byte("age-encrypted-backup"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UploadVerified(context.Background(), path, name); err == nil {
+	if _, err := uploadNoDigest(context.Background(), client, path, name); err == nil {
 		t.Fatal("tampered final succeeded")
 	}
 	if _, exists := server.objects["/pandora/"+name]; exists {
@@ -261,12 +266,12 @@ func TestUploadVerifiedRejectsUntrustedNamesAndSymlinks(t *testing.T) {
 	if err := os.WriteFile(regular, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UploadVerified(context.Background(), regular, "../../backup.age"); err == nil {
+	if _, err := uploadNoDigest(context.Background(), client, regular, "../../backup.age"); err == nil {
 		t.Fatal("unsafe object name succeeded")
 	}
 	link := filepath.Join(dir, "pandora-postgres-20260801T031702Z.dump.age")
 	if err := os.Symlink(regular, link); err == nil {
-		if _, err := client.UploadVerified(context.Background(), link, filepath.Base(link)); err == nil {
+		if _, err := uploadNoDigest(context.Background(), client, link, filepath.Base(link)); err == nil {
 			t.Fatal("symlink upload succeeded")
 		}
 	}

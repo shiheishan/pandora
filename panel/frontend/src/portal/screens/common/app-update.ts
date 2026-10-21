@@ -29,9 +29,6 @@ interface AppUpdateSteps {
   ok: GuideText
 }
 
-/** 一步的纯文字（按钮名照原样，不带说明）：测试与无样式的场合用 */
-export const guideText = (t: GuideText): string => (typeof t === 'string' ? t : t.map((x) => (typeof x === 'string' ? x : x.button)).join(''))
-
 const REFRESH_NOTE = '就是更新你添加的那条链接'
 
 export const APP_UPDATE: Readonly<Record<string, AppUpdateSteps>> = {

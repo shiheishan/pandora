@@ -3,12 +3,15 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/aegispanel/nodeagent/panel"
 	"github.com/aegispanel/nodeagent/upgrade"
@@ -38,7 +41,21 @@ func testKeyring(t *testing.T) *upgrade.Keyring {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return upgrade.NewKeyring(pub)
+	return keyringOf(t, pub)
+}
+
+// keyringOf 经生产的 upgrade.LoadKeyring 从内存文件系统装出公钥环（一把公钥一个 .pub 文件）。
+func keyringOf(t *testing.T, pubs ...ed25519.PublicKey) *upgrade.Keyring {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for i, pub := range pubs {
+		fsys[fmt.Sprintf("k%d.pub", i)] = &fstest.MapFile{Data: []byte(base64.StdEncoding.EncodeToString(pub) + "\n")}
+	}
+	ring, err := upgrade.LoadKeyring(fsys, "*.pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ring
 }
 
 func TestUpgradeUnsupportedReasons(t *testing.T) {
@@ -49,7 +66,7 @@ func TestUpgradeUnsupportedReasons(t *testing.T) {
 	cases := map[string]func(e *upgradeEnv){
 		"dev 构建":     func(e *upgradeEnv) { e.serial = 0 },
 		"公钥加载失败":     func(e *upgradeEnv) { e.keyringErr = errors.New("bad pub") },
-		"没有内置公钥":     func(e *upgradeEnv) { e.keyring = upgrade.NewKeyring() },
+		"没有内置公钥":     func(e *upgradeEnv) { e.keyring = keyringOf(t) },
 		"取不到二进制路径":   func(e *upgradeEnv) { e.exeErr = errors.New("no exe") },
 		"二进制不在固定路径":  func(e *upgradeEnv) { e.exe = "/opt/pandora-native" },
 		"没装 path 单元": func(e *upgradeEnv) { e.pathUnitErr = os.ErrNotExist },

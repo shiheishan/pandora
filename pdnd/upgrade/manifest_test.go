@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -386,9 +387,27 @@ func TestBuiltinKeyring(t *testing.T) {
 	if ring == nil {
 		t.Fatalf("expected non-nil keyring")
 	}
-	// 仓库中当前无 .pub，Len() 应当为 0
-	if ring.Len() != 0 {
-		t.Fatalf("expected empty keyring in current repo, got %d keys", ring.Len())
+	// 发布包要能在线升级，内置公钥至少一把
+	if ring.Len() == 0 {
+		t.Fatalf("expected at least one built-in key")
+	}
+	// 文件名带自己的 key_id（release-<key_id>.pub），轮换时按名字就能对上 1Password 里的私钥
+	paths, err := fs.Glob(keysFS, "keys/*.pub")
+	if err != nil {
+		t.Fatalf("glob keys: %v", err)
+	}
+	for _, p := range paths {
+		data, err := fs.ReadFile(keysFS, p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		pub, err := ParsePublicKey(data)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p, err)
+		}
+		if want := "keys/release-" + KeyID(pub) + ".pub"; p != want {
+			t.Fatalf("built-in key file %s should be named %s", p, want)
+		}
 	}
 }
 
@@ -504,4 +523,15 @@ func TestKeyID(t *testing.T) {
 	if kid != strings.ToLower(kid) {
 		t.Fatalf("key_id is not lowercase hex: %s", kid)
 	}
+}
+
+// NewKeyring 从给定的公钥列表构造 Keyring。若公钥列表为空，生成空 Keyring。
+func NewKeyring(pubs ...ed25519.PublicKey) *Keyring {
+	km := make(map[string]ed25519.PublicKey, len(pubs))
+	for _, pub := range pubs {
+		if len(pub) == ed25519.PublicKeySize {
+			km[KeyID(pub)] = pub
+		}
+	}
+	return &Keyring{keys: km}
 }

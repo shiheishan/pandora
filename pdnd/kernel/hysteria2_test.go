@@ -131,7 +131,7 @@ func TestHysteria2NativeClientTCPUDPAndAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(nil)
+	defer func() { _ = client.CloseWithError(nil) }()
 
 	tcp, err := client.DialConn(ctx, M.ParseSocksaddr("echo.test:80"))
 	if err != nil {

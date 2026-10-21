@@ -84,7 +84,6 @@ const rewardsSchema = z.object({
   price_id: uuid.optional(),
   pool: z.array(prizeSchema).optional(),
 })
-export type Rewards = z.output<typeof rewardsSchema>
 
 const templateSchema = z.object({
   id: uuid,
