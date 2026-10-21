@@ -368,7 +368,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 			if cs == nil {
 				t.Fatal("current_subscription 应有对象")
 			}
-			assertKeys(t, cs, "id", "plan_name", "status", "current_period_end", "traffic", "device_limit", "online_devices")
+			assertKeys(t, cs, "id", "plan_name", "status", "current_period_end", "traffic", "device_limit", "online_devices", "is_trial")
 			tr, _ := cs["traffic"].(map[string]any)
 			assertKeys(t, tr, "limit", "consumed")
 			if m["balance"] != float64(999) {
@@ -403,7 +403,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	assertKeys(t, s0,
 		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
 		"amount", "quotas", "device_limit_override", "plan_max_devices",
-		"online_devices",
+		"online_devices", "is_trial",
 	)
 	if s0["amount"] != float64(1234) {
 		t.Fatalf("subscription amount %v", s0["amount"])

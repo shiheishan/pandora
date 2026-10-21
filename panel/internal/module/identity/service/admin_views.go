@@ -47,6 +47,8 @@ type AdminSub struct {
 	PlanMaxDevices      *int
 	// OnlineDevices 是在线设备数（计数口读失败时按 0）
 	OnlineDevices int
+	// IsTrial 是注册试用发的那一份（subscription_trials 里有它；续过费仍算）
+	IsTrial bool
 }
 
 // AdminUserSubs 是一个用户的全部订阅。

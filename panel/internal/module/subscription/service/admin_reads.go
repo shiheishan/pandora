@@ -21,12 +21,19 @@ func (s *Service) AdminSubs(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 		return nil, err
 	}
 	onlineBySub := s.adminOnlineCounts(ctx, summaries)
+	// 试用标记整批一条 SQL（按 subscription_trials 主键 user_id），列表一页也只查一次
+	trialSubs, err := s.repo.TrialSubscriptionIDs(ctx, userIDs)
+	if err != nil {
+		return nil, subErr(err)
+	}
 	out := make(map[uuid.UUID]identitysvc.AdminUserSubs, len(userIDs))
 	for _, uid := range userIDs {
 		us := summaries[uid]
 		subs := make([]identitysvc.AdminSub, 0, len(us.Subscriptions))
 		for _, sm := range us.Subscriptions {
-			subs = append(subs, adminSubFrom(sm, onlineBySub[sm.ID]))
+			sub := adminSubFrom(sm, onlineBySub[sm.ID])
+			_, sub.IsTrial = trialSubs[sm.ID]
+			subs = append(subs, sub)
 		}
 		var current *identitysvc.AdminSub
 		if us.Current != nil {

@@ -23,7 +23,7 @@ describe('状态圆点与列表状态', () => {
   })
 
   it('账号正常但当前订阅已过期写「已过期」，其余照账号状态', () => {
-    const cs = (status: 'active' | 'expired') => ({ id: 's', plan_name: 'p', status, current_period_end: null, traffic: { limit: null, consumed: 0 }, device_limit: 0, online_devices: 0 })
+    const cs = (status: 'active' | 'expired') => ({ id: 's', plan_name: 'p', status, current_period_end: null, traffic: { limit: null, consumed: 0 }, device_limit: 0, online_devices: 0, is_trial: false })
     expect(listStatusView({ status: 'active', current_subscription: cs('expired') })).toEqual({ label: '已过期', tone: 'warn' })
     expect(listStatusView({ status: 'active', current_subscription: cs('active') })).toEqual({ label: '正常', tone: 'ok' })
     expect(listStatusView({ status: 'active', current_subscription: null })).toEqual({ label: '正常', tone: 'ok' })

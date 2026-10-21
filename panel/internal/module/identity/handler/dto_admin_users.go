@@ -35,6 +35,7 @@ type admCurrentSubResponse struct {
 	Traffic          admTrafficResponse `json:"traffic"`
 	DeviceLimit      int                `json:"device_limit"`
 	OnlineDevices    int                `json:"online_devices"`
+	IsTrial          bool               `json:"is_trial"`
 }
 
 type admQuotaResponse struct {
@@ -59,6 +60,7 @@ type admSubscriptionResponse struct {
 	DeviceLimitOverride *int               `json:"device_limit_override"`
 	PlanMaxDevices      *int               `json:"plan_max_devices"`
 	OnlineDevices       int                `json:"online_devices"`
+	IsTrial             bool               `json:"is_trial"`
 }
 
 // admOrderRowResponse 键与 order 模块 adminOrderRowResponse 完全相同。
@@ -129,6 +131,7 @@ func admCurrentSubFrom(s *service.AdminSub) *admCurrentSubResponse {
 		Traffic:          admTrafficFromQuotas(s.Quotas),
 		DeviceLimit:      admDeviceLimitFromSub(s),
 		OnlineDevices:    s.OnlineDevices,
+		IsTrial:          s.IsTrial,
 	}
 }
 
@@ -161,6 +164,7 @@ func admSubscriptionFrom(cc *admCents, s service.AdminSub) admSubscriptionRespon
 		DeviceLimitOverride: s.DeviceLimitOverride,
 		PlanMaxDevices:      s.PlanMaxDevices,
 		OnlineDevices:       s.OnlineDevices,
+		IsTrial:             s.IsTrial,
 	}
 }
 

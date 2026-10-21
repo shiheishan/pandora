@@ -77,6 +77,11 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
           <>
             {s.label ?? s.plan_name}
             <span className={css.planVer}> · v{s.plan_version}</span>
+            {s.is_trial && (
+              <Tag tone="outline" className={css.trial}>
+                试用
+              </Tag>
+            )}
           </>
         }
         meta={

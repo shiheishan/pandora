@@ -10,6 +10,11 @@
   font-weight: 400;
 }
 
+/* 注册试用发的那一份（P13）：标在名字与版本后面 */
+.trial {
+  margin-left: 6px;
+}
+
 /* 流量与设备并排，窄屏换行 */
 .subFacts {
   display: flex;

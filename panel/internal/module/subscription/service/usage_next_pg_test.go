@@ -82,3 +82,38 @@ func TestMySubscriptionsIsTrialPG(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminSubsIsTrialPG 后台用户详情 / 列表的订阅带试用标记：一页多个用户一次批量查，Current 的副本同样带上。
+func TestAdminSubsIsTrialPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(10 * gib)})
+	e.exec(t, ctx, `UPDATE plans SET current_version_id = ?, status = 'active' WHERE id = ?`, versionID, planID)
+
+	trialUser := newUser(t, e, ctx)
+	if err := e.svc.GrantSignupTrial(ctx, trialUser, planID, 48); err != nil {
+		t.Fatal(err)
+	}
+	var trialSubID uuid.UUID
+	if err := e.row(ctx, `SELECT subscription_id FROM subscription_trials WHERE user_id = ?`, trialUser).Scan(&trialSubID); err != nil {
+		t.Fatal(err)
+	}
+	paidUser := newUser(t, e, ctx)
+	paid := provision(t, e, ctx, paidUser, planID, versionID, "")
+
+	m, err := e.svc.AdminSubs(ctx, []uuid.UUID{trialUser, paidUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tu := m[trialUser]
+	if len(tu.Subscriptions) != 1 || tu.Subscriptions[0].ID != trialSubID || !tu.Subscriptions[0].IsTrial {
+		t.Fatalf("试用用户的订阅应带 IsTrial: %+v", tu.Subscriptions)
+	}
+	if tu.Current == nil || !tu.Current.IsTrial {
+		t.Fatalf("Current 应带 IsTrial: %+v", tu.Current)
+	}
+	pu := m[paidUser]
+	if len(pu.Subscriptions) != 1 || pu.Subscriptions[0].ID != paid.ID || pu.Subscriptions[0].IsTrial {
+		t.Fatalf("付费订阅不应带 IsTrial: %+v", pu.Subscriptions)
+	}
+}
