@@ -57,6 +57,45 @@ func (s *Service) OfflineNodes(ctx context.Context, now time.Time, sample int) (
 	}, nil
 }
 
+// 证书快到期的门槛：IP 证书约 6 天一换，剩 2 天还没续上就要看；域名与手填证书剩 14 天。
+const (
+	CertExpiringIP     = 2 * 24 * time.Hour
+	CertExpiringDomain = 14 * 24 * time.Hour
+)
+
+// CertAttention 是证书要处理的节点统计。
+type CertAttention struct {
+	Count    int64     // 要处理的节点数（一个节点既失败又快到期只算一次）
+	Failing  int64     // 其中申请或续期失败的
+	Expiring int64     // 其中快到期或已过期的
+	Sample   []NodeRef // 到期最早的至多 sample 个（还没有证书的排最前）
+}
+
+// CertAttentionNodes 统计证书要处理的节点：未删除、serving_status='active'、cert_state_at 非空，且
+// failing（cert_error_code 非空）或 expiring（cert_not_after 早于门槛：IP 证书为 now+CertExpiringIP，
+// 其余为 now+CertExpiringDomain；已过期同样算 expiring）。
+func (s *Service) CertAttentionNodes(ctx context.Context, now time.Time, sample int) (CertAttention, error) {
+	ipDeadline := now.Add(CertExpiringIP)
+	domainDeadline := now.Add(CertExpiringDomain)
+	rows, err := s.repo.CertAttentionNodes(ctx, ipDeadline, domainDeadline, sample)
+	if err != nil {
+		return CertAttention{}, err
+	}
+	if len(rows) == 0 {
+		return CertAttention{Sample: []NodeRef{}}, nil
+	}
+	sampleOut := make([]NodeRef, len(rows))
+	for i, r := range rows {
+		sampleOut[i] = NodeRef{ID: r.ID, Name: r.Name}
+	}
+	return CertAttention{
+		Count:    rows[0].Total,
+		Failing:  rows[0].Failing,
+		Expiring: rows[0].Expiring,
+		Sample:   sampleOut,
+	}, nil
+}
+
 // ConfigLaggingCount 数配置落后的节点：落在 ServedOnServerCond 上、面板算出的期望配置摘要与节点回报的已应用摘要不同（含从没应用过）。
 // 期望摘要经 serverConfigsWithSkips 现算（与节点列表的生效状态同一口径）；面板生成文档失败、本次下发不含的节点算落后
 // （节点端拿不到它的配置，入站已停）；其余没有期望摘要的节点不计。

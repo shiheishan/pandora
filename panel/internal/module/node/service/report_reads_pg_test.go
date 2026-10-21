@@ -72,6 +72,84 @@ func TestReportNodeCountsAndOfflinePG(t *testing.T) {
 	}
 }
 
+func TestCertAttentionNodesPG(t *testing.T) {
+	e, ctx := newTrafficEnv(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+
+	srv := seedTrafficServer(t, ctx, e)
+	port := 30100
+
+	activateWithCert := func(nodeID uuid.UUID, port int, identifier *string, notAfter *time.Time, errCode *string) {
+		e.mustExec(t, ctx, `UPDATE nodes SET serving_status = 'active', node_type = 'vless', server_host = 'node.example.test',
+			server_port = ?, listen_l4 = 'tcp', protocol_schema_version = 1 WHERE id = ?`, port, nodeID)
+		if identifier == nil && notAfter == nil && errCode == nil {
+			return
+		}
+		var detail *string
+		if errCode != nil {
+			detail = ptr("test detail")
+		}
+		// 证书列的 CHECK：任一有值时 cert_state_at 必须有值，detail 要跟着 code
+		e.mustExec(t, ctx, `UPDATE nodes SET cert_identifier = CAST(? AS text), cert_not_after = CAST(? AS timestamptz),
+			cert_error_code = CAST(? AS text), cert_error_detail = CAST(? AS text),
+			cert_next_attempt_at = NULL, cert_state_at = now() WHERE id = ?`,
+			identifier, notAfter, errCode, detail, nodeID)
+	}
+
+	// 失败
+	nFail := seedTrafficNode(t, ctx, e, &srv, "1.00")
+	activateWithCert(nFail, port, ptr("fail.example.test"), ptr(now.Add(30*24*time.Hour)), ptr("dns_failed"))
+	port++
+
+	// IP 证书 1 天后到期（应算 expiring）
+	nIP1d := seedTrafficNode(t, ctx, e, &srv, "1.00")
+	activateWithCert(nIP1d, port, ptr("203.0.113.10"), ptr(now.Add(24*time.Hour)), nil)
+	port++
+
+	// 域名证书 10 天后到期（应算 expiring）
+	nDom10 := seedTrafficNode(t, ctx, e, &srv, "1.00")
+	activateWithCert(nDom10, port, ptr("soon.example.test"), ptr(now.Add(10*24*time.Hour)), nil)
+	port++
+
+	// 域名证书 30 天后到期（不算）
+	nDom30 := seedTrafficNode(t, ctx, e, &srv, "1.00")
+	activateWithCert(nDom30, port, ptr("ok.example.test"), ptr(now.Add(30*24*time.Hour)), nil)
+	port++
+
+	// IP 证书 5 天后到期（不算，门槛 2 天）
+	nIP5d := seedTrafficNode(t, ctx, e, &srv, "1.00")
+	activateWithCert(nIP5d, port, ptr("203.0.113.20"), ptr(now.Add(5*24*time.Hour)), nil)
+	port++
+
+	// 非 active 节点有错（不算）
+	nDis := seedTrafficNode(t, ctx, e, &srv, "1.00")
+	activateWithCert(nDis, port, ptr("disabled.example.test"), ptr(now.Add(24*time.Hour)), ptr("rate_limited"))
+	e.mustExec(t, ctx, `UPDATE nodes SET serving_status = 'disabled' WHERE id = ?`, nDis)
+
+	out, err := e.svc.CertAttentionNodes(ctx, now, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Count != 3 {
+		t.Fatalf("Count: want 3 got %d", out.Count)
+	}
+	if out.Failing != 1 {
+		t.Fatalf("Failing: want 1 got %d", out.Failing)
+	}
+	if out.Expiring != 2 {
+		t.Fatalf("Expiring: want 2 got %d", out.Expiring)
+	}
+	wantOrder := []uuid.UUID{nIP1d, nDom10, nFail}
+	if len(out.Sample) != 3 {
+		t.Fatalf("Sample len: want 3 got %d", len(out.Sample))
+	}
+	for i, id := range wantOrder {
+		if out.Sample[i].ID != id {
+			t.Fatalf("Sample[%d].ID: want %s got %s", i, id, out.Sample[i].ID)
+		}
+	}
+}
+
 func TestTrafficReadsPG(t *testing.T) {
 	e, ctx := newTrafficEnv(t)
 	from := e.hour.Add(-time.Hour)

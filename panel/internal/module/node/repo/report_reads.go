@@ -53,6 +53,46 @@ SELECT n.id, coalesce(nullif(n.display_name, ''), n.name) AS name,
 	return out, nil
 }
 
+// CertAttentionRow 是证书要处理的节点样例查询的一行（含窗口聚合的总数与分项数）。
+type CertAttentionRow struct {
+	ID       uuid.UUID `gorm:"column:id"`
+	Name     string    `gorm:"column:name"`
+	Total    int64     `gorm:"column:total"`
+	Failing  int64     `gorm:"column:failing_total"`
+	Expiring int64     `gorm:"column:expiring_total"`
+}
+
+// CertAttentionNodes 一条 SQL 取证书要处理的节点样例（口径见 service.CertAttentionNodes）。
+func (r *Repo) CertAttentionNodes(ctx context.Context, ipDeadline, domainDeadline time.Time, limit int) ([]CertAttentionRow, error) {
+	var out []CertAttentionRow
+	err := r.d.Conn(ctx).Raw(`
+WITH cand AS (
+  SELECT n.id,
+         coalesce(nullif(n.display_name, ''), n.name) AS name,
+         n.cert_not_after,
+         (n.cert_error_code IS NOT NULL) AS failing,
+         (n.cert_not_after IS NOT NULL AND n.cert_not_after < CASE
+            WHEN n.cert_identifier ~ '^[0-9.]+$' OR strpos(n.cert_identifier, ':') > 0
+            THEN ?::timestamptz
+            ELSE ?::timestamptz
+          END) AS expiring
+    FROM nodes n
+   WHERE n.deleted_at IS NULL AND n.serving_status = 'active' AND n.cert_state_at IS NOT NULL
+)
+SELECT id, name,
+       count(*) OVER () AS total,
+       count(*) FILTER (WHERE failing) OVER () AS failing_total,
+       count(*) FILTER (WHERE expiring) OVER () AS expiring_total
+  FROM cand
+ WHERE failing OR expiring
+ ORDER BY cert_not_after ASC NULLS FIRST, id
+ LIMIT ?`, ipDeadline, domainDeadline, limit).Scan(&out).Error
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ServedNodeAppliedRow 是在 ServedOnServerCond 上的节点及其已应用配置摘要。
 type ServedNodeAppliedRow struct {
 	NodeID        uuid.UUID `gorm:"column:node_id"`
