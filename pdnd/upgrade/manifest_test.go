@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -386,9 +387,27 @@ func TestBuiltinKeyring(t *testing.T) {
 	if ring == nil {
 		t.Fatalf("expected non-nil keyring")
 	}
-	// 仓库中当前无 .pub，Len() 应当为 0
-	if ring.Len() != 0 {
-		t.Fatalf("expected empty keyring in current repo, got %d keys", ring.Len())
+	// 发布包要能在线升级，内置公钥至少一把
+	if ring.Len() == 0 {
+		t.Fatalf("expected at least one built-in key")
+	}
+	// 文件名带自己的 key_id（release-<key_id>.pub），轮换时按名字就能对上 1Password 里的私钥
+	paths, err := fs.Glob(keysFS, "keys/*.pub")
+	if err != nil {
+		t.Fatalf("glob keys: %v", err)
+	}
+	for _, p := range paths {
+		data, err := fs.ReadFile(keysFS, p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		pub, err := ParsePublicKey(data)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p, err)
+		}
+		if want := "keys/release-" + KeyID(pub) + ".pub"; p != want {
+			t.Fatalf("built-in key file %s should be named %s", p, want)
+		}
 	}
 }
 
