@@ -34,8 +34,11 @@ describe('mock api · admin security and operations', () => {
     const all = await audit('?limit=200')
     expect(all.events).toHaveLength(Math.min(200, all.total))
     expect((await audit('?limit=500')).events).toHaveLength(50)
-    expect(all.events.some((e) => e.auth_context === null && e.source_ip === null && e.actor_kind === 'admin')).toBe(true)
-    expect(all.events.some((e) => e.actor_kind === 'node')).toBe(true)
+    // 00080 之前的存量行没有 auth_context 与明文 IP：套餐版本多是几个月前发布的
+    const legacy = (await audit('?action=plan_version.&limit=200')).events
+    expect(legacy.some((e) => e.auth_context === null && e.source_ip === null && e.actor_kind === 'admin')).toBe(true)
+    // 库里的操作者类型只有四种（CHECK）
+    expect(all.events.every((e) => ['user', 'admin', 'system', 'anonymous'].includes(e.actor_kind))).toBe(true)
 
     const orders = await audit('?action=order.&limit=200')
     expect(orders.events.length).toBeGreaterThan(0)
@@ -73,10 +76,13 @@ describe('mock api · admin security and operations', () => {
   it('merges audit and fetch rows into the access log with Go categories and validation', async () => {
     const all = accessResponse.parse(await json(await call('GET', '/v1/access-log?limit=200'))).items
     expect(all.some((i) => i.category === 'subscribe') && all.some((i) => i.category === 'login')).toBe(true)
-    expect(all.find((i) => i.action?.startsWith('payment_provider.'))?.category).toBe('admin')
-    expect(all.find((i) => i.action === 'payment.succeeded')?.category).toBe('payment')
+    const byCategory = async (c: string) => accessResponse.parse(await json(await call('GET', `/v1/access-log?category=${c}&limit=200`))).items
+    expect((await byCategory('admin')).some((i) => i.action?.startsWith('payment_provider.'))).toBe(true)
+    expect((await byCategory('payment')).some((i) => i.action === 'payment.succeeded')).toBe(true)
     // omitempty：系统动作没有账号与 IP，键不出现
-    expect(all.find((i) => i.action === 'order.expired')).not.toHaveProperty('ip')
+    const expired = (await byCategory('order')).find((i) => i.action === 'order.expired')!
+    expect(expired).not.toHaveProperty('ip')
+    expect(expired).not.toHaveProperty('user_id')
 
     expect(await json(await call('GET', '/v1/access-log?category=http'))).toMatchObject({ error: { fields: { category: '不认识的分类' } } })
     expect(await json(await call('GET', '/v1/access-log?outcome=ok'))).toMatchObject({ error: { fields: { outcome: expect.any(String) } } })

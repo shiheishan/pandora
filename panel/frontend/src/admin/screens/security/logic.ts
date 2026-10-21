@@ -1,7 +1,8 @@
 import type { QueryParams } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'
+import type { RouteQuery } from '../../../core/router'
 import type { TagTone } from '../../../ui'
-import type { AccessCategory, AccessItem, ActorKind, AuditEvent, Cluster, ClusterDisabled, ClusterReview, Outcome, Risk, SkipReason, SwitchRow } from './schemas'
+import { ACTOR_KINDS, OUTCOMES, type AccessCategory, type AccessItem, type ActorKind, type AuditEvent, type Cluster, type ClusterDisabled, type ClusterReview, type Outcome, type Risk, type SkipReason, type SwitchRow } from './schemas'
 
 const p2 = (n: number) => String(n).padStart(2, '0')
 const trimmed = (v: string) => v.trim() || undefined
@@ -21,7 +22,7 @@ export function clockTime(at: string, now: Date = new Date()): string {
 export const AUDIT_PAGE = 50
 
 export interface AuditFilter {
-  /** 搜索框：动作与操作者邮箱做包含匹配，对象 id 精确匹配 */
+  /** 邮箱（操作人是他，或对象是这个用户）与动作代号做包含匹配，ID 精确匹配对象或操作人；对象名不能搜 */
   q: string
   /** 动作前缀，如 order. */
   action: string
@@ -59,19 +60,308 @@ export function hasAuditFilter(f: AuditFilter): boolean {
   return Boolean(f.q.trim() || f.action.trim() || f.actor || f.outcome)
 }
 
-/** agent 是客服、node 是节点代理进程（迁移 00012） */
-export const ACTOR_LABEL: Record<ActorKind, string> = { user: '用户', admin: '管理员', system: '系统', agent: '客服', node: '节点代理', plugin: '插件', anonymous: '匿名' }
+export const AUDIT_SEARCH_PLACEHOLDER = '邮箱、动作代号或对象 ID'
+
+export const ACTOR_LABEL: Record<ActorKind, string> = { user: '用户', admin: '管理员', system: '系统', anonymous: '匿名' }
 
 /** 操作人：有邮箱给邮箱；system 显示「系统」；其余按主体类型 */
 export function actorLabel(e: Pick<AuditEvent, 'actor_email' | 'actor_kind'>): string {
   return e.actor_email ?? ACTOR_LABEL[e.actor_kind]
 }
 
-/** 对象：可读名优先，退回「类型 · 短 id」，没有对象给 — */
+export const ACTION_NAMES: ReadonlyArray<readonly [string, string]> = [
+  ['admin.admin_granted', '授予管理员'],
+  ['admin.admin_revoked', '撤销管理员'],
+  ['admin.password_reset', '重置后台口令'],
+  ['announcement.published', '公告到点发布'],
+  ['announcement.saved', '保存公告'],
+  ['announcement.withdrawn', '撤回公告'],
+  ['appearance.slot.save', '保存外观插槽'],
+  ['appearance.theme.activate', '启用主题'],
+  ['appearance.theme.delete', '删除主题'],
+  ['appearance.theme.save', '保存主题'],
+  ['audit.export', '导出审计日志'],
+  ['auth.mail_link_login', '邮件链接登录'],
+  ['auth.quick_login', '快捷登录'],
+  ['balance.adjusted', '调整余额'],
+  ['balance.topup_created', '建充值单'],
+  ['commission.auto_transferred_to_balance', '佣金自动转余额'],
+  ['commission.config_changed', '改佣金设置'],
+  ['commission.entry_approved', '通过待复核佣金'],
+  ['commission.entry_voided', '作废佣金'],
+  ['commission.override_removed', '删单独佣金设置'],
+  ['commission.override_set', '设单独佣金'],
+  ['commission.transferred_to_balance', '佣金转余额'],
+  ['content.archived', '归档内容'],
+  ['content.version_created', '发布内容新版本'],
+  ['coupon.batch_generated', '批量生成优惠券'],
+  ['coupon.created', '新建优惠券'],
+  ['coupon.status_change', '优惠券启停'],
+  ['devices.settings_changed', '改设备策略'],
+  ['feature_switch.toggle', '切换降级开关'],
+  ['gift_card.batch_exported', '导出礼品卡批次'],
+  ['gift_card.code_toggled', '礼品卡启停'],
+  ['gift_card.codes_generated', '生成礼品卡'],
+  ['gift_card.codes_report_exported', '导出礼品卡报表'],
+  ['gift_card.redeemed', '兑换礼品卡'],
+  ['gift_card_template.created', '新建礼品卡模板'],
+  ['gift_card_template.updated', '改礼品卡模板'],
+  ['home.settings_changed', '改门户首页设置'],
+  ['late_payment.applied', '处理迟到付款'],
+  ['mail.settings_changed', '改邮件设置'],
+  ['node.activate', '上线节点'],
+  ['node.batch_update', '批量改节点'],
+  ['node.bootstrap_token.issue', '签发节点令牌'],
+  ['node.config.publish', '重下发节点配置'],
+  ['node.copy', '复制节点'],
+  ['node.create', '新建节点'],
+  ['node.delete', '删除节点'],
+  ['node.ech_disable', '关闭 ECH'],
+  ['node.ech_generate', '生成 ECH 密钥'],
+  ['node.identity.revoke', '吊销节点身份'],
+  ['node.order_batch', '调整节点排序'],
+  ['node.relay_create', '新建中转'],
+  ['node.relay_delete', '删除中转'],
+  ['node.relay_update', '改中转'],
+  ['node.retire', '退役节点'],
+  ['node.route_groups_update', '改节点路由组'],
+  ['node.routing.global_publish', '发布全局路由'],
+  ['node.routing.group_publish', '发布路由组路由'],
+  ['node.routing.update', '改节点私有路由'],
+  ['node.server_bind', '节点绑服务器'],
+  ['node.server_unbind', '节点解绑服务器'],
+  ['node.status_batch', '批量改节点状态'],
+  ['node.traffic_reset', '重置节点流量'],
+  ['node.update', '改节点'],
+  ['node_pool.created', '新建节点池'],
+  ['node_pool.deleted', '删除节点池'],
+  ['node_pool.updated', '改节点池'],
+  ['node_pool.user_groups_changed', '改池可见用户组'],
+  ['notification_template.updated', '改通知模板'],
+  ['notify.test_sent', '发测试通知'],
+  ['order.cancelled', '取消订单'],
+  ['order.created', '新购下单'],
+  ['order.expired', '订单超时关闭'],
+  ['order.manual_created', '后台人工开单'],
+  ['order.marked_paid', '标记已支付'],
+  ['order.payment_queried', '向渠道查单'],
+  ['payment.quarantined', '付款隔离待查'],
+  ['payment.succeeded', '付款成功入账'],
+  ['payment_provider.create', '新建支付渠道'],
+  ['payment_provider.toggle', '支付渠道启停'],
+  ['payment_provider.update', '改支付渠道'],
+  ['plan.archive', '归档套餐'],
+  ['plan.create', '新建套餐'],
+  ['plan.pools_update', '改套餐线路'],
+  ['plan.prices_update', '改套餐价格'],
+  ['plan.reset_update', '改流量重置规则'],
+  ['plan.sales_update', '改销售设置'],
+  ['plan.update', '改套餐信息'],
+  ['plan.usage_update', '改套餐用量（存为草稿）'],
+  ['plan_version.publish', '发布套餐版本'],
+  ['plugin.hook.delete', '删 Webhook 钩子'],
+  ['plugin.hook.save', '保存 Webhook 钩子'],
+  ['registration.settings_changed', '改注册设置'],
+  ['revenue.adjustment.create', '登记收入调整'],
+  ['revenue.adjustment.reverse', '冲销收入调整'],
+  ['risk.ip_cluster.disable', '禁用聚类账号'],
+  ['risk.ip_cluster.mark_normal', '聚类标记正常'],
+  ['route_group.create', '新建路由组'],
+  ['route_group.delete', '删除路由组'],
+  ['route_group.members_update', '改路由组成员'],
+  ['route_group.update', '改路由组'],
+  ['security.source_ip_viewed', '查看明文 IP'],
+  ['server.create', '新建服务器'],
+  ['server.delete', '删除服务器'],
+  ['server.enrollment.commit', '服务器接入完成'],
+  ['server.identity.activate', '激活服务器身份'],
+  ['server.identity.renew', '续签服务器证书'],
+  ['server.status_change', '服务器状态变更'],
+  ['server.update', '改服务器'],
+  ['server.upgrade_requested', '请求升级节点程序'],
+  ['session.refresh_reuse', '凭据重放吊销会话'],
+  ['session.revoked_by_user', '用户踢下线会话'],
+  ['settings.payment_updated', '改支付回调设置'],
+  ['settings.purchase_updated', '改购买限制'],
+  ['settings.support_updated', '改工单规则'],
+  ['settings.telegram_extras_updated', '改 Telegram 扩展'],
+  ['settings.telegram_updated', '改 Telegram 机器人'],
+  ['signup.settings_changed', '改注册防护设置'],
+  ['site.settings_changed', '改站点设置'],
+  ['site.url_changed', '改主域名'],
+  ['subscription.closed_by_account_deletion', '注销停订阅'],
+  ['subscription.device_limit_changed', '改订阅设备上限'],
+  ['subscription.domains_changed', '改订阅域名'],
+  ['subscription.expired', '订阅到期'],
+  ['subscription.extended', '订阅加时长'],
+  // 不是审计动作，是访问日志给订阅拉取行起的名字
+  ['subscription.fetch', '拉取订阅'],
+  ['subscription.label_changed', '用户改订阅备注'],
+  ['subscription.link_rotated', '用户换新订阅链接'],
+  ['subscription.link_rotated_by_admin', '后台换发订阅链接'],
+  ['subscription.period_end_set', '改订阅到期时间'],
+  ['subscription.plan_change_created', '换套餐下单'],
+  ['subscription.quota_limit_set', '改订阅流量上限'],
+  ['subscription.renewal_closed', '续费期结束'],
+  ['subscription.renewal_created', '续费下单'],
+  ['subscription.settings_changed', '改订阅附加设置'],
+  ['subscription.stack_created', '叠加下单'],
+  ['subscription.template_reset', '订阅模板恢复默认'],
+  ['subscription.template_saved', '保存订阅模板'],
+  ['subscription.traffic_granted', '订阅加流量'],
+  ['subscription.trial_granted', '开通注册试用'],
+  ['telegram.bound', '绑定 Telegram'],
+  ['telegram.unbound', '解绑 Telegram'],
+  ['ticket.assign', '指派工单'],
+  ['ticket.auto_closed', '工单自动关闭'],
+  ['ticket.close', '用户关闭工单'],
+  ['ticket.create', '新建工单'],
+  ['ticket.internal_note', '工单内部备注'],
+  ['ticket.reply', '回复工单'],
+  ['ticket.sla_escalate', '工单超时升级'],
+  ['ticket.status_change', '改工单状态'],
+  ['ticket.withdraw', '用户撤回工单'],
+  ['ticket_macro.deleted', '删快捷回复'],
+  ['ticket_macro.saved', '保存快捷回复'],
+  ['traffic.manual_reset', '后台重置流量'],
+  ['user.bulk_banned', '批量封禁'],
+  ['user.bulk_exported', '导出用户'],
+  ['user.bulk_generate_exported', '下载批量生成结果'],
+  ['user.bulk_generate_requested', '提交批量生成'],
+  ['user.bulk_generated', '批量生成完成'],
+  ['user.bulk_mail_sent', '群发邮件'],
+  ['user.created', '后台新建用户'],
+  ['user.deleted', '注销账号'],
+  ['user.email_changed', '改邮箱'],
+  ['user.group_changed', '改用户组'],
+  ['user.login', '登录成功'],
+  ['user.login_failed', '登录失败'],
+  ['user.logout', '退出登录'],
+  ['user.note_changed', '改显示名与备注'],
+  ['user.password_changed', '改密码'],
+  ['user.password_reset', '找回密码完成'],
+  ['user.password_reset_by_admin', '后台重置密码'],
+  ['user.password_reset_requested', '申请找回密码'],
+  ['user.reauthenticated', '二次认证'],
+  ['user.referrer_changed', '改邀请人'],
+  ['user.registered', '注册'],
+  ['user.status_change', '改账号状态'],
+  ['user_group.deleted', '删除用户组'],
+  ['user_group.saved', '保存用户组'],
+  ['user_group.status_changed', '用户组启停'],
+  ['withdrawal.approve', '批准提现'],
+  ['withdrawal.paid', '提现已打款'],
+  ['withdrawal.reject', '驳回提现'],
+  ['withdrawal.requested', '申请提现'],
+]
+
+const ACTION_LABEL = new Map(ACTION_NAMES)
+
+export function actionLabel(code: string): string {
+  return ACTION_LABEL.get(code) ?? code
+}
+
+export const RESOURCE_TYPE_LABEL: Readonly<Record<string, string>> = {
+  announcement: '公告',
+  commission_entry: '佣金条目',
+  coupon: '优惠券',
+  feature_switch: '降级开关',
+  gift_card_batch: '礼品卡批次',
+  gift_card_code: '礼品卡',
+  gift_card_template: '礼品卡模板',
+  ip_cluster_review: '聚类复核',
+  late_payment_case: '迟到付款',
+  ledger_transaction: '账本流水',
+  node: '节点',
+  node_pool: '节点池',
+  node_relay: '中转',
+  node_routing: '全局路由',
+  node_set: '一批节点',
+  notification_delivery: '通知投递',
+  notification_template: '通知模板',
+  notification_test: '测试通知',
+  order: '订单',
+  payment: '付款',
+  payment_provider: '支付渠道',
+  plan: '套餐',
+  plan_version: '套餐版本',
+  plugin_hook: 'Webhook 钩子',
+  revenue_report_adjustment: '收入调整',
+  route_group: '路由组',
+  server: '服务器',
+  server_set: '一批服务器',
+  session: '会话',
+  settings: '设置',
+  site_slot: '外观插槽',
+  site_theme: '主题',
+  subscription: '订阅',
+  subscription_domains: '订阅域名',
+  subscription_template: '订阅模板',
+  ticket: '工单',
+  ticket_macro: '快捷回复',
+  user: '用户',
+  user_generation_job: '批量生成任务',
+  user_group: '用户组',
+  withdrawal: '提现',
+}
+
+/** Go 目前只给用户（邮箱）与工单（工单号）解析可读名，其余对象只有类型与短 id */
 export function objectLabel(e: Pick<AuditEvent, 'resource_label' | 'resource_type' | 'resource_id'>): string {
   if (e.resource_label) return e.resource_label
-  if (!e.resource_type) return e.resource_id ? e.resource_id.slice(0, 8) : '—'
-  return e.resource_id ? `${e.resource_type} · ${e.resource_id.slice(0, 8)}` : e.resource_type
+  if (e.resource_type) {
+    const typeName = RESOURCE_TYPE_LABEL[e.resource_type] ?? e.resource_type
+    return e.resource_id ? `${typeName} · ${e.resource_id.slice(0, 8)}` : typeName
+  }
+  if (e.resource_id) return e.resource_id.slice(0, 8)
+  return '—'
+}
+
+export function reasonLabel(reason: string | null): string | null {
+  if (reason === null) return null
+  switch (reason) {
+    case 'invalid_credentials':
+      return '口令错误或账号不存在'
+    case 'account_inactive':
+      return '账号已停用或未激活'
+    case 'not_admin':
+      return '不是管理员却登后台'
+    case 'staff_portal_blocked':
+      return '后台账号登用户端被拒'
+    default:
+      return reason
+  }
+}
+
+const auditOffset = (raw: string | null): number => {
+  const n = Number.parseInt(raw ?? '', 10)
+  return Number.isFinite(n) && n >= 0 ? n : 0
+}
+
+const isActorKind = (v: string): v is ActorKind => (ACTOR_KINDS as readonly string[]).includes(v)
+const isOutcome = (v: string): v is Outcome => (OUTCOMES as readonly string[]).includes(v)
+
+export function auditFromQuery(query: URLSearchParams): { filter: AuditFilter; offset: number } {
+  const actorRaw = query.get('actor') ?? ''
+  const outcomeRaw = query.get('outcome') ?? ''
+  return {
+    filter: {
+      q: query.get('q') ?? '',
+      action: query.get('action') ?? '',
+      actor: isActorKind(actorRaw) ? actorRaw : '',
+      outcome: isOutcome(outcomeRaw) ? outcomeRaw : '',
+    },
+    offset: auditOffset(query.get('o')),
+  }
+}
+
+export function auditToQuery(f: AuditFilter, offset: number): RouteQuery {
+  return {
+    q: f.q || undefined,
+    action: f.action || undefined,
+    actor: f.actor || undefined,
+    outcome: f.outcome || undefined,
+    o: offset || undefined,
+  }
 }
 
 export function authLabel(ctx: AuditEvent['auth_context']): { label: string; strong: boolean } {
@@ -131,8 +421,8 @@ export const CATEGORY_LABEL: Record<AccessCategory, string> = {
   subscribe: '订阅',
 }
 
-/** 订阅拉取的 result（00018）：ok / not_found / revoked / expired / rate_limited */
-const FETCH_RESULT: Record<string, string> = { ok: '成功', not_found: '链接无效', revoked: '已吊销', expired: '已过期', rate_limited: '限流' }
+/** 订阅拉取的 result（迁移 00017 CHECK）：ok / expired / rate_limited / error / not_found */
+const FETCH_RESULT: Record<string, string> = { ok: '成功', expired: '已过期提示', rate_limited: '被限流', error: '失败', not_found: '链接无效' }
 
 export type AccessTone = 'ok' | 'warn' | 'bad' | 'none'
 
@@ -151,15 +441,66 @@ export function accessOutcomeLabel(item: Pick<AccessItem, 'outcome'>): string {
   return OUTCOME_LABEL[o as Outcome] ?? FETCH_RESULT[o] ?? o
 }
 
-/** 行里的账号：邮箱 > 短用户 id > 匿名 */
-export function accessUser(item: Pick<AccessItem, 'user_email' | 'user_id'>): string {
-  return item.user_email ?? (item.user_id ? `用户 ${item.user_id.slice(0, 8)}` : '匿名')
+export interface AccessAccount {
+  /** 「匿名 · 试登 」这类前缀；本人操作为空串 */
+  prefix: string
+  label: string
+  /** 能打开的用户 id：本人操作是 user_id，登录失败是被试的 target_user_id；都没有为 null */
+  userId: string | null
 }
 
-/** 行提示：账号、客户端与网络类型（契约：邮箱与 UA 放 tooltip） */
+export function accessAccount(item: Pick<AccessItem, 'user_email' | 'user_id' | 'target_user_email' | 'target_user_id'>): AccessAccount {
+  if (item.user_email || item.user_id) {
+    return {
+      prefix: '',
+      label: item.user_email ?? `用户 ${item.user_id!.slice(0, 8)}`,
+      userId: item.user_id ?? null,
+    }
+  }
+  if (item.target_user_email || item.target_user_id) {
+    return {
+      prefix: '匿名 · 试登 ',
+      label: item.target_user_email ?? `用户 ${item.target_user_id!.slice(0, 8)}`,
+      userId: item.target_user_id ?? null,
+    }
+  }
+  return { prefix: '', label: '匿名', userId: null }
+}
+
+/** 行里的账号展示：本人邮箱/id，或匿名试登目标账号 */
+export function accessUser(item: Pick<AccessItem, 'user_email' | 'user_id' | 'target_user_email' | 'target_user_id'>): string {
+  const { prefix, label } = accessAccount(item)
+  return prefix + label
+}
+
+/** 行提示：账号、动作、客户端与网络类型（契约：邮箱与 UA 放 tooltip） */
 export function accessTooltip(item: AccessItem): string {
   const kind = item.network_kind ? NETWORK_LABEL[item.network_kind] : undefined
-  return [accessUser(item), item.user_agent, kind, formatDateTime(item.occurred_at)].filter(Boolean).join('\n')
+  const actionLine = item.action ? `${actionLabel(item.action)}（${item.action}）` : undefined
+  return [accessUser(item), actionLine, item.user_agent, kind, formatDateTime(item.occurred_at)].filter(Boolean).join('\n')
+}
+
+const ACCESS_VIEW_SET = new Set(ACCESS_VIEWS.map(([v]) => v))
+
+export function accessFromQuery(query: URLSearchParams): { filter: AccessFilter; offset: number } {
+  const viewRaw = query.get('view') ?? 'all'
+  return {
+    filter: {
+      view: ACCESS_VIEW_SET.has(viewRaw as AccessView) ? (viewRaw as AccessView) : 'all',
+      ip: query.get('ip') ?? '',
+      user: query.get('user') ?? '',
+    },
+    offset: auditOffset(query.get('o')),
+  }
+}
+
+export function accessToQuery(f: AccessFilter, offset: number): RouteQuery {
+  return {
+    view: f.view === 'all' ? undefined : f.view,
+    ip: f.ip || undefined,
+    user: f.user || undefined,
+    o: offset || undefined,
+  }
 }
 
 export function accessKey(item: AccessItem, index: number): string {
@@ -349,3 +690,12 @@ export function validateSwitchReason(degrade: boolean, reason: string): string {
 export function switchBody(degrade: boolean, reason: string): { enabled: boolean; reason: string } {
   return { enabled: !degrade, reason: reason.trim() }
 }
+
+/** 术语的一句话解释：表头与标签悬停（title）用，口径照 Go（identity/service/trace_merge.go、ops_access.go 的 clusterRisk） */
+export const TERM_HINT = {
+  datacenterHits: '来自机房 IP（云服务器、VPN 出口）的登录等行为与订阅拉取次数；正常用户多用家里宽带或手机网络，次数多要留意',
+  uaKinds: '用过几种不同的客户端标识（User-Agent：某个浏览器、Clash、sing-box 各算一种），登录等行为与订阅拉取两路各自去重后相加',
+  sharedIps: '这些 IP 也被别的账号用过（两路合并去重）：可能是一家人或同一公司出口，也可能是共享、倒卖账号',
+  linkedIps: '登录等行为用过的 IP 与订阅拉取用过的 IP 合并去重后的个数',
+  clusterRisk: '机房出口或 5 个以上账号为高风险，3–4 个为中风险，2 个为低风险',
+} as const

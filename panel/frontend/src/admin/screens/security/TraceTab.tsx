@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { formatDateTime, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Button, Empty, FilterTabs, QueryView, Segmented, StatStrip, Table, Tag, type TableColumn } from '../../../ui'
+import { TERM_HINT } from './logic'
 import { useFailure, useRefreshTrace, useTraceAccounts, useTraceIPs, useTraceReveal, useTraceSubscribers } from './queries'
 import {
   accountsText,
@@ -195,7 +196,7 @@ function IPRanking({ query }: { query: ReturnType<typeof useTraceIPs> }) {
         )
       },
     },
-    { key: 'ua_kinds', header: 'UA 种类', align: 'right', hideOnMobile: true, render: (r) => r.ua_kinds },
+    { key: 'ua_kinds', header: <span className={sec.term} title={TERM_HINT.uaKinds}>UA 种类</span>, align: 'right', hideOnMobile: true, render: (r) => r.ua_kinds },
     {
       key: 'last_seen',
       header: '最近出现',
@@ -345,7 +346,7 @@ function AccountRanking({ win }: { win: TraceWindow }) {
     },
     {
       key: 'linked_ips',
-      header: '关联 IP',
+      header: <span className={sec.term} title={TERM_HINT.linkedIps}>关联 IP</span>,
       align: 'right',
       sortable: true,
       render: (r) => r.linked_ips,
@@ -361,15 +362,15 @@ function AccountRanking({ win }: { win: TraceWindow }) {
     { key: 'fetch_ips', header: '拉取 IP', align: 'right', hideOnMobile: true, sortable: true, render: (r) => r.fetch_ips },
     {
       key: 'shared_ips',
-      header: '与他人共用 IP',
+      header: <span className={sec.term} title={TERM_HINT.sharedIps}>与他人共用 IP</span>,
       align: 'right',
       sortable: true,
       render: (r) => (r.shared_ips > 0 ? <span className={css.warn}>{r.shared_ips}</span> : r.shared_ips),
     },
-    { key: 'ua_kinds', header: 'UA 种类', align: 'right', hideOnMobile: true, sortable: true, render: (r) => r.ua_kinds },
+    { key: 'ua_kinds', header: <span className={sec.term} title={TERM_HINT.uaKinds}>UA 种类</span>, align: 'right', hideOnMobile: true, sortable: true, render: (r) => r.ua_kinds },
     {
       key: 'datacenter_hits',
-      header: '机房命中',
+      header: <span className={sec.term} title={TERM_HINT.datacenterHits}>机房命中</span>,
       align: 'right',
       hideOnMobile: true,
       sortable: true,

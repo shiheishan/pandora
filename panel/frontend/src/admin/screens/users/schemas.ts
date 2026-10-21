@@ -11,7 +11,6 @@ const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_sch
 const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
 const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
-export type RiskLevel = (typeof RISK_LEVELS)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
 
 const int = z.number().int()
@@ -92,3 +91,33 @@ export type SubscriptionRow = z.output<typeof subscriptionSchema>
 
 // POST v1/subscriptions/{id}/traffic-reset 的回执
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
+
+// ---------------------------------------------------------------------------
+// GET v1/users/{id}/profile：风控画像，明文 IP 只在这里
+// ---------------------------------------------------------------------------
+const profileRisk = z.enum(['', 'low', 'mid', 'high'])
+export const profileSchema = z.object({
+  events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
+  ips: z.array(
+    z.object({
+      ip: z.string(),
+      count: count,
+      first: time,
+      last: time,
+      accounts: count,
+      geo: z.string(),
+      network_kind: z.string(),
+      risk: profileRisk,
+    }),
+  ),
+  related: z.array(z.object({ id: z.string(), email: z.string() })),
+  fetches: z.array(z.object({ ip: z.string(), ua: z.string(), family: z.string(), result: z.string(), format: z.string(), at: time })),
+  fetch_sources_7d: count,
+  registered_ip: z.string(),
+  /** 各 IP 风险里最高的一档（与风控聚类同一条规则）；空串 = 没有和别的账号共用 IP */
+  risk: profileRisk,
+})
+export type ProfileRisk = z.output<typeof profileRisk>
+type UserProfile = z.output<typeof profileSchema>
+/** 画像 IP 表里只用到时间与去重时的字段（测试夹具不必带 geo / network_kind / risk） */
+export type ProfileIpActivity = Pick<UserProfile['ips'][number], 'ip' | 'count' | 'first' | 'last' | 'accounts'>

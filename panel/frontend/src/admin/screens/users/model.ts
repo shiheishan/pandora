@@ -1,5 +1,5 @@
 import { formatBytes } from '../../../core/format'
-import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, Quota, RiskLevel, SubscriptionRow, SubStatus, UserGroup, UserProfile, UserRow, UserStatus, UsersParams } from './api'
+import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, ProfileIpActivity, ProfileRisk, Quota, SubscriptionRow, SubStatus, UserGroup, UserRow, UserStatus, UsersParams } from './api'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -63,11 +63,12 @@ export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone 
   expired: { label: '已过期', tone: 'neutral' },
 }
 
-export const RISK_VIEW: Record<RiskLevel, { label: string; tone: Tone }> = {
-  trusted: { label: '可信', tone: 'ok' },
-  normal: { label: '正常', tone: 'neutral' },
-  elevated: { label: '偏高', tone: 'warn' },
-  high: { label: '高', tone: 'danger' },
+/** 画像风险：后端按共用 IP 推出（identity clusterRisk，与「安全与运维 › 风控」同一条规则）；空串 = 没有和别的账号共用 IP */
+export const PROFILE_RISK_VIEW: Record<ProfileRisk, { label: string; tone: Tone }> = {
+  '': { label: '正常', tone: 'neutral' },
+  low: { label: '低风险', tone: 'neutral' },
+  mid: { label: '中风险', tone: 'warn' },
+  high: { label: '高风险', tone: 'danger' },
 }
 
 const INTERVAL_LABELS: Record<string, string> = {
@@ -449,7 +450,7 @@ export function subExpiryView(periodEnd: string | null, now: Date): { text: stri
 // ===========================================================================
 const LOGIN_IP_WINDOW_DAYS = 7
 
-export function loginIps7d(ips: UserProfile['ips'], now: Date): number {
+export function loginIps7d(ips: readonly ProfileIpActivity[], now: Date): number {
   const since = now.getTime() - LOGIN_IP_WINDOW_DAYS * DAY
   return new Set(ips.filter((r) => new Date(r.last).getTime() >= since).map((r) => r.ip)).size
 }

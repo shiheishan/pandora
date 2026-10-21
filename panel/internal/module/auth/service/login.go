@@ -20,7 +20,6 @@ const (
 	failureThreshold   = 10               // 窗口内失败到这个次数就暂停
 	failurePause       = 15 * time.Minute // 暂停时长（期间口令正确也拒）
 	failureAuditWindow = 10 * time.Minute // 同一 IP 或同一邮箱在这个窗口内只记一条失败审计
-	loginFailedAction  = "user.login_failed"
 )
 
 // 失败原因（写进审计 data.reason）
@@ -227,7 +226,7 @@ func (s *Service) loginFailed(ctx context.Context, aud, emailHash string, uid *u
 	}
 
 	ev := auditsvc.Event{
-		Action:  loginFailedAction,
+		Action:  auditsvc.ActionLoginFailed,
 		Outcome: auditsvc.OutcomeFailure,
 		Data:    map[string]any{"reason": reason, "email_hash": emailHash, "audience": aud},
 	}

@@ -13,6 +13,7 @@ import {
   reviewText,
   RISK_LABEL,
   RISK_TONE,
+  TERM_HINT,
   USER_STATUS_LABEL,
   validateDisable,
   withDisabled,
@@ -145,7 +146,7 @@ function ClusterCard({ cluster: c, onMark, onDisable }: { cluster: Cluster; onMa
       <div className={css.clh}>
         <span className={css.ip}>{c.ip || 'IP 无法解密'}</span>
         <span className={css.geo}>{clusterPlace(c)}</span>
-        <Tag tone={RISK_TONE[c.risk]}>{RISK_LABEL[c.risk]}</Tag>
+        <Tag tone={RISK_TONE[c.risk]} title={TERM_HINT.clusterRisk}>{RISK_LABEL[c.risk]}</Tag>
         <span className={css.accCount}>{c.accounts} 个账号</span>
         <span className={css.sp} />
         {canMark && (
@@ -166,6 +167,9 @@ function ClusterCard({ cluster: c, onMark, onDisable }: { cluster: Cluster; onMa
           </a>
           <span className={statusClass(u.status)}>{USER_STATUS_LABEL[u.status] ?? u.status}</span>
           <span className={css.plan}>{u.active_plan ?? '无生效套餐'}</span>
+          <a className={css.link} href={href('/security/access', { view: 'login', user: u.id })}>
+            登录记录
+          </a>
         </div>
       ))}
       {c.users.length < c.accounts && <div className={css.more}>另有 {c.accounts - c.users.length} 个账号已不存在</div>}

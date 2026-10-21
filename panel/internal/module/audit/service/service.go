@@ -33,6 +33,9 @@ const (
 	OutcomePartial = "partial"
 )
 
+// ActionLoginFailed 是登录失败的动作代号（auth 写、identity 访问日志按它带出被试账号、溯源统计按它数）：登录失败是匿名事件，被试的账号只在对象里。
+const ActionLoginFailed = "user.login_failed"
+
 // Event 是一条审计。
 type Event struct {
 	Action       string // 动作名，如 "user.login"

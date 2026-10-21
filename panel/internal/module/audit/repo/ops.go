@@ -16,8 +16,10 @@ type AccessFilter struct {
 	IPHash           []byte
 	FilterActors     bool
 	ActorIDs         []uuid.UUID
-	Outcome          string
-	Limit            int
+	// TargetActions：FilterActors 为 true 时，这些动作再按对象匹配（resource_type = 'user' 且 resource_id 属于 ActorIDs）；登录失败是匿名事件，被试的账号只在对象里。
+	TargetActions []string
+	Outcome       string
+	Limit         int
 }
 
 // ActorEventRow 是画像里的一条审计原始行。
@@ -42,12 +44,14 @@ type ActorIPRow struct {
 
 // AccessRow 是访问明细里的一条审计行。
 type AccessRow struct {
-	Action     string     `gorm:"column:action"`
-	Outcome    string     `gorm:"column:outcome"`
-	IPEnc      []byte     `gorm:"column:ip_enc"`
-	UserAgent  string     `gorm:"column:user_agent"`
-	ActorID    *uuid.UUID `gorm:"column:actor_id"`
-	OccurredAt time.Time  `gorm:"column:occurred_at"`
+	Action       string     `gorm:"column:action"`
+	Outcome      string     `gorm:"column:outcome"`
+	IPEnc        []byte     `gorm:"column:ip_enc"`
+	UserAgent    string     `gorm:"column:user_agent"`
+	ActorID      *uuid.UUID `gorm:"column:actor_id"`
+	ResourceType *string    `gorm:"column:resource_type"`
+	ResourceID   *uuid.UUID `gorm:"column:resource_id"`
+	OccurredAt   time.Time  `gorm:"column:occurred_at"`
 }
 
 // ClusterRow 是同源 IP 聚类列表的一行。
@@ -168,7 +172,12 @@ func (r *Repo) AccessEvents(ctx context.Context, f AccessFilter) ([]AccessRow, e
 		tx = tx.Where("ip_hash = ?", f.IPHash)
 	}
 	if f.FilterActors {
-		tx = tx.Where("actor_id = ANY(CAST(? AS uuid[]))", uuidArray(f.ActorIDs))
+		arr := uuidArray(f.ActorIDs)
+		if len(f.TargetActions) == 0 {
+			tx = tx.Where("actor_id = ANY(CAST(? AS uuid[]))", arr)
+		} else {
+			tx = tx.Where("(actor_id = ANY(CAST(? AS uuid[])) OR (resource_type = 'user' AND resource_id = ANY(CAST(? AS uuid[])) AND action IN ?))", arr, arr, f.TargetActions)
+		}
 	}
 	if f.Outcome == "error" {
 		tx = tx.Where("outcome <> ?", "success")
@@ -179,7 +188,7 @@ func (r *Repo) AccessEvents(ctx context.Context, f AccessFilter) ([]AccessRow, e
 	err := tx.Select(
 		"action", "outcome", "ip_enc",
 		"COALESCE(user_agent,'') AS user_agent",
-		"actor_id", "occurred_at",
+		"actor_id", "resource_type", "resource_id", "occurred_at",
 	).Order("occurred_at DESC, id DESC").Limit(f.Limit).Scan(&rows).Error
 	if err != nil {
 		return nil, err

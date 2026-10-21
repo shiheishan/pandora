@@ -3,8 +3,8 @@ import { z } from 'zod'
 // ---------------------------------------------------------------------------
 // 审计日志（audit/handler auditEventResponse，与 auditEventSchema 对齐）
 // ---------------------------------------------------------------------------
-/** agent 是客服，node 是 Node Agent 进程（迁移 00012），两者不是一回事 */
-export const ACTOR_KINDS = ['user', 'admin', 'system', 'agent', 'node', 'plugin', 'anonymous'] as const
+/** 与数据库 CHECK、Go 筛选参数一致，只有这四种；客服、节点代理、插件在库里不存在 */
+export const ACTOR_KINDS = ['user', 'admin', 'system', 'anonymous'] as const
 export type ActorKind = (typeof ACTOR_KINDS)[number]
 export const OUTCOMES = ['success', 'failure', 'denied', 'partial'] as const
 export type Outcome = (typeof OUTCOMES)[number]
@@ -42,6 +42,9 @@ const accessItemSchema = z.object({
   action: z.string().optional(),
   user_id: z.string().optional(),
   user_email: z.string().optional(),
+  /** 仅匿名的登录失败（user.login_failed）才有，是被试登的账号（审计对象） */
+  target_user_id: z.string().optional(),
+  target_user_email: z.string().optional(),
   ip: z.string().optional(),
   geo: z.string().optional(),
   network_kind: z.string().optional(),

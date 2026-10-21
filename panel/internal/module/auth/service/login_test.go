@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -211,7 +212,7 @@ func TestLoginStaffPortalBlocked(t *testing.T) {
 	}
 	blocked := 0
 	for _, r := range h.Audit.events {
-		if r.ev.Action == loginFailedAction && r.ev.Data["reason"] == reasonStaffPortal {
+		if r.ev.Action == auditsvc.ActionLoginFailed && r.ev.Data["reason"] == reasonStaffPortal {
 			blocked++
 		}
 	}

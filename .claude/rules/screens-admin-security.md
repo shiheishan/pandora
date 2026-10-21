@@ -11,8 +11,12 @@ paths:
 - 批量停用走 `suspended`（可恢复），已停用 / 已封禁 / 后台账号由后端跳过：结果按 `disabled` / `skipped` 汇总，一个都没停成时后端不写结论、前端缓存补丁也不写。
 - 产品取舍：「订阅下发使用缓存」开关不做；字典不收 `ops.bulk_export` / `ops.reports` / `node.autoscale`（旧库残留的行按未知 code 显示、照后端极性可切）。
 - 审计导出要 reauth，导出日期校验与后端 `auditExportRange` 同键同文案。
-- 10-16 设计稿：审计日志「结果」单独一列（每行都有标签）；访问日志行里直接显示账号（`accessUser`：邮箱 > 短用户 id > 匿名，`AccessTab.tsx` 再接「· 动作」），工具栏右侧显示本页条数与「清空筛选」。
-- 风控是三段筛选（待处理 / 已标记正常 / 全部，带计数）：待处理取默认列表，另两段取 `include_reviewed=1` 的列表再按有效的「标记正常」过滤（`clusterViews`），两个查询同时发；「标记正常」先确认再提交；成员不显示「最近出现」（后端没有）。风控列表下方挂用户块的 `DevicePolicy`，「注册防护」页签挂 `SignupSecurity`（组件归 users/，这里只接线）。
+- 10-16 设计稿：审计日志「结果」单独一列（每行都有标签）；访问日志行里直接显示账号（`accessAccount`：本人邮箱 > 短用户 id；匿名的登录失败显示「匿名 · 试登 <被试邮箱>」，取后端 `target_user_id/email`；有 id 的账号是到用户详情的链接），后接「· 动作中文名」与代号小字，工具栏右侧显示本页条数与「清空筛选」。
+- 审计与访问日志的筛选、翻页都在地址上（`auditFromQuery` / `auditToQuery`：`q`、`action`、`actor`、`outcome`、`o`；`accessFromQuery` / `accessToQuery`：`view`、`ip`、`user`、`o`；`navigate` 用 replace），搜索框与动作前缀都是 `DebouncedInput`（停手 300ms 回写，地址变了跟着地址走；受地址直接控制的输入框会在 hashchange 前被还原，光标跳、输入法组字被打断）。用户详情「看登录记录 →」（`#/security/access?view=login&user=<id>`）、「看审计记录 →」（`#/security/audit?q=<用户 id>`）与风控成员行的「登录记录」靠这个深链；`paused` 仍是组件状态。
+- 动作显示中文名：`logic.ts` 的 `ACTION_NAMES` 覆盖 Go 写进审计的全部代号（10-21 核过 181 个）外加访问日志的 `subscription.fetch`，`actionLabel` 查不到回退代号；Go 新增审计动作时在这里加一行（单测查重复、代号格式、按代号排序）。对象类型中文名 `RESOURCE_TYPE_LABEL`（`objectLabel` 写「类型 · id 前 8 位」，Go 只给用户与工单解析可读名）；登录失败原因码 `reasonLabel`，在对象下面直接显示，不藏在悬停里。
+- 审计搜索框占位 `AUDIT_SEARCH_PLACEHOLDER`（邮箱、动作代号或对象 ID）与 Go 搜索口径一致：邮箱命中操作人或「对象是这个用户」，名称搜不到，空结果的说明里写明。操作者类型只有库里的四种（`ACTOR_KINDS`：user / admin / system / anonymous），订阅拉取结果只有迁移 00017 的五种（`FETCH_RESULT`）。
+- 访问日志行本身不可点，不加悬停底色（只有账号链接可点）。术语就地解释：表头与风险标签用 `TERM_HINT` 作 `title`，表头文字套 `.term`（点线下划线）；页面说明里同名 `{ term, text }` 条目口径一致。
+- 风控是三段筛选（待处理 / 已标记正常 / 全部，带计数）：待处理取默认列表，另两段取 `include_reviewed=1` 的列表再按有效的「标记正常」过滤（`clusterViews`），两个查询同时发；「标记正常」先确认再提交；成员不显示「最近出现」（后端没有）；成员行末尾「登录记录」链到访问日志的登录分段。风控列表下方挂用户块的 `DevicePolicy`，「注册防护」页签挂 `SignupSecurity`（组件归 users/，这里只接线）。
 - 降级开关页没有顶部说明与只读横幅（说明在 `PAGE_HELP`）；核心项画成禁用的打开开关。
 - av4（样稿 admin-v4）：
   - 访问日志是亮底白框（不再是深色终端）：头部两行——第一行 `StatusDot`（监控中 / 已暂停 / 查看更早的记录）+ 说明 + 第一页的「暂停 / 继续」，第二行 `FilterTabs` 分段；事件行是 5 列 grid（时间、分类标签、结果、IP、账号 · 动作）；页脚常显，「回到最新」第一页置灰。结果色档在 `logic.ts` 的 `accessTone`：成功绿、订阅拉取 `rate_limited` 黄、其余非成功红、无结果灰。

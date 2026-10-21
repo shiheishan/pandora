@@ -87,6 +87,18 @@ export function setPoolSource(fn: (groupId: string) => PoolRef[]): void {
 }
 export const exclusivePoolsOf = (groupId: string) => poolSource(groupId)
 
+// 用户画像（GET v1/users/:id/profile）由审计与订阅拉取算出，数据归 security.ts：它经 setProfileSource 登记回来，
+// 与审计日志、访问日志、风控聚类是同一份数据；没登记时回空画像（形状照 identity/handler 的 userProfileResponse）
+export interface ProfileViewer {
+  id: string
+  email: string
+}
+type ProfileSource = (u: User, viewer: ProfileViewer) => Record<string, unknown>
+let profileSource: ProfileSource = () => ({ events: [], ips: [], related: [], fetches: [], fetch_sources_7d: 0, registered_ip: '', risk: '' })
+export function setProfileSource(fn: ProfileSource): void {
+  profileSource = fn
+}
+
 export const GROUPS: Group[] = [
   { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', status: 'active', plans: 2, coupons: 1 },
   { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', status: 'active', plans: 1, coupons: 0 },
@@ -103,7 +115,8 @@ const PLANS: Array<[string, number, number | null, number | null]> = [
 // 套餐 id 固定：批量运营按 plan_id 筛当前订阅的套餐；plans-store.ts 用同一组 id 建目录
 export const PLAN_IDS = PLANS.map((_, k) => `9c0e1a2b-3333-4b00-8000-00000000000${k + 1}`)
 
-const DOMAINS = ['qq.com', 'gmail.com', '163.com', 'outlook.com', 'proton.me', 'icloud.com', 'foxmail.com']
+// 仓库公开：邮箱只用保留域（RFC 2606），本地名照旧
+const DOMAINS = ['example.com', 'example.net', 'example.org', 'mail.example.com', 'mail.example.test', 'mail.example.net', 'mail.example.org']
 const NAMES = ['zhang.wei', 'k.liu', 'wu.qing', 'm.chen', 'yao_ops', 'tomato', 'grace.h', 'lin.xiao', 'sec.check', 'mira', 'hu.jun', 'sun.yue', 'zhao.lei', 'qian.fei', 'luo.an', 'ma.teng', 'he.xin', 'gao.yu', 'lin.bo', 'xu.ke']
 
 function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
@@ -148,10 +161,12 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     email,
     display_name: i % 4 === 0 ? `用户${i + 1}` : null,
     status: i % 15 === 9 ? 'suspended' : i % 23 === 17 ? 'banned' : i % 19 === 11 ? 'pending' : 'active',
-    risk_level: i % 17 === 3 ? 'high' : i % 9 === 2 ? 'elevated' : i % 10 === 0 ? 'trusted' : 'normal',
+    // Go 没有任何代码写 users.risk_level（迁移缺省 normal）；风险由画像按共用 IP 推出（security.ts）
+    risk_level: 'normal',
     group_id: i % 5 === 1 ? GROUPS[0]!.id : i % 11 === 4 ? GROUPS[1]!.id : i % 13 === 6 ? GROUPS[2]!.id : null,
     created_at: iso((i * 3 + 2) * DAY),
-    last_login_at: i % 6 === 5 ? null : iso(((i * 47) % 600) * 60_000),
+    // i % 19 === 11 是 pending：Go 只让 active 账号登录成功，没激活的从没登录过
+    last_login_at: i % 6 === 5 || i % 19 === 11 ? null : iso(((i * 47) % 600) * 60_000),
     email_verified: i % 8 !== 7,
     balance: (i * 1375) % 26500,
     currency: 'CNY',
@@ -161,6 +176,8 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     is_admin: i === 0,
   }
 })
+// k.liu（第 2 位）登录不上的场景：最后一次成功登录在两天前，之后全是冲着他的登录失败（审计种子在 security.ts）
+users[1]!.last_login_at = iso(2 * DAY)
 // 邀请关系：每隔几个人由第 0 号邀请
 for (let i = 2; i < users.length; i += 4) users[i]!.referrer = users[0]!.id
 
@@ -477,22 +494,11 @@ const users_: MockModule = {
       ctx.send(200, detail(u))
     },
 
-    // 风控画像：明文 IP 只在这里
+    // 风控画像：明文 IP 只在这里；画像由审计与订阅拉取现算，属主是 security.ts（经 setProfileSource 登记）
     'GET /v1/users/:id/profile': (ctx) => {
       const u = findUser(ctx)
-      const n = u ? users.indexOf(u) : 0
-      // 只用文档段（RFC 5737 的三个 /24），k 不同末段就不同
-      const DOC_NETS = ['192.0.2', '198.51.100', '203.0.113']
-      const ip = (k: number) => `${DOC_NETS[(n * 7 + k) % 3]}.${((n * 7 + k * 31 + 18) % 254) + 1}`
-      const shared = n % 4 === 2
-      ctx.send(200, {
-        events: Array.from({ length: 6 }, (_, k) => ({ action: k % 3 ? 'auth.login' : 'user.password_changed', outcome: k === 4 ? 'failure' : 'success', ip: ip(k % 2), ua: 'Mozilla/5.0', domain: 'public', at: iso((k * 9 + 1) * 3_600_000) })),
-        ips: [0, 1].map((k) => ({ ip: ip(k), count: 12 - k * 7, first: iso(20 * DAY), last: iso((k + 1) * 3_600_000), accounts: shared && k === 0 ? 3 : 1 })),
-        related: shared ? users.filter((r) => r !== u).slice(n % 5, (n % 5) + 2).map((r) => ({ id: r.id, email: r.email })) : [],
-        fetches: Array.from({ length: 5 }, (_, k) => ({ ip: ip(k % (shared ? 5 : 2)), ua: 'clash-verge/2.0', family: k % 2 ? 'clash' : 'sing-box', result: k === 3 ? 'denied' : 'ok', format: k % 2 ? 'clash' : 'singbox', at: iso((k * 5 + 2) * 3_600_000) })),
-        fetch_sources_7d: shared ? 6 : 1 + (n % 3),
-        registered_ip: n % 5 === 0 ? '' : ip(9),
-      })
+      if (!u) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
+      ctx.send(200, profileSource(u, { id: ctx.user.userId, email: ctx.user.email }))
     },
 
     // ---- 写 -----------------------------------------------------------------

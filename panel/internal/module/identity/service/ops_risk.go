@@ -52,13 +52,22 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 		})
 	}
 	for _, ip := range activity.IPs {
+		geo, kind := s.locate(ip.IP)
+		risk := ""
+		if ip.Accounts > 1 {
+			risk = clusterRisk(ip.Accounts, kind)
+		}
 		out.IPs = append(out.IPs, ProfileIP{
-			IP:       ip.IP,
-			Count:    ip.Count,
-			First:    ip.First,
-			Last:     ip.Last,
-			Accounts: ip.Accounts,
+			IP:          ip.IP,
+			Count:       ip.Count,
+			First:       ip.First,
+			Last:        ip.Last,
+			Accounts:    ip.Accounts,
+			Geo:         geo,
+			NetworkKind: kind,
+			Risk:        risk,
 		})
+		out.Risk = higherRisk(out.Risk, risk)
 	}
 
 	relatedSet := make(map[uuid.UUID]struct{})

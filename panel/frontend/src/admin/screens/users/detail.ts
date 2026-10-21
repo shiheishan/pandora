@@ -1,4 +1,4 @@
-import type { SubscriptionRow, UserProfile, UserRow } from './api'
+import type { ProfileIpActivity, SubscriptionRow, UserRow } from './api'
 import {
   currentSubscription,
   extendableSubscriptions,
@@ -112,6 +112,6 @@ export function planMetaLine(s: Pick<SubscriptionRow, 'quotas' | 'current_period
 // ===========================================================================
 // 风控页「最近登录 IP」：画像 ips[] 按最近一次出现倒序
 // ===========================================================================
-export function recentIps(ips: UserProfile['ips']): UserProfile['ips'] {
+export function recentIps<T extends ProfileIpActivity>(ips: readonly T[]): T[] {
   return [...ips].sort((a, b) => new Date(b.last).getTime() - new Date(a.last).getTime())
 }

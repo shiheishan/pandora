@@ -15,7 +15,7 @@ var accessCategoryRules = []struct {
 	category string
 	prefixes []string
 }{
-	{"login", []string{"user.login"}},
+	{"login", []string{"user.login", "auth.quick_login", "auth.mail_link_login"}},
 	{"register", []string{"user.registered"}},
 	{"reset_password", []string{"user.password", "user.reset"}},
 	{"order", []string{"order."}},
@@ -64,6 +64,36 @@ func clusterRisk(accounts int, kind string) string {
 	default:
 		return "low"
 	}
+}
+
+// accessTarget 只认登录失败，别的匿名事件（如 session.refresh_reuse）不挂到人身上。
+func accessTarget(a auditsvc.AccessEvent) *uuid.UUID {
+	if a.ActorID == nil && a.Action == auditsvc.ActionLoginFailed && a.ResourceType == "user" && a.ResourceID != nil {
+		id := *a.ResourceID
+		return &id
+	}
+	return nil
+}
+
+func riskRank(r string) int {
+	switch r {
+	case "high":
+		return 3
+	case "mid":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// higherRisk 按 high > mid > low > "" 返回较高的一档。
+func higherRisk(a, b string) string {
+	if riskRank(a) >= riskRank(b) {
+		return a
+	}
+	return b
 }
 
 // accessMaxOffset 是访问明细最多往后翻的条数（加上每页上限 200 不超过 audit 单次最多取的 10000 行）。
@@ -148,7 +178,7 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 		if category != "" {
 			inc, exc = include, exclude
 		}
-		audits, err = s.ops.AccessEvents(ctx, auditsvc.AccessQuery{
+		qAudit := auditsvc.AccessQuery{
 			Include:      nonNilStrings(inc),
 			Exclude:      nonNilStrings(exc),
 			IP:           ip,
@@ -156,7 +186,11 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 			ActorIDs:     actorIDs,
 			Outcome:      outcome,
 			Limit:        fetchLimit,
-		})
+		}
+		if filterActors {
+			qAudit.TargetActions = []string{auditsvc.ActionLoginFailed}
+		}
+		audits, err = s.ops.AccessEvents(ctx, qAudit)
 		if err != nil {
 			return nil, err
 		}
@@ -200,13 +234,14 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 	items := make([]AccessItem, 0, len(audits)+len(fetches))
 	for _, a := range audits {
 		items = append(items, AccessItem{
-			Category:  categoryFromAction(a.Action),
-			Action:    a.Action,
-			Outcome:   a.Outcome,
-			IP:        a.IP,
-			UserAgent: a.UserAgent,
-			UserID:    a.ActorID,
-			At:        a.At,
+			Category:     categoryFromAction(a.Action),
+			Action:       a.Action,
+			Outcome:      a.Outcome,
+			IP:           a.IP,
+			UserAgent:    a.UserAgent,
+			UserID:       a.ActorID,
+			TargetUserID: accessTarget(a),
+			At:           a.At,
 		})
 	}
 	for _, f := range fetches {
@@ -238,6 +273,9 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 		if it.UserID != nil {
 			pageIDSet[*it.UserID] = struct{}{}
 		}
+		if it.TargetUserID != nil {
+			pageIDSet[*it.TargetUserID] = struct{}{}
+		}
 	}
 	if len(pageIDSet) > 0 {
 		pageIDs := make([]uuid.UUID, 0, len(pageIDSet))
@@ -251,6 +289,9 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 		for i := range items {
 			if items[i].UserID != nil {
 				items[i].UserEmail = emails[*items[i].UserID]
+			}
+			if items[i].TargetUserID != nil {
+				items[i].TargetUserEmail = emails[*items[i].TargetUserID]
 			}
 		}
 	}
