@@ -302,6 +302,26 @@ func TestListQueryMatchesUserAsResource(t *testing.T) {
 		}
 	}
 
+	// 整串是用户 id：他自己做的、对象是他的，外加对象 id 恰好等于它的（存量口径），不靠邮箱包含匹配
+	wantID := map[string]bool{
+		p + ".self":         true,
+		p + ".adjust":       true,
+		p + ".login_failed": true,
+		p + ".order":        true,
+	}
+	rowsID, _, err := svc.List(ctx, Filter{ActionPrefix: p, Query: kim.String()}, Page{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsID) != len(wantID) {
+		t.Fatalf("id query len %d want %d", len(rowsID), len(wantID))
+	}
+	for _, r := range rowsID {
+		if !wantID[r.Action] {
+			t.Fatalf("id query unexpected action %q", r.Action)
+		}
+	}
+
 	wantOps := map[string]bool{
 		p + ".adjust": true,
 		p + ".order":  true,

@@ -307,7 +307,7 @@ func newTestService(t *testing.T) *testHarness {
 func loginFailedEvents(al *auditLog) []recorded {
 	var out []recorded
 	for _, r := range al.events {
-		if r.ev.Action == loginFailedAction {
+		if r.ev.Action == auditsvc.ActionLoginFailed {
 			out = append(out, r)
 		}
 	}

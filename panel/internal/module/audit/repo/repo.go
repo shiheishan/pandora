@@ -28,11 +28,11 @@ type Query struct {
 	ActionPrefix   string      // action LIKE 前缀（转义 % _ \ ）
 	ActorKind      string      // actor_kind = ?
 	Outcome        string      // outcome = ?
-	Text           string      // 搜索框：非空时加 (action ILIKE '%'||转义后||'%' OR actor_id IN TextUserIDs OR (resource_type = 'user' AND resource_id IN TextUserIDs) OR resource_id = TextResourceID)，
+	Text           string      // 搜索框：非空时加 (action ILIKE '%'||转义后||'%' OR actor_id IN TextUserIDs OR (resource_type = 'user' AND resource_id IN TextUserIDs) OR resource_id = TextResourceID OR actor_id = TextResourceID)，
 	TextUserIDs    []uuid.UUID // 邮箱包含搜索词的用户；命中 actor_id IN 或 (resource_type = 'user' AND resource_id IN)
-	TextResourceID *uuid.UUID
-	From, To       *time.Time // occurred_at >= From、occurred_at < To
-	AsOf           *time.Time // occurred_at <= AsOf（导出用，冻结范围）
+	TextResourceID *uuid.UUID  // 整串是 uuid 时：对象 id 或操作人 id 等于它（从用户详情按 id 跳进来，不用邮箱包含匹配混进别人）
+	From, To       *time.Time  // occurred_at >= From、occurred_at < To
+	AsOf           *time.Time  // occurred_at <= AsOf（导出用，冻结范围）
 }
 
 // Record 是查询出的一行（只取后台要的列）。
@@ -147,8 +147,8 @@ func apply(tx *gorm.DB, q Query) *gorm.DB {
 			args = append(args, q.TextUserIDs, q.TextUserIDs)
 		}
 		if q.TextResourceID != nil {
-			parts = append(parts, "resource_id = ?")
-			args = append(args, *q.TextResourceID)
+			parts = append(parts, "resource_id = ?", "actor_id = ?")
+			args = append(args, *q.TextResourceID, *q.TextResourceID)
 		}
 		tx = tx.Where("("+strings.Join(parts, " OR ")+")", args...)
 	}

@@ -25,7 +25,7 @@ export function RiskTab({ d, now }: { d: UserDetail; now: Date }) {
             <section>
               <SectionTitle
                 action={
-                  <a className={css.link} href={href('/security/audit', { q: d.email })}>
+                  <a className={css.link} href={href('/security/audit', { q: d.id })}>
                     看审计记录 →
                   </a>
                 }

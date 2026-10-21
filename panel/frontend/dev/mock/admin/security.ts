@@ -486,7 +486,8 @@ function auditMatch(r: AuditRow, f: AuditQuery): boolean {
     r.action.toLowerCase().includes(q) ||
     (r.actor_id !== null && f.ids.has(r.actor_id)) ||
     (r.resource_type === 'user' && r.resource_id !== null && f.ids.has(r.resource_id)) ||
-    r.resource_id === f.q
+    r.resource_id === f.q ||
+    r.actor_id === f.q
   return (
     (!f.action || r.action.startsWith(f.action)) &&
     (!f.actorKind || r.actor_kind === f.actorKind) &&
@@ -630,7 +631,8 @@ function tick() {
           const uaStr = CLIENTS[ui % CLIENTS.length]!
           fetches.unshift({ at, user: u, ip, ua: uaStr, result: 'ok', format: fetchFormat(uaStr) })
         }
-      } else {
+      } else if (u.status === 'active') {
+        // Go 只让 active 账号登录成功：停用、待激活的这一拍什么都不写
         record({
           at,
           actor_kind: 'user',
@@ -659,7 +661,7 @@ function tick() {
 
 /** accessCategoryRules：先命中者胜，admin 排在 payment 前面 */
 const CATEGORY_RULES: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['login', ['user.login']],
+  ['login', ['user.login', 'auth.quick_login', 'auth.mail_link_login']],
   ['register', ['user.registered']],
   ['reset_password', ['user.password', 'user.reset']],
   ['order', ['order.']],

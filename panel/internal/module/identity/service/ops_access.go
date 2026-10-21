@@ -15,7 +15,7 @@ var accessCategoryRules = []struct {
 	category string
 	prefixes []string
 }{
-	{"login", []string{"user.login"}},
+	{"login", []string{"user.login", "auth.quick_login", "auth.mail_link_login"}},
 	{"register", []string{"user.registered"}},
 	{"reset_password", []string{"user.password", "user.reset"}},
 	{"order", []string{"order."}},
@@ -23,9 +23,6 @@ var accessCategoryRules = []struct {
 	{"payment", []string{"payment"}},
 	{"ticket", []string{"ticket."}},
 }
-
-// actionLoginFailed 与 auth/service/login.go 的 loginFailedAction 同值；登录失败是匿名事件，被试的账号只在审计对象里。
-const actionLoginFailed = "user.login_failed"
 
 // categoryFromAction 把审计 action 归到展示分类。
 func categoryFromAction(action string) string {
@@ -71,7 +68,7 @@ func clusterRisk(accounts int, kind string) string {
 
 // accessTarget 只认登录失败，别的匿名事件（如 session.refresh_reuse）不挂到人身上。
 func accessTarget(a auditsvc.AccessEvent) *uuid.UUID {
-	if a.ActorID == nil && a.Action == actionLoginFailed && a.ResourceType == "user" && a.ResourceID != nil {
+	if a.ActorID == nil && a.Action == auditsvc.ActionLoginFailed && a.ResourceType == "user" && a.ResourceID != nil {
 		id := *a.ResourceID
 		return &id
 	}
@@ -191,7 +188,7 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 			Limit:        fetchLimit,
 		}
 		if filterActors {
-			qAudit.TargetActions = []string{actionLoginFailed}
+			qAudit.TargetActions = []string{auditsvc.ActionLoginFailed}
 		}
 		audits, err = s.ops.AccessEvents(ctx, qAudit)
 		if err != nil {

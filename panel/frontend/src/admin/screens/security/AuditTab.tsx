@@ -137,7 +137,7 @@ export function AuditTab() {
           aria-label="搜索审计日志"
           fieldClassName={css.search}
         />
-        <Input size="sm" mono aria-label="动作前缀" fieldClassName={css.prefix} placeholder="动作代号开头，如 plan、order." value={filter.action} onChange={(e) => patch({ action: e.target.value })} />
+        <DebouncedInput mono aria-label="动作前缀" fieldClassName={css.prefix} placeholder="动作代号开头，如 plan、order." value={filter.action} onChange={(action) => patch({ action })} />
         <Select size="sm" aria-label="操作者类型" emptyOption="全部操作者" value={filter.actor} options={ACTOR_KINDS.map((k) => ({ value: k, label: ACTOR_LABEL[k] }))} onChange={(e) => patch({ actor: e.target.value as ActorKind | '' })} />
         <Select size="sm" aria-label="结果" emptyOption="全部结果" value={filter.outcome} options={OUTCOMES.map((o) => ({ value: o, label: OUTCOME_LABEL[o] }))} onChange={(e) => patch({ outcome: e.target.value as Outcome | '' })} />
       </div>

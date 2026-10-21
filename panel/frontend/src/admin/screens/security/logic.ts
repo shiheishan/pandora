@@ -22,7 +22,7 @@ export function clockTime(at: string, now: Date = new Date()): string {
 export const AUDIT_PAGE = 50
 
 export interface AuditFilter {
-  /** 邮箱（操作人是他，或对象是这个用户）与动作代号做包含匹配，对象 ID 精确匹配；对象名不能搜 */
+  /** 邮箱（操作人是他，或对象是这个用户）与动作代号做包含匹配，ID 精确匹配对象或操作人；对象名不能搜 */
   q: string
   /** 动作前缀，如 order. */
   action: string

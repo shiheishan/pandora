@@ -12,6 +12,9 @@ import (
 func TestCategoryFromAction(t *testing.T) {
 	cases := map[string]string{
 		"user.login":             "login",
+		"user.login_failed":      "login",
+		"auth.quick_login":       "login",
+		"auth.mail_link_login":   "login",
 		"user.registered":        "register",
 		"user.password_changed":  "reset_password",
 		"user.reset_requested":   "reset_password",
@@ -69,7 +72,7 @@ func TestAccessTarget(t *testing.T) {
 		{
 			name: "匿名登录失败对象 user",
 			a: auditsvc.AccessEvent{
-				Action:       actionLoginFailed,
+				Action:       auditsvc.ActionLoginFailed,
 				ResourceType: "user",
 				ResourceID:   &uid,
 			},
@@ -79,7 +82,7 @@ func TestAccessTarget(t *testing.T) {
 			name: "有 ActorID 的同动作",
 			a: auditsvc.AccessEvent{
 				ActorID:      &uid,
-				Action:       actionLoginFailed,
+				Action:       auditsvc.ActionLoginFailed,
 				ResourceType: "user",
 				ResourceID:   &uid,
 			},
@@ -95,7 +98,7 @@ func TestAccessTarget(t *testing.T) {
 		{
 			name: "匿名登录失败对象 session",
 			a: auditsvc.AccessEvent{
-				Action:       actionLoginFailed,
+				Action:       auditsvc.ActionLoginFailed,
 				ResourceType: "session",
 				ResourceID:   &uid,
 			},
@@ -103,7 +106,7 @@ func TestAccessTarget(t *testing.T) {
 		{
 			name: "匿名登录失败无 ResourceID",
 			a: auditsvc.AccessEvent{
-				Action:       actionLoginFailed,
+				Action:       auditsvc.ActionLoginFailed,
 				ResourceType: "user",
 			},
 		},

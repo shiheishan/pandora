@@ -66,6 +66,6 @@ paths:
 
 ## 后台安全读路径（`service/ops_*.go`）
 
-- 访问明细 `AccessLog`：按账号筛选时给 audit 传 `TargetActions: [actionLoginFailed]`，冲着这个账号的匿名登录失败也列出；匿名登录失败的被试账号由 `accessTarget` 取（操作者为空、动作 `user.login_failed`、对象 user），放进 `TargetUserID` / `TargetUserEmail`，与操作人邮箱同一次 `Emails` 查完；别的匿名事件（如 `session.refresh_reuse`）不挂到人身上。`actionLoginFailed` 与 auth 的 `loginFailedAction` 同值（identity 不能 import auth）。守卫 `ops_access_test.go` 的 `TestAccessTarget`、`ops_risk_pg_test.go` 的 `TestPGAccessLog`。
+- 访问明细 `AccessLog`：按账号筛选时给 audit 传 `TargetActions: [auditsvc.ActionLoginFailed]`，冲着这个账号的匿名登录失败也列出；匿名登录失败的被试账号由 `accessTarget` 取（操作者为空、动作 `user.login_failed`、对象 user），放进 `TargetUserID` / `TargetUserEmail`，与操作人邮箱同一次 `Emails` 查完；别的匿名事件（如 `session.refresh_reuse`）不挂到人身上。登录失败的动作代号只有 audit service 的 `ActionLoginFailed` 一份（auth 写、identity 读都用它）。访问分类 login 含 `user.login`（及 `user.login_failed`）、`auth.quick_login`、`auth.mail_link_login`（`accessCategoryRules`，假后端 `CATEGORY_RULES` 同步），「看登录记录」才不漏快捷登录与邮件链接登录。守卫 `ops_access_test.go` 的 `TestAccessTarget`、`ops_risk_pg_test.go` 的 `TestPGAccessLog`。
 - 用户画像 `UserProfile`：每个 IP 读时 `locate` 出归属地与网络类型；近 90 天与别的账号共用（`Accounts > 1`）时按 `clusterRisk` 给 `Risk`（与风控聚类同一条规则），顶层 `Risk` 取最高一档（`higherRisk`）。`users.risk_level` 列没有任何代码写（永远 normal），后台不再用它判断风险；要删列另做迁移。
 - 读访问明细、聚类列表、画像都会先记 `security.source_ip_viewed`（后台访问日志第一页 5 秒轮询时每次都记）。
