@@ -16,7 +16,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-var errOpenReset = errs.Newf(errs.Conflict, "这份订阅还有一张未完成的流量重置订单，请先支付或取消")
+var errOpenReset = errs.Newf(errs.Conflict, "这一份还有一张没付款的流量重置订单，请先付款或取消")
 
 // resetBasis 取流量重置的判断依据：限额流量配额行里周期最长的那一行（没有周期末的 total 行最长，其余按
 // period_end − period_start 比，一样长取排在前面的）。没有限额流量配额回 false（不限流量的订阅不卖重置）。
