@@ -78,7 +78,7 @@ func (f *fakeSvc) Redemptions(context.Context, uuid.UUID) ([]service.Redemption,
 	return f.redemptions, nil
 }
 
-func newEngine(svc Service, admin bool, p *authn.Principal) *gin.Engine {
+func newEngine(svc Service, p *authn.Principal) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	e.Use(httpx.RequestID(zap.NewNop()), httpx.Errors())
@@ -93,11 +93,7 @@ func newEngine(svc Service, admin bool, p *authn.Principal) *gin.Engine {
 		Switch:       func(string) gin.HandlerFunc { return pass },
 	}
 	h := New(svc)
-	if admin {
-		h.RegisterAdmin(e.Group("/v1"), kit)
-	} else {
-		h.RegisterPublic(e.Group("/v1"), kit)
-	}
+	h.RegisterAdmin(e.Group("/v1"), kit)
 	return e
 }
 
@@ -163,7 +159,7 @@ func TestListCouponsShape(t *testing.T) {
 		},
 		listTotal: 2,
 	}
-	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
+	e := newEngine(f, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
 
 	w := do(e, http.MethodGet, "/v1/coupons?status=active&q=vip&limit=50", "")
 	if w.Code != http.StatusOK {
@@ -206,7 +202,7 @@ func ptrDec(d decimal.Decimal) *decimal.Decimal { return &d }
 
 func TestCreateCouponMapping(t *testing.T) {
 	f := &fakeSvc{}
-	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
+	e := newEngine(f, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
 	w := do(e, http.MethodPost, "/v1/coupons", `{"code":" summer ","discount_type":"fixed","discount_value":1050,"min_order_amount":5000,"max_redemptions_per_user":2}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("fixed create status %d %s", w.Code, w.Body)
@@ -229,7 +225,7 @@ func TestCreateCouponMapping(t *testing.T) {
 	}
 
 	f2 := &fakeSvc{}
-	e2 := newEngine(f2, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
+	e2 := newEngine(f2, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
 	w = do(e2, http.MethodPost, "/v1/coupons", `{"code":"A","discount_type":"percent","discount_value":2000,"max_discount":500}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("percent status %d %s", w.Code, w.Body)
@@ -272,7 +268,7 @@ func TestCreateCouponMapping(t *testing.T) {
 
 func TestGenerateCouponsDefaults(t *testing.T) {
 	f := &fakeSvc{genCodes: []string{"vip1", "vip2", "vip3"}}
-	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
+	e := newEngine(f, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
 	w := do(e, http.MethodPost, "/v1/coupons/batch", `{"name":"双11","count":3,"prefix":"vip","discount_type":"percent","discount_value":1000}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
@@ -295,7 +291,7 @@ func TestGenerateCouponsDefaults(t *testing.T) {
 
 func TestSetStatusAndRedemptions(t *testing.T) {
 	f := &fakeSvc{}
-	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
+	e := newEngine(f, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin})
 
 	w := do(e, http.MethodPost, "/v1/coupons/not-a-uuid/status", `{"status":"paused"}`)
 	if w.Code != http.StatusNotFound {
