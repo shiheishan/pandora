@@ -161,6 +161,7 @@ type EntryView struct {
 	Base         decimal.Decimal
 	RateBP       int64
 	Status       string
+	UnderReview  bool // 待复核（冻结中且 review_required），门户显示「审核中」
 	FrozenUntil  time.Time
 	CreatedAt    time.Time
 	OrderNo      string
@@ -178,6 +179,7 @@ type WithdrawalView struct {
 	RequestedAt  time.Time
 	CompletedAt  *time.Time
 	Method       string
+	TxHash       string // USDT 提现已打款时的链上交易哈希（即 payout_reference）；非 USDT 或未打款为空串，非 USDT 的流水号不给用户看
 }
 
 // TransferView 是门户「佣金转入余额」的一行。

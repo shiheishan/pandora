@@ -87,6 +87,14 @@ func TestApproveEntryThenSettle(t *testing.T) {
 	referrer, buyer := newUser(t, e, ctx), newUser(t, e, ctx)
 	id, amt := newReviewEntry(t, e, ctx, referrer, buyer, "100.00")
 
+	mc, err := e.svc.MyCommission(ctx, referrer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mc.Entries) != 1 || !mc.Entries[0].UnderReview || mc.Entries[0].Status != EntryPending {
+		t.Fatalf("待复核时 MyCommission 条目不对: %+v", mc.Entries)
+	}
+
 	// 待复核的不参与自动解冻
 	if _, err := e.svc.SettleDue(ctx, SettleBatchDefault); err != nil {
 		t.Fatal(err)
@@ -109,6 +117,14 @@ func TestApproveEntryThenSettle(t *testing.T) {
 	var n int
 	if err := e.row(ctx, `SELECT count(*) FROM audit_events WHERE action = ? AND resource_id = ?`, ActionEntryApproved, id).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("审计 %d err=%v", n, err)
+	}
+
+	mcApproved, err := e.svc.MyCommission(ctx, referrer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mcApproved.Entries) != 1 || mcApproved.Entries[0].UnderReview {
+		t.Fatalf("复核通过后 UnderReview 应为 false: %+v", mcApproved.Entries)
 	}
 
 	st, err := e.svc.SettleDue(ctx, SettleBatchDefault)

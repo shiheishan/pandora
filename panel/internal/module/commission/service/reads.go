@@ -14,6 +14,7 @@ import (
 
 // MyCommission 返回门户「我的佣金」：汇总、最近 100 条佣金、50 条提现、50 笔转余额。
 // 横幅比例与计佣范围按该用户的单独设置（无则用全局）。第 2、3 级的条目不给上级看下线邮箱（From 为空）。
+// 待复核条目标 UnderReview；只有 USDT 已打款的提现带交易哈希。
 func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommission, error) {
 	refs, err := s.needRefs()
 	if err != nil {
@@ -103,6 +104,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			Base:         e.BaseAmount,
 			RateBP:       e.RateBP,
 			Status:       e.Status,
+			UnderReview:  e.Status == EntryPending && e.ReviewRequired,
 			FrozenUntil:  e.FrozenUntil,
 			CreatedAt:    e.CreatedAt,
 			OrderNo:      e.OrderNo,
@@ -121,6 +123,10 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		if w.RejectReason != nil {
 			reason = *w.RejectReason
 		}
+		txHash := ""
+		if w.Status == WithdrawalPaid && IsUSDTMethod(w.Method) && w.PayoutReference != nil {
+			txHash = *w.PayoutReference
+		}
 		out.Withdrawals = append(out.Withdrawals, WithdrawalView{
 			ID:           w.ID,
 			Amount:       w.Amount,
@@ -129,6 +135,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			RequestedAt:  w.RequestedAt,
 			CompletedAt:  w.CompletedAt,
 			Method:       w.Method,
+			TxHash:       txHash,
 		})
 	}
 
