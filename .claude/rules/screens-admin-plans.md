@@ -10,6 +10,7 @@ paths:
 - 后端按块写（`PUT v1/plans/:id/{basic,sales,reset,prices,pools,usage}`、`POST .../versions/:vid/publish`、`POST .../archive`），都带套餐的 `expected_row_version`、要近期二次认证与幂等键，成功都回 `{plan: PlanDetail}`：写后先用 `api.ts` 的 `useApplyPlan` 把响应写回详情缓存（下一次写拿到新 row_version），再按前缀失效。详情里的写统一走 `EditModals.tsx` 的 `usePlanWrite`。
 - 新建是一步 `POST v1/plans`：订阅只带填了的档（`prices`），一次性只带 `unit_amount` + `validity_days`，另一类型的键不出现；`publish: true` 时发布失败（没有可服务节点、没有在售价）整单不建。422 的 `prices.<i>` 指的是**发出去的第 i 档**，经 `createFieldKey` 映射回表单的 `tier.<周期>`。套餐代码由后端按名称生成，前端 `autoCode` 只做预览，规则与 Go `catalog/service/code.go` 逐条相同，改一边要改另一边（假后端 `dev/mock/admin/plans-store.ts` 也有一份）。
 - 订阅改价按档发：停售 = 该档 `unit_amount: null`，添加 = 该档新金额（已有在售价时替换）；在售套餐至少留一档由后端 422 拒绝，前端不另拦。
+- 价格页签（10-21 体验核对：测试员分不清「停售」是状态还是按钮）：状态与动作分开写。每行先是状态标签「在售」（ok）/「已停售」（neutral），再是金额与灰字；动作是描边小按钮——在售行「停售」，这一档现在没有在售价时、该档最新一条已停售价格给「恢复售卖」（用那条的金额重新添加这一档，同一个 `PUT prices`）。被新价替换掉的旧价也标「已停售」，灰字「已换成新价」，不给恢复。行的形状与规则在 `model.ts` 的 `priceListRows`（`PriceListRow`）。
 - 「新建版本」没有单独接口：改用量（`PUT usage`）就是写进草稿（没有就新建），所以「新建版本」打开用量弹窗，已有草稿时禁用。
 - 线路开关以详情里的 `pool_ids` 为准算新集合（选择器只列未停用的池，已绑但停用的池不在里面，不能从选择器的 `bound` 反推，否则会被悄悄解绑）；改动立即生效。绑池选择器的数字显示 `deliverable_nodes / active_nodes`；「0 节点」提示（`poolBindingWarning`）只按 `deliverable_nodes` 求和。
 - 写失败走 `failure.ts` 的 `useCatalogFailure`：只有 422 的 `fields` 给表单（没有表单可标的写把 fields 的话 Toast 出来）；409 的 `fields` 是乐观锁现值，Toast 信封原文，并重拉数据。不要直接用通用 `useFailure`。

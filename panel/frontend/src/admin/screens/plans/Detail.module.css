@@ -21,13 +21,8 @@
   color: var(--text-3);
 }
 
-/* 停售（样稿 .link-d：灰字，悬停变红）；类名写两遍压过 Button 的 link 色 */
-.dangerLink.dangerLink {
-  color: var(--text-2);
-}
-
-.dangerLink.dangerLink:not(:disabled):hover {
-  color: var(--danger);
+.priceTag {
+  margin-right: 8px;
 }
 
 /* 添加价格一行排开（样稿 .addp）：周期下拉定宽，价格输入占满剩余宽度 */
