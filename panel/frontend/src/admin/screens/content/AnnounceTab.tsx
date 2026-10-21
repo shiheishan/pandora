@@ -12,7 +12,7 @@ import type { Announcement, Severity } from './schemas'
 /** 列表路径：筛选放在 ?f= 上，all 不写进地址 */
 const LIST_PATH = '/content/announce'
 
-/** 级别文字的颜色类（普通灰、提示 info、警告 warn、紧急 danger） */
+/** 级别文字的颜色类（普通灰、提示 info、注意 warn、重要 danger） */
 const SEV_CLASS: Record<Severity, string | undefined> = { info: css.sev_info, notice: css.sev_notice, warning: css.sev_warning, critical: css.sev_critical }
 
 export function AnnounceTab({ rest }: { rest: string[] }) {

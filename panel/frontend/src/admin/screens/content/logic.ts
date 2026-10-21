@@ -1,5 +1,5 @@
 import { formatDateTime } from '../../../core/format'
-import { PLATFORMS, type Announcement, type AnnStatus, type Kind, type Page, type Platform, type Severity, type Slot, type Visibility } from './schemas'
+import { SEVERITIES, type Announcement, type AnnStatus, type Kind, type Page, type Severity, type Slot, type Visibility } from './schemas'
 
 const runes = (s: string) => [...s.trim()].length
 
@@ -34,12 +34,15 @@ export const ANN_STATUS: Record<AnnStatus, { label: string; tone: 'ok' | 'warn' 
   withdrawn: { label: '已撤回', tone: 'neutral' },
 }
 
+// 叫法与用户端一致（portal common/announcements.ts 的 SEVERITY_LABEL）；普通在用户端不显示标签
 export const SEVERITY: Record<Severity, { label: string; tone: 'neutral' | 'info' | 'warn' | 'danger' }> = {
   info: { label: '普通', tone: 'neutral' },
   notice: { label: '提示', tone: 'info' },
-  warning: { label: '警告', tone: 'warn' },
-  critical: { label: '紧急', tone: 'danger' },
+  warning: { label: '注意', tone: 'warn' },
+  critical: { label: '重要', tone: 'danger' },
 }
+
+export const SEVERITY_OPTIONS = SEVERITIES.map((s) => ({ value: s, label: s === 'info' ? '普通（用户端不显示标签）' : SEVERITY[s].label }))
 
 /** 列表里「可见范围」：套餐名与用户组名以「、」连接，都为空是全部用户 */
 export function annTargetLabel(a: Pick<Announcement, 'plan_targets' | 'user_group_targets'>): string {
@@ -195,7 +198,6 @@ export function annActions(status: AnnStatus | 'new', publishAt: string, now: Da
 // 知识库 · 按 slug 聚成文章（列表每个版本一行，按 slug、version 倒序）
 // ---------------------------------------------------------------------------
 export const KIND_LABEL: Record<Kind, string> = { kb_article: '知识库', tutorial: '教程', page: '页面', legal: '法律条款' }
-export const PLATFORM_LABEL: Record<Platform, string> = { web: '网页', windows: 'Windows', macos: 'macOS', linux: 'Linux', android: 'Android', ios: 'iOS' }
 export const VISIBILITY_LABEL: Record<Visibility, string> = { authenticated: '登录用户', internal: '仅后台' }
 export const PAGE_STATUS_LABEL = { draft: '草稿', published: '已发布', archived: '已归档' } as const
 
@@ -247,14 +249,6 @@ export function articleRows(articles: readonly Article[], q = ''): Article[] {
   })
 }
 
-/** 列表「平台」列：空 = 全部平台，否则按 PLATFORMS 顺序取 PLATFORM_LABEL，用 / 连接 */
-export function platformsLabel(platforms: readonly string[]): string {
-  if (platforms.length === 0) return '全部平台'
-  const order = new Map(PLATFORMS.map((p, i) => [p, i]))
-  const sorted = [...platforms].sort((a, b) => (order.get(a as Platform) ?? 99) - (order.get(b as Platform) ?? 99))
-  return sorted.map((p) => PLATFORM_LABEL[p as Platform] ?? p).join(' / ')
-}
-
 export function knownCategories(articles: readonly Article[]): string[] {
   return [...new Set(articles.map((a) => a.latest.category).filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b, 'zh'))
 }
@@ -268,14 +262,12 @@ export interface KbForm {
   category: string
   title: string
   body: string
-  locale: string
-  platforms: string[]
   planIds: string[]
   visibility: Visibility
 }
 
 export function emptyKbForm(kind: Kind): KbForm {
-  return { slug: '', kind, category: '', title: '', body: '', locale: 'zh-CN', platforms: [], planIds: [], visibility: 'authenticated' }
+  return { slug: '', kind, category: '', title: '', body: '', planIds: [], visibility: 'authenticated' }
 }
 
 export function kbFormFrom(p: Page): KbForm {
@@ -285,15 +277,12 @@ export function kbFormFrom(p: Page): KbForm {
     category: p.category ?? '',
     title: p.title,
     body: p.body ?? '',
-    locale: p.locale,
-    platforms: [...p.target_platforms],
     planIds: [...p.target_plan_ids],
     visibility: p.visibility,
   }
 }
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const LOCALE = /^[a-z]{2,3}(?:-[A-Z]{2})?$/
 
 /** 照 normalizePublishInput 的规则与文案；takenSlugs 是已有文章的 slug（新文章撞上时后端只会回版本冲突，先在前端说清楚） */
 export function validateKb(form: KbForm, takenSlugs: readonly string[] = []): Record<string, string> {
@@ -306,7 +295,6 @@ export function validateKb(form: KbForm, takenSlugs: readonly string[] = []): Re
   if (t < 2 || t > 160) errors.title = '标题需在 2–160 字之间'
   const b = runes(form.body)
   if (b < 10 || b > 100000) errors.body = '正文需在 10–100000 字之间'
-  if (!LOCALE.test(form.locale.trim())) errors.locale = '语言格式不正确'
   return errors
 }
 
@@ -317,10 +305,6 @@ export interface KbBody {
   title: string
   summary: string
   body: string
-  locale: string
-  target_platforms: string[]
-  min_client_version: string
-  max_client_version: string
   target_plan_ids: string[]
   visibility: Visibility
   status: 'draft' | 'published'
@@ -329,7 +313,7 @@ export interface KbBody {
 }
 
 /**
- * 界面已不提供摘要、客户端版本、复审日期；这几项从来源版本原样带上，免得保存新版本时把旧值清掉、改变受众。
+ * 界面已不提供摘要、复审日期；这两项从来源版本原样带上，免得保存新版本时把旧值清掉。
  * review_due_at 空串解析会 400，original 没有时整个键省略。
  */
 export function kbBody(form: KbForm, status: 'draft' | 'published', expectedLatest: number, original?: Page | null): KbBody {
@@ -340,10 +324,6 @@ export function kbBody(form: KbForm, status: 'draft' | 'published', expectedLate
     title: form.title.trim(),
     summary: original?.summary ?? '',
     body: form.body.trim(),
-    locale: form.locale.trim(),
-    target_platforms: [...form.platforms].sort(),
-    min_client_version: original?.min_client_version ?? '',
-    max_client_version: original?.max_client_version ?? '',
     target_plan_ids: [...form.planIds].sort(),
     visibility: form.visibility,
     status,
@@ -353,14 +333,12 @@ export function kbBody(form: KbForm, status: 'draft' | 'published', expectedLate
 }
 
 /**
- * 受众（语言、平台、限定套餐、可见性）与来源版本不同：
- * 后端只归档「同一受众组合」的旧发布版，改了受众，旧版会和新版同时对用户可见
+ * 受众（限定套餐、可见性）与来源版本不同：
+ * 后端只归档同一受众的旧发布版，改了受众，旧版会和新版同时对用户可见
  */
 export function audienceChanged(form: KbForm, from: Page): boolean {
   const same = (a: readonly string[], b: readonly string[]) => [...a].sort().join() === [...b].sort().join()
   return (
-    form.locale.trim() !== from.locale ||
-    !same(form.platforms, from.target_platforms) ||
     !same(form.planIds, from.target_plan_ids) ||
     form.visibility !== from.visibility
   )

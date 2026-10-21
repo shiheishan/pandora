@@ -5,9 +5,9 @@ import { formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, IconClose, Input, Menu, Modal, Select, Switch, Tag, TextArea, useToast, type MenuEntry } from '../../../ui'
 import css from './announce.module.css'
-import { ANN_STATUS, annActions, annBody, annFieldErrors, annFormFrom, annMeta, emptyAnnForm, SEVERITY, validateAnn, type AnnBody, type AnnForm } from './logic'
+import { ANN_STATUS, annActions, annBody, annFieldErrors, annFormFrom, annMeta, emptyAnnForm, SEVERITY_OPTIONS, validateAnn, type AnnBody, type AnnForm } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent } from './queries'
-import { annSaved, annWithdrawn, SEVERITIES, type Announcement, type AnnouncementsData, type Severity } from './schemas'
+import { annSaved, annWithdrawn, type Announcement, type AnnouncementsData, type Severity } from './schemas'
 
 interface Props {
   data: AnnouncementsData
@@ -159,7 +159,7 @@ export function AnnounceEditor({ data, original, prefill, onCopy, onClose }: Pro
       <div className={css.fieldGrid}>
         <label className={css.field}>
           <span className={css.fieldLabel}>级别</span>
-          <Select size="sm" value={form.severity} disabled={disabled} options={SEVERITIES.map((s) => ({ value: s, label: SEVERITY[s].label }))} onChange={(e) => edit({ severity: e.target.value as Severity })} />
+          <Select size="sm" value={form.severity} disabled={disabled} options={SEVERITY_OPTIONS} onChange={(e) => edit({ severity: e.target.value as Severity })} />
         </label>
         <label className={css.field}>
           <span className={css.fieldLabel}>可见范围</span>
