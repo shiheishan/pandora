@@ -477,7 +477,7 @@ export function withRealityKeypair(values: FormValues, k: { private_key: string;
       ...values,
       [REALITY_KEYS.private_key]: k.private_key,
       [REALITY_KEYS.public_key]: k.public_key,
-      [REALITY_KEYS.short_id]: keptShortId ? values[REALITY_KEYS.short_id] : k.short_id,
+      [REALITY_KEYS.short_id]: keptShortId ? (values[REALITY_KEYS.short_id] ?? '') : k.short_id,
     },
     keptShortId,
   }

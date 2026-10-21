@@ -37,6 +37,7 @@ import {
   type FormValues,
   type ProtocolField,
 } from './logic'
+import { wizardServerHint } from './infra'
 import css from './form.module.css'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
@@ -385,11 +386,7 @@ export function NodeCreateWizard({
   const footNotes = ['第 1 步，共 3 步', '第 2 步，共 3 步', '创建后在节点详情右上角上线']
 
   const selectedServer = basic.serverId ? (servers.data ?? []).find((sv) => sv.id === basic.serverId) : undefined
-  const serverHint = !basic.serverId
-    ? UNBOUND_HINT
-    : selectedServer?.enrolled
-      ? '已接入：创建后在节点详情右上角点「上线」，这台服务器随之投入服务'
-      : '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行后再上线'
+  const serverHint = !basic.serverId ? UNBOUND_HINT : wizardServerHint(selectedServer)
   const selectedPool = basic.poolId ? (pools.data ?? []).find((p) => p.id === basic.poolId) : undefined
   const poolHint =
     selectedPool && selectedPool.plan_names.length === 0
