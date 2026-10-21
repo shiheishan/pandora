@@ -79,7 +79,7 @@ func (a *proxyAdapter) Validate(spec InboundSpec) error {
 		return fmt.Errorf("native %s rejects unsupported security %q", a.protocol, security)
 	}
 	if enabled, ok := spec.Config.Raw["tls"].(bool); ok && enabled {
-		if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
+		if err := validateInboundTLSConfig(spec.Config.Raw); err != nil {
 			return err
 		}
 	}
@@ -95,7 +95,7 @@ func (a *proxyAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Unlock()
 		return fmt.Errorf("native %s adapter already started or closed", a.protocol)
 	}
-	tlsConfig, _, err := loadInboundTLSConfig(spec.Config.Raw)
+	tlsConfig, _, err := loadInboundTLSConfig(spec.Config.Raw, hooks.Certs)
 	if err != nil {
 		a.mu.Unlock()
 		return err

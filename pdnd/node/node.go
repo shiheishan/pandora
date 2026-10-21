@@ -60,6 +60,11 @@ type Node struct {
 
 	// cache 是这个节点的落盘缓存（nil 即不落盘），见 cache.go。
 	cache *nodeCache
+
+	// certs 是本机自动申请证书管理；nil 时 acme 入站一律 cert_pending。
+	certs CertManager
+	// fileCertNotAfter 是手填证书（file 模式）的到期时间，装上时解析，只给心跳。
+	fileCertNotAfter time.Time
 }
 
 // stagedUsers 是入站起来之前收到的一版全量名单。
@@ -79,6 +84,7 @@ func (s *Server) newNode(id, nodeType string) *Node {
 		scope:    s.scope,
 		known:    make(map[int64]core.User),
 		acked:    make(map[string]bool),
+		certs:    s.certs,
 	}
 	if s.cache != nil {
 		n.cache = s.cache.node(id)

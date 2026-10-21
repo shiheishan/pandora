@@ -235,6 +235,7 @@ type fakePorts struct {
 
 	nodeCounts     nodesvc.ReportNodeCounts
 	offline        nodesvc.OfflineNodes
+	certs          nodesvc.CertAttention
 	configLagging  int64
 	nodeTraffic    []nodesvc.NodeTraffic
 	subTraffic     []nodesvc.SubscriptionTraffic
@@ -334,6 +335,10 @@ func (f *fakePorts) ReportNodeCounts(context.Context, time.Time) (nodesvc.Report
 
 func (f *fakePorts) OfflineNodes(context.Context, time.Time, int) (nodesvc.OfflineNodes, error) {
 	return f.offline, f.err("OfflineNodes")
+}
+
+func (f *fakePorts) CertAttentionNodes(context.Context, time.Time, int) (nodesvc.CertAttention, error) {
+	return f.certs, f.err("CertAttentionNodes")
 }
 
 func (f *fakePorts) ConfigLaggingCount(context.Context) (int64, error) {

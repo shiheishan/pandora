@@ -174,6 +174,14 @@ type taskNodesOffline struct {
 	LongestOfflineSeconds *int64           `json:"longest_offline_seconds"`
 }
 
+type taskNodeCerts struct {
+	Kind     string           `json:"kind"`
+	Count    int64            `json:"count"`
+	Failing  int64            `json:"failing"`
+	Expiring int64            `json:"expiring"`
+	Sample   []taskNodeSample `json:"sample"`
+}
+
 type taskNodeSample struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -440,6 +448,10 @@ func tasksFrom(t service.Tasks) (tasksResponse, error) {
 	for i, n := range t.NodesOffline.Sample {
 		sample[i] = taskNodeSample{ID: n.ID.String(), Name: n.Name}
 	}
+	certSample := make([]taskNodeSample, len(t.NodeCerts.Sample))
+	for i, n := range t.NodeCerts.Sample {
+		certSample[i] = taskNodeSample{ID: n.ID.String(), Name: n.Name}
+	}
 	checks := make([]taskIntegrityCheck, len(t.Integrity))
 	for i, c := range t.Integrity {
 		checks[i] = taskIntegrityCheck{Code: c.Code, Count: c.Count, CheckedAt: c.CheckedAt}
@@ -453,6 +465,10 @@ func tasksFrom(t service.Tasks) (tasksResponse, error) {
 		taskNodesOffline{
 			Kind: "nodes_offline", Count: t.NodesOffline.Count, Sample: sample,
 			LongestOfflineSeconds: t.NodesOffline.LongestOfflineSeconds,
+		},
+		taskNodeCerts{
+			Kind: "node_certs", Count: t.NodeCerts.Count, Failing: t.NodeCerts.Failing,
+			Expiring: t.NodeCerts.Expiring, Sample: certSample,
 		},
 		taskOrdersPendingStale{
 			Kind: "orders_pending_stale", Count: t.OrdersPendingStale.Count,

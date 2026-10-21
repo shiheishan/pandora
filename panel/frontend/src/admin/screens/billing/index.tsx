@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useNow } from '../../kit'
 import type { AdminScreenProps } from '../index'
 import { AdjustTab } from './AdjustTab'
 import { ArrearsTab } from './ArrearsTab'
@@ -13,11 +13,3 @@ export default function Billing({ tab, rest }: AdminScreenProps) {
   return <OrdersTab rest={rest} now={now} />
 }
 
-function useNow(intervalMs = 60_000): Date {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
-  return now
-}

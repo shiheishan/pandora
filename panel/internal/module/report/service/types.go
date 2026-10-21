@@ -207,12 +207,13 @@ type NotificationBacklog struct {
 // StaleOrderAfter 是「超时未支付」的门槛：下单这么久还挂着，说明过期任务没跑或卡住。
 const StaleOrderAfter = 30 * time.Minute
 
-// Tasks 是「需要处理」：后台不分权限，六项全部给。
+// Tasks 是「需要处理」：后台不分权限，七项全部给。
 type Tasks struct {
 	AsOf                 time.Time
 	TicketsOpen          TicketsOpenTask
 	WithdrawalsPending   WithdrawalsPendingTask
 	NodesOffline         NodesOfflineTask
+	NodeCerts            NodeCertsTask
 	OrdersPendingStale   OrdersPendingStaleTask
 	NotificationsBacklog NotificationsBacklogTask
 	Integrity            []IntegrityItem // 数据巡检各项最近一次的结果，按检查顺序；没跑过的不在里面
@@ -242,6 +243,14 @@ type NodesOfflineTask struct {
 	Count                 int64
 	Sample                []NodeRef
 	LongestOfflineSeconds *int64
+}
+
+// NodeCertsTask 是证书要处理的节点（申请或续期失败、快到期或已过期）。
+type NodeCertsTask struct {
+	Count    int64
+	Failing  int64
+	Expiring int64
+	Sample   []NodeRef
 }
 
 // OrdersPendingStaleTask 是超时未支付的订单。

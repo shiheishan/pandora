@@ -299,6 +299,9 @@ func TestShapeTasks(t *testing.T) {
 		NodesOffline: service.NodesOfflineTask{
 			Count: 1, Sample: []service.NodeRef{{ID: uuid.New(), Name: "n"}}, LongestOfflineSeconds: &wait,
 		},
+		NodeCerts: service.NodeCertsTask{
+			Count: 2, Failing: 1, Expiring: 1, Sample: []service.NodeRef{{ID: uuid.New(), Name: "c"}},
+		},
 		OrdersPendingStale:   service.OrdersPendingStaleTask{Count: 3, ThresholdSeconds: 1800},
 		NotificationsBacklog: service.NotificationsBacklogTask{Queued: 4, FailedTotal: 5, BacklogState: "clear"},
 		Integrity: []service.IntegrityItem{
@@ -313,10 +316,10 @@ func TestShapeTasks(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
 	wantKeys(t, "tasks", root, "as_of", "items")
 	items := root["items"].([]any)
-	if len(items) != 6 {
+	if len(items) != 7 {
 		t.Fatalf("items len %d", len(items))
 	}
-	kinds := []string{"tickets_open", "withdrawals_pending", "nodes_offline", "orders_pending_stale", "notifications_backlog", "integrity"}
+	kinds := []string{"tickets_open", "withdrawals_pending", "nodes_offline", "node_certs", "orders_pending_stale", "notifications_backlog", "integrity"}
 	for i, kind := range kinds {
 		m := items[i].(map[string]any)
 		if m["kind"] != kind {
@@ -327,6 +330,7 @@ func TestShapeTasks(t *testing.T) {
 		{"kind", "count", "high_priority", "oldest_wait_seconds"},
 		{"kind", "count", "amount"},
 		{"kind", "count", "sample", "longest_offline_seconds"},
+		{"kind", "count", "failing", "expiring", "sample"},
 		{"kind", "count", "threshold_seconds"},
 		{"kind", "queued", "failed_total", "backlog_state"},
 		{"kind", "checks"},
@@ -334,7 +338,7 @@ func TestShapeTasks(t *testing.T) {
 	for i, keys := range itemKeys {
 		wantKeys(t, kinds[i], items[i].(map[string]any), keys...)
 	}
-	checks := items[5].(map[string]any)["checks"].([]any)
+	checks := items[6].(map[string]any)["checks"].([]any)
 	if len(checks) != 1 {
 		t.Fatalf("checks len %d", len(checks))
 	}

@@ -28,6 +28,7 @@ import {
   enumOptions,
   fieldVisible,
   protocolDefaults,
+  type ProtocolField,
   BASIC_STEP_KEYS,
   realityEnabled,
   VISION_FLOW,
@@ -118,7 +119,8 @@ describe('schemas', () => {
     expect(SCHEMAS).toHaveLength(13)
     expect(SCHEMAS.filter(isStable)).toHaveLength(13)
     expect(SCHEMAS.some((s) => s.status === 'legacy-read-compatible' || s.node_type === 'v2ray' || s.node_type === 'hysteria')).toBe(false)
-    expect(schemaOf('socks').required).toEqual([])
+    // Go 的 nil required 归一成 []（mieru 没有必填项）
+    expect(schemaOf('mieru').required).toEqual([])
     expect(row().granted_plans).toEqual([])
     // 标签与时段倍率：Go 的 nil 切片按 null 来也归一成 []
     expect(row().tags).toEqual([])
@@ -327,6 +329,25 @@ describe('protocol form', () => {
   it('withProtocolDefaults and protocolNotices stay aligned with backend rules', () => {
     expect(withProtocolDefaults('vless', 'tls', { tls: '2' }).flow).toBe(VISION_FLOW)
     expect(protocolNotices('vless', { tls: '0', network: 'ws' })[0]).toContain('需要套 CDN 或 TLS')
+  })
+
+  it('toFormValues defaults missing cert_mode to file for legacy configs', () => {
+    const fields: ProtocolField[] = [
+      {
+        path: 'cert_mode',
+        kind: 'enum',
+        options: ['acme', 'file'],
+        required: true,
+        sensitive: false,
+        label: '证书模式',
+        advanced: false,
+        showIf: null,
+        defaultValue: 'acme',
+        optionLabels: {},
+      },
+    ]
+    expect(toFormValues(fields, { cert_path: '/etc/pandora-native/certs/a/fullchain.pem' }).cert_mode).toBe('file')
+    expect(toFormValues(fields, { cert_mode: 'acme' }).cert_mode).toBe('acme')
   })
 
   it('maps protocol_config.* 422 keys onto form fields', () => {

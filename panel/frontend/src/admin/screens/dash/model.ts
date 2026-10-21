@@ -72,7 +72,7 @@ export function greeting(now: Date, me: Pick<AdminMe, 'display_name' | 'email'> 
 // 「要处理」
 // ===========================================================================
 
-export type TodoKey = 'tickets_open' | 'withdrawals_pending' | 'orders_pending_stale' | 'integrity'
+export type TodoKey = 'tickets_open' | 'withdrawals_pending' | 'orders_pending_stale' | 'node_certs' | 'integrity'
 
 export interface TodoCard {
   key: TodoKey
@@ -110,6 +110,15 @@ function withdrawalMeta(item: Extract<TaskItem, { kind: 'withdrawals_pending' }>
 function staleOrderMeta(item: Extract<TaskItem, { kind: 'orders_pending_stale' }> | undefined): string {
   if (!item || item.count === 0) return '没有超时未支付的订单'
   return `超过 ${Math.round(item.threshold_seconds / 60)} 分钟没到账，可能是回调丢失`
+}
+
+function certMeta(item: Extract<TaskItem, { kind: 'node_certs' }>): string {
+  const parts: string[] = []
+  if (item.failing > 0) parts.push(`申请失败 ${item.failing} 个`)
+  if (item.expiring > 0) parts.push(`快到期 ${item.expiring} 个`)
+  const names = item.sample.slice(0, 2).map((s) => s.name)
+  if (names.length > 0) parts.push(`如 ${names.join('、')}`)
+  return parts.join(' · ')
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +177,7 @@ function integrityMeta(failing: readonly IntegrityCheckRow[]): string {
 function todoSummary(cards: readonly TodoCard[]): string {
   const pending = cards.filter((c) => c.count > 0).length
   if (pending === 0) return '没有待处理的事'
-  const urgent = cards.filter((c) => c.count > 0 && (c.key === 'tickets_open' || c.key === 'integrity')).length
+  const urgent = cards.filter((c) => c.count > 0 && c.hot).length
   return `${pending} 项` + (urgent > 0 ? ` · ${urgent} 项紧急` : '')
 }
 
@@ -176,6 +185,7 @@ export function todoBoard(items: readonly TaskItem[] | undefined, asOf?: string)
   const tickets = findItem(items, 'tickets_open')
   const withdrawals = findItem(items, 'withdrawals_pending')
   const stale = findItem(items, 'orders_pending_stale')
+  const nodeCerts = findItem(items, 'node_certs')
   const integrity = findItem(items, 'integrity')
   const failing = failingChecks(integrity)
   const outdated = outdatedChecks(integrity, asOf)
@@ -210,7 +220,19 @@ export function todoBoard(items: readonly TaskItem[] | undefined, asOf?: string)
     },
   ]
 
-  // 巡检有违例或有项太久没更新才出第四格，标红；数字是出问题的检查项数（各项违例的单位不同，不相加），
+  if (nodeCerts && nodeCerts.count > 0) {
+    cards.push({
+      key: 'node_certs',
+      title: '证书异常',
+      count: nodeCerts.count,
+      meta: certMeta(nodeCerts),
+      action: '去看看',
+      target: { module: 'nodes', tab: 'nodes' },
+      hot: nodeCerts.failing > 0,
+    })
+  }
+
+  // 巡检有违例或有项太久没更新才多出一格，标红；数字是出问题的检查项数（各项违例的单位不同，不相加），
   // 去处是第一项有违例的检查对应的页
   const problems = new Set([...failing, ...outdated].map((c) => c.code))
   if (problems.size > 0) {

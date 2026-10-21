@@ -28,9 +28,14 @@ const (
 	maxRuntimeReason     = 200
 	maxFailReasonChars   = 64
 	maxFailDetailBytes   = 2048
+	maxCertIdentifier    = 253
+	maxCertDetailBytes   = 1024
 )
 
-var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var (
+	sha256Hex        = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	certErrorCodePat = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+)
 
 // cleanText 是节点自报文本（Hello、心跳原因、配置回执原因码、接入时的主机信息）唯一的规整入口：
 // 去非法 UTF-8、去掉全部 unicode.IsControl（含 NUL、换行、TAB、ESC、DEL、C1）、TrimSpace、按 rune 截到 maxChars、再 TrimSpace；空串返回 nil。
@@ -126,6 +131,22 @@ func (s *Service) RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, 
 	return s.succeedUpgradeBySHA(ctx, serverID, h, at)
 }
 
+// certRowFrom 把心跳里的证书状态规整成列值；n.Cert 为 nil 时五列全 nil。
+func certRowFrom(c *NodeCert) (id *string, notAfter, next *time.Time, code, detail *string) {
+	if c == nil {
+		return nil, nil, nil, nil, nil
+	}
+	id = cleanText(c.Identifier, maxCertIdentifier)
+	notAfter = c.NotAfter
+	next = c.NextAttempt
+	if raw := cleanText(c.ErrorCode, 64); raw != nil && certErrorCodePat.MatchString(*raw) {
+		code = raw
+		// 详情是 CA 的原话，保留换行等排版，只去 NUL 与非法 UTF-8 并按字节截断（列上限 1 KiB）
+		detail = truncateBytes(c.ErrorDetail, maxCertDetailBytes)
+	}
+	return id, notAfter, next, code, detail
+}
+
 // runtimeRows 把心跳里的运行状态规整成列值：认不出的状态丢掉，同一节点后出现的为准，running 不带原因。
 func runtimeRows(nodes []NodeRuntime) []repo.NodeRuntimeRow {
 	idx := make(map[uuid.UUID]int, len(nodes))
@@ -141,6 +162,7 @@ func runtimeRows(nodes []NodeRuntime) []repo.NodeRuntimeRow {
 			row.Reason = cleanText(n.Reason, maxRuntimeReason)
 			row.ReasonNodeID = n.ReasonNodeID
 		}
+		row.CertIdentifier, row.CertNotAfter, row.CertNextAttempt, row.CertErrorCode, row.CertErrorDetail = certRowFrom(n.Cert)
 		if i, ok := idx[n.NodeID]; ok {
 			rows[i] = row
 			continue

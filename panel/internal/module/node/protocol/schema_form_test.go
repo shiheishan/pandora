@@ -69,6 +69,37 @@ func TestSchemaFormSpotChecks(t *testing.T) {
 	if !reflect.DeepEqual(f.ShowIf, want) {
 		t.Fatalf("hysteria2 obfs.password 的 show_if=%#v，期望 %#v", f.ShowIf, want)
 	}
+
+	assertFieldDefault(t, hy2, "cert_mode", "acme")
+	assertFieldShowIf(t, hy2, "cert_path", map[string][]string{"cert_mode": {"file"}})
+	assertFieldShowIf(t, hy2, "tls_settings.allow_insecure", map[string][]string{"cert_mode": {"file"}})
+
+	trojan := byType["trojan"]
+	assertFieldShowIf(t, trojan, "cert_mode", map[string][]string{"tls": {"1"}})
+	assertFieldShowIf(t, trojan, "cert_path", map[string][]string{"tls": {"1"}, "cert_mode": {"file"}})
+	assertFieldShowIf(t, trojan, "tls_settings.server_name", map[string][]string{"tls": {"1"}})
+
+	socks := byType["socks"]
+	assertFieldShowIf(t, socks, "cert_mode", map[string][]string{"tls": {"true"}})
+
+	if findField(vless, "cert_mode") != nil {
+		t.Fatal("vless 不应有 cert_mode 字段")
+	}
+	if vless.Enums["cert_mode"] != nil {
+		t.Fatal("vless 不应有 cert_mode 枚举")
+	}
+
+	certModeTypes := []string{"hysteria2", "juicity", "socks", "http", "naive", "tuic", "anytls", "trojan"}
+	for _, typ := range certModeTypes {
+		s := byType[typ]
+		enums := s.Enums["cert_mode"]
+		if !reflect.DeepEqual(enums, []string{"acme", "file"}) {
+			t.Fatalf("协议 %s：cert_mode 枚举=%#v，期望 [acme file]", typ, enums)
+		}
+		if !containsString(s.Required, "cert_mode") {
+			t.Fatalf("协议 %s：Required 应含 cert_mode", typ)
+		}
+	}
 }
 
 func TestWithFormsDoesNotMutateInputHints(t *testing.T) {
@@ -236,5 +267,15 @@ func assertFieldNoDefault(t *testing.T, schema Schema, path string) {
 	}
 	if f.Default != nil {
 		t.Fatalf("协议 %s 字段 %s：不应有 Default，实际 %v", schema.NodeType, path, f.Default)
+	}
+}
+
+func assertFieldShowIf(t *testing.T, schema Schema, path string, want map[string][]string) {
+	f := findField(schema, path)
+	if f == nil {
+		t.Fatalf("协议 %s 缺少字段 %s", schema.NodeType, path)
+	}
+	if !reflect.DeepEqual(f.ShowIf, want) {
+		t.Fatalf("协议 %s 字段 %s：show_if=%#v，期望 %#v", schema.NodeType, path, f.ShowIf, want)
 	}
 }

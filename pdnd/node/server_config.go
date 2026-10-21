@@ -52,6 +52,9 @@ type applyFailure struct {
 	nextRetry time.Time
 	reason    string
 	detail    string
+	// fromCache：冷启动用落盘缓存没装上记的（certs 审查 S4）。面板确认（Welcome）之前重装照冷启动的做法
+	// 带落盘名单、装上算「靠缓存服务」；Welcome 时清掉，之后按面板下发走。
+	fromCache bool
 }
 
 // applyError 带原因码的装配置错误（摘要不符、不是 JSON 对象）。
@@ -77,6 +80,8 @@ func (s *Server) applyServerConfig(cfg *nodev1.ServerConfig) {
 	if cfg == nil {
 		return
 	}
+	// 先把全部 acme 标识符交给证书管理（不论这次能不能装上），新出现的立即排队申请。
+	s.wantCerts(cfg.GetNodes())
 	seen := make(map[string]bool, len(cfg.GetNodes()))
 	order := make([]string, 0, len(cfg.GetNodes()))
 	for _, nc := range cfg.GetNodes() {
@@ -104,6 +109,8 @@ func (s *Server) applyServerConfig(cfg *nodev1.ServerConfig) {
 		}
 	}
 	s.order = order
+	// 停掉的节点、换了证书名字并已装上的节点，旧标识符不再有人用：交回证书管理，让它们开始闲置计时
+	s.syncCertWant()
 	if s.cache != nil {
 		if err := s.cache.saveOrder(order); err != nil {
 			s.log.Warn("节点顺序落盘失败（不影响服务）", "err", err)
@@ -135,7 +142,14 @@ func (s *Server) applyNodeConfig(n *Node, nc *nodev1.NodeConfig) {
 // tryInstall 装一个节点的配置，按结果记坏版本台账、报回执。
 func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 	sha := strings.ToLower(nc.GetContentSha256())
+	oldCertID := ""
+	if n.started {
+		oldCertID = acmeIdentifier(n.activeConfig)
+	}
+	offline := n.failed != nil && n.failed.fromCache && n.failed.sha == sha
+	n.offlineStart = offline
 	err := s.installNodeConfig(n, nc)
+	n.offlineStart = false
 	if err != nil {
 		f := n.failed
 		if f == nil || f.sha != sha {
@@ -154,6 +168,17 @@ func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 		n.log.Error("配置装不上", "版本", sha, "原因", f.reason, "第几次", f.attempts,
 			"旧配置仍在服务", n.started, "下次重试", f.nextRetry.Sub(now).Round(time.Second), "err", err)
 		return
+	}
+	if offline {
+		// 面板还没连上：回执发不出去，Hello 会报这个版本；与冷启动装上的一样标成靠缓存服务
+		n.fromCache = true
+		n.healthPending = false
+		n.log.Warn("面板确认之前用落盘缓存的配置起服务（冷启动时没装上，重试成功）", "版本", sha, "名单版本", n.userVersion)
+		return
+	}
+	if oldCertID != "" && oldCertID != acmeIdentifier(n.activeConfig) {
+		// 旧配置的证书名字不再在服务：重算一次，让旧证书开始闲置计时（新配置的名字已在 certWanted 里）
+		s.syncCertWant()
 	}
 	s.sendConfigAck(n, sha, nodev1.ConfigPhase_CONFIG_PHASE_SWITCHED, "", "")
 	n.log.Info("入站已就绪", "port", intFrom(n.activeConfig, "server_port"), "type", n.nodeType, "版本", sha)

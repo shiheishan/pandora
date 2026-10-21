@@ -92,7 +92,7 @@ func TestNewUpgraderAndFeatures(t *testing.T) {
 	if up != nil {
 		t.Fatalf("不支持时应返回 nil，得 %#v", up)
 	}
-	if got := sessionFeatures(up); !slices.Equal(got, []string{panel.FeatureUsersDelta}) {
+	if got := sessionFeatures(up); !slices.Equal(got, []string{panel.FeatureUsersDelta, panel.FeatureCertACME}) {
 		t.Fatalf("features = %v", got)
 	}
 
@@ -105,7 +105,7 @@ func TestNewUpgraderAndFeatures(t *testing.T) {
 	if agent.Dir != upgrade.DefaultStateDir || agent.BuildSerial != 100 || agent.BinarySHA256 != "abc" || !agent.AllowHTTP {
 		t.Fatalf("Agent 参数不对: %+v", agent)
 	}
-	if got := sessionFeatures(up); !slices.Equal(got, []string{panel.FeatureUsersDelta, panel.FeatureUpgrade}) {
+	if got := sessionFeatures(up); !slices.Equal(got, []string{panel.FeatureUsersDelta, panel.FeatureCertACME, panel.FeatureUpgrade}) {
 		t.Fatalf("features = %v", got)
 	}
 }

@@ -95,9 +95,9 @@ func newUpgrader(cfg *config, env upgradeEnv, binarySHA string, log *slog.Logger
 	}
 }
 
-// sessionFeatures 是 Hello 里声明的可选能力：名单增量总有，在线升级只在 newUpgrader 给出实现时才有。
+// sessionFeatures 是 Hello 里声明的可选能力：名单增量与自动申请证书总有，在线升级只在 newUpgrader 给出实现时才有。
 func sessionFeatures(up node.Upgrader) []string {
-	features := []string{panel.FeatureUsersDelta}
+	features := []string{panel.FeatureUsersDelta, panel.FeatureCertACME}
 	if up != nil {
 		features = append(features, panel.FeatureUpgrade)
 	}

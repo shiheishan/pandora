@@ -235,9 +235,14 @@ func shadowTLSHandshakeServer(cfg map[string]any) string {
 	return server
 }
 
-// anyTLSHasCertificate：节点端没有 cert_path 时以明文起 AnyTLS，而所有客户端
-// 都强制 TLS。这种存量节点（后台现在已要求证书）在订阅里一律跳过。
+// anyTLSHasCertificate：节点端没有证书时以明文起 AnyTLS，而所有客户端都强制 TLS。
+// 有证书 = 手填了 cert_path，或证书来源是自动申请（cert_mode=acme，节点端向 Let's Encrypt 申请，
+// 配置里没有路径）；判法与 node 模块 protocol.CertMode 同口径（render 不能 import node，就地判）。
+// 两样都没有的存量节点（后台现在已要求证书）在订阅里一律跳过。
 func anyTLSHasCertificate(cfg map[string]any) bool {
+	if strings.EqualFold(strings.TrimSpace(cfgStr(cfg, "cert_mode", "")), "acme") {
+		return true
+	}
 	return strings.TrimSpace(cfgStr(cfg, "cert_path", "")) != ""
 }
 

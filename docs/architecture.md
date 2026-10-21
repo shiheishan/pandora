@@ -433,6 +433,8 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 
 删除 `panel/client.go`（UniProxy）、`signed.go`、`stream.go`（SSE）、`config_key_transition.go`、`effective_release.go`、`bindingcontract`；重写 `enrollment.go` 为 Enroll（保留崩溃安全日志的思路）；新写会话客户端。`node.go` 主循环改为消费会话消息，保留单 goroutine 不变式；`report.go` 改为由 ack 驱动；`users.go` 保留 diff 和「先删后加」，入口改为 proto 消息；`config_apply.go` 保留应用、回滚和坏版本台账，去掉验签。config.json 去掉 token、signed_required，加上证书路径。
 
+入站证书（2026-10-20）：带证书的协议可选「自动申请」（协议配置 `cert_mode=acme`）。面板在配置文档里写 `cert_identifier`（SNI，没有就用节点地址），pdnd 的 `certs` 包按它用 lego 向 Let's Encrypt 申请（HTTP-01，80 端口；IP 用 shortlived 档）、按 ARI 续期，证书与账户落在 `<cache_dir>/acme/`；内核每次握手经 `core.CertSource` 取证书，续期不断连。证书没到时编排层不碰内核，按装失败报 `cert_pending`，证书一到立即重装；状态随心跳 `NodeRuntime.cert` 报给面板，落在 `nodes.cert_*`（迁移 00061）。面板不签发、不下发证书，私钥不离开节点机。详见 `docs/node-certificates.md`。
+
 ### 11.6 节点在线升级
 
 信任根是 pdnd 二进制里内置的发版公钥：面板被攻破时最多能改配置、不能在节点上执行代码，升级之后也一样。面板给的清单、签名、下载地址都只当搬运工，面板不验签。
@@ -509,7 +511,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 - viper：先读 `/etc/pandora/config.yaml`（root:pandora，0640），再用 `PANDORA_` 前缀的环境变量覆盖（`SetEnvKeyReplacer(".", "_")`）。
 - 秘密只能来自环境变量（systemd `EnvironmentFile=`，0600），或者 `*_FILE` 指向的 0600 文件；放在配置文件里会启动失败。
 - 启动时 Unmarshal 进结构体，再统一 `Validate()`。现有的校验规则（长度、两个 JWT 密钥不同、生产环境禁用某些项、pprof 只能回环）原样搬过去。
-- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做（面板不签发节点入站证书，见 `docs/node-certificates.md`）。
+- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做（面板不签发节点入站证书；自动申请在节点端做，见 `docs/node-certificates.md`）。
 - `env` 缺省为 `production`（失败即关闭）：注册、找回回显 `dev_code`，以及开发格式的日志，只在显式设成 `development` 或 `test` 时打开；CI 与本地开发显式设 `PANDORA_ENV=development`。
 - 只有部署脚本用的变量（POSTGRES_*、后台路径前缀、告警 Telegram、备份钩子、迁移连接串）放在 `/etc/pandora/deploy.env`（root 0600）给脚本读，不进应用配置；服务的秘密放 `/etc/pandora/secrets.env`。
 

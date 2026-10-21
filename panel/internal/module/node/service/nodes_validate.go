@@ -136,6 +136,10 @@ func nodeValidateProtocol(nodeType, host string, port int, raw json.RawMessage, 
 	if len(fields) > 0 {
 		return 0, errs.Invalid(fields)
 	}
+	// 自动申请证书的名字取 SNI 或连接地址，要能被 Let's Encrypt 签发，保存时就拦住内网 IP、单段名字。
+	if f := protocol.ValidateCertIdentity(nodeType, host, raw); len(f) > 0 {
+		return 0, errs.Invalid(f)
+	}
 	if version <= 0 {
 		return 0, inventoryInvalid("node_type", "不支持的协议类型")
 	}

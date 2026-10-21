@@ -47,6 +47,8 @@ type config struct {
 	Runtime runtimeTuning `json:"runtime"`
 	// Upgrade 是在线升级的可选设置，见 upgrade_cmd.go。
 	Upgrade upgradeConfig `json:"upgrade"`
+	// ACME 是自动申请入站证书的可选设置，见 acme_config.go；生产上不写。
+	ACME acmeConfig `json:"acme"`
 }
 
 // buildVersion is injected by the release builder and intentionally defaults
@@ -278,10 +280,21 @@ func run(cfg *config, log *slog.Logger) error {
 	defer kernel.Close()
 	log.Info("内核已启动", "kernel", kernel.Type(), "version", buildVersion, "server", id.ServerID())
 
+	// 证书管理要在冷启动装第一个入站之前就位：读盘的证书冷启动即可用，acme 入站不必等联网。
+	// 建不起来（落盘目录不可写等）不拦整个进程：手填证书与不用证书的节点照常服务，acme 节点报 cert_pending。
+	var nodeCerts node.CertManager
+	if mgr, err := newCertManager(cfg, log); err != nil {
+		log.Error("自动申请证书不可用，acme 节点将一直等待证书", "dir", cfg.acmeDir(), "err", err)
+	} else {
+		kernel.SetCertSource(mgr)
+		go mgr.Run(ctx)
+		nodeCerts = mgr
+	}
+
 	binSHA := binarySHA256()
 	env := currentUpgradeEnv()
 	upgrader := newUpgrader(cfg, env, binSHA, log)
-	srv := node.New(node.Options{ServerID: id.ServerID(), Kernel: kernel, Logger: log, CacheDir: cfg.stateDir(), Upgrader: upgrader})
+	srv := node.New(node.Options{ServerID: id.ServerID(), Kernel: kernel, Logger: log, CacheDir: cfg.stateDir(), Upgrader: upgrader, Certs: nodeCerts})
 	// 先用落盘缓存把上次的节点装起来：面板不可达也照常服务，第一条 Hello 就带着这些版本。
 	srv.Start()
 
@@ -417,6 +430,9 @@ func loadConfig(path string) (*config, error) {
 		return nil, fmt.Errorf("panel.address: %w", err)
 	}
 	if err := cfg.Runtime.validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.ACME.validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

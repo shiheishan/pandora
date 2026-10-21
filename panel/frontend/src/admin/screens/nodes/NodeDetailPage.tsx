@@ -1,7 +1,7 @@
 import { href, navigate, useHashLocation } from '../../../core/router'
 import { formatBytes } from '../../../core/format'
 import { Empty, QueryView, Tag } from '../../../ui'
-import { DetailPage, SideFact, SideFacts, StatusDot, type StatusTone } from '../../kit'
+import { DetailPage, SideFact, SideFacts, StatusDot, useNow, type StatusTone } from '../../kit'
 import css from './detail.module.css'
 import { addressLabel, nodeState, protocolLabel, REGIONS } from './logic'
 import { NodeIdentity } from './NodeIdentity'
@@ -9,7 +9,7 @@ import { NodeMonitor } from './NodeMonitor'
 import { NodeHeaderAction, NodeOps } from './NodeOps'
 import { NodeProtocol } from './NodeProtocol'
 import { NodeSettings } from './NodeSettings'
-import { runState } from './runtime'
+import { runState, certBadge } from './runtime'
 import { useNodeDetail, useNodes } from './queries'
 import type { NodeRow } from './schemas'
 import { trafficUsageLabel } from './xb'
@@ -44,6 +44,8 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
   const list = useNodes()
   const detail = useNodeDetail(id)
   const location = useHashLocation()
+  // 证书剩余天数按分钟走，不在渲染里读时钟
+  const now = useNow().getTime()
   // 列表页带来的筛选查询串原样带着走，返回时还原
   const listQuery = Object.fromEntries(location.query)
   const back = { href: href('/nodes/nodes', listQuery), label: '节点' }
@@ -62,6 +64,7 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
 
   const state = nodeState(row)
   const run = runState(row)
+  const cert = certBadge(row.cert, now)
 
   return (
     <DetailPage
@@ -122,6 +125,12 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
             {run === null ? '—' : run.label}
             {run !== null && run.detail !== '' && (
               <span className={css.faint}>{run.detail}</span>
+            )}
+          </SideFact>
+          <SideFact label="证书">
+            {row.cert === null ? '—' : (cert?.label ?? '—')}
+            {cert !== null && cert.detail !== '' && (
+              <span className={css.faint}>{cert.detail}</span>
             )}
           </SideFact>
         </SideFacts>

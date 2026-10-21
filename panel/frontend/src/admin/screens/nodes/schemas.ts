@@ -71,6 +71,20 @@ export const nodeRowSchema = z.object({
   runtime_reason: z.string().nullish().transform((v) => v ?? null),
   runtime_state_at: iso.nullish().transform((v) => v ?? null),
   runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
+  // 入站证书状态（节点端心跳报的，node/handler 的 nodeCertResponse）；null = 节点端没报过
+  cert: z
+    .object({
+      mode: z.enum(['acme', 'file']),
+      identifier: z.string().nullable(),
+      identifier_kind: z.enum(['domain', 'ip']).nullable(),
+      not_after: iso.nullable(),
+      error_code: z.string().nullable(),
+      error_detail: z.string().nullable(),
+      next_attempt_at: iso.nullable(),
+      reported_at: iso,
+    })
+    .nullish()
+    .transform((v) => v ?? null),
   delivery_degraded: z.boolean().catch(false),
   ...xbNodeFields,
   relay_count: z.number(),
@@ -78,6 +92,7 @@ export const nodeRowSchema = z.object({
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
+export type NodeCert = NonNullable<NodeRow['cert']>
 
 /**
  * 单取（?id=）才带的编辑字段（node/handler 的 nodeDetailResponse）：列表不带，1000 个节点每次刷新省掉

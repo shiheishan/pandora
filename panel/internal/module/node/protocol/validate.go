@@ -100,20 +100,30 @@ func takeClientTLSHints(nodeType string, kernelShape map[string]any) map[string]
 	}
 	if raw, ok := kernelShape["allow_insecure"]; ok {
 		delete(kernelShape, "allow_insecure")
-		if _, isBool := raw.(bool); !isBool {
+		allow, isBool := raw.(bool)
+		if !isBool {
 			fields["protocol_config.tls_settings.allow_insecure"] = "必须是 true 或 false"
+		} else if allow {
+			mode, _ := kernelShape["cert_mode"].(string)
+			if strings.EqualFold(strings.TrimSpace(mode), CertModeACME) {
+				fields["protocol_config.tls_settings.allow_insecure"] = "自动申请的证书是受信任的，不需要也不允许跳过证书校验"
+			}
 		}
 	}
 	return fields
 }
 
-// requireAnyTLSCertificate 要求 AnyTLS 必须配证书。
+// requireAnyTLSCertificate 要求 AnyTLS 必须配证书（含 cert_mode=acme 自动申请）。
 //
 // 节点端在没有 cert_path 时以明文起 AnyTLS（pdnd/kernel/anytls.go），而
 // mihomo、sing-box 等所有客户端都强制 TLS：这样的节点存得进去、起得来，
 // 却谁都连不上。在保存时拦住，比让用户对着「超时」排查强。
 func requireAnyTLSCertificate(nodeType string, kernelShape map[string]any, fields map[string]string) {
 	if nodeType != "anytls" {
+		return
+	}
+	mode, _ := kernelShape["cert_mode"].(string)
+	if strings.EqualFold(strings.TrimSpace(mode), CertModeACME) {
 		return
 	}
 	cert, _ := kernelShape["cert_path"].(string)

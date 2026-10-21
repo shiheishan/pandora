@@ -298,6 +298,16 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		RelayCount:   row.RelayCount,
 		ECHEnabled:   row.ECHEnabled,
 	}
+	if row.CertStateAt != nil {
+		nr.Cert = &NodeCertState{
+			Identifier:  row.CertIdentifier,
+			NotAfter:    row.CertNotAfter,
+			ErrorCode:   row.CertErrorCode,
+			ErrorDetail: row.CertErrorDetail,
+			NextAttempt: row.CertNextAttemptAt,
+			ReportedAt:  *row.CertStateAt,
+		}
+	}
 
 	if live, ok := x.live[row.ID]; ok {
 		nr.OnlineUsers = live.OnlineUsers

@@ -105,6 +105,7 @@ type Subscriptions interface {
 type Nodes interface {
 	ReportNodeCounts(ctx context.Context, now time.Time) (nodesvc.ReportNodeCounts, error)
 	OfflineNodes(ctx context.Context, now time.Time, sample int) (nodesvc.OfflineNodes, error)
+	CertAttentionNodes(ctx context.Context, now time.Time, sample int) (nodesvc.CertAttention, error)
 	ConfigLaggingCount(ctx context.Context) (int64, error)
 	TrafficByNode(ctx context.Context, from, to time.Time) ([]nodesvc.NodeTraffic, error)
 	TrafficBySubscription(ctx context.Context, from, to time.Time) ([]nodesvc.SubscriptionTraffic, error)

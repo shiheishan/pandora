@@ -103,8 +103,10 @@ func (a *vlessAdapter) Validate(spec InboundSpec) error {
 		if _, err := ParseXHTTPConfig(spec.Config.Raw); err != nil {
 			return err
 		}
-		if strings.EqualFold(network, "xhttp-h3") && !strings.EqualFold(stringValue(spec.Config.Raw["security"]), "reality") && (strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")) == "" || strings.TrimSpace(rawString(spec.Config.Raw, "key_path")) == "") {
-			return fmt.Errorf("vless xhttp-h3 requires cert_path and key_path")
+		if strings.EqualFold(network, "xhttp-h3") && !strings.EqualFold(stringValue(spec.Config.Raw["security"]), "reality") {
+			if err := checkInboundCertificate(spec.Config.Raw); err != nil {
+				return fmt.Errorf("vless xhttp-h3 %w", err)
+			}
 		}
 	}
 	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
@@ -123,7 +125,7 @@ func (a *vlessAdapter) Validate(spec InboundSpec) error {
 			return fmt.Errorf("native vless TLS is currently supported on TCP only")
 		}
 		if !strings.EqualFold(security, "reality") {
-			if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
+			if err := validateInboundTLSConfig(spec.Config.Raw); err != nil {
 				return err
 			}
 		}
@@ -151,7 +153,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 	var tlsEnabled bool
 	if !a.reality {
 		var err error
-		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw)
+		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw, hooks.Certs)
 		if err != nil {
 			a.mu.Unlock()
 			return err
@@ -177,7 +179,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.mu.Unlock()
 			return parseErr
 		}
-		var cert tls.Certificate
+		var getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 		var realitySpec RealityServerConfig
 		if a.reality {
 			var realityErr error
@@ -189,11 +191,11 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			}
 		} else {
 			var certErr error
-			cert, certErr = tls.LoadX509KeyPair(rawString(spec.Config.Raw, "cert_path"), rawString(spec.Config.Raw, "key_path"))
+			getCert, certErr = inboundCertificate(spec.Config.Raw, hooks.Certs)
 			if certErr != nil {
 				a.cancel()
 				a.mu.Unlock()
-				return fmt.Errorf("vless xhttp-h3 TLS: %w", certErr)
+				return fmt.Errorf("vless xhttp-h3 %w", certErr)
 			}
 		}
 		packet, listenErr := net.ListenPacket("udp", address)
@@ -217,7 +219,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		if a.reality {
 			h3Server, serveErr = (XHTTPServer{Config: xhttpConfig, Handler: a.xhttpHandler()}).ServeH3Reality(packet, realitySpec, nil)
 		} else {
-			h3Server, serveErr = (XHTTPServer{Config: xhttpConfig, Handler: a.xhttpHandler()}).ServeH3(packet, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
+			h3Server, serveErr = (XHTTPServer{Config: xhttpConfig, Handler: a.xhttpHandler()}).ServeH3(packet, &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS13})
 		}
 		if serveErr != nil {
 			_ = packet.Close()

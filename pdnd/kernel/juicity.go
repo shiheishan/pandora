@@ -79,8 +79,8 @@ func (a *juicityAdapter) Validate(spec InboundSpec) error {
 	if network := strings.TrimSpace(rawString(spec.Config.Raw, "network")); network != "" && !strings.EqualFold(network, "udp") {
 		return fmt.Errorf("juicity requires UDP transport, got %q", network)
 	}
-	if strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")) == "" || strings.TrimSpace(rawString(spec.Config.Raw, "key_path")) == "" {
-		return fmt.Errorf("juicity requires cert_path and key_path")
+	if err := checkInboundCertificate(spec.Config.Raw); err != nil {
+		return fmt.Errorf("juicity %w", err)
 	}
 	if cc := strings.ToLower(strings.TrimSpace(rawString(spec.Config.Raw, "congestion_control"))); cc != "" && cc != "cubic" && cc != "new_reno" && cc != "bbr" {
 		return fmt.Errorf("juicity unsupported congestion_control %q", cc)
@@ -95,9 +95,9 @@ func (a *juicityAdapter) Start(parent context.Context, spec InboundSpec, hooks A
 	if err := a.Validate(spec); err != nil {
 		return err
 	}
-	cert, err := tls.LoadX509KeyPair(rawString(spec.Config.Raw, "cert_path"), rawString(spec.Config.Raw, "key_path"))
+	getCert, err := inboundCertificate(spec.Config.Raw, hooks.Certs)
 	if err != nil {
-		return fmt.Errorf("juicity TLS certificate: %w", err)
+		return fmt.Errorf("juicity %w", err)
 	}
 	listen := spec.Config.Listen
 	if listen == "" {
@@ -108,7 +108,7 @@ func (a *juicityAdapter) Start(parent context.Context, spec InboundSpec, hooks A
 		return err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h3"}}
+	tlsConfig := &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS13, NextProtos: []string{"h3"}}
 	transport := &quic.Transport{Conn: packet}
 	listener, err := transport.Listen(tlsConfig, &quic.Config{
 		MaxIncomingStreams:    100,

@@ -110,8 +110,8 @@ func (a *hysteria2Adapter) Validate(spec InboundSpec) error {
 	if network := strings.TrimSpace(rawString(spec.Config.Raw, "network")); network != "" && !strings.EqualFold(network, "udp") {
 		return fmt.Errorf("hysteria2 requires UDP transport, got %q", network)
 	}
-	if strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")) == "" || strings.TrimSpace(rawString(spec.Config.Raw, "key_path")) == "" {
-		return fmt.Errorf("hysteria2 requires cert_path and key_path")
+	if err := checkInboundCertificate(spec.Config.Raw); err != nil {
+		return fmt.Errorf("hysteria2 %w", err)
 	}
 	if raw, ok := spec.Config.Raw["obfs"]; ok && raw != nil {
 		obj, ok := raw.(map[string]any)
@@ -167,11 +167,11 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 	if err := a.Validate(spec); err != nil {
 		return err
 	}
-	cert, err := tls.LoadX509KeyPair(rawString(spec.Config.Raw, "cert_path"), rawString(spec.Config.Raw, "key_path"))
+	getCert, err := inboundCertificate(spec.Config.Raw, hooks.Certs)
 	if err != nil {
-		return fmt.Errorf("hysteria2 TLS certificate: %w", err)
+		return fmt.Errorf("hysteria2 %w", err)
 	}
-	stdTLS := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+	stdTLS := &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS13}
 	tlsConfig := &hysteria2TLSConfig{std: stdTLS}
 	ctx, cancel := context.WithCancel(parent)
 	connErr := newConnErrorReporter(hooks, spec, "hysteria2")

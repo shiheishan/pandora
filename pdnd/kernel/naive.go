@@ -70,7 +70,7 @@ func (a *naiveAdapter) Validate(spec InboundSpec) error {
 	if !ok || !enabled {
 		return fmt.Errorf("native naive requires TLS with ALPN h2")
 	}
-	if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
+	if err := validateInboundTLSConfig(spec.Config.Raw); err != nil {
 		return err
 	}
 	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
@@ -88,7 +88,7 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Unlock()
 		return fmt.Errorf("native naive adapter already started or closed")
 	}
-	tlsConfig, _, err := loadInboundTLSConfig(spec.Config.Raw)
+	tlsConfig, _, err := loadInboundTLSConfig(spec.Config.Raw, hooks.Certs)
 	if err != nil {
 		a.mu.Unlock()
 		return err

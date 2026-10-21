@@ -66,6 +66,19 @@ interface Node {
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Array<Json> }
   identityRevoked: boolean
   xb: XBState
+  /** 入站证书心跳；null = 未报过 */
+  cert: CertSnapshot | null
+}
+
+interface CertSnapshot {
+  mode: 'acme' | 'file'
+  identifier: string | null
+  identifier_kind: 'domain' | 'ip' | null
+  not_after: string | null
+  error_code: string | null
+  error_detail: string | null
+  next_attempt_at: string | null
+  reported_at: string
 }
 
 let nodeNo = 100
@@ -98,9 +111,12 @@ function node(p: Partial<Node> & Pick<Node, 'name' | 'node_type' | 'serving_stat
     routing: { outbounds: [], routes: [] },
     identityRevoked: false,
     xb: xbDefaults(),
+    cert: null,
     ...p,
   }
 }
+const fromNow = (ms: number) => new Date(Date.now() + ms).toISOString()
+
 const store: Node[] = [
   node(
     {
@@ -127,6 +143,16 @@ const store: Node[] = [
       online_ips: 301,
       traffic_bytes_24h: Math.round(1.12 * 1024 * GB),
       protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', bandwidth: { up: 200, down: 1000 } },
+      cert: {
+        mode: 'file',
+        identifier: null,
+        identifier_kind: null,
+        not_after: fromNow(10 * 86400000),
+        error_code: null,
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: ago(300),
+      },
       xb: {
         ...xbDefaults(),
         tags: ['香港', 'IPLC'],
@@ -163,10 +189,53 @@ const store: Node[] = [
     },
     0,
   ),
-  node({ name: '东京 03', node_type: 'trojan', serving_status: 'active', country_code: 'JP', online_users: 356, online_ips: 402, traffic_bytes_24h: Math.round(1.49 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } } }, 1),
-  node({ name: '新加坡 02', node_type: 'shadowsocks', serving_status: 'active', country_code: 'SG', server_port: 8388, last_heartbeat_at: ago(900), online_users: 0, traffic_bytes_24h: 864 * GB, protocol_config: { cipher: 'aes-256-gcm' } }, 2),
+  node(
+    {
+      name: '东京 03',
+      node_type: 'trojan',
+      serving_status: 'active',
+      country_code: 'JP',
+      online_users: 356,
+      online_ips: 402,
+      traffic_bytes_24h: Math.round(1.49 * 1024 * GB),
+      protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } },
+    },
+    1,
+  ),
+  node({
+    name: '新加坡 02',
+    node_type: 'shadowsocks',
+    serving_status: 'active',
+    country_code: 'SG',
+    server_port: 8388,
+    last_heartbeat_at: ago(900),
+    online_users: 0,
+    traffic_bytes_24h: 864 * GB,
+    protocol_config: { cipher: 'aes-256-gcm' },
+  }, 2),
   node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'active', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' }, xb: { ...xbDefaults(), tags: ['流媒体'], limit_bytes: 500 * GI, used_bytes: 540 * GI, reset_day: 20, exceeded_at: ago(86400) } }, 3),
-  node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
+  node(
+    {
+      name: '首尔 01 · 灰度',
+      node_type: 'tuic',
+      serving_status: 'disabled',
+      country_code: 'KR',
+      pool_id: pools[2]!.id,
+      protocol_config: { cert_mode: 'acme' },
+      // IP 证书申请失败：80 端口没放行
+      cert: {
+        mode: 'acme',
+        identifier: '192.0.2.10',
+        identifier_kind: 'ip',
+        not_after: null,
+        error_code: 'validation_failed',
+        error_detail: 'Connection refused during HTTP-01 challenge',
+        next_attempt_at: fromNow(15 * 60 * 1000),
+        reported_at: ago(30),
+      },
+    },
+    1,
+  ),
   node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, protocol_config: {} }, 2),
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
   // R105：在役但没划进节点池，不服务任何用户
@@ -181,7 +250,17 @@ const store: Node[] = [
       node_type: 'trojan',
       serving_status: 'active',
       country_code: 'DE',
-      protocol_config: { network: 'tcp', tls: 1, cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' },
+      protocol_config: { network: 'tcp', tls: 1, cert_mode: 'acme' },
+      cert: {
+        mode: 'acme',
+        identifier: 'fra1.example.com',
+        identifier_kind: 'domain',
+        not_after: fromNow(5 * 86400000),
+        error_code: 'rate_limited',
+        error_detail: null,
+        next_attempt_at: fromNow(3600000),
+        reported_at: ago(90),
+      },
       xb: {
         ...xbDefaults(),
         tags: ['欧洲'],
@@ -292,6 +371,7 @@ function listRow(n: Node) {
     mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
     metrics_at: cpu === null ? null : ago(20),
     granted_plans: pool?.plans.length ? pool.plans : null,
+    cert: n.cert,
     ...xbRow(n.xb),
   }
 }
@@ -392,7 +472,12 @@ function validateProtocol(nodeType: string, config: unknown): Record<string, str
     const options = s.enums?.[path] ?? (path === 'cipher' ? s.methods : undefined)
     if (options && !options.includes(String(value))) fields[`protocol_config.${path}`] = `只能是 ${options.join(' / ')}`
   }
-  for (const path of s.required ?? []) if (!flat.has(path)) fields[`protocol_config.${path}`] = '必填'
+  // 与真后端一致：cert_mode 缺省按 file，不必填；acme 时不要 cert_path / key_path（required 只是表单在显示时的必填标记）
+  const acme = flat.get('cert_mode') === 'acme'
+  for (const path of s.required ?? []) {
+    if (path === 'cert_mode' || (acme && (path === 'cert_path' || path === 'key_path'))) continue
+    if (!flat.has(path)) fields[`protocol_config.${path}`] = '必填'
+  }
   if (nodeType === 'vless' && String(flat.get('tls')) === '2') {
     for (const key of ['dest', 'server_name', 'private_key', 'short_id']) {
       if (!flat.get(`reality_settings.${key}`)) fields[`protocol_config.${key}`] = `REALITY 需要 ${key}`

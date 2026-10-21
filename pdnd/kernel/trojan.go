@@ -100,7 +100,7 @@ func (a *trojanAdapter) Validate(spec InboundSpec) error {
 		return fmt.Errorf("native trojan rejects unsupported security %q", security)
 	}
 	if enabled, ok := spec.Config.Raw["tls"].(bool); ok && enabled && !strings.EqualFold(security, "reality") {
-		if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
+		if err := validateInboundTLSConfig(spec.Config.Raw); err != nil {
 			return err
 		}
 	}
@@ -132,7 +132,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	a.fallback = newProbeFallback(fallbackAddr)
 	if !a.reality {
 		var tlsEnabled bool
-		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw)
+		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw, hooks.Certs)
 		_ = tlsEnabled
 		if err != nil {
 			a.mu.Unlock()

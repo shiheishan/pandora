@@ -140,6 +140,23 @@ message NodeRuntime {
   string reason = 3;
   // 端口被同机另一个节点占用时，占用者的 node_id。
   string reason_node_id = 4;
+  // 入站证书的状态：自动申请（acme）的节点每拍都带；手填证书（file）的只带 not_after_unix。
+  // 不用证书的协议不带。
+  CertStatus cert = 5;
+}
+
+// CertStatus 是一个节点入站证书的状态（节点端能力 cert_acme_v1）。
+message CertStatus {
+  // 证书的标识符（域名或 IP，与配置文档的 cert_identifier 相同）；file 模式为空。
+  string identifier = 1;
+  // 当前证书的到期时间（Unix 秒）；0 = 还没有证书。
+  int64 not_after_unix = 2;
+  // 最近一次申请或续期失败的原因码（如 challenge_port_busy、validation_failed）；成功后清空。
+  string error_code = 3;
+  // 失败详情（CA 回的 problem detail，至多 1024 字节、可打印 ASCII）。
+  string error_detail = 4;
+  // 下一次申请或续期的计划时间（Unix 秒）；0 = 没有计划。
+  int64 next_attempt_unix = 5;
 }
 
 enum RuntimeStatus {

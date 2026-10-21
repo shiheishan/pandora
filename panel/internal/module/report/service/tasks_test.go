@@ -136,6 +136,10 @@ func TestTasksMapping(t *testing.T) {
 		},
 		LongestOfflineSeconds: &long900,
 	}
+	e.ports.certs = nodesvc.CertAttention{
+		Count: 5, Failing: 2, Expiring: 3,
+		Sample: []nodesvc.NodeRef{{ID: id2, Name: "cert-b"}},
+	}
 	e.ports.pendingStale = 6
 	oneMinAgo := testNow.Add(-time.Minute)
 	e.ports.backlog = notifysvc.DeliveryBacklog{
@@ -170,6 +174,12 @@ func TestTasksMapping(t *testing.T) {
 		tasks.NodesOffline.Sample[1].ID != id2 || tasks.NodesOffline.Sample[1].Name != "node-b" {
 		t.Fatalf("sample=%+v", tasks.NodesOffline.Sample)
 	}
+	if tasks.NodeCerts.Count != 5 || tasks.NodeCerts.Failing != 2 || tasks.NodeCerts.Expiring != 3 {
+		t.Fatalf("NodeCerts=%+v", tasks.NodeCerts)
+	}
+	if len(tasks.NodeCerts.Sample) != 1 || tasks.NodeCerts.Sample[0].ID != id2 || tasks.NodeCerts.Sample[0].Name != "cert-b" {
+		t.Fatalf("NodeCerts.Sample=%+v", tasks.NodeCerts.Sample)
+	}
 	if tasks.OrdersPendingStale.Count != 6 || tasks.OrdersPendingStale.ThresholdSeconds != 1800 {
 		t.Fatalf("OrdersPendingStale=%+v", tasks.OrdersPendingStale)
 	}
@@ -195,6 +205,9 @@ func TestTasksEmptySlices(t *testing.T) {
 	if tasks.NodesOffline.Sample == nil || len(tasks.NodesOffline.Sample) != 0 {
 		t.Fatalf("NodesOffline.Sample=%v", tasks.NodesOffline.Sample)
 	}
+	if tasks.NodeCerts.Sample == nil || len(tasks.NodeCerts.Sample) != 0 {
+		t.Fatalf("NodeCerts.Sample=%v", tasks.NodeCerts.Sample)
+	}
 }
 
 func TestTasksPortError(t *testing.T) {
@@ -208,6 +221,13 @@ func TestTasksPortError(t *testing.T) {
 	e2 := newTestEnv()
 	e2.ports.errFor["PendingStaleCount"] = errBoom
 	_, err = e2.svc.Tasks(context.Background())
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("err=%v want errBoom", err)
+	}
+
+	e3 := newTestEnv()
+	e3.ports.errFor["CertAttentionNodes"] = errBoom
+	_, err = e3.svc.Tasks(context.Background())
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("err=%v want errBoom", err)
 	}
