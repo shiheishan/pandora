@@ -20,3 +20,4 @@ paths:
   - 没有上架时间窗、价格时间窗、用户组专属价、库存、限购、排序、卖点；目录顺序是推荐在前、再按 created_at。
 - 已发布版本及其权益、配额冻结不可变（触发器兜底，撞上转 `ErrSnapshotFrozen`）。
 - 改线路（`SetPlanPools`）：只对新加的池检查存在、未停用，原来就绑着、后来停用的池照样保留；已发布过的套餐（`current_version_id` 非空）改完在同一事务里过 `PublishGate.CheckPublishable`，不能一步改成没有可服务节点（审查 1016-A1）。
+- 审计对象可读名：`service/audit_labels.go` 的 `PlanLabels`（plan → 套餐名）与 `PlanVersionLabels`（plan_version → 「套餐名 · v版本号」，版本号是 `plan_versions.version`），各一条 SQL（`repo/audit_labels.go`），在 `wire.go` 经 audit 的 `UseResourceLabeler` 登记；查不到的 id 不放进返回值。守卫 `service/audit_labels_pg_test.go` 的 `TestAuditLabelsPG`。
