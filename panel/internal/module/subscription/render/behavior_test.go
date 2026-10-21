@@ -107,6 +107,16 @@ func TestAnyTLSWithoutCertificateIsSkipped(t *testing.T) {
 	}
 }
 
+// 自动申请证书的 AnyTLS（cert_mode=acme，配置里没有 cert_path）照常进订阅（certs 审查 B1）。
+func TestAnyTLSWithACMECertificateIsRendered(t *testing.T) {
+	node := Node{Name: "acme-anytls", Type: "anytls", Host: fixtureHost, Port: 1, Config: map[string]any{"cert_mode": "acme"}}
+	for _, f := range []Format{FormatClash, FormatSingbox, FormatURI, FormatLoon, FormatSurfboard} {
+		if _, _, count := renderPlain(f, []Node{node}, fixtureUUID, "", Options{}); count != 1 {
+			t.Errorf("%s skipped an AnyTLS node whose certificate is issued automatically (count=%d)", f, count)
+		}
+	}
+}
+
 func TestContentDispositionIsASCIISafe(t *testing.T) {
 	cases := map[string]string{
 		"Pandora":               `attachment; filename="Pandora"; filename*=UTF-8''Pandora`,
