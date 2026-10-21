@@ -1,6 +1,6 @@
 ---
 name: flow-walk
-description: pandora 的产品验证：像用户一样用浏览器（默认 ego-browser，`ego-browser nodejs` 跑脚本；内置浏览器只作备用）把门户和后台的业务流程真点一遍（注册登录、买套餐、续费、换套餐看报价、加流量包、添加到 App、兑换卡、换新链接、钱包；后台开单、换发链接、加时长、重置流量、加服务器拿接入命令、建节点），每步读页面文字或截图核对，出一张记录表证明功能真能用。改了门户或后台的页面和流程后、验收前端分支、用户说「点一遍」「走一遍流程」「像用户一样验证」「功能真能用吗」时使用；新手看不看得懂、符合不符合直觉用 ux-review。不覆盖单元测试与 CI（见 verify）、接口级 e2e（panel/tests/*.sh）、订阅渲染（subscription-e2e）。
+description: pandora 的产品验证：像用户一样用浏览器（一律 ego-browser，`ego-browser nodejs` 跑脚本；不用内置浏览器）把门户和后台的业务流程真点一遍（注册登录、买套餐、续费、换套餐看报价、加流量包、添加到 App、兑换卡、换新链接、钱包；后台开单、换发链接、加时长、重置流量、加服务器拿接入命令、建节点），每步读页面文字或截图核对，出一张记录表证明功能真能用。改了门户或后台的页面和流程后、验收前端分支、用户说「点一遍」「走一遍流程」「像用户一样验证」「功能真能用吗」时使用；新手看不看得懂、符合不符合直觉用 ux-review。不覆盖单元测试与 CI（见 verify）、接口级 e2e（panel/tests/*.sh）、订阅渲染（subscription-e2e）。
 ---
 
 # 像用户一样走一遍流程
@@ -19,7 +19,7 @@ description: pandora 的产品验证：像用户一样用浏览器（默认 ego-
 | 新手看不看得懂、好不好用 | ux-review |
 | **CI 测不到的「点得通」**：测试机真后端、手机宽度、视觉、注册登录、添加到 App、后台加时长与重置流量等 | **本 skill** |
 
-用哪个浏览器：**默认 ego-browser**（用户 10-20 定）。内置浏览器（`mcp__Claude_Browser__*`）只在两种情况用：用户想在 app 窗格里看着点，或 ego 连不上（`ego-browser` 报连接错误，按它 `references/install.md` 排查仍不行）。用法见文末「备用：内置浏览器」。
+用哪个浏览器：**一律 ego-browser**（用户 10-20 定默认，10-21 定不再用内置浏览器 `mcp__Claude_Browser__*`）。`ego-browser` 报连接错误时按它的 `references/install.md` 排查，仍不行就停下告诉用户，不换别的浏览器。
 
 ## 先选环境
 
@@ -129,7 +129,7 @@ description: pandora 的产品验证：像用户一样用浏览器（默认 ego-
 - 实际写看到的原文；一致就写「同期望」。
 - 截图只有失败和视觉核对才有路径，截图放会话 scratchpad，不进仓库。
 - 结论三选一：通过 / 失败 / 未测（写原因）。
-- 收尾给一行总结：环境（假后端 / 测试机别名）、提交号、浏览器（ego / 内置）、桌面与手机是否都走了、失败几条。
+- 收尾给一行总结：环境（假后端 / 测试机别名）、提交号、桌面与手机是否都走了、失败几条。
 
 ## 门户流程
 
@@ -204,14 +204,3 @@ description: pandora 的产品验证：像用户一样用浏览器（默认 ego-
 - **ego 的视口与报错收集只活在本轮**：`Emulation.*`、`addScriptToEvaluateOnNewDocument` 在脚本结束时就失效，下一轮要重设；漏设时截到的是用户窗口的实际宽度。
 - **ego 是用户看得见的真窗口**：用户可能正在用它；用户接管（`waitForControl`、空间变成非活动）时停下，不绕开。
 - 记录表、截图和报告里的测试机一律写别名或 `<后台前缀>`（仓库公开红线见根 CLAUDE.md）。
-
-## 备用：内置浏览器
-
-只在用户要在 app 窗格里看着点、或 ego 连不上时用。和 ego 的差别：
-
-- 起服务：`preview_start` 用 `.claude/launch.json` 里的 `portal-mock`（5181）和 `admin-mock`（5182）（这两条只监听 `localhost`，不是 127.0.0.1，地址用 preview_start 返回的）。每次 `preview_start` 自动开一个标签并返回 `tabId`，那个标签就是自己的，用完 `tabs_close`，再 `preview_stop`。`launch.json` 别的任务在用，**不要自己改**。用 `preview_start` 就不要再跑 `mock-up.sh`（端口会冲突）；没有 `preview_start` 的环境才用 `mock-up.sh` 加 `navigate`。
-- 标签：`tabs_create` 开自己的标签，之后每个调用都显式带 `tabId`（窗格是共用的，「当前标签」会在调用之间跳）；不碰别的任务开的标签。标签数到上限（`tabs_create` 报「Could not open a new tab」）时只关自己开过的（`preview_start` 自动开的也算），向主 Agent 说明。
-- 尺寸：`resize_window` `preset: "desktop"` / `"mobile"`（375x812），切完刷新，测完恢复 `desktop`。设一次一直有效（和 ego 相反）。
-- 窗格没显示时（用户没打开 Browser 面板），新标签视口是 0x0，`read_page` 返回空、截图超时：先对该标签 `resize_window`（如 1280x900）再读；要截图得请用户把窗格打开，否则记「未测」。
-- 读文字用 `read_page` / `find`；`get_page_text` 只读 `<main>`，读不到 toast。页面脚本用 `javascript_tool`（上面的 toast 轮询、fetch 记录器照样能用）；接口层可直接用 `read_network_requests`，报错用 `read_console_messages` 的 `onlyErrors`。
-- 测试机登录：用户在窗格里自己登录，说「已登录」后在那个标签上接着点。
