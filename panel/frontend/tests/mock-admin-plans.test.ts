@@ -7,6 +7,7 @@ import {
   planResponseSchema,
   plansSchema,
 } from '../src/admin/screens/plans/schemas'
+import { auditResponse } from '../src/admin/screens/security/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin plans (two-kind redesign)', () => {
@@ -344,6 +345,49 @@ describe('mock api · admin plans (two-kind redesign)', () => {
     expect(d.versions.find((v) => v.id === draftId)!.status).toBe('published')
     expect(d.draft_version_id).toBeNull()
     expect(d.version).toBe(draftVer.version)
+  })
+
+  it('writes audit rows like Go when a version is published', async () => {
+    let d = await detailOf(FAMILY)
+    const usageRes = await send(
+      'PUT',
+      `/v1/plans/${FAMILY}/usage`,
+      {
+        expected_row_version: d.row_version,
+        traffic_bytes: 280 * 1024 ** 3,
+        max_devices: 3,
+        throttle_kbps: 80_000,
+      },
+      'usage-audit-family',
+    )
+    expect(usageRes.status).toBe(200)
+    d = planResponseSchema.parse(await usageRes.json()).plan
+    const draftId = d.draft_version_id!
+
+    const pubRes = await send(
+      'POST',
+      `/v1/plans/${FAMILY}/versions/${draftId}/publish`,
+      { expected_row_version: d.row_version },
+      'pub-audit-family',
+    )
+    expect(pubRes.status).toBe(200)
+
+    const publishAudit = auditResponse.parse(
+      await (await get('/v1/audit?action=plan_version.publish&limit=200')).json(),
+    )
+    expect(publishAudit.events[0]).toMatchObject({
+      action: 'plan_version.publish',
+      resource_type: 'plan_version',
+      resource_id: draftId,
+      actor_kind: 'admin',
+      actor_email: MOCK_ACCOUNTS.admin.email,
+      outcome: 'success',
+    })
+
+    const usageAudit = auditResponse.parse(
+      await (await get('/v1/audit?action=plan.usage_update&limit=200')).json(),
+    )
+    expect(usageAudit.events[0]).toMatchObject({ resource_id: FAMILY })
   })
 
   // 8. reset

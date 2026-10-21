@@ -112,7 +112,7 @@ coupons.forEach((c) => {
   redemptions.set(
     c.id,
     Array.from({ length: n }, (_, i) => ({
-      email: ['zhang.wei@qq.com', 'mei.x@outlook.com', 'tomato@sina.com'][i]!,
+      email: ['zhang.wei@example.net', 'mei.x@mail.example.com', 'tomato@example.test'][i]!,
       order_no: `PD-2609-${3312 + i}`,
       discount: [11980, 1180, 2780][i]!,
       at: days(-i - 0.2),
@@ -268,7 +268,7 @@ function mintBatch(t: Template, count: number, prefix: string, expiresAt: string
     .forEach((c, i) => {
       if (i === 4) return void (c.status = 'disabled')
       c.status = 'used'
-      c.used_email = ['zhang.wei@qq.com', 'grace.h@icloud.com', 'wu.qing@163.com', 'lin.xiao@foxmail.com'][i]!
+      c.used_email = ['zhang.wei@example.net', 'grace.h@mail.example.org', 'wu.qing@example.org', 'lin.xiao@mail.example.test'][i]!
       c.used_at = days(-i - 0.4)
       const t2 = t as Template
       usages.push({ template_id: t2.id, code_id: c.id, user_email: c.used_email, granted: grantedOf(t2), redeemed_at: c.used_at })
@@ -434,15 +434,15 @@ function usdtPaidErrors(method: string, ref: string, paidUsdt: unknown): Record<
   return Object.keys(fields).length ? fields : null
 }
 const withdrawals: Withdrawal[] = [
-  withdrawal('chen.l@gmail.com', 42000, 'requested', '支付宝 · 138****2201', 0.1),
-  withdrawal('dora@proton.me', 128000, 'requested', 'USDT · TBXSw8fM4jpQkGc6zZjsVABFpVN7UvXPdV', 0.5, { method: 'usdt_trc20' }),
-  withdrawal('m.chen@gmail.com', 30000, 'approved', '支付宝 · 186****0932', 1.2),
-  withdrawal('yx_agent@163.com', 260000, 'paid', '银行卡 · 招商 **** 7781', 4, {
+  withdrawal('chen.l@example.com', 42000, 'requested', '支付宝 · 138****2201', 0.1),
+  withdrawal('dora@mail.example.net', 128000, 'requested', 'USDT · TBXSw8fM4jpQkGc6zZjsVABFpVN7UvXPdV', 0.5, { method: 'usdt_trc20' }),
+  withdrawal('m.chen@example.com', 30000, 'approved', '支付宝 · 186****0932', 1.2),
+  withdrawal('yx_agent@example.org', 260000, 'paid', '银行卡 · 招商 **** 7781', 4, {
     completed_at: days(-3),
     method: 'bank',
     payout_reference: 'CMB-20261010-0001',
   }),
-  withdrawal('sp4m@mail.ru', 18000, 'rejected', '支付宝 · 150****1188', 5, { reject_reason: '邀请关系异常，多个账号共用同一设备', earned_total: 18000 }),
+  withdrawal('sp4m@spam.example.test', 18000, 'rejected', '支付宝 · 150****1188', 5, { reject_reason: '邀请关系异常，多个账号共用同一设备', earned_total: 18000 }),
   withdrawal('late@example.test', 50000, 'rejected', '银行卡 · 建设 **** 1024', 7, { method: 'other', reject_reason: '收款账户信息有误，请核对后重新申请' }),
   withdrawal('usdt.payee@example.test', 88000, 'approved', '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed', 0.8, { method: 'usdt_erc20' }),
 ]

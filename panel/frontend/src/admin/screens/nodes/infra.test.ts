@@ -24,8 +24,11 @@ import {
   serverMeters,
   serverNodeLines,
   serverNotes,
+  serverLink,
   serverNextStep,
   serverSubtitle,
+  wizardServerHint,
+  nodeCreatedToast,
   upgradeBlockNote,
   upgradeConfirmBody,
   upgradeOffer,
@@ -220,6 +223,59 @@ describe('server status', () => {
       ),
     ).toBe(
       '已接入，但节点端没连着面板（心跳 5 分钟前）：先在机器上检查节点端服务，再新建或绑定节点并上线',
+    )
+  })
+})
+
+describe('new-node hints by server link', () => {
+  const now = new Date('2026-09-24T10:05:00Z')
+
+  it('serverLink covers unknown, enrollment, heartbeat and draft timing', () => {
+    expect(serverLink(undefined, now)).toBe('unknown')
+    expect(serverLink(server({ enrolled: false }), now)).toBe('unenrolled')
+    expect(serverLink(server({ enrolled: true, last_heartbeat_at: null }), now)).toBe('never')
+    expect(serverLink(server({ status: 'ready', heartbeat_online: true }), now)).toBe('online')
+    expect(serverLink(server({ status: 'ready', heartbeat_online: false }), now)).toBe('offline')
+    expect(
+      serverLink(server({ status: 'draft', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:04:30Z' }), now),
+    ).toBe('online')
+    expect(
+      serverLink(server({ status: 'draft', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }), now),
+    ).toBe('offline')
+  })
+
+  it('wizardServerHint matches each link', () => {
+    expect(wizardServerHint(undefined, now)).toBe('创建后在节点详情右上角点「上线」')
+    expect(wizardServerHint(server({ enrolled: false }), now)).toBe(
+      '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线',
+    )
+    expect(wizardServerHint(server({ enrolled: true, last_heartbeat_at: null }), now)).toBe(
+      '已接入，但节点端还没连上面板：先在机器上检查节点端服务，再上线',
+    )
+    expect(
+      wizardServerHint(server({ status: 'ready', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }), now),
+    ).toBe('已接入，但节点端没连着面板（心跳 5 分钟前）：先在机器上检查节点端服务，再上线')
+    expect(
+      wizardServerHint(server({ status: 'draft', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:04:30Z' }), now),
+    ).toBe('已接入：创建后可以直接在节点详情右上角点「上线」，这台服务器随之投入服务')
+    expect(wizardServerHint(server({ status: 'ready', heartbeat_online: true }), now)).toBe(
+      '已接入：创建后可以直接在节点详情右上角点「上线」',
+    )
+  })
+
+  it('nodeCreatedToast matches bound and link cases', () => {
+    expect(nodeCreatedToast(false, undefined, now)).toBe(
+      '节点已创建为草稿，还没绑服务器：要上线时在详情「身份与操作」里绑定服务器',
+    )
+    expect(nodeCreatedToast(true, undefined, now)).toBe('节点已创建为草稿：在节点详情右上角点「上线」')
+    expect(nodeCreatedToast(true, server({ enrolled: false }), now)).toBe(
+      '节点已创建为草稿。所在服务器还没接入：到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线',
+    )
+    expect(
+      nodeCreatedToast(true, server({ status: 'ready', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }), now),
+    ).toBe('节点已创建为草稿。所在服务器已接入，但节点端没连着面板：先在机器上检查节点端服务，再上线')
+    expect(nodeCreatedToast(true, server({ status: 'ready', heartbeat_online: true }), now)).toBe(
+      '节点已创建为草稿，所在服务器已接入：可以直接在节点详情右上角点「上线」',
     )
   })
 })

@@ -75,8 +75,8 @@ describe('列表三列', () => {
   })
 
   it('头像字与短 id', () => {
-    expect(initial('zhang@qq.com', null)).toBe('Z')
-    expect(initial('zhang@qq.com', ' 张伟 ')).toBe('张')
+    expect(initial('zhang@example.net', null)).toBe('Z')
+    expect(initial('zhang@example.net', ' 张伟 ')).toBe('张')
     expect(shortId('1a2b3c4d-0000-4000-8000-000000000001')).toBe('1a2b3c4d')
   })
 

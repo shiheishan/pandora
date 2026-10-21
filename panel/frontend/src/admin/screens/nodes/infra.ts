@@ -104,6 +104,65 @@ export function serverNextStep(s: Pick<Server, 'status' | 'enrolled' | 'last_hea
   return `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(s.last_heartbeat_at, now)}）：先在机器上检查节点端服务，再新建或绑定节点并上线`
 }
 
+/** 新建节点时所选服务器的接入状态：unknown 列表还没取到；unenrolled 没接入；never 接入了但从没心跳；offline 心跳断了；online 节点端连着面板 */
+export type ServerLink = 'unknown' | 'unenrolled' | 'never' | 'offline' | 'online'
+
+export function serverLink(
+  s: Pick<Server, 'status' | 'enrolled' | 'heartbeat_online' | 'last_heartbeat_at'> | undefined,
+  now: Date = new Date(),
+): ServerLink {
+  if (!s) return 'unknown'
+  if (!s.enrolled) return 'unenrolled'
+  if (!s.last_heartbeat_at) return 'never'
+  if (s.status === 'ready') return s.heartbeat_online ? 'online' : 'offline'
+  return now.getTime() - new Date(s.last_heartbeat_at).getTime() < HEARTBEAT_FRESH_MS ? 'online' : 'offline'
+}
+
+/** 新建节点向导第 2 步「所在服务器」的提示：按 serverLink 分五种，已接入且节点端在线时说可以直接上线 */
+export function wizardServerHint(
+  s: Pick<Server, 'status' | 'enrolled' | 'heartbeat_online' | 'last_heartbeat_at'> | undefined,
+  now: Date = new Date(),
+): string {
+  const link = serverLink(s, now)
+  switch (link) {
+    case 'unknown':
+      return '创建后在节点详情右上角点「上线」'
+    case 'unenrolled':
+      return '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线'
+    case 'never':
+      return '已接入，但节点端还没连上面板：先在机器上检查节点端服务，再上线'
+    case 'offline': {
+      const at = s!.last_heartbeat_at!
+      return `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(at, now)}）：先在机器上检查节点端服务，再上线`
+    }
+    case 'online':
+      return s!.status === 'draft'
+        ? '已接入：创建后可以直接在节点详情右上角点「上线」，这台服务器随之投入服务'
+        : '已接入：创建后可以直接在节点详情右上角点「上线」'
+  }
+}
+
+/** 新建节点成功的提示；bound 为 false 表示没绑服务器（s 忽略） */
+export function nodeCreatedToast(
+  bound: boolean,
+  s: Pick<Server, 'status' | 'enrolled' | 'heartbeat_online' | 'last_heartbeat_at'> | undefined,
+  now: Date = new Date(),
+): string {
+  if (!bound) return '节点已创建为草稿，还没绑服务器：要上线时在详情「身份与操作」里绑定服务器'
+  const link = serverLink(s, now)
+  switch (link) {
+    case 'unknown':
+      return '节点已创建为草稿：在节点详情右上角点「上线」'
+    case 'unenrolled':
+      return '节点已创建为草稿。所在服务器还没接入：到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线'
+    case 'never':
+    case 'offline':
+      return '节点已创建为草稿。所在服务器已接入，但节点端没连着面板：先在机器上检查节点端服务，再上线'
+    case 'online':
+      return '节点已创建为草稿，所在服务器已接入：可以直接在节点详情右上角点「上线」'
+  }
+}
+
 /** 服务器详情的节点列表：server_id 等于 serverId 且未退役，保持原顺序 */
 export function serverNodeLines<T extends Pick<NodeRow, 'server_id' | 'serving_status'>>(nodes: readonly T[], serverId: string): T[] {
   return nodes.filter((n) => n.server_id === serverId && n.serving_status !== 'retired')

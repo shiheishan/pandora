@@ -307,7 +307,7 @@ const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
 // 节点还没绑服务器就上线时的文案（activate 与批量改状态同一条）
 const UNBOUND_ACTIVATE = '节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线'
 /** 照 Go serverNotEnrolledMsg */
-const SERVER_NOT_ENROLLED = '服务器还没接入（先在服务器页生成安装命令完成接入）'
+const SERVER_NOT_ENROLLED = '服务器还没接入：先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令'
 
 /** 照 Go nodeProtocolReady：协议类型、对外地址、端口、schema 版本 */
 const protocolReady = (n: Node): boolean => Boolean(n.node_type && n.server_host && n.server_port !== null && n.protocol_schema_version > 0)

@@ -38,7 +38,7 @@ const stamp = (offsetMin = 0, seconds = false) => {
 // ---------------------------------------------------------------------------
 const SITE_NAME = 'Pandora'
 const mail = {
-  smtp_host: 'smtp.exmail.qq.com',
+  smtp_host: 'smtp.example.test',
   smtp_port: 465,
   encryption: 'ssl',
   smtp_username: 'noreply@example.test',
