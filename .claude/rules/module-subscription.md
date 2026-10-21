@@ -71,7 +71,7 @@ paths:
 - 换套餐 `ChangePlan` 可以跨类型，周期从现在起按新价重开，`rebuildQuotas` 按新版本重建（`service/plan_change.go`）
 - 延期 `Extend`：救回折算 cycle 上限、走过到期日重对齐 day/month（`service/extend.go`）
 - 开通 `Provision`：按套餐类型建 cycle 或 total 流量行（`service/provision.go`）；注册试用 `GrantSignupTrial` 与它共用 `provisionAt`（指定起止），不建订单、不计佣，每人终身一次（`subscription_trials` 主键，只追加），套餐不可用时记日志跳过（`service/trial.go`）
-- 试用标记（P13，用户 10-21 定）：门户 `MySubscriptions` 按本人一次 `repo.TrialSubscriptionIDs`（按 `subscription_trials.user_id` 主键）填 `IsTrial`，DTO `is_trial`；不放进 `summarize`，免得 order、giftcard 的 `ByUser` 每次多一条 SQL（`service/portal.go`、`repo/trials.go`）。后台用户详情、用户列表的试用标记还没做：要在 identity 的 `AdminSub` 与 `dto_admin_users.go` 加字段，`AdminSubs`（`service/admin_reads.go`）同样按一次 `TrialSubscriptionIDs` 批量填
+- 试用标记（P13，用户 10-21 定）：门户 `MySubscriptions` 按本人一次 `repo.TrialSubscriptionIDs`（按 `subscription_trials.user_id` 主键）填 `IsTrial`，DTO `is_trial`；不放进 `summarize`，免得 order、giftcard 的 `ByUser` 每次多一条 SQL（`service/portal.go`、`repo/trials.go`）。后台用户详情、用户列表经 `AdminSubs`（`service/admin_reads.go`）整页一次 `TrialSubscriptionIDs` 批量填 identity `AdminSub.IsTrial`（DTO `is_trial`，列表与详情同一入口）
 - 注销账号 `CloseUserSubscriptions`：identity 在注销事务里调，生效中的改 expired（到期截到现在）、关续费窗口、吊销全部凭据，提交后通知名单（`service/close.go`）
 - 后台直接改：`AdminSetPeriodEnd` 只改生效中的到期时刻（晚于现在、10 年内，不折算流量），`AdminSetQuotaLimit` 按「指标 + 周期」改一行当期上限（0–10 TiB 或不限，下个周期滚动按套餐当前版本重设）；都要原因，各写一条订阅事件（`period_end_set` / `quota_limit_set`，状态不变）与审计，并推实时变更（`service/admin_edit.go`）
 - 后台改订阅（改到期、改上限、加时长、加流量、重置流量、改设备数、换链接）一律经 `lockForAdmin` / `rejectDeletedOwner`：先不加锁读出属主，经 identity 的 `IsDeleted`（给用户行加共享锁）拒已注销账号 409，再锁订阅行（`service/internal.go`）。给 order/giftcard 的写方法（Provision、Renew、Extend 等）不在这里判断：注销时待付订单已在同一事务里取消，order、giftcard 在各自事务开头判断。
