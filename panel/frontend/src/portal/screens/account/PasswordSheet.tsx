@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Input, useToast } from '../../../ui'
+import { PasswordInput, useToast } from '../../../ui'
 import { Btn, Sheet } from '../../kit'
 import { usePortalMe } from '../../queries'
 import css from './Account.module.css'
@@ -63,17 +63,15 @@ export function PasswordSheet({ open, onClose }: { open: boolean; onClose: () =>
       <form id="pw-form" className={css.form} onSubmit={submit} noValidate>
         {/* 给密码管理器认账号用，不显示 */}
         <input type="email" name="username" autoComplete="username" value={email} readOnly hidden />
-        <Input
+        <PasswordInput
           label="当前密码"
-          type="password"
           autoComplete="current-password"
           value={oldPw}
           onChange={(e) => setOldPw(e.target.value)}
           error={errors.old}
         />
-        <Input
+        <PasswordInput
           label="新密码"
-          type="password"
           autoComplete="new-password"
           placeholder="至少 8 位，含字母和数字"
           value={newPw}
