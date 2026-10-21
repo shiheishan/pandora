@@ -25,8 +25,9 @@ const (
 
 // 缺省值。
 const (
-	defaultSiteName     = "Pandora"
-	defaultSiteTimezone = "UTC"
+	defaultSiteName = "Pandora"
+	// 站点时区缺省北京时间（用户 10-21 定）：用户多在中国大陆，用量切日、收入趋势按它算
+	defaultSiteTimezone = "Asia/Shanghai"
 
 	// 新装缺省开放注册；紧急关闭用 auth.registration 开关。
 	defaultRegistrationMode = RegistrationOpen

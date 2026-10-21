@@ -61,12 +61,12 @@ func TestSiteDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDef := Site{Name: "Pandora", Timezone: "UTC"}
+	wantDef := Site{Name: "Pandora", Timezone: "Asia/Shanghai"}
 	if site != wantDef {
 		t.Fatalf("default %+v want %+v", site, wantDef)
 	}
 
-	want := Site{Name: "示例站", Timezone: "Asia/Shanghai"}
+	want := Site{Name: "示例站", Timezone: "Asia/Tokyo"}
 	if err := svc.SetSite(ctx, fullSite(want)); err != nil {
 		t.Fatal(err)
 	}
