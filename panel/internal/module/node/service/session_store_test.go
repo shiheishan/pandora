@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -154,6 +155,76 @@ func TestRuntimeRows(t *testing.T) {
 	}
 	if rows[1].Reason != nil || rows[1].ReasonNodeID != nil {
 		t.Fatalf("running 应无原因: reason=%v reasonNode=%v", rows[1].Reason, rows[1].ReasonNodeID)
+	}
+}
+
+func TestRuntimeRowsCert(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000010")
+	notAfter := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	longDetail := strings.Repeat("x", 1100)
+	rows := runtimeRows([]NodeRuntime{{
+		NodeID: id,
+		Status: RuntimeRunning,
+		Cert: &NodeCert{
+			Identifier:  "node.example.com",
+			NotAfter:    &notAfter,
+			ErrorCode:   "rate_limited",
+			ErrorDetail: "ok",
+		},
+	}})
+	if len(rows) != 1 {
+		t.Fatalf("len=%d", len(rows))
+	}
+	if rows[0].CertIdentifier == nil || *rows[0].CertIdentifier != "node.example.com" {
+		t.Fatalf("identifier: %v", rows[0].CertIdentifier)
+	}
+	if rows[0].CertNotAfter == nil || !rows[0].CertNotAfter.Equal(notAfter) {
+		t.Fatalf("not_after: %v", rows[0].CertNotAfter)
+	}
+	if rows[0].CertErrorCode == nil || *rows[0].CertErrorCode != "rate_limited" {
+		t.Fatalf("code: %v", rows[0].CertErrorCode)
+	}
+	if rows[0].CertErrorDetail == nil || *rows[0].CertErrorDetail != "ok" {
+		t.Fatalf("detail: %v", rows[0].CertErrorDetail)
+	}
+
+	bad := runtimeRows([]NodeRuntime{{
+		NodeID: id,
+		Status: RuntimeRunning,
+		Cert:   &NodeCert{ErrorCode: "Bad-Code", ErrorDetail: "d"},
+	}})
+	if bad[0].CertErrorCode != nil || bad[0].CertErrorDetail != nil {
+		t.Fatalf("非法原因码应清空: code=%v detail=%v", bad[0].CertErrorCode, bad[0].CertErrorDetail)
+	}
+
+	trunc := runtimeRows([]NodeRuntime{{
+		NodeID: id,
+		Status: RuntimeRunning,
+		Cert: &NodeCert{
+			ErrorCode:   "failed",
+			ErrorDetail: longDetail,
+		},
+	}})
+	if trunc[0].CertErrorDetail == nil || len(*trunc[0].CertErrorDetail) > 1024 {
+		t.Fatalf("detail 应截到 ≤1024 字节: len=%d", len(ptrStr(trunc[0].CertErrorDetail)))
+	}
+	if !utf8.ValidString(*trunc[0].CertErrorDetail) {
+		t.Fatal("detail 应为合法 UTF-8")
+	}
+
+	nilCert := runtimeRows([]NodeRuntime{{NodeID: id, Status: RuntimeRunning}})
+	if nilCert[0].CertIdentifier != nil || nilCert[0].CertNotAfter != nil || nilCert[0].CertNextAttempt != nil ||
+		nilCert[0].CertErrorCode != nil || nilCert[0].CertErrorDetail != nil {
+		t.Fatalf("Cert nil 时五列应全 nil: %+v", nilCert[0])
+	}
+
+	dropped := runtimeRows([]NodeRuntime{{
+		NodeID: id,
+		Status: "bogus",
+		Cert:   &NodeCert{Identifier: "a.example.com"},
+	}})
+	if len(dropped) != 0 {
+		t.Fatalf("非法运行状态应整条丢弃: %d", len(dropped))
 	}
 }
 

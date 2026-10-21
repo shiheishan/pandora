@@ -161,6 +161,7 @@ func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64,
 func (r *Repo) SetNodeServer(ctx context.Context, id uuid.UUID, expected int64, serverID *uuid.UUID, port *int, l4 *string) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET server_id = ?, server_port = ?, listen_l4 = ?,
 		runtime_status = NULL, runtime_reason = NULL, runtime_reason_node_id = NULL, runtime_state_at = NULL,
+		cert_identifier = NULL, cert_not_after = NULL, cert_error_code = NULL, cert_error_detail = NULL, cert_next_attempt_at = NULL, cert_state_at = NULL,
 		applied_config_sha256 = NULL, applied_config_at = NULL,
 		apply_failed_sha256 = NULL, apply_failed_reason = NULL, apply_failed_detail = NULL, apply_failed_at = NULL,
 		row_version = row_version + 1, updated_at = now()

@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"github.com/google/uuid"
@@ -111,6 +112,55 @@ func TestUpgradeReportFromProto(t *testing.T) {
 				t.Fatalf("got %+v want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHeartbeatFromProtoCert(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	notAfter := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	next := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	hb := heartbeatFromProto(&nodev1.Heartbeat{
+		Nodes: []*nodev1.NodeRuntime{{
+			NodeId: id.String(),
+			Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING,
+			Cert: &nodev1.CertStatus{
+				Identifier:      "node.example.com",
+				NotAfterUnix:    notAfter.Unix(),
+				ErrorCode:       "challenge_failed",
+				ErrorDetail:     "detail",
+				NextAttemptUnix: next.Unix(),
+			},
+		}},
+	})
+	if len(hb.Nodes) != 1 {
+		t.Fatalf("nodes=%d", len(hb.Nodes))
+	}
+	rt := hb.Nodes[0]
+	if rt.Cert == nil {
+		t.Fatal("Cert 应为非 nil")
+	}
+	if rt.Cert.Identifier != "node.example.com" || rt.Cert.ErrorCode != "challenge_failed" || rt.Cert.ErrorDetail != "detail" {
+		t.Fatalf("Cert 字符串: %+v", rt.Cert)
+	}
+	if rt.Cert.NotAfter == nil || !rt.Cert.NotAfter.Equal(notAfter) {
+		t.Fatalf("NotAfter=%v want %v", rt.Cert.NotAfter, notAfter)
+	}
+	if rt.Cert.NextAttempt == nil || !rt.Cert.NextAttempt.Equal(next) {
+		t.Fatalf("NextAttempt=%v want %v", rt.Cert.NextAttempt, next)
+	}
+
+	hb0 := heartbeatFromProto(&nodev1.Heartbeat{
+		Nodes: []*nodev1.NodeRuntime{{
+			NodeId: id.String(),
+			Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING,
+			Cert:   &nodev1.CertStatus{NotAfterUnix: 0, NextAttemptUnix: 0},
+		}},
+	})
+	if hb0.Nodes[0].Cert == nil {
+		t.Fatal("Cert 应为非 nil")
+	}
+	if hb0.Nodes[0].Cert.NotAfter != nil || hb0.Nodes[0].Cert.NextAttempt != nil {
+		t.Fatalf("0 应转 nil: NotAfter=%v NextAttempt=%v", hb0.Nodes[0].Cert.NotAfter, hb0.Nodes[0].Cert.NextAttempt)
 	}
 }
 

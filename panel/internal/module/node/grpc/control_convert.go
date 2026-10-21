@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"github.com/google/uuid"
@@ -93,6 +94,22 @@ func heartbeatFromProto(hb *nodev1.Heartbeat) service.Heartbeat {
 		rt := service.NodeRuntime{NodeID: id, Status: st, Reason: n.GetReason()}
 		if other, ok := parseID(n.GetReasonNodeId()); ok {
 			rt.ReasonNodeID = &other
+		}
+		if c := n.GetCert(); c != nil {
+			cert := &service.NodeCert{
+				Identifier:  c.GetIdentifier(),
+				ErrorCode:   c.GetErrorCode(),
+				ErrorDetail: c.GetErrorDetail(),
+			}
+			if u := c.GetNotAfterUnix(); u != 0 {
+				t := time.Unix(u, 0).UTC()
+				cert.NotAfter = &t
+			}
+			if u := c.GetNextAttemptUnix(); u != 0 {
+				t := time.Unix(u, 0).UTC()
+				cert.NextAttempt = &t
+			}
+			rt.Cert = cert
 		}
 		out.Nodes = append(out.Nodes, rt)
 	}

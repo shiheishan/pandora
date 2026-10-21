@@ -39,6 +39,15 @@ const (
 	RuntimeDown     = "down"
 )
 
+// NodeCert 是节点端报的入站证书状态（心跳 NodeRuntime.cert）。
+type NodeCert struct {
+	Identifier  string     // acme 证书的名字（域名或 IP）；file 为空
+	NotAfter    *time.Time // 当前证书到期时间；nil = 还没有证书
+	ErrorCode   string     // 最近一次申请 / 续期失败的原因码；成功后为空
+	ErrorDetail string
+	NextAttempt *time.Time // 下次申请或续期的计划时间；nil = 没有
+}
+
 // NodeRuntime 是心跳里一个节点的运行状态。
 type NodeRuntime struct {
 	NodeID uuid.UUID
@@ -48,6 +57,8 @@ type NodeRuntime struct {
 	Reason string
 	// ReasonNodeID 是端口被同机另一节点占用时的占用者
 	ReasonNodeID *uuid.UUID
+	// Cert 是这拍心跳带的入站证书状态；nil = 这拍没带（不用证书的协议，或旧节点端）
+	Cert *NodeCert
 }
 
 // Heartbeat 是一拍心跳。

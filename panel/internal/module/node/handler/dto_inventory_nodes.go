@@ -5,6 +5,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"strings"
 	"time"
 
@@ -192,6 +193,18 @@ type nodeApplyFailureResponse struct {
 	At     time.Time `json:"at"`
 }
 
+// nodeCertResponse 是节点入站证书状态。mode：有标识符即自动申请（acme），否则手填（file）。
+type nodeCertResponse struct {
+	Mode           string     `json:"mode"`
+	Identifier     *string    `json:"identifier"`
+	IdentifierKind *string    `json:"identifier_kind"` // "ip" / "domain"；没有标识符为 null
+	NotAfter       *time.Time `json:"not_after"`
+	ErrorCode      *string    `json:"error_code"`
+	ErrorDetail    *string    `json:"error_detail"`
+	NextAttemptAt  *time.Time `json:"next_attempt_at"`
+	ReportedAt     time.Time  `json:"reported_at"`
+}
+
 // nodeRowResponse 是后台节点列表的一行（nodeRowSchema）。没有健康分与配置代数：配置是否生效看
 // effective_state（按配置文档 SHA-256 比）。
 type nodeRowResponse struct {
@@ -236,6 +249,7 @@ type nodeRowResponse struct {
 	RuntimeReason       *string                   `json:"runtime_reason"`
 	RuntimeStateAt      *time.Time                `json:"runtime_state_at"`
 	RuntimeReasonNode   *string                   `json:"runtime_reason_node"`
+	Cert                *nodeCertResponse         `json:"cert"`
 	DeliveryDegraded    bool                      `json:"delivery_degraded"`
 	Tags                []string                  `json:"tags"`
 	Traffic             nodeTrafficLimitResponse  `json:"traffic"`
@@ -350,6 +364,35 @@ type nodeDeletedResponse struct {
 	Deleted bool `json:"deleted"`
 }
 
+// nodeCertFrom 把 service 的证书状态转成响应 DTO。
+func nodeCertFrom(c *service.NodeCertState) *nodeCertResponse {
+	if c == nil {
+		return nil
+	}
+	mode := "file"
+	var kind *string
+	if c.Identifier != nil && *c.Identifier != "" {
+		mode = "acme"
+		if net.ParseIP(*c.Identifier) != nil {
+			k := "ip"
+			kind = &k
+		} else {
+			k := "domain"
+			kind = &k
+		}
+	}
+	return &nodeCertResponse{
+		Mode:           mode,
+		Identifier:     c.Identifier,
+		IdentifierKind: kind,
+		NotAfter:       c.NotAfter,
+		ErrorCode:      c.ErrorCode,
+		ErrorDetail:    c.ErrorDetail,
+		NextAttemptAt:  c.NextAttempt,
+		ReportedAt:     c.ReportedAt,
+	}
+}
+
 // nodeRowFrom 把 service 的列表行转成响应。
 func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 	out := nodeRowResponse{
@@ -409,6 +452,7 @@ func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 	if f := r.LastApplyFailure; f != nil {
 		out.LastApplyFailure = &nodeApplyFailureResponse{Phase: f.Phase, Detail: f.Detail, At: f.At}
 	}
+	out.Cert = nodeCertFrom(r.Cert)
 	return out
 }
 

@@ -315,6 +315,16 @@ type ApplyFailure struct {
 	At     time.Time
 }
 
+// NodeCertState 是后台看到的节点证书状态（节点端心跳报的，迁移 00061）。
+type NodeCertState struct {
+	Identifier  *string
+	NotAfter    *time.Time
+	ErrorCode   *string
+	ErrorDetail *string
+	NextAttempt *time.Time
+	ReportedAt  time.Time
+}
+
 // NodeRow 是后台节点列表的一行。在线、流量、指标、身份序号、授权套餐按当前页批量取，不逐行查。
 type NodeRow struct {
 	ID            uuid.UUID
@@ -354,7 +364,9 @@ type NodeRow struct {
 	RuntimeReason     *string
 	RuntimeStateAt    *time.Time
 	RuntimeReasonNode *string
-	DeliveryDegraded  bool
+	// Cert 是节点端报过的入站证书状态；nil = 节点端没报过（不用证书、旧节点端或还没心跳）
+	Cert             *NodeCertState
+	DeliveryDegraded bool
 	// OnlineUsers、OnlineIPs、TrafficBytes24h 来自 NodeLiveStats；没有数据为 0
 	OnlineUsers     int
 	OnlineIPs       int

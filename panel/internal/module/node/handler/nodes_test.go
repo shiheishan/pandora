@@ -114,7 +114,7 @@ var (
 		"server_port", "display_name", "country_code", "sort_order", "online_users", "online_ips",
 		"traffic_bytes_24h", "cpu_percent", "mem_percent", "metrics_at", "granted_plans",
 		"effective_state", "last_apply_failure",
-		"runtime_status", "runtime_reason", "runtime_state_at", "runtime_reason_node", "delivery_degraded",
+		"runtime_status", "runtime_reason", "runtime_state_at", "runtime_reason_node", "cert", "delivery_degraded",
 		"tags", "traffic", "traffic_rate_schedule", "relay_count", "ech_enabled",
 	}
 	inventoryNodeDetailExtra = []string{
@@ -373,7 +373,7 @@ func TestNodeRowResponseShape(t *testing.T) {
 	if gp, ok := m["granted_plans"].([]any); !ok || len(gp) != 0 {
 		t.Fatalf("granted_plans 应为空数组：%v", m["granted_plans"])
 	}
-	for _, k := range []string{"identity_serial", "cpu_percent", "metrics_at", "last_apply_failure"} {
+	for _, k := range []string{"identity_serial", "cpu_percent", "metrics_at", "last_apply_failure", "cert"} {
 		if m[k] != nil {
 			t.Fatalf("%s 应为 null：%v", k, m[k])
 		}
@@ -387,6 +387,39 @@ func TestNodeRowResponseShape(t *testing.T) {
 	f, ok := m["last_apply_failure"].(map[string]any)
 	if _, has := f["generation"]; !ok || f["phase"] != "failed" || f["detail"] != "d" || has {
 		t.Fatalf("last_apply_failure 不对：%v", m["last_apply_failure"])
+	}
+}
+
+func TestNodeRowResponseCert(t *testing.T) {
+	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	notAfter := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	id := "192.0.2.10"
+	_, m := inventoryKeys(t, nodeRowFrom(service.NodeRow{
+		ServingStatus: "active",
+		Cert: &service.NodeCertState{
+			Identifier: &id,
+			NotAfter:   &notAfter,
+			ReportedAt: at,
+		},
+	}))
+	cert, ok := m["cert"].(map[string]any)
+	if !ok {
+		t.Fatalf("cert 应为对象：%v", m["cert"])
+	}
+	if cert["mode"] != "acme" || cert["identifier_kind"] != "ip" {
+		t.Fatalf("acme/ip：%v", cert)
+	}
+
+	_, m = inventoryKeys(t, nodeRowFrom(service.NodeRow{
+		ServingStatus: "active",
+		Cert: &service.NodeCertState{
+			NotAfter:   &notAfter,
+			ReportedAt: at,
+		},
+	}))
+	cert = m["cert"].(map[string]any)
+	if cert["mode"] != "file" || cert["identifier_kind"] != nil {
+		t.Fatalf("file：%v", cert)
 	}
 }
 
