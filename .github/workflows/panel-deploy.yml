@@ -161,7 +161,8 @@ jobs:
 
   # 真 nginx 上验 JSON 错误页（map $uri $pandora_api + error_page + 命名 location）：apt 装 Ubuntu 的 nginx 包，
   # render-nginx.sh 渲染正式模板，面板不起（9000 / 9001 没人听），门户与后台 API 路径经回环 9080 与 443
-  # 都回 502 信封（正文、Content-Type、no-store、nosniff），非 API 路径回 nginx 默认 502 页。
+  # 都回 502 信封（正文、Content-Type、no-store、nosniff），非 API 路径回 nginx 默认 502 页；另验 413 / 429 信封、
+  # /readyz /healthz 403、80 的 308 与未知 Host 444、缺省不采信客户端自填的真实 IP 头。
   # render-nginx_test.sh 只核渲染出的文本；真 nginx 的行为原先由 panel-docker.yml 停掉 serve 时实测，
   # 10-21 删掉 Docker 装法后挪到这里。要 root 与 apt，只在 GitHub 上跑。
   deploy-nginx-error-pages:
@@ -176,8 +177,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # 检查机回放不认 if:、不设 GITHUB_ACTIONS：装包这步也先判断，免得在检查机上 apt 装 nginx
       - name: Install nginx from the distribution
         run: |
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过装 nginx（GitHub 上必跑）"
+            exit 0
+          fi
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx
           nginx -v
