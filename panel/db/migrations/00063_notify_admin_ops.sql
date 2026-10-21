@@ -21,7 +21,7 @@ INSERT INTO notification_templates (code, channel, subject, body) VALUES
 
 {{site}}'),
 ('subscription.link_rotated', 'telegram', '链接已更换',
-'管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加。'),
+'管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加：{{subs_url}}'),
 ('order.pending_created', 'inapp', '有一张待付款订单',
 '管理员给你开了一张订单 {{order_no}}（「{{plan}}」），应付 {{amount}}。请在 {{expires_at}} 前到「订单」页付款，过期自动取消。'),
 ('order.pending_created', 'email', '【{{site}}】你有一张待付款订单 {{order_no}}',

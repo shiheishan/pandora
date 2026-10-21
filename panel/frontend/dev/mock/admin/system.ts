@@ -196,7 +196,7 @@ const DEFAULTS: Record<string, { subject: string; body: string }> = {
   // 后台换链接、后台开待付单（与 Go 的 registry_admin_ops.go、迁移 00063 逐字一致）
   'subscription.link_rotated|inapp': { subject: '链接已更换', body: '管理员给你的「{{plan}}」换了新链接，旧链接已失效，用它的设备会连不上。请到「我的套餐」复制新链接，在 App 里重新添加；原来那条可以删掉。到期日和流量不变。' },
   'subscription.link_rotated|email': { subject: '【{{site}}】你的套餐链接已更换', body: '你好，\n\n管理员给你的「{{plan}}」换了新链接，旧链接已失效，用它的设备会连不上。\n请登录后到「我的套餐」复制新链接，在 App 里重新添加；原来那条可以删掉。到期日和流量不变。\n\n{{subs_url}}\n\n{{site}}' },
-  'subscription.link_rotated|telegram': { subject: '链接已更换', body: '管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加。' },
+  'subscription.link_rotated|telegram': { subject: '链接已更换', body: '管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加：{{subs_url}}' },
   'order.pending_created|inapp': { subject: '有一张待付款订单', body: '管理员给你开了一张订单 {{order_no}}（「{{plan}}」），应付 {{amount}}。请在 {{expires_at}} 前到「订单」页付款，过期自动取消。' },
   'order.pending_created|email': { subject: '【{{site}}】你有一张待付款订单 {{order_no}}', body: '你好，\n\n管理员给你开了一张订单，等你付款：\n订单号：{{order_no}}\n套餐：{{plan}}\n应付：{{amount}}\n付款期限：{{expires_at}}\n\n过期自动取消。登录后到「订单」页付款：\n{{order_url}}\n\n{{site}}' },
   'order.pending_created|telegram': { subject: '有一张待付款订单', body: '管理员给你开了一张订单 {{order_no}}（「{{plan}}」），应付 {{amount}}，请在 {{expires_at}} 前付款，过期自动取消。去付款：{{order_url}}' },
@@ -213,7 +213,7 @@ const DESCRIPTION: Record<string, string> = {
   'admin.ticket_opened': '用户新建工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单',
   'admin.ticket_replied': '用户回复工单后发一条到管理员群组（后台「Telegram · 机器人与群组」的工单提醒开着时）；绑定了 Telegram 的管理员回复这条消息即回复工单',
 }
-const SAMPLE: Record<string, string> = { site: '潘多拉面板', plan: '旗舰套餐', days: '3', expires_at: '2026-08-31 23:59', percent: '85', remaining: '3.2 GB', order_no: 'AO20260804-XXXXXX', subject: '无法连接节点', amount: '29.90 CNY', email: 'us***@example.com', ticket_no: 'TK20260804-ABCDEFGH', body: '节点连不上了，麻烦看一下。', traffic: '12.5 GB', balance: '88.00 CNY', subs_url: 'https://panel.example.test/#/subs', order_url: 'https://panel.example.test/#/orders/AO20260804-XXXXXX' }
+const SAMPLE: Record<string, string> = { site: '潘多拉面板', plan: '旗舰套餐', days: '3', expires_at: '2026-08-31 23:59', percent: '85', remaining: '3.2 GB', order_no: 'AO20260804-XXXXXX', subject: '无法连接节点', amount: '29.90 CNY', email: 'us***@example.com', ticket_no: 'TK20260804-ABCDEFGH', body: '节点连不上了，麻烦看一下。', traffic: '12.5 GB', balance: '88.00 CNY', subs_url: 'https://panel.example.test/#/subs', order_url: 'https://panel.example.test/#/orders' }
 const tpl = (code: string, channel: string, category: string, vars: string[], override?: { subject: string; body: string }): Tpl => {
   const d = override ?? DEFAULTS[`${code}|${channel}`]!
   return { code, channel, category, version: override ? 3 : 1, subject: d.subject, body: d.body, vars, updated_at: new Date(Date.now() - 86_400_000 * 20).toISOString() }

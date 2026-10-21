@@ -149,7 +149,7 @@ func TestNotifyOrderPending(t *testing.T) {
 	d := noticeClaimEmail(t, e)
 	p := noticeOpenPayload(t, e, d)
 	if p.Vars["amount"] != "29.90 元" || p.Vars["expires_at"] != "2026-08-31 23:59" ||
-		p.Vars["order_url"] != "https://panel.example.test/#/orders/AO20260804-ABCDEF" ||
+		p.Vars["order_url"] != "https://panel.example.test/#/orders" ||
 		p.Vars["order_no"] != "AO20260804-ABCDEF" || p.Vars["plan"] != "旗舰套餐" {
 		t.Fatalf("email vars %+v", p.Vars)
 	}

@@ -44,7 +44,7 @@ export const pagePath = (page: PageKey) => `/${page}`
 
 export interface PortalRoute {
   page: PageKey
-  /** 页面之后剩下的路径段，已 URI 解码，交给页面自己解释（如 #/orders/<订单号> → [订单号]） */
+  /** 页面之后剩下的路径段，已 URI 解码，交给页面自己解释（如 #/orders/<订单 id> → [订单 id]） */
   rest: string[]
   /** 地址不规范（未知页面、空段）时外框 replace 成它 */
   canonical: string

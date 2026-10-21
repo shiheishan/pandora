@@ -43,7 +43,7 @@ func init() {
 			Description: "管理员在后台给用户的某一份换链接后发一条给已绑定 Telegram 的属主（用户自己在用户端换不发）",
 			Allowed:     []string{"plan", "subs_url"},
 			Subject:     "链接已更换",
-			Body:        "管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加。",
+			Body:        "管理员给你的「{{plan}}」换了新链接，旧链接已失效。请到「我的套餐」复制新链接，在 App 里重新添加：{{subs_url}}",
 		},
 		templateDef{
 			Code:        TemplateOrderPending,
@@ -85,5 +85,5 @@ func init() {
 		},
 	)
 	sampleVars["subs_url"] = "https://panel.example.test/#/subs"
-	sampleVars["order_url"] = "https://panel.example.test/#/orders/AO20260804-XXXXXX"
+	sampleVars["order_url"] = "https://panel.example.test/#/orders"
 }

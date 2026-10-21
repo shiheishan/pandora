@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -72,7 +71,7 @@ func (s *Service) NotifyOrderPending(ctx context.Context, n PendingOrderNotice) 
 		"plan":       planName(plans, n.PlanID),
 		"amount":     n.Amount.StringFixed(2) + " 元",
 		"expires_at": noticeTime(n.ExpiresAt, loc),
-		"order_url":  s.portalURL(ctx, "orders/"+url.PathEscape(n.OrderNo)),
+		"order_url":  s.portalURL(ctx, "orders"), // 门户订单页按订单 id 定位，待付卡就在页顶，链到页面即可
 	}
 	key := "order-pending:" + n.OrderID.String()
 	return s.NotifyUser(ctx, n.UserID, TemplateOrderPending, vars, key)

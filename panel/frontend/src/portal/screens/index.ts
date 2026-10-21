@@ -1,7 +1,7 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import type { PageKey } from '../pages'
 
-/** 页面入参：页面之后剩下的路径段（已解码），如 #/orders/<订单号> → rest = [订单号]；查询串用 core/router 的 useHashLocation 读 */
+/** 页面入参：页面之后剩下的路径段（已解码），如 #/orders/<订单 id> → rest = [订单 id]；查询串用 core/router 的 useHashLocation 读 */
 export interface PortalScreenProps {
   rest: string[]
 }
