@@ -1,5 +1,11 @@
 import { formatMoney } from '../../../core/format'
-import { isUSDTMethod, looksLikeUSDTAddress, payoutAccountHint, withdrawMethodLabel } from '../../../core/withdraw-methods'
+import {
+  isUSDTMethod,
+  looksLikeTxHash,
+  looksLikeUSDTAddress,
+  payoutAccountHint,
+  withdrawMethodLabel,
+} from '../../../core/withdraw-methods'
 import type { Commission } from '../../queries'
 import { shortDate } from '../common/traffic'
 import type { Invite, InviteCode } from './api'
@@ -116,7 +122,7 @@ export function withdrawBlock(summary: Commission['summary']): string | null {
 // ---------------------------------------------------------------------------
 // 佣金记录：entries（+）、transfers（−，完成）、withdrawals（−）按时间倒序合并
 // ---------------------------------------------------------------------------
-/** plus 入账；minus 出账；void 没有生效（冲销、驳回、失败退回），金额划掉 */
+/** plus 入账；minus 出账；void 没有生效（作废、驳回），金额划掉 */
 type RecordTone = 'plus' | 'minus' | 'void'
 /** 行首图标（样稿 .rec .ico）：返佣 gift、转入余额 wallet、提现 out */
 type RecordIcon = 'gift' | 'wallet' | 'out'
@@ -134,6 +140,10 @@ export interface CommissionRecord {
   tone: RecordTone
   icon: RecordIcon
   at: string
+  /** USDT 已打款的链上交易哈希（可复制） */
+  txHash?: string
+  /** 交易哈希的区块浏览器地址 */
+  txUrl?: string
 }
 
 type Entry = Commission['entries'][number]
@@ -142,16 +152,12 @@ type Withdrawal = Commission['withdrawals'][number]
 function entryStatus(e: Entry): { status: string; tone: RecordTone } {
   switch (e.status) {
     case 'pending':
-    case 'frozen':
-      return { status: e.frozen_until ? `冻结至 ${shortDate(e.frozen_until)}` : '冻结中', tone: 'plus' }
+      if (e.under_review) {
+        return { status: '审核中', tone: 'plus' }
+      }
+      return { status: `冻结至 ${shortDate(e.frozen_until)}`, tone: 'plus' }
     case 'available':
       return { status: '可用', tone: 'plus' }
-    case 'settled':
-      return { status: '已结算', tone: 'plus' }
-    case 'reversed':
-      return { status: '已冲销', tone: 'void' }
-    case 'rejected':
-      return { status: '已驳回', tone: 'void' }
     case 'voided':
       return { status: '已作废', tone: 'void' }
   }
@@ -159,13 +165,32 @@ function entryStatus(e: Entry): { status: string; tone: RecordTone } {
 
 const WITHDRAWAL_STATUS: Readonly<Record<Withdrawal['status'], { status: string; tone: RecordTone }>> = {
   requested: { status: '审核中', tone: 'minus' },
-  reviewing: { status: '审核中', tone: 'minus' },
   approved: { status: '打款中', tone: 'minus' },
-  processing: { status: '打款中', tone: 'minus' },
   paid: { status: '已打款', tone: 'minus' },
   rejected: { status: '已驳回', tone: 'void' },
-  failed: { status: '失败已退回', tone: 'void' },
-  returned: { status: '失败已退回', tone: 'void' },
+}
+
+/** USDT 交易哈希的区块浏览器地址（只拼公开浏览器的地址，不请求它们）；方式不是 USDT 或哈希形状不对返回 null */
+export function txExplorerUrl(method: string, hash: string): string | null {
+  if (!isUSDTMethod(method) || !looksLikeTxHash(method, hash)) return null
+  const h = encodeURIComponent(hash.trim())
+  switch (method) {
+    case 'usdt_trc20':
+      return `https://tronscan.org/#/transaction/${h}`
+    case 'usdt_erc20':
+      return `https://etherscan.io/tx/${h}`
+    case 'usdt_bep20':
+      return `https://bscscan.com/tx/${h}`
+    default:
+      return null
+  }
+}
+
+/** 长哈希缩写：前 8 位 + … + 后 6 位；不超过 20 个字符原样返回 */
+export function shortHash(hash: string): string {
+  const h = hash.trim()
+  if (h.length <= 20) return h
+  return `${h.slice(0, 8)}…${h.slice(-6)}`
 }
 
 export function commissionRecords(c: Commission): CommissionRecord[] {
@@ -190,6 +215,8 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
   }
   for (const w of c.withdrawals) {
     const reason = w.status === 'rejected' && w.reject_reason ? ` · ${w.reject_reason}` : ''
+    const isPaidUSDT = w.status === 'paid' && isUSDTMethod(w.method) && Boolean(w.tx_hash)
+    const txUrl = isPaidUSDT ? txExplorerUrl(w.method, w.tx_hash) : null
     rows.push({
       key: `w${w.id}`,
       title: '提现',
@@ -199,6 +226,8 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
       icon: 'out',
       at: w.requested_at,
       ...WITHDRAWAL_STATUS[w.status],
+      ...(isPaidUSDT ? { txHash: w.tx_hash } : {}),
+      ...(txUrl ? { txUrl } : {}),
     })
   }
   return rows.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())

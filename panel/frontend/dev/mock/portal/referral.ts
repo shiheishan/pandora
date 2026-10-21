@@ -16,8 +16,9 @@ interface EntryFixture {
   base: number
   level: number
   share_percent: number
-  status: 'pending' | 'available' | 'reversed'
-  frozen_until: string | null
+  status: 'pending' | 'available' | 'voided'
+  frozen_until: string
+  under_review: boolean
   created_at: string
   order_no: string
   from: string
@@ -27,7 +28,8 @@ interface WithdrawalFixture {
   id: string
   amount: number
   method: string
-  status: 'requested' | 'reviewing' | 'approved' | 'rejected' | 'processing' | 'paid' | 'failed' | 'returned'
+  status: 'requested' | 'approved' | 'rejected' | 'paid'
+  tx_hash: string
   reject_reason: string
   requested_at: string
   completed_at: string | null
@@ -88,23 +90,62 @@ function build(): CommissionState {
       transfers: [],
     }
   }
-  const entry = (daysAgo: number, amount: number, status: EntryFixture['status'], from: string, order: number, frozenInDays = -1, level = 1, share_percent = 100): EntryFixture => ({
+  const entry = (
+    daysAgo: number,
+    amount: number,
+    status: EntryFixture['status'],
+    from: string,
+    order: number,
+    frozenInDays = -1,
+    level = 1,
+    share_percent = 100,
+    under_review = false,
+  ): EntryFixture => ({
     amount,
     base: (amount * 100) / RATE_PERCENT,
     level,
     share_percent,
     status,
     frozen_until: ago(-frozenInDays),
+    under_review,
     created_at: ago(daysAgo),
     order_no: `PD-2${order}`,
     from,
   })
   const withdrawals: WithdrawalFixture[] = [
-    { id: randomUUID(), amount: 12_000, method: 'alipay', status: 'rejected', reject_reason: '收款账号与实名不一致，请核对后重新申请', requested_at: ago(20), completed_at: ago(19) },
-    { id: randomUUID(), amount: 10_000, method: 'usdt_trc20', status: 'paid', reject_reason: '', requested_at: ago(45), completed_at: ago(43) },
+    {
+      id: randomUUID(),
+      amount: 12_000,
+      method: 'alipay',
+      status: 'rejected',
+      tx_hash: '',
+      reject_reason: '收款账号与实名不一致，请核对后重新申请',
+      requested_at: ago(20),
+      completed_at: ago(19),
+    },
+    {
+      id: randomUUID(),
+      amount: 10_000,
+      method: 'usdt_trc20',
+      status: 'paid',
+      tx_hash: '0123456789abcdef'.repeat(4),
+      reject_reason: '',
+      requested_at: ago(45),
+      completed_at: ago(43),
+    },
   ]
-  // multi：一笔审核中的提现，申请表应当锁住，再申请回 409
-  if (s === 'multi') withdrawals.unshift({ id: randomUUID(), amount: 3_000, method: 'alipay', status: 'reviewing', reject_reason: '', requested_at: ago(1), completed_at: null })
+  // multi：一笔申请中的提现，申请表应当锁住，再申请回 409
+  if (s === 'multi')
+    withdrawals.unshift({
+      id: randomUUID(),
+      amount: 3_000,
+      method: 'alipay',
+      status: 'requested',
+      tx_hash: '',
+      reject_reason: '',
+      requested_at: ago(1),
+      completed_at: null,
+    })
   // multi：邀请码有使用上限且已用满
   const maxUses = s === 'multi' ? 6 : null
   const invitees = [
@@ -137,9 +178,10 @@ function build(): CommissionState {
     entries: [
       entry(2, 1_180, 'pending', 'me***@gmail.com', 4101, 5),
       entry(6, 2_780, 'available', 'to***@qq.com', 4087),
+      entry(12, 1_580, 'pending', 'ha***@icloud.com', 4050, -2, 1, 100, true),
       // 第 2 级：后端不给上级看下线邮箱，from 为空
       entry(29, 980, 'available', '', 3962, -1, 2, 30),
-      entry(40, 1_980, 'reversed', 'ya***@163.com', 3890),
+      entry(40, 1_980, 'voided', 'ya***@163.com', 3890),
       entry(50, 19_800, 'available', 'to***@qq.com', 3811),
       entry(70, 5_000, 'available', 'li***@proton.me', 3702),
     ],
@@ -149,26 +191,26 @@ function build(): CommissionState {
 }
 
 // ---------------------------------------------------------------------------
-// 口径（5.A D-F-1）：账本余额 = 已解冻佣金 − 转出 − 已过账的提现（processing / paid）；
-// 可用 = 账本余额 − 未过账的在途提现（requested / reviewing / approved）
+// 口径：与 Go MyCommission 同口径
+// available = 已解冻条目合计 − 在途提现（requested + approved）− 已打款 − 已转余额（summary 显示时 <0 取 0）
+// pending = pending 条目合计（含待复核）；withdrawing = requested + approved；settled = paid
+// orders / total_earned / paid_invitees 不计 voided 条目
 // ---------------------------------------------------------------------------
 const sum = <T>(list: readonly T[], pick: (x: T) => number) => list.reduce((acc, x) => acc + pick(x), 0)
-const UNPOSTED = new Set(['requested', 'reviewing', 'approved'])
-const IN_FLIGHT = new Set(['requested', 'reviewing', 'approved', 'processing'])
+const IN_FLIGHT = new Set(['requested', 'approved'])
 
-function ledgerBalance(c: CommissionState): number {
-  const earned = sum(c.entries, (e) => (e.status === 'available' ? e.amount : 0))
-  const posted = sum(c.withdrawals, (w) => (w.status === 'processing' || w.status === 'paid' ? w.amount : 0))
-  return earned - sum(c.transfers, (t) => t.amount) - posted
-}
-
-const available = (c: CommissionState) => ledgerBalance(c) - sum(c.withdrawals, (w) => (UNPOSTED.has(w.status) ? w.amount : 0))
+const available = (c: CommissionState) =>
+  sum(c.entries, (e) => (e.status === 'available' ? e.amount : 0)) -
+  sum(c.withdrawals, (w) => (IN_FLIGHT.has(w.status) ? w.amount : 0)) -
+  sum(c.withdrawals, (w) => (w.status === 'paid' ? w.amount : 0)) -
+  sum(c.transfers, (t) => t.amount)
 
 function summary(c: CommissionState) {
-  const live = c.entries.filter((e) => e.status !== 'reversed')
+  const live = c.entries.filter((e) => e.status !== 'voided')
+  const avail = available(c)
   return {
     pending: sum(c.entries, (e) => (e.status === 'pending' ? e.amount : 0)),
-    available: available(c),
+    available: Math.max(0, avail),
     withdrawing: sum(c.withdrawals, (w) => (IN_FLIGHT.has(w.status) ? w.amount : 0)),
     settled: sum(c.withdrawals, (w) => (w.status === 'paid' ? w.amount : 0)),
     invitees: c.invitees.length,
@@ -300,8 +342,8 @@ export const referral: MockModule = {
       await ctx.idempotent('commission_withdrawal_request', () => {
         const c = commissionState(ctx.user.userId)
         if (!c.withdrawEnabled) {
-          // mock 只有站点币种 CNY，关着时一律拒绝（后端只拒站点币种）
-          return new BillingError(409, 'conflict', '提现已关闭：本站币种的佣金改为解冻后自动转入余额，只有其他币种的佣金还能申请提现').result()
+          // 只有人民币，关着时一律拒绝
+          return new BillingError(409, 'conflict', '提现已关闭：佣金解冻后将自动转入余额，不能申请提现').result()
         }
         const method = typeof body.method === 'string' ? body.method.trim() : ''
         if (!method) {
@@ -326,7 +368,16 @@ export const referral: MockModule = {
         if (avail <= 0) return new BillingError(422, 'validation_failed', '没有可提现的佣金').result()
         if (amount > avail) return new BillingError(409, 'conflict', '提现金额超过可提现余额').result()
         const id = randomUUID()
-        c.withdrawals.unshift({ id, amount, method, status: 'requested', reject_reason: '', requested_at: new Date().toISOString(), completed_at: null })
+        c.withdrawals.unshift({
+          id,
+          amount,
+          method,
+          status: 'requested',
+          tx_hash: '',
+          reject_reason: '',
+          requested_at: new Date().toISOString(),
+          completed_at: null,
+        })
         return { status: 200, body: { id } }
       })
     },

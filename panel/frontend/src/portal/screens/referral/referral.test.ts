@@ -12,6 +12,8 @@ import {
   parseWithdrawAmount,
   payoutError,
   ratePercentText,
+  shortHash,
+  txExplorerUrl,
   withdrawBlock,
   withdrawClosedHere,
   withdrawClosedHint,
@@ -56,8 +58,68 @@ describe('佣金概况 schema', () => {
   })
 
   it('提现状态是封闭枚举', () => {
-    const w = { id: 'w', amount: 1, method: 'alipay', status: 'queued', reject_reason: '', requested_at: '2026-09-01T00:00:00Z', completed_at: null }
+    const w = {
+      id: 'w',
+      amount: 1,
+      method: 'alipay',
+      status: 'queued',
+      reject_reason: '',
+      tx_hash: '',
+      requested_at: '2026-09-01T00:00:00Z',
+      completed_at: null,
+    }
     expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [w], transfers: [] }).success).toBe(false)
+  })
+
+  it('状态集合与 Go 一致', () => {
+    const baseEntry = {
+      amount: 1,
+      base: 1,
+      rate_percent: 1,
+      rate_bp: 100,
+      level: 1,
+      share_percent: 100,
+      status: 'available' as const,
+      under_review: false,
+      frozen_until: '2026-09-01T00:00:00Z',
+      created_at: '2026-09-01T00:00:00Z',
+      order_no: '',
+      from: '',
+    }
+    expect(
+      commissionSchema.safeParse({
+        summary: SUMMARY,
+        entries: [{ ...baseEntry, status: 'reversed' }],
+        withdrawals: [],
+        transfers: [],
+      }).success,
+    ).toBe(false)
+    const baseWithdrawal = {
+      id: 'w',
+      amount: 1,
+      method: 'alipay',
+      status: 'requested' as const,
+      reject_reason: '',
+      tx_hash: '',
+      requested_at: '2026-09-01T00:00:00Z',
+      completed_at: null,
+    }
+    expect(
+      commissionSchema.safeParse({
+        summary: SUMMARY,
+        entries: [],
+        withdrawals: [{ ...baseWithdrawal, status: 'reviewing' }],
+        transfers: [],
+      }).success,
+    ).toBe(false)
+    const missingReview = { ...baseEntry }
+    delete (missingReview as { under_review?: boolean }).under_review
+    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [missingReview], withdrawals: [], transfers: [] }).success).toBe(
+      false,
+    )
+    const missingTx = { ...baseWithdrawal }
+    delete (missingTx as { tx_hash?: string }).tx_hash
+    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [missingTx], transfers: [] }).success).toBe(false)
   })
 
   it('邀请：max_uses 可为 null，invitees 不收 null；codes 与 max_codes 必填', () => {
@@ -164,7 +226,13 @@ describe('申请提现', () => {
 })
 
 describe('佣金记录', () => {
-  const entry = (status: Commission['entries'][number]['status'], created_at: string, frozen_until: string | null = null, level = 1) => ({
+  const entry = (
+    status: Commission['entries'][number]['status'],
+    created_at: string,
+    frozen_until = '2026-09-29T10:00:00Z',
+    level = 1,
+    under_review = false,
+  ) => ({
     amount: 1180,
     base: 5900,
     rate_percent: 20,
@@ -172,17 +240,19 @@ describe('佣金记录', () => {
     level,
     share_percent: 100,
     status,
+    under_review,
     frozen_until,
     created_at,
     order_no: 'PD-24101',
     from: 'me***@gmail.com',
   })
-  const withdrawal = (status: Commission['withdrawals'][number]['status'], requested_at: string, reject_reason = '', method = 'alipay') => ({
+  const withdrawal = (status: Commission['withdrawals'][number]['status'], requested_at: string, reject_reason = '', method = 'alipay', tx_hash = '') => ({
     id: status,
     amount: 12000,
     method,
     status,
     reject_reason,
+    tx_hash,
     requested_at,
     completed_at: null,
   })
@@ -202,38 +272,88 @@ describe('佣金记录', () => {
     ])
   })
 
-  it('佣金状态：冻结至某日、冲销划掉；多级分销标题与 meta', () => {
+  it('佣金状态：冻结至某日、作废划掉；多级分销标题与 meta', () => {
     const rows = commissionRecords(
       commission({
         entries: [
           entry('pending', '2026-09-22T02:00:00Z', '2026-09-29T10:00:00Z'),
-          { ...entry('reversed', '2026-09-01T12:00:00Z', null, 2), order_no: '', from: '' },
+          { ...entry('voided', '2026-09-01T12:00:00Z', '2026-09-01T00:00:00Z', 2), order_no: '', from: '' },
         ],
       }),
     )
     expect(rows[0]!.status).toBe('冻结至 09-29')
-    expect(rows[1]).toMatchObject({ title: '第 2 级好友付款返佣', status: '已冲销', tone: 'void' })
+    expect(rows[1]).toMatchObject({ title: '第 2 级好友付款返佣', status: '已作废', tone: 'void' })
     expect(rows[1]!.meta).toBe('09-01')
     expect(rows[1]!.ref).toBeUndefined()
-    expect(commissionRecords(commission({ entries: [entry('pending', '2026-09-22T02:00:00Z')] }))[0]!.status).toBe('冻结中')
     const level1 = commissionRecords(commission({ entries: [entry('available', '2026-09-20T02:00:00Z')] }))[0]!
     expect(level1.meta).toContain('me***@gmail.com')
   })
 
-  it('提现状态映射，驳回带原因、失败退回划掉', () => {
+  it('待复核显示审核中，不写已过的冻结日期', () => {
+    const row = commissionRecords(
+      commission({ entries: [entry('pending', '2026-09-22T02:00:00Z', '2026-09-01T00:00:00Z', 1, true)] }),
+    )[0]!
+    expect(row.status).toBe('审核中')
+    expect(row.tone).toBe('plus')
+  })
+
+  it('提现状态映射，驳回带原因', () => {
     const rows = commissionRecords(
       commission({
         withdrawals: [
-          withdrawal('reviewing', '2026-09-06T02:00:00Z'),
-          withdrawal('processing', '2026-09-05T02:00:00Z'),
+          withdrawal('requested', '2026-09-06T02:00:00Z'),
+          withdrawal('approved', '2026-09-05T02:00:00Z'),
           withdrawal('rejected', '2026-09-04T02:00:00Z', '账号与实名不一致'),
-          withdrawal('returned', '2026-09-03T02:00:00Z'),
+          withdrawal('paid', '2026-09-03T02:00:00Z'),
         ],
       }),
     )
-    expect(rows.map((r) => r.status)).toEqual(['审核中', '打款中', '已驳回', '失败已退回'])
+    expect(rows.map((r) => r.status)).toEqual(['审核中', '打款中', '已驳回', '已打款'])
     expect(rows[2]!.meta).toMatch(/ · 账号与实名不一致$/)
-    expect(rows[3]!.tone).toBe('void')
+    expect(rows[2]!.tone).toBe('void')
+  })
+
+  it('USDT 已打款带交易哈希与浏览器链接', () => {
+    const trc = '0123456789abcdef'.repeat(4)
+    const trcRow = commissionRecords(
+      commission({ withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z', '', 'usdt_trc20', trc)] }),
+    )[0]!
+    expect(trcRow.txHash).toBe(trc)
+    expect(trcRow.txUrl).toBe(`https://tronscan.org/#/transaction/${trc}`)
+
+    const ethHash = `0x${trc}`
+    const ethRow = commissionRecords(
+      commission({ withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z', '', 'usdt_erc20', ethHash)] }),
+    )[0]!
+    expect(ethRow.txUrl).toMatch(/^https:\/\/etherscan\.io\/tx\/0x/)
+
+    const bepRow = commissionRecords(
+      commission({ withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z', '', 'usdt_bep20', ethHash)] }),
+    )[0]!
+    expect(bepRow.txUrl).toMatch(/^https:\/\/bscscan\.com\/tx\/0x/)
+
+    const approved = commissionRecords(
+      commission({ withdrawals: [withdrawal('approved', '2026-09-10T02:00:00Z', '', 'usdt_trc20', '')] }),
+    )[0]!
+    expect(approved.txHash).toBeUndefined()
+
+    const alipay = commissionRecords(
+      commission({ withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z', '', 'alipay', 'TX-0001')] }),
+    )[0]!
+    expect(alipay.txHash).toBeUndefined()
+
+    const badShape = commissionRecords(
+      commission({ withdrawals: [withdrawal('paid', '2026-09-10T02:00:00Z', '', 'usdt_trc20', 'not-a-hash')] }),
+    )[0]!
+    expect(badShape.txHash).toBe('not-a-hash')
+    expect(badShape.txUrl).toBeUndefined()
+  })
+
+  it('txExplorerUrl 与 shortHash', () => {
+    const trc = '0123456789abcdef'.repeat(4)
+    expect(txExplorerUrl('alipay', trc)).toBeNull()
+    expect(shortHash(trc)).toBe('01234567…abcdef')
+    expect(shortHash('short-hash-ok')).toBe('short-hash-ok')
   })
 
   it('没有转出记录（transfers 为空数组）时照常合并', () => {
