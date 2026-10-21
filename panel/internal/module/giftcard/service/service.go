@@ -105,11 +105,6 @@ type PaidHistory interface {
 	HasPaidOrder(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
-// Referrals 由 identity 实现：用户是不是经邀请注册的。「仅受邀用户」条件用它。
-type Referrals interface {
-	HasReferrer(ctx context.Context, userID uuid.UUID) (bool, error)
-}
-
 // Service 是 giftcard 模块对外的唯一入口。
 type Service struct {
 	repo    *repo.Repo
@@ -125,7 +120,6 @@ type Service struct {
 	sealer  Sealer
 	valuer  PlanChangeValuer
 	paid    PaidHistory
-	refs    Referrals
 	now     func() time.Time
 }
 
@@ -154,9 +148,6 @@ func (s *Service) UsePlanChangeValuer(v PlanChangeValuer) { s.valuer = v }
 // UsePaidHistory 注册付费记录查询（order）；只在启动装配时调用。
 func (s *Service) UsePaidHistory(p PaidHistory) { s.paid = p }
 
-// UseReferrals 注册邀请关系查询（identity）；只在启动装配时调用。
-func (s *Service) UseReferrals(r Referrals) { s.refs = r }
-
 // MissingPorts 列出还没注册的必需端口（装配完成后由 internal/app 统一检查，非空就拒绝启动；缺了对应的卡会一直回 503、少了「换掉」或不发插件事件）。
 func (s *Service) MissingPorts() []string {
 	var out []string
@@ -165,9 +156,6 @@ func (s *Service) MissingPorts() []string {
 	}
 	if s.paid == nil {
 		out = append(out, "PaidHistory")
-	}
-	if s.refs == nil {
-		out = append(out, "Referrals")
 	}
 	if s.events == nil {
 		out = append(out, "PluginEvents")
@@ -218,7 +206,7 @@ var (
 	ErrChoiceRequired = errs.Invalid(map[string]string{"choice": "请先选一种用法"})
 	// ErrBatchAlreadyExported 是一次性导出的第二次请求。
 	ErrBatchAlreadyExported = errs.Newf(errs.Conflict, "该批次已导出，完整卡码不可再次获取")
-	// ErrConditionUnavailable 是模板的领取条件要查的数据源没装配（付费记录、邀请关系）：宁可不让兑，也不放过条件。
+	// ErrConditionUnavailable 是模板的领取条件要查的数据源（付费记录）没装配：宁可不让兑，也不放过条件。
 	ErrConditionUnavailable = errs.Newf(errs.Unavailable, "暂时无法核对这张卡的领取条件，请稍后再试")
 	// ErrStateChanged 是带旧状态的条件更新影响 0 行（并发改了状态）。
 	ErrStateChanged = errs.Newf(errs.Conflict, "状态已变化，请刷新后重试")

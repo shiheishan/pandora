@@ -51,9 +51,8 @@ type rewardsDTO struct {
 }
 
 type conditionsDTO struct {
-	NewUserOnly   bool `json:"new_user_only,omitempty"`
-	PaidUserOnly  bool `json:"paid_user_only,omitempty"`
-	RequireInvite bool `json:"require_invite,omitempty"`
+	NewUserOnly  bool `json:"new_user_only,omitempty"`
+	PaidUserOnly bool `json:"paid_user_only,omitempty"`
 }
 
 type limitsDTO struct {
@@ -83,7 +82,7 @@ func rewardsFrom(r service.Rewards, c *cents) rewardsDTO {
 }
 
 func conditionsFrom(c service.Conditions) conditionsDTO {
-	return conditionsDTO{NewUserOnly: c.NewUserOnly, PaidUserOnly: c.PaidUserOnly, RequireInvite: c.RequireInvite}
+	return conditionsDTO{NewUserOnly: c.NewUserOnly, PaidUserOnly: c.PaidUserOnly}
 }
 
 func limitsFrom(l service.Limits) limitsDTO {

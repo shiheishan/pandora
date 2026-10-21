@@ -215,7 +215,7 @@ describe('gift cards', () => {
       type: 'general',
       status: 'active',
       rewards: { balance: 2000, traffic_bytes: 10 * GB },
-      conditions: { new_user_only: true, require_invite: true },
+      conditions: { new_user_only: true },
       limits: { max_use_per_user: 3 },
     })
     const pausedBody = templateStatusBody(t, 'paused')
@@ -225,7 +225,7 @@ describe('gift cards', () => {
       type: 'general',
       status: 'paused',
       rewards: { balance: 2000, traffic_bytes: 10 * GB },
-      conditions: { new_user_only: true, require_invite: true },
+      conditions: { new_user_only: true },
       limits: { max_use_per_user: 3 },
     })
   })

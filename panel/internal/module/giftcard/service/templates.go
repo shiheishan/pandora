@@ -209,9 +209,8 @@ func templateOf(m model.Template, prizes []model.Prize) Template {
 		Type:   m.Type,
 		Status: m.Status,
 		Conditions: Conditions{
-			NewUserOnly:   m.NewUserOnly,
-			PaidUserOnly:  m.PaidUserOnly,
-			RequireInvite: m.RequireInvite,
+			NewUserOnly:  m.NewUserOnly,
+			PaidUserOnly: m.PaidUserOnly,
 		},
 		Limits:    Limits{MaxUsePerUser: m.MaxUsePerUser},
 		CreatedAt: m.CreatedAt,
@@ -258,7 +257,6 @@ func templateModel(in TemplateInput) model.Template {
 		PriceID:       r.PriceID,
 		NewUserOnly:   in.Conditions.NewUserOnly,
 		PaidUserOnly:  in.Conditions.PaidUserOnly,
-		RequireInvite: in.Conditions.RequireInvite,
 		MaxUsePerUser: in.Limits.MaxUsePerUser,
 	}
 }

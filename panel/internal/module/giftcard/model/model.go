@@ -22,7 +22,6 @@ type Template struct {
 	PriceID       *uuid.UUID       `gorm:"column:price_id;type:uuid"`
 	NewUserOnly   bool             `gorm:"column:new_user_only"`
 	PaidUserOnly  bool             `gorm:"column:paid_user_only"`
-	RequireInvite bool             `gorm:"column:require_invite"`
 	MaxUsePerUser int              `gorm:"column:max_use_per_user"`
 	CreatedBy     *uuid.UUID       `gorm:"column:created_by;type:uuid"`
 	CreatedAt     time.Time        `gorm:"column:created_at;autoCreateTime"`

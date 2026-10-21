@@ -195,7 +195,7 @@ interface Template {
   type: 'general' | 'plan' | 'mystery'
   status: 'active' | 'paused' | 'archived'
   rewards: Rewards
-  conditions: { new_user_only?: boolean; paid_user_only?: boolean; require_invite?: boolean }
+  conditions: { new_user_only?: boolean; paid_user_only?: boolean }
   limits: { max_use_per_user?: number }
   created_at: string
 }
@@ -233,7 +233,7 @@ const templates: Template[] = [
     type: 'mystery',
     status: 'paused',
     rewards: { pool: [{ label: '¥5 余额', weight: 80, balance: 500 }, { label: '50 GB 流量', weight: 18, traffic_bytes: 50 * GB }, { label: '30 天会员', weight: 2, expire_days: 30 }] },
-    conditions: { require_invite: true },
+    conditions: {},
     limits: {},
     created_at: days(-3),
   },
@@ -340,7 +340,7 @@ function rewardsError(type: string, r: Rewards): string | null {
 
 const REWARD_FIELDS = ['balance', 'traffic_bytes', 'expire_days', 'reset_quota', 'plan_id', 'price_id', 'pool']
 const PRIZE_FIELDS = ['label', 'weight', 'balance', 'traffic_bytes', 'expire_days']
-const CONDITION_FIELDS = ['new_user_only', 'paid_user_only', 'require_invite']
+const CONDITION_FIELDS = ['new_user_only', 'paid_user_only']
 const LIMIT_FIELDS = ['max_use_per_user']
 
 function csvCell(v: string) {

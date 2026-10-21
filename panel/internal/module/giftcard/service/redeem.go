@@ -169,7 +169,7 @@ func permanentIn(cands []candidate, id uuid.UUID) bool {
 	return false
 }
 
-// checkConditions 校验领取条件。付费记录与邀请关系没装配时宁可不让兑（ErrConditionUnavailable）。
+// checkConditions 校验领取条件。付费记录没装配时宁可不让兑（ErrConditionUnavailable）。
 func (s *Service) checkConditions(ctx context.Context, user uuid.UUID, t Template) error {
 	c := t.Conditions
 	if c.NewUserOnly || c.PaidUserOnly {
@@ -185,18 +185,6 @@ func (s *Service) checkConditions(ctx context.Context, user uuid.UUID, t Templat
 		}
 		if c.PaidUserOnly && !paid {
 			return errs.Newf(errs.ValidationFailed, "这张卡需要有过付费记录才能使用")
-		}
-	}
-	if c.RequireInvite {
-		if s.refs == nil {
-			return ErrConditionUnavailable
-		}
-		invited, err := s.refs.HasReferrer(ctx, user)
-		if err != nil {
-			return err
-		}
-		if !invited {
-			return errs.Newf(errs.ValidationFailed, "这张卡只对通过邀请注册的用户开放")
 		}
 	}
 	return nil

@@ -94,7 +94,6 @@ const templateSchema = z.object({
   conditions: z.object({
     new_user_only: z.boolean().optional(),
     paid_user_only: z.boolean().optional(),
-    require_invite: z.boolean().optional(),
   }),
   limits: z.object({ max_use_per_user: z.number().optional() }),
   code_total: z.number(),

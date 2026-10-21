@@ -13,7 +13,7 @@ paths:
 - 「导出当前筛选」走 `GET v1/gift-cards/codes/report`（要 reauth，无幂等），与卡码列表共用 `codeFilterQuery`；确认框写明明文只在批次的一次性导出里。
 - 下载文件名优先取 `Content-Disposition`，幂等重放的响应没有这个头，所以兜底按批次 id 前 8 位自拼（`batchFileName` / `codesReportFileName`）。
 - 卡码的行内停用 / 恢复不要 reauth：发现异常要能立刻止血（契约有意设计）。
-- 礼品卡模板（10-16）：逐行列表，没有编辑入口；只能新建（`TemplateModal`）与行内暂停 / 恢复。暂停恢复是把整份模板原样重发 `POST v1/gift-cards`（`templateStatusBody`，只改 status，别的字段原样带回，要 reauth）。新建只填名称、类型、奖励、仅新用户 / 仅付费用户、每人限兑次数；需邀请不在界面上出现（新建不发，老模板的值暂停恢复时原样保留）。说明、主题色、限定套餐、冷却小时 10-21 前后端连库删了（迁移 00065），不要加回。盲盒建模板时就填奖品（2–50 个）。套餐卡：订阅套餐必须选一档在售周期价，一次性套餐自动取它唯一的在售价；价格后来下架的模板行标「价格已下架」，这时暂停恢复会被后端 422 拒（要重建模板）。
+- 礼品卡模板（10-16）：逐行列表，没有编辑入口；只能新建（`TemplateModal`）与行内暂停 / 恢复。暂停恢复是把整份模板原样重发 `POST v1/gift-cards`（`templateStatusBody`，只改 status，别的字段原样带回，要 reauth）。新建只填名称、类型、奖励、仅新用户 / 仅付费用户、每人限兑次数。说明、主题色、需邀请、限定套餐、冷却小时 10-21 前后端连库删了（迁移 00065），不要加回。盲盒建模板时就填奖品（2–50 个）。套餐卡：订阅套餐必须选一档在售周期价，一次性套餐自动取它唯一的在售价；价格后来下架的模板行标「价格已下架」，这时暂停恢复会被后端 422 拒（要重建模板）。
 - 后端恒回的字段在 schema 里必填、不写降级分支：`gift-cards/stats` 的 `balance_issued`，模板的 `price_archived`，`commission/overview` 的 `total_earned` / `invited_users` / `scope`（后端缺设置时已兜底 `every_order`）。
 - 前端校验的错误键与后端 422 `fields` 同名（各 model 文件的表单构建），改字段名两边一起改。
 - 佣金与提现的二级切换是带计数的 `FilterTabs`：待复核佣金（count = `need_review`）、提现申请（count = `waiting_withdrawals`）、规则设置。待复核与提现都是 `Card flush` + kit `RowList`；「待结科目余额不足」那条说明用红字。规则设置是一张 Card 三段（返佣规则 / 三级分销 / 开放提现）+ 底栏保存。

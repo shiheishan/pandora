@@ -62,9 +62,8 @@ type Rewards struct {
 
 // Conditions 是领取条件。
 type Conditions struct {
-	NewUserOnly   bool
-	PaidUserOnly  bool
-	RequireInvite bool
+	NewUserOnly  bool
+	PaidUserOnly bool
 }
 
 // Limits 是每人限兑次数：0 表示不限。

@@ -51,7 +51,6 @@ func (r *Repo) UpdateTemplate(ctx context.Context, t *model.Template, prizes []m
 		"price_id":         t.PriceID,
 		"new_user_only":    t.NewUserOnly,
 		"paid_user_only":   t.PaidUserOnly,
-		"require_invite":   t.RequireInvite,
 		"max_use_per_user": t.MaxUsePerUser,
 		"updated_at":       now(),
 	}

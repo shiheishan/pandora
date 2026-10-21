@@ -103,9 +103,8 @@ func (r templateRequest) input() (service.TemplateInput, error) {
 			Pool:         pool,
 		},
 		Conditions: service.Conditions{
-			NewUserOnly:   r.Conditions.NewUserOnly,
-			PaidUserOnly:  r.Conditions.PaidUserOnly,
-			RequireInvite: r.Conditions.RequireInvite,
+			NewUserOnly:  r.Conditions.NewUserOnly,
+			PaidUserOnly: r.Conditions.PaidUserOnly,
 		},
 		Limits: service.Limits{MaxUsePerUser: r.Limits.MaxUsePerUser},
 	}, nil
