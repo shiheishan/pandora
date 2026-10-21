@@ -326,6 +326,7 @@ describe('余额流水原因列', () => {
     expect(balanceEntryNote('balance_release', '管理员取消：重复下单')).toBe('管理员取消：重复下单')
     expect(balanceEntryNote('balance_adjusted', ' 补偿：节点故障 ')).toBe('补偿：节点故障')
     expect(balanceEntryNote('balance_hold', '')).toBe('')
-    expect(balanceEntryNote('balance_topup', 'internal_code')).toBe('')
+    expect(balanceEntryNote('balance_adjusted', 'refund1')).toBe('refund1')
+    expect(balanceEntryNote('balance_topup', '余额充值')).toBe('余额充值')
   })
 })
