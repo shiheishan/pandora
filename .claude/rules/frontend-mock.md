@@ -32,7 +32,7 @@ paths:
   - 中转、ECH、手动重置都不动节点的 `row_version`（Go 里中转与 ECH 是别的表，重置只改用量列）；批量修改先把所有节点校验完再一起写，模拟整批回滚
   - 种子演示：「香港 02 · IPLC」两条中转与时段倍率，「洛杉矶 01」超限（不下发），末尾「法兰克福 01 · ECH」已开 ECH；「新加坡 02」保持「心跳超时仍下发」的演示，不叠超限
   - 守卫测试：`tests/mock-admin-nodes-xb.test.ts`
-- 节点种子末尾「伦敦 01（未绑定）」是没绑服务器的草稿（`server_id: null`、从没心跳），演示「未绑定 · 去绑定」与上线置灰；新种子加在它之前会改它的 `node_no`
+- 节点种子末尾「伦敦 01（未绑定）」是没绑服务器的草稿（`server_id: null`、从没心跳），演示「未绑定 · 去绑定」与上线置灰；新种子加在它之前会改它的 `node_no`。未绑节点照 Go：身份接口回空视图（`identity: null`、令牌 0），吊销身份 409
 - `admin/node-schemas.ts` 是 `GET /v1/node-protocol-schemas` 响应（Go `protocol.Schemas()` 经 handler 的 DTO）的原样导出，守卫是 `panel/internal/module/node/handler/schemas_mock_test.go` 的 `TestMockNodeSchemasMatchGo`（逐字节比对）
   - Go 的协议 schema 或 DTO 一变，在 `panel/` 下跑 `go test ./internal/module/node/handler/ -run TestMockNodeSchemasMatchGo -update` 重导，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它

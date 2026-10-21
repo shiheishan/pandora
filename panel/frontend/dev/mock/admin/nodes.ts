@@ -884,7 +884,10 @@ export const nodes: MockModule = {
     'POST /v1/nodes/:id/revoke-identity': (ctx) => {
       if (!ctx.requireReauth()) return
       const n = findNode(ctx.params.id)
-      if (!n || !n.identity_serial || n.identityRevoked) return reply(ctx, notFound('该节点没有有效身份'))
+      if (!n) return reply(ctx, notFound())
+      // 照 Go RevokeNodeIdentity：没绑服务器、服务器没有有效身份都是 409
+      if (!n.server_id) return reply(ctx, err(409, 'conflict', '节点还没放到服务器上，没有接入身份'))
+      if (!n.identity_serial || n.identityRevoked) return reply(ctx, err(409, 'conflict', '这台服务器没有有效的接入身份'))
       n.identityRevoked = true
       ctx.send(200, { ok: true })
     },
@@ -935,7 +938,8 @@ export const nodes: MockModule = {
       if (!UUID.test(ctx.params.id!)) return reply(ctx, notFound('节点不存在'))
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
-      const identity = n.identity_serial
+      // 照 Go NodeIdentity：没绑服务器回空视图（无身份、0 个令牌），身份与令牌都是服务器级的
+      const identity = n.server_id && n.identity_serial
         ? {
             serial: n.identity_serial,
             status: n.identityRevoked ? 'revoked' : 'active',
@@ -946,7 +950,7 @@ export const nodes: MockModule = {
             ...(n.identityRevoked ? { revoked_at: ago(60), revoked_reason: 'admin_revoked' } : {}),
           }
         : null
-      ctx.send(200, { identity, bootstrap_tokens_pending: n.last_heartbeat_at ? 0 : 1 })
+      ctx.send(200, { identity, bootstrap_tokens_pending: n.server_id && !n.last_heartbeat_at ? 1 : 0 })
     },
   },
 }

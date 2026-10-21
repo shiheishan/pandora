@@ -419,6 +419,16 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没接入')
   })
 
+  it('seeds an unbound draft: no identity, no tokens, cannot go live', async () => {
+    const n = (await list()).find((x) => x.name === '伦敦 01（未绑定）')!
+    expect(n).toMatchObject({ server_id: null, serving_status: 'draft', delivered_to_users: false, delivery_note: '未绑定服务器，不下发：先在节点详情「身份与操作」里绑定服务器，再上线' })
+    expect(await (await call('GET', `/v1/nodes/${n.id}/identity`)).json()).toEqual({ identity: null, bootstrap_tokens_pending: 0 })
+    expect((await call('POST', `/v1/nodes/${n.id}/revoke-identity`)).status).toBe(409)
+    const refused = await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-unbound')
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: { fields: { server_id: expect.any(String) } } })
+  })
+
   it('W2: delivery notes follow the subscription rule, and a serving node cannot drop its pool', async () => {
     // R108 的用例已把大阪 02 推上线：在役、有心跳、服务器已就绪，但池没绑任何套餐
     const unbound = (await list()).find((x) => x.name === '大阪 02（新池待上线）')!

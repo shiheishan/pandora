@@ -107,7 +107,8 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
             {row.delivered_to_users ? (
               <span className={css.okText}>正在下发给用户</span>
             ) : (
-              <span className={css.warnText}>不下发：{row.delivery_note}</span>
+              // 后端的说明是完整句子（多数已写明「不下发」），原样显示，不再加前缀
+              <span className={css.warnText}>{row.delivery_note || '不下发'}</span>
             )}
           </SideFact>
           <SideFact label="本周期用量">

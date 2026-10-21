@@ -29,7 +29,7 @@ paths:
 - 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点详情页还要能继续显示。
 - 列表的筛选 `f`、搜索 `q`、标签 `tag` 都在地址查询串里（`logic.parseNodeFilter`；replace 回写，搜索框本地状态 + 300ms 防抖写回）；勾选后实心 BulkBar（kit）替换筛选行；标签筛选是 Menu；页脚常驻「共 N 个节点 · M 个在线」（`logic.nodeCounts`），超过一页走服务端分页时换成 `<Pager inline>`；「新建节点」在 PageActions；≤639 次要列隐藏，名称下折一行摘要。
 - 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用详情页头「上线节点」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。
-- 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判。
+- 节点是否下发给用户直接显示后端的 `delivered_to_users` / `delivery_note`（无池节点不服务任何用户），不要按 `pool_id` 另判；说明是完整句子（多数自带「不下发」），详情右栏原样显示，不加前缀。
 - 批量启停整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员（`batchPlan`）。
 - 服务器卡片（`ServersTab.tsx`）：头是 StatusDot 包等宽名称、非 ready 跟状态 Tag、右上角 IconButton「…」进详情；副行合并地区 · IP · agent 版本（`infra.serverSubtitle`）；`status_reason` 与心跳过期提示来自 `infra.serverNotes`；删除是次要按钮，不能删时禁用并在 title 说明原因（`infra.serverDeleteBlock`）。
 - 在线升级（10-20）：卡片副行照旧带 agent 版本，可升级时下面一行 info Tag「可升级到 vX」，卡片头最前面出勾选框（只在 `upgrade.available` 且列表里有目标版本时）；勾选后 kit BulkBar 替换顶部说明，动作「升级到 vX（N 台）」→ ConfirmModal「开始升级」，文案 `infra.upgradeConfirmBody`（会重启这些服务器上的全部节点、3 分钟连不上自动装回旧版、整个过程约几分钟）。勾选集合每次渲染经 `pruneUpgradePicks` 去掉已不能升的。`POST v1/servers/upgrade` 要重认证与幂等键（`useUpgradeServers`），结果逐台 toast（`upgradeResultToast`）。不能升且原因值得说时（不是未就绪、离线、已最新、升级中）卡片 note 写「不能在线升级：…」（`upgradeBlockNote`）；最近一次升级状态行 `lastUpgradeLine`（已升级超过 24 小时不显示），详情右栏「最近一次升级」用 `lastUpgradeDetail` 加时间。原因码中文表 `UPGRADE_REASON_TEXT` 与后端同一张，`infra.test.ts` 逐码钉住。详情页不做升级按钮。
