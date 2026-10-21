@@ -12,7 +12,7 @@ paths:
 - 投递表只存收件地址的 HMAC（`recipientHash`）；地址与变量封存在 `payload_enc`，AAD 绑定投递 id（`deliveryAAD`），防止密文被挪到别的行。日志不带收件地址。
 - 每件事的通知都要带去重键（`NotifyUser` 的 `dedupeKey` 必填、不超过 200 字）：先插去重键，撞了就什么都不写。定时扫描每轮都会扫到同一批订阅，靠它保证只通知一次。
   - 到期类的键带周期末 Unix 秒（`expiring:`、`expired:`、`recall:`），流量预警带档位与配额当期起点（`quota:<订阅>:<档>:<起点>`）；不带周期的话续费后的下一期再也发不出。
-- 内置模板登记在 `registry.go`，后台只能改内容不能新建；默认内容与迁移 `00007_notify.sql`、`00026_notify_inbox.sql` 的种子逐字一致，「恢复默认」回到代码里的值，改一处必须同改另一处（PG 测试对照）。模板变量走白名单，主题去换行防邮件头注入（`headerSafe`）。
+- 内置模板登记在 `registry.go`，后台只能改内容不能新建；默认内容与迁移 `00007_notify.sql`、`00026_notify_inbox.sql` 的种子逐字一致，「恢复默认」回到代码里的值，改一处必须同改另一处（PG 测试对照）。模板变量走白名单，主题去换行防邮件头注入（`headerSafe`）。后台保存、恢复默认、测试发送模板都挂 `RecentReauth`（模板就是找回密码、验证码邮件的正文，用户 10-21 定），预览不挂；`TestAdminRoutesRequireAuth` 的 reauth 一列逐条钉住。
 - 模板类别：transactional 不可退订；service 用户可按渠道关；marketing 是营销与群发。
 - 扫描 `notify:scan` 约每 5 分钟：先按游标写支付成功通知（`scan_paid.go`，停机多久都不漏，第一次只回看 `paidLookback`），再扫到期提醒、过期召回与流量预警。每轮最多写 `scanBatch` 件，余下的下一轮接着写（一轮写完会超任务时限）。时刻按站点时区显示到分钟；永久的一次性套餐（`subsvc.IsPermanent`）的到期写「永久」（`paidExpiry`）。
   支付成功只有 `order.paid` 一套模板（新购、续费、叠加、换套餐共用）；剩余流量取配额行的 `Remaining`，已含本期赠送（`bonus_value`），TG `/traffic` 的「共」按已用 + 剩余算。

@@ -99,8 +99,9 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/settings/mail/test", k.RequireAuth, h.testMailSettings)
 	v1.GET("/mail/templates", k.RequireAuth, h.listTemplates)
 	v1.POST("/mail/templates/preview", k.RequireAuth, h.previewTemplate)
-	v1.POST("/mail/templates", k.RequireAuth, h.saveTemplate)
-	v1.POST("/mail/templates/reset", k.RequireAuth, h.resetTemplate)
+	// 模板就是找回密码、验证码等邮件的正文，保存与恢复默认和改 SMTP 一样要近期重新验证（用户 10-21 定）
+	v1.POST("/mail/templates", k.RequireAuth, k.RecentReauth, h.saveTemplate)
+	v1.POST("/mail/templates/reset", k.RequireAuth, k.RecentReauth, h.resetTemplate)
 	v1.POST("/mail/templates/test", k.RequireAuth, k.RecentReauth, h.testTemplate)
 
 	v1.GET("/settings/telegram", k.RequireAuth, h.getTelegramSettings)

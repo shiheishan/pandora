@@ -353,7 +353,7 @@ func TestTestTemplateDraftPointersAndReauth(t *testing.T) {
 }
 
 // 后台不分权限：每条后台路由都挂 RequireAuth，且只挂一次；reauth 一列钉住哪些要近期重新验证
-// （改设置、发测试模板、绑定码、公告、群发要；两条只发固定内容的 test 路由与模板编辑不要），新加路由要补这一列。
+// （改设置、保存与恢复模板、发测试模板、绑定码、公告、群发要；两条只发固定内容的 test 路由与模板预览不要），新加路由要补这一列。
 func TestAdminRoutesRequireAuth(t *testing.T) {
 	e, k := setupEngine(&fakeNotify{
 		mail: service.MailSettings{RegistrationMode: "open"},
@@ -373,8 +373,8 @@ func TestAdminRoutesRequireAuth(t *testing.T) {
 		{http.MethodPost, "/v1/settings/mail/test", `{"to":"a@b.c"}`, false},
 		{http.MethodGet, "/v1/mail/templates", "", false},
 		{http.MethodPost, "/v1/mail/templates/preview", `{"code":"c","channel":"email","subject":"","body":""}`, false},
-		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`, false},
-		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`, false},
+		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`, true},
+		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`, true},
 		{http.MethodPost, "/v1/mail/templates/test", `{"code":"c","channel":"email","to":"a@b.c"}`, true},
 		{http.MethodGet, "/v1/settings/telegram", "", false},
 		{http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":""}`, true},

@@ -461,6 +461,7 @@ export const system: MockModule = {
       ctx.send(200, { preview_subject: render(str(b.subject)), preview_body: render(str(b.body)), unknown_variables: unknownVars(`${str(b.subject)}\n${str(b.body)}`, t.vars) })
     },
     'POST /v1/mail/templates/reset': async (ctx) => {
+      if (!ctx.requireReauth()) return
       const d = await decode(ctx, { code: 'string', channel: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const def = DEFAULTS[`${str(d.body.code)}|${str(d.body.channel)}`]
@@ -489,6 +490,7 @@ export const system: MockModule = {
       ctx.send(200, { sent: true, subject })
     },
     'POST /v1/mail/templates': async (ctx) => {
+      if (!ctx.requireReauth()) return
       const d = await decode(ctx, { code: 'string', channel: 'string', subject: 'string', body: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const b = d.body
