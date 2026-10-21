@@ -92,7 +92,7 @@ UPDATE nodes n SET
   runtime_state_at = CASE
     WHEN ROW(n.runtime_status, n.runtime_reason, n.runtime_reason_node_id)
          IS DISTINCT FROM ROW(v.status, v.reason, v.reason_node_id)
-    THEN ? ELSE n.runtime_state_at END,
+    THEN CAST(? AS timestamptz) ELSE n.runtime_state_at END,
   cert_identifier = v.cert_identifier,
   cert_not_after = v.cert_not_after,
   cert_error_code = v.cert_error_code,
@@ -105,7 +105,7 @@ UPDATE nodes n SET
       WHEN v.cert_identifier IS NULL AND v.cert_not_after IS NULL AND v.cert_error_code IS NULL
            AND v.cert_error_detail IS NULL AND v.cert_next_attempt_at IS NULL
       THEN NULL
-      ELSE ?
+      ELSE CAST(? AS timestamptz)
     END
     ELSE n.cert_state_at
   END
