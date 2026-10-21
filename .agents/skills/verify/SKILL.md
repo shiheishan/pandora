@@ -7,8 +7,8 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 原则：本地轻、远端重。
 
-- 本地只跑秒级到几分钟、不起 Docker 的检查。
-- 真库真 Redis 上的测试、迁移往返、e2e 脚本、冒烟栈、Playwright、race 全量交给 GitHub。
+- 本地只跑秒级到几分钟、不起 Docker 的检查；改了 repo、service、迁移、SQL 的，推送前在本机 PG 上跑改到的包（见下「本机 PG」）。
+- 冒烟栈、Playwright、race 全量、Docker 类部署测试交给 GitHub。
 - **推送后 `wait-github.sh` 退出 0，才算完成。**
 
 ## 本地层：改了什么 → 本地跑什么
@@ -27,10 +27,25 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 | 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`（eslint 加 knip：没人用的文件、导出、依赖，配置 `knip.jsonc`）、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`）；`npm run check` 会再构建一遍，按需 |
 | 部署脚本 `panel/deploy/` | 跑对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
 
-本地跑不了的（本机没有 docker、psql、redis-cli）：
+### 本机 PG（10-21 起）
 
-- PG 用例（经 `internal/pkg/testkit` 取库的 `*_pg_test.go` 等）在 `PANDORA_TEST_DATABASE_URL` 没设时跳过，**跳过不等于通过**。
-- 迁移往返、`panel/tests/*.sh` 与 `invariants.sql`、冒烟栈、Playwright 购买路径：只在 GitHub。
+本机用 Homebrew 装了 postgresql@18 与 redis（用户 10-21 同意），**不常驻**：用 `.agents/skills/verify/scripts/local-db.sh` 按需起停，只听 127.0.0.1:5433 / 6380（与 `panel/dev/.env` 同端口）。
+
+```bash
+.agents/skills/verify/scripts/local-db.sh start
+cd panel && eval "$(../.agents/skills/verify/scripts/local-db.sh test-env)"   # PANDORA_TEST_DATABASE_URL 与 TZ=UTC
+GOTOOLCHAIN=go1.26.9 go test -p 1 -count=1 ./internal/module/order/... ./db/migrations/
+../.agents/skills/verify/scripts/local-db.sh stop                             # 用完就停
+```
+
+- 改到哪些包跑哪些；迁移改了带上 `./db/migrations/`（含 `TestRoundTrip` 往返）。全量 `./...` 本机约 2.5 分钟（不带 race），按包串行（`-p 1`），所有包共用 `pandora_test` 一个库（与 CI 同）。
+- 必须带 `TZ=UTC`（test-env 已给）：有用例按本地时区算「一个月后」，本机时区跨夏令时会差一小时。
+- 占用：PG 约 60MB、Redis 约 3MB；为了少写盘关了 fsync，库里只有测试数据。本机是 16G 内存的笔记本，不要同时开多路全量；`-race` 留给 CI。
+- 起真面板：`local-db.sh dev-init`（按 `panel/dev/.env` 建库与 pandora_owner）后 `make migrate`、`make serve`，见 run-pandora。
+
+本地仍跑不了的（本机没有 docker）：
+
+- `panel/tests/*.sh` 与 `invariants.sql`：要先起真面板，按需；冒烟栈、Playwright 购买路径：只在 GitHub。
 - 部署脚本里 `db-roles_pg18_test.sh`（要 PG18）、`redis-hardening_versions_docker_test.sh`（要 Docker）、`backup-provenance_mock_test.sh`（要 Linux root）只在 GitHub 的对应 job 跑。
 - `build-release.sh` 要 GNU tar。
 
@@ -61,5 +76,6 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 ## 坑
 
 - `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
-- CI 的 test job 按包串行（`-p 1`），所有包共用一个库：夹具里的唯一值（邮箱、名字、代码）要带随机后缀，否则单包能过、合起来撞。
+- CI 的 test job 与本机 PG 按包串行（`-p 1`），所有包共用一个库：夹具里的唯一值（邮箱、名字、代码）要带随机后缀，否则单包能过、合起来撞。
 - 一次推多个提交只有最新那个有 run，等的时候传最新的 sha。
+- `wait-github.sh` / `wait-status.sh` 不要接管道（`| tail` 之类）：管道的退出码是最后一个命令的，CI 红了也拿到 0。要截输出就加 `set -o pipefail`，或者先跑完再读输出里的「未通过」。

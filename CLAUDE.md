@@ -78,7 +78,8 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 ### 子 Agent 规则
 
-- 不 build、不 test、不 typecheck（不跑 go build/test/vet、npm run typecheck/test 等）；要验证的命令写进交回说明，由主 Agent 跑。
+- composer 跑不了命令；它说做完时，项目的收尾检查（`.agents/hooks/composer-gate.py`（Stop hook，登记在 `.claude/settings.json`））自动对它改过的 Go 包跑 gofmt 与 go vet、对改过的前端文件跑 tsc 与 eslint，有错退回给它改，最多两轮。
+- opus 子 Agent 可以对自己（含它派的 composer）改过的包跑几秒到几十秒的检查（用户 10-21 同意）：gofmt、go build、go vet、改动包的 go test（本机 PG 起着时含 PG 用例，见 verify skill「本机 PG」）、前端 `npm run typecheck`、`npx eslint <改过的文件>`、相关的 vitest（`npx vitest run <文件>`）。不跑 `npm ci`、全量测试、`-race`、lint 全仓、e2e 与浏览器；几路并行时别同时跑全模块的 build。交回说明写明跑过哪些、结果如何；主 Agent 照样自己复核。
 - 只改任务说明里列出的文件；需要动别的文件时不改，在交回说明里写明。
 - 尽早提交、尽早返回：composer 改完文件就返回，由派它的人核对并提交；opus 子 Agent 每核对完一块就在自己的分支上提交，做完立刻交回，遇到卡点也先交回。
 - 交回说明：改了哪些文件、提交 sha（opus）、做了什么、没做完或拿不准的。
@@ -132,7 +133,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）。
 - 本机 Go：缺省 1.27.x（Homebrew，10-20 为 1.27.2），比 go.mod 的 1.26.9 新。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（模块缓存里已有，`GOPROXY=off` 也能切），结论才与 CI 同口径，报告里注明本机 Go 版本。pdnd 去掉 sing-box 后已能在 1.27 下链接（10-14）；还依赖 sing-box 的只剩 subscription-e2e 的 tools 模块，升 Go 1.27 前先处理它，见 deps-upgrade skill。
-- 本机（这台 Mac）没有 docker、psql、redis-cli：PG18 用例、迁移往返、e2e 脚本、冒烟栈、Playwright 购买路径本机跑不了；本机跳过不等于通过，以 CI 为准（verify skill）。
+- 本机（这台 Mac）没有 docker：冒烟栈、Playwright 购买路径、Docker 类部署测试本机跑不了，以 CI 为准。PG18 与 Redis 用 Homebrew 装了（用户 10-21 同意），不常驻：`.agents/skills/verify/scripts/local-db.sh start|stop`，PG 用例与迁移往返推送前在本机跑（verify skill「本机 PG」，要 `TZ=UTC`）。本机是 16G 内存的笔记本：注意磁盘、CPU、内存占用，用完停库，不同时开多路全量、`-race` 留给 CI。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请我解锁；不改走 HTTPS。
 - 测试机上起后台进程一律 `ssh -n host 'cd /root/x; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；远端 `pkill -f` 的模式要锚定（`pkill -f '^vmstat'`），否则会误杀自己的 ssh 会话；限时的故障注入在远端自带撤销（`setsid -f sh -c 'sleep N; iptables -D …'`）。本机是 macOS，没有 setsid。
 - 性能闸门的测试机用 ssh 别名指定（主目录 `ops-local/netcup-perf/gate.env`），机器规矩先读 `~/ai/servers/` 下它的 `AGENTS.md`：只放虚构数据、测试端口只听回环、不改系统设置；机上日志可能带后台路径前缀，引用前先打码（`gate.sh` 的输出已打码）。一次运行约 30 分钟，放后台跑，同一时间只跑一个。

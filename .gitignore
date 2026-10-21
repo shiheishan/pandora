@@ -46,6 +46,7 @@ id_ed25519*
 /.claude/*
 !/.claude/rules/
 !/.claude/skills
+!/.claude/settings.json
 
 # 共享 skill 是 skills link 建的链接，指向维护者本机 ~/ai/skills/repos 的原件，
 # 别人 clone 下来是坏链接，不入库。新 link 一个共享 skill 就在这里加一行。
