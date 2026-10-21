@@ -1,5 +1,5 @@
 import { expireOrderSql, newUser, setBalance, sql } from './api.ts'
-import { backToSubs, card, expect, go, openCard, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, step, tailOf, test, text, submit } from './fixtures.ts'
+import { appArticles, backToSubs, card, expect, go, openCard, happened, monthsLater, nav, narrowShot, openPortal, payByCashier, planCard, step, tailOf, test, text, submit } from './fixtures.ts'
 
 // ============================================================================
 //  门户 A 组（A0–A4）：新购走渠道付、另买一份（不起名被拦、同款提示续费、起名）、
@@ -70,7 +70,7 @@ test('A：新购、另买一份、续费', async ({ browser, world }) => {
     expect(lines[0]).toContain(`妈妈的 · ${std.name}`)
     await backToSubs(page)
     // 两份：顶部切换条各一个，同一时间只显示选中的那份
-    await expect(page.locator('article')).toHaveCount(2)
+    await expect(appArticles(page)).toHaveCount(2)
     await expect(page.getByRole('tablist', { name: '你的几份' }).getByRole('tab')).toHaveCount(2)
     await openCard(page, '妈妈的')
     await expect(card(page, std.name)).toBeHidden()

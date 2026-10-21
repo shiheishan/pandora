@@ -72,7 +72,9 @@ function memoryTokens(): TokenStore {
     get: () => token,
     set: (t) => (token = t),
     clear: () => (token = null),
+    hasSessionHint: () => token !== null,
     subscribe: () => () => {},
+    onPeerSignIn: () => () => {},
   }
 }
 

@@ -145,9 +145,17 @@ export async function nav(page: Page, name: '我的套餐' | '选购' | '钱包'
   await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name, exact: true }).click()
 }
 
+/**
+ * 应用里的 <article>（限在 #root 里）：入口页 #root 前还有服务端首页片段，它的套餐卡也是 <article>，
+ * 登录后只是藏起来、仍在 DOM 里，不限范围会被一起数进去
+ */
+export function appArticles(page: Page): Locator {
+  return page.locator('#root article')
+}
+
 /** 我的套餐里的一张卡（<article>）：按卡片标题（备注名或套餐名）找 */
 export function card(page: Page, title: string): Locator {
-  return page.locator('article').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
+  return appArticles(page).filter({ has: page.getByRole('heading', { name: title, exact: true }) })
 }
 
 /**
@@ -156,7 +164,7 @@ export function card(page: Page, title: string): Locator {
  */
 export async function openCard(page: Page, title: string): Promise<Locator> {
   // 先等页面出了至少一份（切换条与各份同时渲染），再看有没有切换条
-  await expect(page.locator('article').first()).toBeAttached()
+  await expect(appArticles(page).first()).toBeAttached()
   const tabs = page.getByRole('tablist', { name: '你的几份' })
   if ((await tabs.count()) > 0) {
     const esc = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

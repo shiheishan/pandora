@@ -535,7 +535,8 @@ print('yes' if not any(p['id']=='$PID' for p in json.load(sys.stdin)['plans']) e
 # 已删的旧接口保持移除
 for OLD in "POST /plans/$PID/status" "POST /plans/$PID/versions" "POST /plans/complete" "POST /plans/$PID/prices" "POST /plans/$PID/pools"; do
   C=$(code -X "${OLD%% *}" "$ADM/v1${OLD#* }" -H "$AH" -H 'Content-Type: application/json' -d '{}')
-  [ "$C" = "404" ] && ok "旧接口 ${OLD%% *} ${OLD#* } 仍保持移除" || bad "旧接口被重新引入" "${OLD} HTTP $C"
+  # 路径与别的路由同形（如 /plans/:id）时引擎回 405（方法不对），否则 404；两者都表示这个方法没有接口
+  case "$C" in 404|405) ok "旧接口 ${OLD%% *} ${OLD#* } 仍保持移除" ;; *) bad "旧接口被重新引入" "${OLD} HTTP $C" ;; esac
 done
 
 #-------------------------------------------------------------------------------
