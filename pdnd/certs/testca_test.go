@@ -40,6 +40,8 @@ type testCA struct {
 	replaces  []string // 每张新订单 payload 里的 replaces（没有记 "")
 	profiles  []string // 每张新订单 payload 里的 profile（没有记 "")
 	reject429 string   // 非空时新订单回 429，值是 Retry-After 秒数
+	// onNewAccount 非空时在 pebble 处理注册账户请求之前调用（注册期间插入别的动作）
+	onNewAccount func()
 }
 
 // startTestCA 起 pebble。withShortlived 为假时不配 shortlived 档；dnsAddr 为空时 VA 用系统解析。
@@ -85,7 +87,11 @@ func startTestCA(t *testing.T, withShortlived bool, dnsAddr string) *testCA {
 		isNewOrder := strings.HasSuffix(r.URL.Path, "/order-plz") && r.Method == http.MethodPost
 		c.mu.Lock()
 		reject := c.reject429
+		onNewAccount := c.onNewAccount
 		c.mu.Unlock()
+		if onNewAccount != nil && strings.HasSuffix(r.URL.Path, "/sign-me-up") && r.Method == http.MethodPost {
+			onNewAccount()
+		}
 
 		if isNewOrder {
 			body, _ := io.ReadAll(r.Body)

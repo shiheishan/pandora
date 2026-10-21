@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -83,13 +85,13 @@ func TestManagerIssuesIPCertificate(t *testing.T) {
 		t.Fatalf("Status: %+v", st)
 	}
 
-	keyPath := filepath.Join(dir, "certs", "127.0.0.1", "key.pem")
+	keyPath := filepath.Join(dir, "certs", "127.0.0.1", bundleFile)
 	fi, err := os.Stat(keyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("key.pem perm = %o", fi.Mode().Perm())
+		t.Fatalf("bundle.pem perm = %o", fi.Mode().Perm())
 	}
 	certDir := filepath.Join(dir, "certs", "127.0.0.1")
 	fi, err = os.Stat(certDir)
@@ -323,12 +325,21 @@ func TestManagerSkipsCorruptStoredCertificate(t *testing.T) {
 	m1.Want([]string{"127.0.0.1"})
 	m1.step(ctx)
 
-	certPath := filepath.Join(dir, "certs", "127.0.0.1", "cert.pem")
+	bundlePath := filepath.Join(dir, "certs", "127.0.0.1", bundleFile)
 	badDER, err := makeWrongSANCertPEM()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(certPath, badDER, 0o600); err != nil {
+	// 留下盘上的私钥、换掉证书：一对不配对的 key 与 cert
+	old, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBlock, _ := pem.Decode(old)
+	if keyBlock == nil || !strings.HasSuffix(keyBlock.Type, "PRIVATE KEY") {
+		t.Fatalf("bundle 第一块应是私钥，得到 %v", keyBlock)
+	}
+	if err := os.WriteFile(bundlePath, append(pem.EncodeToMemory(keyBlock), badDER...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,7 +354,7 @@ func TestManagerSkipsCorruptStoredCertificate(t *testing.T) {
 	}
 }
 
-// makeWrongSANCertPEM 生成与盘上 key.pem 不配的 ECDSA 自签证书，SAN 为 127.0.0.1。
+// makeWrongSANCertPEM 生成与盘上私钥不配的 ECDSA 自签证书，SAN 为 127.0.0.1。
 func makeWrongSANCertPEM() ([]byte, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -463,4 +474,61 @@ func freeTCPPort(t *testing.T) int {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 	return port
+}
+
+// step 选中闲置满期的证书、放锁后主循环又 Want 回来：doRecycle 复核后不删（certs 审查 S2）。
+func TestManagerRecycleRechecksWanted(t *testing.T) {
+	useIdentityJitter(t)
+	ca := startTestCA(t, true, "")
+	clock := newFakeClock()
+	dir := t.TempDir()
+	m := newTestManager(t, ca, dir, clock)
+	ctx := context.Background()
+
+	m.Want([]string{"127.0.0.1"})
+	m.step(ctx)
+	m.Want(nil)
+	clock.Add(unusedKeep + time.Minute)
+	m.mu.Lock()
+	st := m.store
+	m.mu.Unlock()
+	// 相当于 step 已在锁内选中回收、放锁之后这一刻
+	m.Want([]string{"127.0.0.1"})
+	m.doRecycle("127.0.0.1", st)
+
+	if _, ok := m.Certificate("127.0.0.1"); !ok {
+		t.Fatal("又被需要的证书不应被回收")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "certs", "127.0.0.1", bundleFile)); err != nil {
+		t.Fatalf("又被需要的证书文件不应被删: %v", err)
+	}
+}
+
+// 注册账户期间被 Purge（Tombstone）：账户不挂回去，account.json 不留（certs 审查 S3）。
+func TestManagerPurgeDuringRegistrationDropsAccount(t *testing.T) {
+	useIdentityJitter(t)
+	ca := startTestCA(t, true, "")
+	clock := newFakeClock()
+	dir := t.TempDir()
+	m := newTestManager(t, ca, dir, clock)
+	var once sync.Once
+	ca.mu.Lock()
+	ca.onNewAccount = func() { once.Do(func() { _ = m.Purge() }) }
+	ca.mu.Unlock()
+	ctx := context.Background()
+
+	m.Want([]string{"127.0.0.1"})
+	m.step(ctx)
+	if _, err := os.Stat(filepath.Join(dir, "account.json")); !os.IsNotExist(err) {
+		t.Fatalf("Purge 之后不应留下 account.json: %v", err)
+	}
+	m.mu.Lock()
+	is := m.issuer
+	m.mu.Unlock()
+	if is != nil {
+		t.Fatal("Purge 期间注册的账户不应挂回去")
+	}
+	if _, ok := m.Certificate("127.0.0.1"); ok {
+		t.Fatal("Purge 之后不应有证书")
+	}
 }

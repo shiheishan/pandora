@@ -89,7 +89,7 @@ func TestStoreSaveLoadAndPermissions(t *testing.T) {
 		if info.Mode().Perm() != 0o700 {
 			t.Fatalf("dir perm %o", info.Mode().Perm())
 		}
-		for _, name := range []string{"key.pem", "cert.pem", "meta.json"} {
+		for _, name := range []string{bundleFile, "meta.json"} {
 			fi, err := os.Stat(filepath.Join(certDir, name))
 			if err != nil {
 				t.Fatal(err)
@@ -151,8 +151,7 @@ func TestStoreLoadSkipsBad(t *testing.T) {
 	if err := os.MkdirAll(wrongDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(wrongDir, "cert.pem"), c2, 0o600)
-	_ = os.WriteFile(filepath.Join(wrongDir, "key.pem"), k2, 0o600)
+	_ = os.WriteFile(filepath.Join(wrongDir, bundleFile), append(k2, c2...), 0o600)
 	wrongMeta, _ := json.Marshal(certMeta{Identifier: "192.0.2.99"})
 	_ = os.WriteFile(filepath.Join(wrongDir, "meta.json"), wrongMeta, 0o600)
 
@@ -163,8 +162,7 @@ func TestStoreLoadSkipsBad(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(badMetaDir, "meta.json"), []byte("not-json"), 0o600)
 	c3, k3, _ := testSelfSigned(t, "node2.example.com")
-	_ = os.WriteFile(filepath.Join(badMetaDir, "cert.pem"), c3, 0o600)
-	_ = os.WriteFile(filepath.Join(badMetaDir, "key.pem"), k3, 0o600)
+	_ = os.WriteFile(filepath.Join(badMetaDir, bundleFile), append(k3, c3...), 0o600)
 
 	loaded, skipped := st.loadCerts()
 	if len(loaded) != 1 || loaded[goodID] == nil {

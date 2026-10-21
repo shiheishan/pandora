@@ -39,6 +39,9 @@ type storedCert struct {
 
 type store struct{ dir string }
 
+// bundleFile 是每个证书目录里私钥加证书链的那个文件（私钥在前）
+const bundleFile = "bundle.pem"
+
 // 不许以点开头：挡住 "." / ".." 这类会落到上级目录的名字
 var dirNameSafe = regexp.MustCompile(`^[a-z0-9_][a-z0-9._-]{0,199}$`)
 
@@ -121,8 +124,7 @@ func (s *store) loadCerts() (certs map[string]*storedCert, skipped []string) {
 func (s *store) loadCertDir(sub string) (*storedCert, error) {
 	dir := filepath.Join(s.certsRoot(), sub)
 	metaPath := filepath.Join(dir, "meta.json")
-	certPath := filepath.Join(dir, "cert.pem")
-	keyPath := filepath.Join(dir, "key.pem")
+	bundlePath := filepath.Join(dir, bundleFile)
 
 	metaBody, err := os.ReadFile(metaPath)
 	if err != nil {
@@ -140,16 +142,13 @@ func (s *store) loadCertDir(sub string) (*storedCert, error) {
 		return nil, fmt.Errorf("目录名 %s 与标识符 %q 不符", sub, id)
 	}
 
-	certPEM, err := os.ReadFile(certPath)
+	bundle, err := os.ReadFile(bundlePath)
 	if err != nil {
-		return nil, fmt.Errorf("读取 %s 失败: %w", certPath, err)
-	}
-	keyPEM, err := os.ReadFile(keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("读取 %s 失败: %w", keyPath, err)
+		return nil, fmt.Errorf("读取 %s 失败: %w", bundlePath, err)
 	}
 
-	sc, err := parseStoredCert(id, certPEM, keyPEM, meta)
+	// X509KeyPair 从证书参数里只取 CERTIFICATE 块、从私钥参数里只取私钥块，同一份 bundle 传两次即可
+	sc, err := parseStoredCert(id, bundle, bundle, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -217,22 +216,26 @@ func (s *store) saveCert(id string, certPEM, keyPEM []byte, meta certMeta) (*sto
 		return nil, fmt.Errorf("设置证书目录 %s 权限失败: %w", dir, err)
 	}
 
-	keyPath := filepath.Join(dir, "key.pem")
-	certPath := filepath.Join(dir, "cert.pem")
+	bundlePath := filepath.Join(dir, bundleFile)
 	metaPath := filepath.Join(dir, "meta.json")
 
-	if err := writeFileAtomic(keyPath, keyPEM); err != nil {
-		return nil, fmt.Errorf("写入 %s 失败: %w", keyPath, err)
-	}
-	if err := writeFileAtomic(certPath, certPEM); err != nil {
-		return nil, fmt.Errorf("写入 %s 失败: %w", certPath, err)
-	}
+	// meta 先写：它只有标识符与 profile，同一标识符每次都一样，新 meta 配旧 bundle 也成立。
+	// 私钥与证书链合在一个文件里一次 rename，续期中途被杀也不会留下不配对的一对（certs 审查 S5）。
 	metaBody, err := json.Marshal(sc.meta)
 	if err != nil {
 		return nil, fmt.Errorf("序列化元数据失败: %w", err)
 	}
 	if err := writeFileAtomic(metaPath, metaBody); err != nil {
 		return nil, fmt.Errorf("写入 %s 失败: %w", metaPath, err)
+	}
+	bundle := make([]byte, 0, len(keyPEM)+len(certPEM)+1)
+	bundle = append(bundle, keyPEM...)
+	if len(keyPEM) > 0 && keyPEM[len(keyPEM)-1] != '\n' {
+		bundle = append(bundle, '\n')
+	}
+	bundle = append(bundle, certPEM...)
+	if err := writeFileAtomic(bundlePath, bundle); err != nil {
+		return nil, fmt.Errorf("写入 %s 失败: %w", bundlePath, err)
 	}
 	return sc, nil
 }

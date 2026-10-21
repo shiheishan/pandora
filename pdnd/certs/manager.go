@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -412,6 +413,7 @@ func (m *Manager) ensureIssuer(ctx context.Context, st *store) (*issuer, error) 
 		m.mu.Unlock()
 		return is, nil
 	}
+	gen := m.gen
 	m.mu.Unlock()
 
 	is, err := newIssuer(ctx, st, m.opts, force)
@@ -419,6 +421,12 @@ func (m *Manager) ensureIssuer(ctx context.Context, st *store) (*issuer, error) 
 		return nil, err
 	}
 	m.mu.Lock()
+	if m.gen != gen {
+		// 注册期间被 Purge 了（Tombstone）：这个账户不挂回去，刚写回的 account.json 也删掉（certs 审查 S3）
+		m.mu.Unlock()
+		_ = os.Remove(st.accountPath())
+		return nil, &issueError{code: ReasonStoreFailed, err: errors.New("证书目录在注册账户期间被清空")}
+	}
 	m.issuer = is
 	m.forceRegister = false
 	m.mu.Unlock()
@@ -518,13 +526,21 @@ func (m *Manager) applyIssueFailure(id string, err error, log *slog.Logger) {
 }
 
 func (m *Manager) doRecycle(id string, st *store) {
-	if err := st.remove(id); err != nil {
-		m.log.Warn("删除闲置证书失败", slog.String("identifier", id), slog.String("detail", err.Error()))
-	}
+	// step 放锁之后主循环可能又 Want 回这个标识符：锁内复核仍闲置满期才删，删条目在删盘之前，
+	// 之后再 Want 会建一个空条目重新申请，申请也只在本 goroutine，不会与下面的删盘交错（certs 审查 S2）
 	m.mu.Lock()
+	e := m.entries[id]
+	if e == nil || m.wanted[id] || e.unusedSince.IsZero() || m.now().Before(e.unusedSince.Add(unusedKeep)) {
+		m.mu.Unlock()
+		return
+	}
 	delete(m.entries, id)
 	m.publishCertsLocked()
 	m.mu.Unlock()
+
+	if err := st.remove(id); err != nil {
+		m.log.Warn("删除闲置证书失败", slog.String("identifier", id), slog.String("detail", err.Error()))
+	}
 }
 
 func (m *Manager) doARI(ctx context.Context, id string, e *entry, st *store) {
