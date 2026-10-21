@@ -65,8 +65,8 @@ func cloneFields(in []FormField) []FormField {
 
 func realityFields() []FormField {
 	return []FormField{
-		{Path: "reality_settings.dest", Label: "REALITY 目标站（dest）", ShowIf: showTLS2, Placeholder: "www.apple.com:443"},
-		{Path: "reality_settings.server_name", Label: "REALITY SNI", ShowIf: showTLS2, Placeholder: "www.apple.com"},
+		{Path: "reality_settings.dest", Label: "REALITY 目标站（dest）", ShowIf: showTLS2, Default: "www.apple.com:443", Placeholder: "www.apple.com:443"},
+		{Path: "reality_settings.server_name", Label: "REALITY SNI", ShowIf: showTLS2, Default: "www.apple.com", Placeholder: "www.apple.com"},
 		{Path: "reality_settings.private_key", Label: "REALITY 私钥", ShowIf: showTLS2},
 		{Path: "reality_settings.public_key", Label: "REALITY 公钥", ShowIf: showTLS2},
 		{Path: "reality_settings.short_id", Label: "REALITY short_id", ShowIf: showTLS2, Placeholder: "0a1b2c3d"},
@@ -168,7 +168,7 @@ func appendAll(dst []FormField, parts ...[]FormField) []FormField {
 
 var protocolForms = map[string]formSpec{
 	"vless": {
-		note: "缺省是 REALITY + tcp + xtls-rprx-vision：填 REALITY 目标站与 SNI，点「生成密钥对」后就能保存；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
+		note: "缺省是 REALITY + tcp + xtls-rprx-vision：目标站与 SNI 已预填常用值（不懂就保持不动），密钥对进到这一步会自动生成；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
@@ -227,7 +227,7 @@ var protocolForms = map[string]formSpec{
 	},
 	"shadowsocks": {
 		note:   "只有加密方式一项；用户密钥由面板按订阅生成。",
-		fields: []FormField{{Path: "cipher", Label: "加密方式"}},
+		fields: []FormField{{Path: "cipher", Label: "加密方式", Default: "aes-256-gcm"}},
 	},
 	"hysteria2": {
 		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",

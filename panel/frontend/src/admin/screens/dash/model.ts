@@ -117,7 +117,7 @@ function withdrawalMeta(item: Extract<TaskItem, { kind: 'withdrawals_pending' }>
 
 function staleOrderMeta(item: Extract<TaskItem, { kind: 'orders_pending_stale' }> | undefined): string {
   if (!item || item.count === 0) return '没有超时未支付的订单'
-  return `超过 ${Math.round(item.threshold_seconds / 60)} 分钟没到账，可能是回调丢失`
+  return `超过 ${Math.round(item.threshold_seconds / 60)} 分钟没到账，可能是支付平台的到账通知没送到`
 }
 
 function certMeta(item: Extract<TaskItem, { kind: 'node_certs' }>): string {

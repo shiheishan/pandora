@@ -598,7 +598,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "fields": [
         {
           "path": "cipher",
-          "label": "加密方式"
+          "label": "加密方式",
+          "default": "aes-256-gcm"
         }
       ]
     },
@@ -982,6 +983,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com:443",
           "placeholder": "www.apple.com:443"
         },
         {
@@ -992,6 +994,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com",
           "placeholder": "www.apple.com"
         },
         {
@@ -1461,7 +1464,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "缺省是 REALITY + tcp + xtls-rprx-vision：填 REALITY 目标站与 SNI，点「生成密钥对」后就能保存；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
+      "note": "缺省是 REALITY + tcp + xtls-rprx-vision：目标站与 SNI 已预填常用值（不懂就保持不动），密钥对进到这一步会自动生成；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
       "fields": [
         {
           "path": "network",
@@ -1514,6 +1517,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com:443",
           "placeholder": "www.apple.com:443"
         },
         {
@@ -1524,6 +1528,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com",
           "placeholder": "www.apple.com"
         },
         {

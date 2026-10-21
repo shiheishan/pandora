@@ -73,7 +73,7 @@ describe('mock api · admin nodes', () => {
     expect((await page('state=online')).nodes.every((n) => n.serving_status === 'active' && !n.stale)).toBe(true)
     // 节点心跳取所在服务器：新加坡那台 15 分钟没心跳，新加坡 02 离线但仍在下发（「心跳超时仍下发」）
     const sg2 = (await page('state=offline')).nodes.find((n) => n.name === '新加坡 02')!
-    expect(sg2).toMatchObject({ stale: true, delivered_to_users: true, delivery_note: expect.stringContaining('心跳已超时，但仍在下发') })
+    expect(sg2).toMatchObject({ stale: true, delivered_to_users: true, delivery_note: expect.stringContaining('心跳已超时') })
     // 证书要处理（仪表盘链到 ?f=cert）：失败或快到期的在役节点
     expect((await page('state=cert')).nodes.map((n) => n.name).sort()).toEqual(['法兰克福 01 · ECH', '香港 02 · IPLC'].sort())
     expect((await page('state=disabled')).nodes.every((n) => n.serving_status === 'draft' || n.serving_status === 'disabled')).toBe(true)

@@ -226,6 +226,22 @@ export function validateBind(serverId: string, port: string): Record<string, str
   return e
 }
 
+/** 端口缺省的候选：常见的 HTTPS 端口在前，都被占了再往后找 */
+const PORT_CANDIDATES = [443, 8443, 2053, 2083, 2087, 2096, 10443]
+
+/**
+ * 给某台服务器挑一个没被占的端口当缺省值（绑定弹窗、新建向导用）：同一台上别的节点（不论 TCP / UDP）用过的都跳过，
+ * 后端按 L4 判冲突更宽，这里保守些；候选都被占时从 20000 往上找。只是缺省值，占用以后端 409 为准
+ */
+export function freePort(serverId: string, nodes: readonly Pick<NodeRow, 'id' | 'server_id' | 'server_port'>[], selfId?: string): number {
+  const used = new Set(nodes.filter((n) => n.server_id === serverId && n.id !== selfId && n.server_port != null).map((n) => n.server_port))
+  const hit = PORT_CANDIDATES.find((p) => !used.has(p))
+  if (hit != null) return hit
+  let p = 20000
+  while (used.has(p)) p++
+  return p
+}
+
 /** POST v1/nodes/:id/bind 的请求体 */
 export function bindBody(n: Pick<NodeRow, 'row_version'>, serverId: string, port: string): { row_version: number; server_id: string; server_port: number } {
   return { row_version: n.row_version, server_id: serverId, server_port: Number(port) }

@@ -449,9 +449,9 @@ describe('在线升级', () => {
       last_upgrade: { status: 'rolled_back' as const, target_version: 'v2026.10.21', reason_code: 'confirm_timeout', updated_at: '2026-10-21T11:00:00Z' },
     }
     expect(lastUpgradeLine(rolled, now)).toEqual({
-      label: '已回退',
+      label: '已装回旧版',
       tone: 'warn',
-      text: '升级到 v2026.10.21已回退：新版本没能连上面板，已自动装回旧版',
+      text: '升级到 v2026.10.21没成功：新版本没能连上面板，已自动装回旧版',
     })
     const okOld = {
       last_upgrade: { status: 'succeeded' as const, target_version: 'v2026.10.21', reason_code: null, updated_at: '2026-10-19T11:00:00Z' },

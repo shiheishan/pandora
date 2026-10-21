@@ -113,7 +113,7 @@ describe('todoBoard', () => {
     })
     expect(board.cards[1]).toMatchObject({ meta: '合计 ¥1,280.00' })
     expect(board.cards[2]).toMatchObject({
-      meta: '超过 30 分钟没到账，可能是回调丢失',
+      meta: '超过 30 分钟没到账，可能是支付平台的到账通知没送到',
       target: { module: 'billing', tab: 'orders', query: { s: 'pending' } },
     })
   })

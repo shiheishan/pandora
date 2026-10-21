@@ -52,7 +52,7 @@ export interface SystemView {
 const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   postgres: 'PostgreSQL 主库',
   redis: 'Redis 缓存',
-  node_fabric: 'NativeCore 调度',
+  node_fabric: '节点调度',
   payment_callbacks: '支付回调队列',
   mail: '邮件投递',
   telegram: 'Telegram',

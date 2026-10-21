@@ -149,7 +149,7 @@ export function EventsTrigger({ variant }: { variant: 'nav' | 'top' }) {
         ) : (
           <>
             {pulse}
-            <span className={css.topLabel}>实时</span>
+            <span>实时</span>
             {unread > 0 && <span className={css.topCount}>{unread > 99 ? '99+' : unread}</span>}
           </>
         )}
@@ -220,7 +220,7 @@ function EventsPanel({
       </div>
       <div className={css.list}>
         {items.length === 0 ? (
-          <div className={css.empty}>暂无事件，数据有变化时会出现在这里</div>
+          <div className={css.empty}>打开页面以来还没有新事件：订单、工单、节点等有变化时会出现在这里（刷新页面会清空）</div>
         ) : visible.length === 0 ? (
           <div className={css.empty}>这一类暂时没有事件</div>
         ) : (

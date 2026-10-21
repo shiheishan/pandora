@@ -54,6 +54,7 @@ import {
   toProtocolConfig,
   validateBasic,
   validateBind,
+  freePort,
   NO_POOL_HINT,
   NODE_LINE_FIELDS,
   sameNodeLine,
@@ -448,6 +449,14 @@ describe('basic info and PATCH', () => {
     expect(validateBind('', '443')).toEqual({ server_id: '选择要绑定的服务器' })
     expect(validateBind('s1', 'x').server_port).toBe('1–65535')
     expect(bindBody({ row_version: 3 }, 's1', '443')).toEqual({ row_version: 3, server_id: 's1', server_port: 443 })
+  })
+
+  it('freePort skips ports taken on the same server', () => {
+    const n = (id: string, server_id: string | null, server_port: number | null) => ({ id, server_id, server_port })
+    expect(freePort('s1', [])).toBe(443)
+    expect(freePort('s1', [n('a', 's1', 443), n('b', 's2', 8443)])).toBe(8443)
+    expect(freePort('s1', [n('a', 's1', 443)], 'a')).toBe(443)
+    expect(freePort('s1', [443, 8443, 2053, 2083, 2087, 2096, 10443, 20000].map((p, i) => n(String(i), 's1', p)))).toBe(20001)
   })
 
   it('sends only changed fields and leaves protocol_config out unless the protocol changed', () => {

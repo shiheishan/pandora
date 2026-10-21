@@ -411,7 +411,7 @@ export const UPGRADE_STATUS: Readonly<Record<UpgradeStatus, { label: string; ton
   staged: { label: '升级中', tone: 'info' },
   succeeded: { label: '已升级', tone: 'ok' },
   failed: { label: '失败', tone: 'danger' },
-  rolled_back: { label: '已回退', tone: 'warn' },
+  rolled_back: { label: '已装回旧版', tone: 'warn' },
   timed_out: { label: '超时', tone: 'warn' },
 }
 
@@ -470,6 +470,7 @@ function lastUpgradePresentation(
   let text: string
   if (status === 'sent' || status === 'staged') text = `正在升级到 ${target_version}`
   else if (status === 'succeeded') text = `已升级到 ${target_version}`
+  else if (status === 'rolled_back') text = `升级到 ${target_version}没成功：${upgradeReasonText(reason_code)}`
   else if (status === 'timed_out' && reason_code === null) text = `升级到 ${target_version}超时：十几分钟内没有结果，请查看节点端日志`
   else text = `升级到 ${target_version}${UPGRADE_STATUS[status].label}：${upgradeReasonText(reason_code)}`
   return { label, tone, text }
