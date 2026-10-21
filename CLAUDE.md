@@ -43,7 +43,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 3. **迁移与 DDL**：迁移是 goose 版本化 SQL，每个都有 Down，确实不可逆的写明原因；不用 GORM AutoMigrate。CI 跑 up → down → up。会锁大表、失败代价高的 DDL 写清预检、超时和失败后怎么回滚。
 4. **数据约束进数据库**：NOT NULL、CHECK、UNIQUE、外键能加就加；钱和余额的变动走只追加的账本。
 5. **回归普通**：错误、响应、日志、配置、鉴权各只有一套统一做法；用社区里最常见的写法，不发明新机制。
-6. **不留死代码**：没有调用方的代码、只剩测试在用的函数、被替换的旧做法，当场删掉，不注释掉、不留着备用。
+6. **不留死代码**：没有调用方的代码、只剩测试在用的函数、被替换的旧做法，当场删掉，不注释掉、不留着备用。守卫：golangci 的 unused、`.github/scripts/deadcode.sh`（panel、pdnd，忽略表 `<module>/.deadcode-ignore`）、前端 knip（`npm run lint`）。
 
 分层和模块边界用 golangci-lint 的规则（如 depguard）钉住，不再写自研的源码扫描测试。
 
