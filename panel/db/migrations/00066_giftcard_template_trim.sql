@@ -8,8 +8,9 @@
 -- 没有新旧二进制同时连库的窗口；现在也没有生产部署（10-09 确认）。
 --
 -- 锁与耗时（整个迁移在一个事务里，锁持到提交）：gift_card_templates 拿 ACCESS EXCLUSIVE，删列只改系统目录、不重写表；
---   删 gift_card_template_plans 拿它自己的 ACCESS EXCLUSIVE，并为去掉外键短暂锁 gift_card_templates 与 plans。
---   模板是后台手工建的几十行，毫秒级；期间挡住的只有礼品卡模板读写、兑换与套餐表的写。
+--   删 gift_card_template_plans 拿它自己的 ACCESS EXCLUSIVE；去掉两条外键要删被引用表上的 RI 触发器，
+--   gift_card_templates 与 plans 也拿 ACCESS EXCLUSIVE（本机 PG18 查 pg_locks 核实）。
+--   模板是后台手工建的几十行，毫秒级；期间礼品卡模板与兑换、套餐表的读写（门户套餐页、下单）都要等这几毫秒。
 --   预检：SELECT count(*) FROM gift_card_templates WHERE description <> '' OR theme_color <> '' OR cooldown_hours <> 0 OR require_invite;
 --         SELECT count(*) FROM gift_card_template_plans;
 --     非零是要随本迁移丢掉的值（Down 还原不了，见下），先告诉管理员；按现有界面这两个数都应为 0。
