@@ -110,7 +110,7 @@ async function build(): Promise<World> {
   const cards = {} as World['cards']
   for (const [key, spec] of Object.entries(specs) as Array<[keyof World['cards'], Json]>) {
     const t = await admin('/v1/gift-cards', {
-      body: { name: `W9 ${key}`, description: '', status: 'active', conditions: {}, limits: {}, theme_color: '', ...spec },
+      body: { name: `W9 ${key}`, status: 'active', conditions: {}, limits: {}, ...spec },
       expect: [200, 201],
     })
     cards[key] = str(t, 'template.id')

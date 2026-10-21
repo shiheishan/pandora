@@ -11,8 +11,8 @@ import (
 // CodeCounts 是一个模板下的码数与已兑换数。
 type CodeCounts struct{ Total, Used int64 }
 
-// CreateTemplate 插入模板，再插奖池与限定套餐。
-func (r *Repo) CreateTemplate(ctx context.Context, t *model.Template, prizes []model.Prize, planIDs []uuid.UUID) error {
+// CreateTemplate 插入模板，再插奖池。
+func (r *Repo) CreateTemplate(ctx context.Context, t *model.Template, prizes []model.Prize) error {
 	if err := checkTemplateMoney(t, prizes); err != nil {
 		return err
 	}
@@ -31,27 +31,17 @@ func (r *Repo) CreateTemplate(ctx context.Context, t *model.Template, prizes []m
 			return mapErr(err)
 		}
 	}
-	if len(planIDs) > 0 {
-		rows := make([]model.TemplatePlan, len(planIDs))
-		for i, pid := range planIDs {
-			rows[i] = model.TemplatePlan{TemplateID: t.ID, PlanID: pid}
-		}
-		if err := conn.Create(&rows).Error; err != nil {
-			return mapErr(err)
-		}
-	}
 	return nil
 }
 
-// UpdateTemplate 按 id 更新模板可改列，并整池替换奖池与限定套餐。
-func (r *Repo) UpdateTemplate(ctx context.Context, t *model.Template, prizes []model.Prize, planIDs []uuid.UUID) (bool, error) {
+// UpdateTemplate 按 id 更新模板可改列，并整池替换奖池。
+func (r *Repo) UpdateTemplate(ctx context.Context, t *model.Template, prizes []model.Prize) (bool, error) {
 	if err := checkTemplateMoney(t, prizes); err != nil {
 		return false, err
 	}
 	conn := r.d.Conn(ctx)
 	cols := map[string]any{
 		"name":             t.Name,
-		"description":      t.Description,
 		"status":           t.Status,
 		"balance_amount":   t.BalanceAmount,
 		"traffic_bytes":    t.TrafficBytes,
@@ -61,10 +51,7 @@ func (r *Repo) UpdateTemplate(ctx context.Context, t *model.Template, prizes []m
 		"price_id":         t.PriceID,
 		"new_user_only":    t.NewUserOnly,
 		"paid_user_only":   t.PaidUserOnly,
-		"require_invite":   t.RequireInvite,
 		"max_use_per_user": t.MaxUsePerUser,
-		"cooldown_hours":   t.CooldownHours,
-		"theme_color":      t.ThemeColor,
 		"updated_at":       now(),
 	}
 	res := conn.Model(&model.Template{}).Where("id = ?", t.ID).Updates(cols)
@@ -77,23 +64,11 @@ func (r *Repo) UpdateTemplate(ctx context.Context, t *model.Template, prizes []m
 	if err := conn.Exec("DELETE FROM gift_card_prizes WHERE template_id = ?", t.ID).Error; err != nil {
 		return false, mapErr(err)
 	}
-	if err := conn.Exec("DELETE FROM gift_card_template_plans WHERE template_id = ?", t.ID).Error; err != nil {
-		return false, mapErr(err)
-	}
 	if len(prizes) > 0 {
 		for i := range prizes {
 			prizes[i].TemplateID = t.ID
 		}
 		if err := conn.Create(&prizes).Error; err != nil {
-			return false, mapErr(err)
-		}
-	}
-	if len(planIDs) > 0 {
-		rows := make([]model.TemplatePlan, len(planIDs))
-		for i, pid := range planIDs {
-			rows[i] = model.TemplatePlan{TemplateID: t.ID, PlanID: pid}
-		}
-		if err := conn.Create(&rows).Error; err != nil {
 			return false, mapErr(err)
 		}
 	}
@@ -136,29 +111,6 @@ func (r *Repo) PrizesByTemplates(ctx context.Context, ids []uuid.UUID) (map[uuid
 		out[p.TemplateID] = append(out[p.TemplateID], p)
 	}
 	return out, nil
-}
-
-// PlanIDsByTemplates 批量取限定套餐并按模板分组。
-func (r *Repo) PlanIDsByTemplates(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
-	out := make(map[uuid.UUID][]uuid.UUID)
-	if len(ids) == 0 {
-		return out, nil
-	}
-	rows, err := r.d.Conn(ctx).Raw(
-		"SELECT template_id, plan_id FROM gift_card_template_plans WHERE template_id IN ? ORDER BY template_id, plan_id", ids,
-	).Rows()
-	if err != nil {
-		return nil, mapErr(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var tid, pid uuid.UUID
-		if err := rows.Scan(&tid, &pid); err != nil {
-			return nil, err
-		}
-		out[tid] = append(out[tid], pid)
-	}
-	return out, mapErr(rows.Err())
 }
 
 // CodeCountsByTemplates 批量统计各模板下的码数与已兑换数。

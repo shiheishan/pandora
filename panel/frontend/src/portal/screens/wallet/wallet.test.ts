@@ -6,7 +6,7 @@ import { giftFace, giftKind, giftNote, ledgerByMonth, ledgerLabel, ledgerView, n
 const GIB = 1024 ** 3
 
 function card(over: Partial<GiftCard>): GiftCard {
-  return giftCardSchema.parse({ id: 'c', name: '卡', description: '', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, theme_color: '#000', created_at: 'x', placement: null, ...over })
+  return giftCardSchema.parse({ id: 'c', name: '卡', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, created_at: 'x', placement: null, ...over })
 }
 
 describe('充值金额', () => {
@@ -71,10 +71,10 @@ describe('礼品卡', () => {
     expect(giftKind(card({ rewards: { balance: 1000, expire_days: 7 } }))).toBe('礼品卡')
   })
 
-  it('说明：后台说明优先，缺省按类型', () => {
-    expect(giftNote(card({ description: '限国庆' }))).toBe('限国庆')
+  it('卡面小字按卡型给固定文案', () => {
     expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('送的流量：按时间的套餐只在本期有效，一次性套餐加到总流量上')
     expect(giftNote(card({ type: 'mystery' }))).toBe('兑换时随机抽取其中一项')
+    expect(giftNote(card({ type: 'plan', plan_name: '专业版' }))).toBe('')
   })
 
   it('兑换记录「获得」列与卡码归一', () => {

@@ -347,6 +347,18 @@ func TestRedeemConditionsAndLimits(t *testing.T) {
 		t.Fatalf("新用户兑换: %v", err)
 	}
 
+	paidOnly := e.mkTemplate(t, ctx, TemplateInput{Type: TypeGeneral, Rewards: Rewards{Balance: dec("1")},
+		Conditions: Conditions{PaidUserOnly: true}})
+	pc := e.mkCodes(t, ctx, paidOnly.ID, 1, nil)
+	_, err = e.redeem(ctx, user, pc[0], nil)
+	mustCode(t, err, errs.ValidationFailed)
+	if st := e.codeStatus(t, ctx, pc[0]); st != CodeUnused {
+		t.Fatalf("没付过费被拒的码状态 %s，期望 unused", st)
+	}
+	if _, err := e.redeem(ctx, paidUser, pc[0], nil); err != nil {
+		t.Fatalf("付费用户兑换: %v", err)
+	}
+
 	once := e.mkTemplate(t, ctx, TemplateInput{Type: TypeGeneral, Rewards: Rewards{Balance: dec("1")},
 		Limits: Limits{MaxUsePerUser: 1}})
 	oc := e.mkCodes(t, ctx, once.ID, 2, nil)

@@ -192,13 +192,11 @@ interface Rewards {
 interface Template {
   id: string
   name: string
-  description: string
   type: 'general' | 'plan' | 'mystery'
   status: 'active' | 'paused' | 'archived'
   rewards: Rewards
-  conditions: { new_user_only?: boolean; paid_user_only?: boolean; allowed_plan_ids?: string[]; require_invite?: boolean }
-  limits: { max_use_per_user?: number; cooldown_hours?: number }
-  theme_color: string
+  conditions: { new_user_only?: boolean; paid_user_only?: boolean }
+  limits: { max_use_per_user?: number }
   created_at: string
 }
 interface Code {
@@ -226,19 +224,17 @@ interface Batch {
 
 const GB = 1024 ** 3
 const templates: Template[] = [
-  { id: randomUUID(), name: '100 元余额卡', description: '渠道合作用', type: 'general', status: 'active', rewards: { balance: 10000 }, conditions: {}, limits: { max_use_per_user: 1 }, theme_color: '#b9442b', created_at: days(-40) },
-  { id: randomUUID(), name: '专业版月卡', description: '', type: 'plan', status: 'active', rewards: { plan_id: PRO.id, price_id: PRO_MONTH.id }, conditions: { new_user_only: true }, limits: {}, theme_color: '#34507c', created_at: days(-30) },
-  { id: randomUUID(), name: '流量加油包', description: '当期有效', type: 'general', status: 'active', rewards: { traffic_bytes: 100 * GB }, conditions: {}, limits: { cooldown_hours: 24 }, theme_color: '#1f7a4f', created_at: days(-25) },
+  { id: randomUUID(), name: '100 元余额卡', type: 'general', status: 'active', rewards: { balance: 10000 }, conditions: {}, limits: { max_use_per_user: 1 }, created_at: days(-40) },
+  { id: randomUUID(), name: '专业版月卡', type: 'plan', status: 'active', rewards: { plan_id: PRO.id, price_id: PRO_MONTH.id }, conditions: { new_user_only: true }, limits: {}, created_at: days(-30) },
+  { id: randomUUID(), name: '流量加油包', type: 'general', status: 'active', rewards: { traffic_bytes: 100 * GB }, conditions: {}, limits: {}, created_at: days(-25) },
   {
     id: randomUUID(),
     name: '国庆盲盒',
-    description: '',
     type: 'mystery',
     status: 'paused',
     rewards: { pool: [{ label: '¥5 余额', weight: 80, balance: 500 }, { label: '50 GB 流量', weight: 18, traffic_bytes: 50 * GB }, { label: '30 天会员', weight: 2, expire_days: 30 }] },
-    conditions: { require_invite: true },
+    conditions: {},
     limits: {},
-    theme_color: '#9a5c00',
     created_at: days(-3),
   },
 ]
@@ -344,8 +340,8 @@ function rewardsError(type: string, r: Rewards): string | null {
 
 const REWARD_FIELDS = ['balance', 'traffic_bytes', 'expire_days', 'reset_quota', 'plan_id', 'price_id', 'pool']
 const PRIZE_FIELDS = ['label', 'weight', 'balance', 'traffic_bytes', 'expire_days']
-const CONDITION_FIELDS = ['new_user_only', 'paid_user_only', 'allowed_plan_ids', 'require_invite']
-const LIMIT_FIELDS = ['max_use_per_user', 'cooldown_hours']
+const CONDITION_FIELDS = ['new_user_only', 'paid_user_only']
+const LIMIT_FIELDS = ['max_use_per_user']
 
 function csvCell(v: string) {
   return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
@@ -623,7 +619,7 @@ export const marketing: MockModule = {
       const c = (body.conditions ?? {}) as Template['conditions'] & Json
       const l = (body.limits ?? {}) as Template['limits'] & Json
       const extra =
-        unknownField(body, ['id', 'name', 'description', 'type', 'status', 'rewards', 'conditions', 'limits', 'theme_color']) ??
+        unknownField(body, ['id', 'name', 'type', 'status', 'rewards', 'conditions', 'limits']) ??
         unknownField(r, REWARD_FIELDS) ??
         unknownField(c, CONDITION_FIELDS) ??
         unknownField(l, LIMIT_FIELDS) ??
@@ -637,11 +633,12 @@ export const marketing: MockModule = {
       const type = text(body.type) as Template['type']
       const rewardErr = rewardsError(type, r)
       if (rewardErr) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { rewards: rewardErr })
-      if ((l.max_use_per_user ?? 0) < 0 || (l.cooldown_hours ?? 0) < 0) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { limits: '限制值不能为负' })
+      const maxUse = l.max_use_per_user ?? 0
+      if (maxUse < 0 || maxUse > 10000) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { limits: '每人限兑次数在 0 到 10000 之间' })
       if (c.new_user_only && c.paid_user_only) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { conditions: '「仅新用户」和「仅付费用户」互斥，同时勾选等于谁都不能兑' })
       const id = text(body.id)
       if (templates.some((t) => t.name === name && t.id !== id)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { name: '已经有同名的礼品卡了' })
-      const fields = { name, description: text(body.description).trim(), status, rewards: r, conditions: c, limits: l, theme_color: text(body.theme_color) }
+      const fields = { name, status, rewards: r, conditions: c, limits: l }
       if (id) {
         const t = templates.find((x) => x.id === id)
         if (!t) return ctx.fail(404, 'not_found', '资源不存在或无权访问')

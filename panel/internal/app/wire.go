@@ -272,10 +272,9 @@ func buildServices(r *runtime) (*services, error) {
 	commissionSvc.UseReferrals(identitySvc)
 	commissionSvc.UseSourceMatcher(auditSvc)
 	orderSvc.UsePaidHook(commissionSvc)
-	// 礼品卡：套餐卡「换掉那一份」按 order 的折算退剩余价值；新用户、付费用户、受邀用户三种条件
+	// 礼品卡：套餐卡「换掉那一份」按 order 的折算退剩余价值；新用户、付费用户两种条件
 	giftcardSvc.UsePlanChangeValuer(orderSvc)
 	giftcardSvc.UsePaidHistory(orderSvc)
-	giftcardSvc.UseReferrals(identitySvc)
 	// 工单：提单人与客服的邮箱、显示名经 identity，可指派客服是 auth 的管理员名单；
 	// 关联订单经 order 校验归属（建单时存下订单号），队列与详情的在用套餐经 subscription 批量读；审计页显示工单号
 	supportSvc := supportsvc.New(supportrepo.New(r.db), txm, auditSvc, idemSvc, identitySvc, authSvc)

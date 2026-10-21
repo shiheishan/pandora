@@ -88,18 +88,14 @@ const rewardsSchema = z.object({
 const templateSchema = z.object({
   id: uuid,
   name: z.string(),
-  description: z.string(),
   type: z.enum(['general', 'plan', 'mystery']),
   status: z.enum(['active', 'paused', 'archived']),
   rewards: rewardsSchema,
   conditions: z.object({
     new_user_only: z.boolean().optional(),
     paid_user_only: z.boolean().optional(),
-    allowed_plan_ids: z.array(uuid).optional(),
-    require_invite: z.boolean().optional(),
   }),
-  limits: z.object({ max_use_per_user: z.number().optional(), cooldown_hours: z.number().optional() }),
-  theme_color: z.string(),
+  limits: z.object({ max_use_per_user: z.number().optional() }),
   code_total: z.number(),
   code_used: z.number(),
   /** 套餐卡的价格档已下架：兑换会被拒，模板行标出来 */

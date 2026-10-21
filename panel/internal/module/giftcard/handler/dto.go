@@ -51,15 +51,12 @@ type rewardsDTO struct {
 }
 
 type conditionsDTO struct {
-	NewUserOnly    bool     `json:"new_user_only,omitempty"`
-	PaidUserOnly   bool     `json:"paid_user_only,omitempty"`
-	AllowedPlanIDs []string `json:"allowed_plan_ids,omitempty"`
-	RequireInvite  bool     `json:"require_invite,omitempty"`
+	NewUserOnly  bool `json:"new_user_only,omitempty"`
+	PaidUserOnly bool `json:"paid_user_only,omitempty"`
 }
 
 type limitsDTO struct {
 	MaxUsePerUser int `json:"max_use_per_user,omitempty"`
-	CooldownHours int `json:"cooldown_hours,omitempty"`
 }
 
 func rewardsFrom(r service.Rewards, c *cents) rewardsDTO {
@@ -85,15 +82,11 @@ func rewardsFrom(r service.Rewards, c *cents) rewardsDTO {
 }
 
 func conditionsFrom(c service.Conditions) conditionsDTO {
-	out := conditionsDTO{NewUserOnly: c.NewUserOnly, PaidUserOnly: c.PaidUserOnly, RequireInvite: c.RequireInvite}
-	for _, id := range c.AllowedPlanIDs {
-		out.AllowedPlanIDs = append(out.AllowedPlanIDs, id.String())
-	}
-	return out
+	return conditionsDTO{NewUserOnly: c.NewUserOnly, PaidUserOnly: c.PaidUserOnly}
 }
 
 func limitsFrom(l service.Limits) limitsDTO {
-	return limitsDTO{MaxUsePerUser: l.MaxUsePerUser, CooldownHours: l.CooldownHours}
+	return limitsDTO{MaxUsePerUser: l.MaxUsePerUser}
 }
 
 // optUUID 解析可空的 id；格式不对回 422（字段名 field）。
@@ -168,13 +161,11 @@ type placementDTO struct {
 type cardDTO struct {
 	ID            string        `json:"id"`
 	Name          string        `json:"name"`
-	Description   string        `json:"description"`
 	Type          string        `json:"type"`
 	Status        string        `json:"status"`
 	Rewards       rewardsDTO    `json:"rewards"`
 	Conditions    conditionsDTO `json:"conditions"`
 	Limits        limitsDTO     `json:"limits"`
-	ThemeColor    string        `json:"theme_color"`
 	CreatedAt     time.Time     `json:"created_at"`
 	PlanName      string        `json:"plan_name,omitempty"`
 	PlanKind      string        `json:"plan_kind,omitempty"`
@@ -193,13 +184,11 @@ func previewFrom(p service.CardPreview) (previewResponse, error) {
 	card := cardDTO{
 		ID:            p.ID.String(),
 		Name:          p.Name,
-		Description:   p.Description,
 		Type:          p.Type,
 		Status:        p.Status,
 		Rewards:       rewardsFrom(p.Rewards, &c),
 		Conditions:    conditionsFrom(p.Conditions),
 		Limits:        limitsFrom(p.Limits),
-		ThemeColor:    p.ThemeColor,
 		CreatedAt:     p.CreatedAt,
 		PlanName:      p.PlanName,
 		PlanKind:      p.PlanKind,
