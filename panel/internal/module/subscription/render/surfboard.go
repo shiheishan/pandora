@@ -52,10 +52,7 @@ func renderSurfboard(rc renderCtx) ([]byte, string, int) {
 		}
 		lines = append(infoLines, realLines...)
 	}
-	tmpl := rc.tmpl
-	if tmpl == "" {
-		tmpl = defaultSurfboardTemplate
-	}
+	tmpl := defaultSurfboardTemplate
 	if rc.subscribeURL == "" {
 		tmpl = dropLinesWith(tmpl, phSubscribeURL)
 	}

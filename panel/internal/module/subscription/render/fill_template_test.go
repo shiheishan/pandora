@@ -10,7 +10,7 @@ import (
 func TestFillTemplateMatchesReplacer(t *testing.T) {
 	vals := []map[string]string{
 		{phProxies: "proxies:\n  - {name: \"a\"}", phProxyGroups: "  - {name: g}", phProxyNames: "\"a\", \"b\""},
-		{phOutbounds: `{"tag":"{{proxy_tags}}"}`, phProxyTags: `"x", "y"`},
+		{`"{{outbounds}}"`: `{"tag":"{{proxy_tags}}"}`, `"{{proxy_tags}}"`: `"x", "y"`},
 		{phProxies: "P{{proxy_names}}", phProxyNames: "", phSubscribeURL: "https://example.com/s/{{proxies}}"},
 	}
 	tmpls := []string{

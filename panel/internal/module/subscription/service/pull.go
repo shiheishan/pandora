@@ -167,7 +167,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	if err != nil {
 		return fail(err)
 	}
-	// 后台模板与订阅附加设置走进程内快照（30 秒过期），不每次拉取都查库
+	// 订阅附加设置与订阅域名分组走进程内快照（30 秒过期），不每次拉取都查库
 	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return fail(err)

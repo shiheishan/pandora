@@ -83,20 +83,6 @@ func TestPullInfoNodesAndPrefix(t *testing.T) {
 	}
 }
 
-func TestPullUsesCustomTemplate(t *testing.T) {
-	de, ctx, _, _, token := setupPull(t)
-	custom := "mixed-port: 7891\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n  - MATCH,节点选择\n"
-	de.exec(t, ctx, `INSERT INTO subscription_templates (format, content, updated_at) VALUES (?, ?, now())`, string(render.FormatClash), custom)
-	de.svc.extras.snap.Store(nil)
-	res, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(res.Body), "mixed-port: 7891") {
-		t.Fatalf("没用上自定义模板：%s", res.Body)
-	}
-}
-
 func TestLinksUseDomainGroups(t *testing.T) {
 	de, ctx, user, sub := rotateSetup(t)
 	admin := adminCtx(ctx, uuid.New())
