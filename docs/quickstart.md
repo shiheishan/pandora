@@ -601,7 +601,8 @@ timeout 5 bash -c '</dev/tcp/panel.example.com/9443' && echo reachable
 1. 点「去选购」（或左侧「选购」）。
 2. 在套餐卡上点「买<套餐名>」（一次性套餐是「买这个」）。
 3. 在确认页选「买多久」，需要的话填优惠码；有余额时余额开关缺省打开；选付款方式。
-4. 点主按钮，例如「买标准版，付 ¥30.00」。
+4. 点主按钮。按钮文字写着这一单怎么付，例如「买标准版，付 ¥30.00」；余额够付时是「…用余额付 ¥30.00」，已有一份同款时开头是「买一份新的」。
+   按钮灰着写「暂时没有能用的付款方式」：后台还没有收新单的付款渠道（第 6 步），余额也不够付。
 5. 付款页：
    - 手机上点「打开支付宝付款」（按渠道不同，文字会变）。
    - 电脑上用手机扫二维码，或点「在这台电脑上付款」。
@@ -685,10 +686,8 @@ systemctl enable --now pandora-backup.timer
 2. 面板是自签证书时节点安装命令会失败：推断自 `panel/internal/module/node/service/bootstrap.go:146–151`（命令里的 `curl` 没有 `-k`），没有实测。
 3. 机器规格：「面板机建议 2 GB 起」是按内存上限推算的（`panel/deploy/systemd/pandora-serve.service:55`、`pandora-worker.service:53`、`panel/deploy/install-lib.sh:388`、`:647`），仓库没有官方规格；「节点机测试用 1 核 1 GB」依据的是 node-e2e skill 里测试机的规格。
 4. CDN 代理与 9443：正文写「只解析、不开 CDN 代理，节点连面板的 9443 不能走 CDN」，是按「节点 gRPC 直连面板、不经 nginx」（README「端口」）推断的，仓库没写。
-5. 首页右上的「注册」「登录」（`panel/internal/pkg/webapp/home.go:135–171`）：首页开关缺省开；关掉时根地址直接是登录页，要切到「注册」页签。
-6. 服务器卡片接入后的文字「已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务」（`panel/frontend/src/admin/screens/nodes/infra.ts:103`）；安装弹窗里写的是「服务器卡片显示「已接入」后」（`InstallModal.tsx:61`）。
-7. 测试账号「钱包 › 充值 › 其他 1 元」能走通：充值最少 1 元（`.claude/rules/screens-portal-payment.md` 充值一条），渠道最低付款额缺省 1.00（`ProviderDialog.tsx:209`）。没有实测；易支付等渠道自己可能还有最低金额。
-8. 付款页手机主按钮「打开支付宝付款」（`panel/frontend/src/portal/screens/common/PayFlow.tsx:311` 注释）：其他渠道的文字没逐一核对。
-9. 确认页主按钮「买<套餐名>，付 ¥X」：拼法在 `panel/frontend/src/portal/screens/checkout/copy.ts:258` 与 `payCopy` 里，金额格式没实际看过。
-10. 时区下拉的选项文字「中国 · 上海（Asia/Shanghai） UTC+8」（`panel/frontend/src/admin/screens/content/logic.ts:373`、`:407`），正文只写了「中国 · 上海」。
-11. 上线节点时池没绑套餐会多出一条提醒：文字由后端 `activationWarnings` 给、前端 `activationHint` 改写（`NodeOps.tsx:43`），正文没有逐字写。
+5. 服务器卡片接入后的文字「已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务」（`panel/frontend/src/admin/screens/nodes/infra.ts:103`）；安装弹窗里写的是「服务器卡片显示「已接入」后」（`InstallModal.tsx:61`）。
+6. 测试账号「钱包 › 充值 › 其他 1 元」能走通：充值最少 1 元（`.claude/rules/screens-portal-payment.md` 充值一条），渠道最低付款额缺省 1.00（`ProviderDialog.tsx:209`）。没有实测；易支付等渠道自己可能还有最低金额。
+7. 付款页手机主按钮「打开支付宝付款」（`panel/frontend/src/portal/screens/common/PayFlow.tsx:311` 注释）：其他渠道的文字没逐一核对。
+8. 时区下拉的选项文字「中国 · 上海（Asia/Shanghai） UTC+8」（`panel/frontend/src/admin/screens/content/logic.ts:373`、`:407`），正文只写了「中国 · 上海」。
+9. 上线节点时池没绑套餐会多出一条提醒：文字由后端 `activationWarnings` 给、前端 `activationHint` 改写（`NodeOps.tsx:43`），正文没有逐字写。
