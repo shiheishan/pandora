@@ -43,6 +43,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			TLS      bool   `json:"tls"`
 			CertPath string `json:"cert_path"`
 			KeyPath  string `json:"key_path"`
+			CertMode string `json:"cert_mode"`
 			Security string `json:"security"`
 			// 只有 naive 有回落：非 CONNECT 请求与认证失败反代到这里。
 			Fallback *string `json:"fallback"`
@@ -51,6 +52,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			setProtocolObjectError(fields, err, "SOCKS/HTTP 配置包含不支持的字段或类型")
 			break
 		}
+		acme := certModeOf(fields, cfg.CertMode, cfg.CertPath, cfg.KeyPath)
 		if cfg.Fallback != nil {
 			if nodeType != "naive" {
 				fields["protocol_config.fallback"] = "只有 Naive、Trojan、AnyTLS、VLESS 支持回落"
@@ -81,10 +83,10 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 		if (strings.TrimSpace(cfg.CertPath) == "") != (strings.TrimSpace(cfg.KeyPath) == "") {
 			fields["protocol_config.cert_path"] = "cert_path 和 key_path 必须同时提供"
 		}
-		if cfg.TLS && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
+		if cfg.TLS && !acme && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
 			fields["protocol_config.tls"] = "启用 TLS 时必须提供 cert_path 和 key_path"
 		}
-		if nodeType == "naive" && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
+		if nodeType == "naive" && !acme && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
 			fields["protocol_config.cert_path"] = "Naive TLS 必须提供 cert_path 和 key_path"
 		}
 	case "mieru":
@@ -139,6 +141,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			Network    string          `json:"network"`
 			CertPath   string          `json:"cert_path"`
 			KeyPath    string          `json:"key_path"`
+			CertMode   string          `json:"cert_mode"`
 			Obfs       map[string]any  `json:"obfs"`
 			UpMbps     json.RawMessage `json:"up_mbps"`
 			DownMbps   json.RawMessage `json:"down_mbps"`
@@ -148,13 +151,14 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			setProtocolObjectError(fields, err, "Hysteria2 配置包含不支持的字段或类型")
 			break
 		}
+		acme := certModeOf(fields, cfg.CertMode, cfg.CertPath, cfg.KeyPath)
 		if network := strings.ToLower(strings.TrimSpace(cfg.Network)); network != "" && network != "udp" {
 			fields["protocol_config.network"] = "Hysteria2 仅支持 UDP"
 		}
-		if strings.TrimSpace(cfg.CertPath) == "" {
+		if !acme && strings.TrimSpace(cfg.CertPath) == "" {
 			fields["protocol_config.cert_path"] = "Hysteria2 必须提供 cert_path"
 		}
-		if strings.TrimSpace(cfg.KeyPath) == "" {
+		if !acme && strings.TrimSpace(cfg.KeyPath) == "" {
 			fields["protocol_config.key_path"] = "Hysteria2 必须提供 key_path"
 		}
 		validateHysteria2Int(fields, "up_mbps", cfg.UpMbps)
@@ -173,19 +177,21 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			Network           string `json:"network"`
 			CertPath          string `json:"cert_path"`
 			KeyPath           string `json:"key_path"`
+			CertMode          string `json:"cert_mode"`
 			CongestionControl string `json:"congestion_control"`
 		}
 		if err := decodeStrictProtocolObject(raw, &cfg); err != nil {
 			setProtocolObjectError(fields, err, "Juicity 配置包含不支持的字段或类型")
 			break
 		}
+		acme := certModeOf(fields, cfg.CertMode, cfg.CertPath, cfg.KeyPath)
 		if network := strings.ToLower(strings.TrimSpace(cfg.Network)); network != "" && network != "udp" {
 			fields["protocol_config.network"] = "Juicity 仅支持 UDP"
 		}
-		if strings.TrimSpace(cfg.CertPath) == "" {
+		if !acme && strings.TrimSpace(cfg.CertPath) == "" {
 			fields["protocol_config.cert_path"] = "Juicity 必须提供 cert_path"
 		}
-		if strings.TrimSpace(cfg.KeyPath) == "" {
+		if !acme && strings.TrimSpace(cfg.KeyPath) == "" {
 			fields["protocol_config.key_path"] = "Juicity 必须提供 key_path"
 		}
 		if cc := strings.ToLower(strings.TrimSpace(cfg.CongestionControl)); cc != "" && !containsString([]string{"cubic", "new_reno", "bbr"}, cc) {
@@ -196,6 +202,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			Network           string          `json:"network"`
 			CertPath          string          `json:"cert_path"`
 			KeyPath           string          `json:"key_path"`
+			CertMode          string          `json:"cert_mode"`
 			CongestionControl string          `json:"congestion_control"`
 			AuthTimeout       json.RawMessage `json:"auth_timeout"`
 			Heartbeat         json.RawMessage `json:"heartbeat"`
@@ -210,13 +217,14 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			setProtocolObjectError(fields, err, "TUIC 配置包含不支持的字段或类型")
 			break
 		}
+		acme := certModeOf(fields, cfg.CertMode, cfg.CertPath, cfg.KeyPath)
 		if network := strings.ToLower(strings.TrimSpace(cfg.Network)); network != "" && network != "udp" {
 			fields["protocol_config.network"] = "TUIC 仅支持 UDP"
 		}
-		if strings.TrimSpace(cfg.CertPath) == "" {
+		if !acme && strings.TrimSpace(cfg.CertPath) == "" {
 			fields["protocol_config.cert_path"] = "TUIC 必须提供 cert_path"
 		}
-		if strings.TrimSpace(cfg.KeyPath) == "" {
+		if !acme && strings.TrimSpace(cfg.KeyPath) == "" {
 			fields["protocol_config.key_path"] = "TUIC 必须提供 key_path"
 		}
 		if cc := strings.ToLower(strings.TrimSpace(cfg.CongestionControl)); cc != "" && !containsString([]string{"cubic", "new_reno", "bbr"}, cc) {
@@ -231,6 +239,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			TLS           bool            `json:"tls"`
 			CertPath      string          `json:"cert_path"`
 			KeyPath       string          `json:"key_path"`
+			CertMode      string          `json:"cert_mode"`
 			PaddingScheme json.RawMessage `json:"padding_scheme"`
 			// 客户端 uTLS 指纹（表单 utls），只进订阅；节点端不读。
 			Fingerprint string `json:"fingerprint"`
@@ -240,6 +249,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			setProtocolObjectError(fields, err, "AnyTLS 配置包含不支持的字段或类型")
 			break
 		}
+		acme := certModeOf(fields, cfg.CertMode, cfg.CertPath, cfg.KeyPath)
 		validateFingerprint(fields, cfg.Fingerprint)
 		validateProbeFallback(fields, cfg.Fallback)
 		if network := strings.ToLower(strings.TrimSpace(cfg.Network)); network != "" && network != "tcp" {
@@ -248,7 +258,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 		if (strings.TrimSpace(cfg.CertPath) == "") != (strings.TrimSpace(cfg.KeyPath) == "") {
 			fields["protocol_config.cert_path"] = "cert_path 和 key_path 必须同时提供"
 		}
-		if cfg.TLS && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
+		if cfg.TLS && !acme && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
 			fields["protocol_config.tls"] = "启用 AnyTLS TLS 时必须提供 cert_path 和 key_path"
 		}
 		validateAnyTLSPadding(fields, cfg.PaddingScheme)
@@ -270,6 +280,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			Fingerprint     string   `json:"fingerprint"`
 			CertPath        string   `json:"cert_path"`
 			KeyPath         string   `json:"key_path"`
+			CertMode        string   `json:"cert_mode"`
 
 			// mKCP 及其掩码，全部可选。
 			MTU              json.RawMessage `json:"mtu"`
@@ -289,6 +300,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			setProtocolObjectError(fields, err, "Trojan 配置包含不支持的字段或类型")
 			break
 		}
+		acme := certModeOf(fields, cfg.CertMode, cfg.CertPath, cfg.KeyPath)
 		validateFingerprint(fields, cfg.Fingerprint)
 		validateProbeFallback(fields, cfg.Fallback)
 		validateTrojanFallbackNetwork(fields, cfg.Fallback, cfg.Network)
@@ -328,7 +340,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			}
 			if (strings.TrimSpace(cfg.CertPath) == "") != (strings.TrimSpace(cfg.KeyPath) == "") {
 				fields["protocol_config.cert_path"] = "cert_path 和 key_path 必须同时提供"
-			} else if strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "" {
+			} else if !acme && (strings.TrimSpace(cfg.CertPath) == "" || strings.TrimSpace(cfg.KeyPath) == "") {
 				fields["protocol_config.cert_path"] = "Trojan TLS 必须提供 cert_path 和 key_path"
 			}
 		case "reality":

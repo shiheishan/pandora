@@ -241,7 +241,8 @@ func ECHUnsupportedReason(nodeType string, kernel map[string]any) string {
 		return ""
 	case "anytls":
 		cert, _ := kernel["cert_path"].(string)
-		if strings.TrimSpace(cert) == "" {
+		mode, _ := kernel["cert_mode"].(string)
+		if strings.TrimSpace(cert) == "" && !strings.EqualFold(strings.TrimSpace(mode), CertModeACME) {
 			return "只有开启 TLS 的节点能用 ECH"
 		}
 		return ""
