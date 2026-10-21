@@ -37,6 +37,8 @@ export interface Sub {
   /** 订单与收款假后端还在读，那边改完后删 */
   /** 本期送的量，缺省 0 */
   bonus_bytes?: number
+  /** 注册试用发的那一份（Go 按 subscription_trials 判），缺省不是 */
+  trial?: boolean
   created_at: string
   /** 只用于 q 反查，永不出现在响应里（保留规则 2） */
   token: string
@@ -262,6 +264,13 @@ if (twinFirst) {
   twin.subs.push(second)
 }
 
+// 第 5 位（…05）：唯一那份是注册试用发的（P13 标「试用」）；试用不建订单，价格快照为 0
+const trialSub = users[4]!.subs[0]
+if (trialSub) {
+  trialSub.trial = true
+  trialSub.amount = 0
+}
+
 // ---------------------------------------------------------------------------
 // 视图：列表行与详情，字段与 Go 的 json tag 一一对应
 // ---------------------------------------------------------------------------
@@ -306,6 +315,7 @@ function row(u: User) {
           traffic: { limit: cs.traffic_limit, consumed: cs.traffic_used },
           device_limit: effectiveLimit(cs),
           online_devices: cs.online_devices,
+          is_trial: cs.trial ?? false,
         }
       : null,
   }
@@ -398,6 +408,7 @@ function detail(u: User) {
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
+        is_trial: s.trial ?? false,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
     is_admin: u.is_admin,

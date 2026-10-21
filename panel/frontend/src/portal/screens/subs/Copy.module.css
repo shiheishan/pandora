@@ -8,6 +8,21 @@
   display: none;
 }
 
+.titleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trial {
+  flex: none;
+}
+
+.nextUsage {
+  margin-top: 2px;
+}
+
 .titleGap {
   margin-top: 28px;
 }

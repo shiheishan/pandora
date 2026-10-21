@@ -17,6 +17,15 @@ const quotaSchema = z.object({
   period_end: z.string().nullable(),
 })
 
+/** 一份订阅按套餐版本给的用量（Go usageResponse）：三项 null 分别是不限流量、不限台数、不限速 */
+const usageSchema = z.object({
+  /** 订阅套餐每期 / 一次性套餐每次购买的流量 */
+  traffic_bytes: z.number().int().nullable(),
+  /** 生效的设备上限（覆盖优先，否则版本的设备数），口径同 device_limit */
+  device_limit: z.number().int().nullable(),
+  throttle_kbps: z.number().int().nullable(),
+})
+
 const renewalPriceSchema = z.object({
   id: z.string(),
   unit_amount: z.number().int(),
@@ -69,6 +78,12 @@ export const subscriptionSchema = z.object({
   changeable: z.boolean(),
   /** 按续费价续一期会到哪天：生效中的从当前到期日起算，过期的从现在起算；不能续时为 null */
   renew_until: z.string().nullable(),
+  /** 这一份锁定版本的用量（选购页「你在用」卡显示它，不显示目录里的新版本） */
+  usage: usageSchema,
+  /** 下个周期会用的用量：只有订阅套餐、套餐发布了新版本、且和 usage 有不同时才有；一次性套餐恒为 null */
+  next_usage: usageSchema.nullable(),
+  /** 注册试用发的那一份（续过费仍算） */
+  is_trial: z.boolean(),
 })
 export type Subscription = z.output<typeof subscriptionSchema>
 

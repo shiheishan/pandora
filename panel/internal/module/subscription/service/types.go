@@ -173,6 +173,16 @@ type Quota struct {
 	Remaining   *int64
 }
 
+// Usage 是一份订阅按套餐版本给的用量（门户「你在用」卡显示）。
+type Usage struct {
+	// TrafficBytes 是版本里跟着套餐类型走的那条流量定义（订阅套餐每期、一次性套餐每次购买的总量）；nil = 不限或没有流量定义
+	TrafficBytes *int64
+	// DeviceLimit 是生效的设备上限：订阅上的覆盖优先，否则版本的设备数；nil = 不限（口径同 MySubscription.EffectiveDeviceLimit）
+	DeviceLimit *int
+	// ThrottleKbps 是版本限速；nil = 不限速
+	ThrottleKbps *int
+}
+
 // Summary 是一份订阅的摘要：行本身、状态口径、目录展示信息、配额、流量与重置次数（门户与后台共用）。
 type Summary struct {
 	Subscription
@@ -196,6 +206,10 @@ type Summary struct {
 	ResetPrice *decimal.Decimal
 	// Quotas 按 metric 升序、同一指标内周期起点倒序；永不为 nil
 	Quotas []Quota
+	// Usage 是这一份锁定版本的用量。
+	Usage Usage
+	// NextUsage 是下个周期会用的用量。只有订阅套餐、没停用、套餐当前版本非空且不是这份锁定的版本、读得到那个版本、且三项里至少一项与 Usage 不同时才有值，否则 nil。一次性套餐恒为 nil。
+	NextUsage *Usage
 }
 
 // UserSubscriptions 是一个用户的全部订阅。
@@ -374,6 +388,8 @@ type MySubscription struct {
 	RenewUntil *time.Time
 	// ClientName 是 App 里的配置名「站点名 · 备注名（或套餐名）」
 	ClientName string
+	// IsTrial 是注册试用发的那一份（subscription_trials 里有它）；续过费 id 不变，仍算。
+	IsTrial bool
 }
 
 // MySubscriptions 是门户「我的套餐」。

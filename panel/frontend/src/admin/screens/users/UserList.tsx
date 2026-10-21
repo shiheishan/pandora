@@ -8,6 +8,7 @@ import {
   SearchField,
   Select,
   Table,
+  Tag,
   Toolbar,
   type TableColumn,
 } from '../../../ui'
@@ -152,7 +153,7 @@ function columns(now: Date): TableColumn<UserRow>[] {
             {/* 手机上套餐列隐藏，套餐与到期并进这一格（样稿 m-only） */}
             <span className={`${listCss.small} m-only`}>
               {u.current_subscription
-                ? `${u.current_subscription.plan_name} · ${subExpiryView(u.current_subscription.current_period_end, now).text}`
+                ? `${u.current_subscription.plan_name}${u.current_subscription.is_trial ? '（试用）' : ''} · ${subExpiryView(u.current_subscription.current_period_end, now).text}`
                 : '无套餐'}
             </span>
           </div>
@@ -179,7 +180,14 @@ function columns(now: Date): TableColumn<UserRow>[] {
         const exp = subExpiryView(s.current_period_end, now)
         return (
           <div className={listCss.stack}>
-            <span>{s.plan_name}</span>
+            <span>
+              {s.plan_name}
+              {s.is_trial && (
+                <Tag tone="outline" className={listCss.trial}>
+                  试用
+                </Tag>
+              )}
+            </span>
             <span className={listCss.small}>{exp.text}</span>
           </div>
         )
