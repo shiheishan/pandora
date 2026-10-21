@@ -36,7 +36,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
   - 起完后，主 Agent 自己开一个 TaskSpace（如「ux-review 登录准备」），**逐个测试员地址登录一次**（门户账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`，本机假后端的夹具值），然后 `finish({ keep: [] })`。cookie 留在资料里，测试员在自己的 TaskSpace 打开同一地址时会自动恢复登录。测试员不登录、不碰口令；测「注册 / 登录 / 找回密码」的测试员拿一个没登录过的 `t<N>.localhost`。
   - 切原型场景（`/v1/__mock/proto`）不登出；vite 重启后假后端的刷新记录全丢，要重新登录。
   - 收尾删掉这些测试 cookie：每个地址 `Storage.clearDataForOrigin`（`storageTypes: "cookies,local_storage"`，只清那一个源），不用清整个资料的命令（见 ego-browser `references/clearing-state.md`）。
-- 后台：`npm run dev:admin`（flow-walk 的 `admin-mock`，5182），场景只有一份默认数据。
+- 后台：场景只有一份默认数据，但同样整个进程共用（加服务器、建节点会被别的测试员看到）。单人用 `npm run dev:admin`（flow-walk 的 `admin-mock`，5182）；并行时 `mock-multi.sh up <前端目录> <个数> admin`，一人一个实例与 `t<N>.localhost`，登录用 `MOCK_ACCOUNTS.admin`，刷新 cookie 是 `pandora_admin_rt`（同样按主机名区分）。
 
 ### 任务从哪来
 
