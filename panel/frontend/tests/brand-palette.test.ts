@@ -57,6 +57,13 @@ function tokenLight(name: string): string {
   return row.light
 }
 
+/** 取一个必有的键（noUncheckedIndexedAccess 下索引是 string | undefined） */
+function pick(m: Record<string, string>, k: string): string {
+  const v = m[k]
+  if (v === undefined) throw new Error(`缺少 ${k}`)
+  return v
+}
+
 function defaultDarkBrandMap(): Record<string, string> {
   const m: Record<string, string> = {}
   for (const key of DARK_BRAND_KEYS) m[key] = tokenDark(key)
@@ -118,19 +125,19 @@ describe('darkBrandTokens', () => {
     const pairs: [string, string, string, string][] = [
       ['--brand', '--bg', '--brand', bg],
       ['--brand-ink', '--surface', '--brand-ink', surface],
-      ['--on-brand', '--brand', '--on-brand', def['--brand']],
-      ['--on-brand', '--brand-deep', '--on-brand', def['--brand-deep']],
-      ['--brand-ink', '--brand-soft', '--brand-ink', def['--brand-soft']],
-      ['--brand', '--brand-tint', '--brand', def['--brand-tint']],
+      ['--on-brand', '--brand', '--on-brand', pick(def, '--brand')],
+      ['--on-brand', '--brand-deep', '--on-brand', pick(def, '--brand-deep')],
+      ['--brand-ink', '--brand-soft', '--brand-ink', pick(def, '--brand-soft')],
+      ['--brand', '--brand-tint', '--brand', pick(def, '--brand-tint')],
     ]
 
     for (const brand of SAMPLE_BRANDS) {
       const derived = darkBrandTokens(brand)!
       for (const [fgKey, bgKey, defFgKey, defBgVal] of pairs) {
-        const defRatio = contrast(def[defFgKey], defBgVal)
+        const defRatio = contrast(pick(def, defFgKey), defBgVal)
         const newBg =
-          bgKey === '--bg' ? bg : bgKey === '--surface' ? surface : derived[bgKey]
-        const newRatio = contrast(derived[fgKey], newBg)
+          bgKey === '--bg' ? bg : bgKey === '--surface' ? surface : pick(derived, bgKey)
+        const newRatio = contrast(pick(derived, fgKey), newBg)
         expect(newRatio).toBeGreaterThanOrEqual(defRatio - 1e-9)
       }
     }
@@ -141,7 +148,7 @@ describe('darkBrandTokens', () => {
     const derived = darkBrandTokens(blue)!
     const defBrand = tokenDark('--brand')
     expect(derived['--brand']).not.toBe(defBrand)
-    const rgb = parseHexLocal(derived['--brand'])!
+    const rgb = parseHexLocal(pick(derived, '--brand'))!
     const [, g, b] = rgb
     expect(b).toBeGreaterThan(g)
   })
