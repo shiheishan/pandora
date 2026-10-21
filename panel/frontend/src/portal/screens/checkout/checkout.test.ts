@@ -6,7 +6,7 @@ import { rebuyQuery } from '../common/orders'
 import { balanceSplit } from '../common/quote'
 import { BASIC, GIB, ONCE, PLANS as BASE_PLANS, quote, row, split, STD, sub } from '../common/testing'
 import { changeFormula, confirmCopy, payCopy, tierNote } from './copy'
-import { defaultTier, intentOf, landingHref, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
+import { defaultTier, intentOf, landingChoice, landingHref, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
 import { doneLines, doneQuery, doneSub, paidText, readDone } from './result-copy'
 
 const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, validity_days: number | null = null): Price => ({
@@ -58,6 +58,41 @@ describe('确认页地址（约定地址）', () => {
     expect(parse('new=gone')).toEqual({ problem: 'plan_gone' })
     expect(parse('stack=sub1')).toEqual({ problem: 'sub_gone' })
     expect(parse('stack=s1', [sub({ stackable: false })])).toEqual({ problem: 'sub_gone' })
+  })
+})
+
+describe('落点页：每人份数上限', () => {
+  it('只有 new 一项时自动跳', () => {
+    expect(landingChoice([{ mode: 'new' }])).toEqual({ auto: { mode: 'new' }, usable: [{ mode: 'new' }], blocked: [] })
+  })
+
+  it('new 与 renew 都可选时不自动跳', () => {
+    expect(landingChoice([{ mode: 'new' }, { mode: 'renew', subscription_id: 'a' }])).toEqual({
+      auto: null,
+      usable: [{ mode: 'new' }, { mode: 'renew', subscription_id: 'a' }],
+      blocked: [],
+    })
+  })
+
+  it('new 置灰时不自动跳，usable 只有 renew', () => {
+    expect(
+      landingChoice([
+        { mode: 'new', disabled_reason: '每人最多 1 份套餐' },
+        { mode: 'renew', subscription_id: 'a' },
+      ]),
+    ).toEqual({
+      auto: null,
+      usable: [{ mode: 'renew', subscription_id: 'a' }],
+      blocked: [{ mode: 'new', disabled_reason: '每人最多 1 份套餐' }],
+    })
+  })
+
+  it('只有置灰的 new 时 usable 为空', () => {
+    expect(landingChoice([{ mode: 'new', disabled_reason: '每人最多 1 份套餐' }])).toEqual({
+      auto: null,
+      usable: [],
+      blocked: [{ mode: 'new', disabled_reason: '每人最多 1 份套餐' }],
+    })
   })
 })
 

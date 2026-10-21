@@ -11,9 +11,9 @@ import type { Holdings } from '../common/holdings'
 import { useLandings, type Landing } from '../common/landings'
 import { isLive } from '../common/subscriptions'
 import css from './Checkout.module.css'
-import { landingHref } from './model'
+import { landingChoice, landingHref } from './model'
 
-/** 买这个套餐前选「放到哪里」：不预选；只有一个选项时自动跳转 */
+/** 买这个套餐前选「放到哪里」：不预选；只有一个可选项且没有置灰项时自动跳转；新开一份到了每人份数上限时置灰写原因 */
 export function LandingChooser({ planId, plan, h, price }: { planId: string; plan: Plan; h: Holdings; price: string | null }) {
   const landings = useLandings(planId)
   usePageHead(`买${plan.name}`, '/plans')
@@ -46,25 +46,36 @@ export function LandingChooser({ planId, plan, h, price }: { planId: string; pla
   }
 
   const options = (landings.data ?? []).filter((l) => l.mode === 'new' || h.held.some((s) => s.id === l.subscription_id))
+  const choice = landingChoice(options)
 
-  if (options.length === 1) {
-    return <AutoLanding option={options[0]!} planId={planId} price={price} />
+  if (choice.auto) {
+    return <AutoLanding option={choice.auto} planId={planId} price={price} />
   }
 
   const go = (l: Landing) => goToCheckout(planId, l, price, false)
 
   return (
     <div className={css.land} data-screen="checkout-landing">
-      <p className={css.landQ}>{plan.name}放到哪里？</p>
+      <p className={css.landQ}>{choice.usable.length === 0 ? `${plan.name}现在不能再开一份` : `${plan.name}放到哪里？`}</p>
       <ChoiceList
         label={`${plan.name}放到哪里`}
         selected={null}
         onSelect={(key) => {
           const l = options.find((o) => optionKey(o) === key)
-          if (l) go(l)
+          if (l && !l.disabled_reason) go(l)
         }}
-        items={options.map((l) => ({ key: optionKey(l), label: optionLabel(l, plan, h), desc: optionDesc(l, plan, h) }))}
+        items={options.map((l) => ({
+          key: optionKey(l),
+          label: optionLabel(l, plan, h),
+          desc: l.disabled_reason ?? optionDesc(l, plan, h),
+          disabled: !!l.disabled_reason,
+        }))}
       />
+      {choice.usable.length === 0 && (
+        <div className={css.landAct}>
+          <Btn href={href('/subs')} tone="soft">去我的套餐</Btn>
+        </div>
+      )}
     </div>
   )
 }
