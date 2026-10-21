@@ -317,7 +317,6 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
             email,
             display_name: null,
             status: 'active',
-            risk_level: 'normal',
             group_id: groupId || null,
             created_at: new Date().toISOString(),
             last_login_at: null,

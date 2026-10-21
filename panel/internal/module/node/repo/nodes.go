@@ -196,26 +196,6 @@ func (r *Repo) SetNodeServing(ctx context.Context, id uuid.UUID, from string, ex
 	return res.RowsAffected == 1, nil
 }
 
-// nodeVersionRow 是 RETURNING row_version 的一行。
-type nodeVersionRow struct {
-	RowVersion int64 `gorm:"column:row_version"`
-}
-
-// BumpNodeVersion 把未退役、未删除节点的 row_version 加一（强制重新下发），返回新版本；没有这一行时 ok 为 false。
-func (r *Repo) BumpNodeVersion(ctx context.Context, id uuid.UUID) (int64, bool, error) {
-	var rows []nodeVersionRow
-	err := r.d.Conn(ctx).Raw(`UPDATE nodes SET row_version = row_version + 1, updated_at = now()
-		WHERE id = ? AND deleted_at IS NULL AND serving_status <> 'retired'
-		RETURNING row_version`, id).Scan(&rows).Error
-	if err != nil {
-		return 0, false, err
-	}
-	if len(rows) == 0 {
-		return 0, false, nil
-	}
-	return rows[0].RowVersion, true, nil
-}
-
 // SoftDeleteNode 软删一个已退役的节点（nodes_deleted_shape 要求删掉的必须是 retired）。
 func (r *Repo) SoftDeleteNode(ctx context.Context, id uuid.UUID, expected int64) (bool, error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET deleted_at = now(), row_version = row_version + 1, updated_at = now()
@@ -268,27 +248,12 @@ func (r *Repo) CountLiveNodesOnServer(ctx context.Context, serverID uuid.UUID) (
 	return c.N, err
 }
 
-// ListServerNodes 列出服务器名下未删除的节点（含已退役），按 sort_order, name, id。
-func (r *Repo) ListServerNodes(ctx context.Context, serverID uuid.UUID) ([]model.Node, error) {
-	var out []model.Node
-	err := r.d.Conn(ctx).Raw("SELECT "+nodeColumns+` FROM nodes n
-		WHERE n.server_id = ? AND n.deleted_at IS NULL
-		ORDER BY n.sort_order, n.name, n.id`, serverID).Scan(&out).Error
-	if err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = []model.Node{}
-	}
-	return out, nil
-}
-
 // nodePoolStatusRow 是只取池状态的一行。
 type nodePoolStatusRow struct {
 	Status string `gorm:"column:status"`
 }
 
-// LockPoolForNode 以 FOR SHARE 锁住节点要划入的池并返回它的状态（建、改、复制节点时用）。
+// LockPoolForNode 以 FOR SHARE 锁住节点要划入的池并返回它的状态（建、改节点时用）。
 func (r *Repo) LockPoolForNode(ctx context.Context, poolID uuid.UUID) (string, bool, error) {
 	var rows []nodePoolStatusRow
 	err := r.d.Conn(ctx).Raw(`SELECT status FROM node_pools WHERE id = ? FOR SHARE`, poolID).Scan(&rows).Error

@@ -53,13 +53,15 @@ describe('mock api · admin route groups (00096)', () => {
     expect(await patched.json()).toMatchObject({ group: { description: '说明', row_version: 3 }, affected_nodes: 0 })
   })
 
-  it('changes members from both sides and refuses new dangling references', async () => {
+  it('changes members from the node side and refuses new dangling references', async () => {
     const g = (await groups()).find((x) => x.name === '新加坡 · 测试')!
     const target = (await nodes()).find((n) => n.name === '新加坡 02')!
-    const joined = await call('PUT', `/v1/route-groups/${g.id}/members`, { row_version: g.row_version, node_ids: [target.id] }, 'rm-1')
-    expect(await joined.json()).toMatchObject({ ok: true, row_version: g.row_version + 1, affected_nodes: 1 })
-    // 节点私有规则可以指向所在组的出站，按 tag 原样精确比较：大小写不同即 422，内置名不分大小写
     let r = await nodeRouting(target.id)
+    const joined = await call('PUT', `/v1/nodes/${target.id}/route-groups`, { row_version: r.row_version, group_ids: [g.id] })
+    expect(joined.status).toBe(200)
+    expect(await joined.json()).toMatchObject({ ok: true })
+    // 节点私有规则可以指向所在组的出站，按 tag 原样精确比较：大小写不同即 422，内置名不分大小写
+    r = await nodeRouting(target.id)
     expect(r.groups.map((x) => x.id)).toEqual([g.id])
     const cased = await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [{ matcher: { port: [22] }, outbound_tag: 'sg-out', enabled: true }] })
     expect(await cased.json()).toMatchObject({ error: { fields: { routes: '第 1 条规则指向不存在的出站 "sg-out"' } } })
@@ -70,22 +72,21 @@ describe('mock api · admin route groups (00096)', () => {
     expect((await effective(target.id)).routes[0]).toMatchObject({ outbound: 'direct', source: { scope: 'node' } })
     const own = await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [{ matcher: { port: [22] }, outbound_tag: 'SG-OUT', enabled: true }] })
     expect(own.status).toBe(200)
-    // 退组会让那条规则悬空：组侧与节点侧都 409，原样不动
-    const left = await call('PUT', `/v1/route-groups/${g.id}/members`, { row_version: g.row_version + 1, node_ids: [] }, 'rm-2')
-    expect(await left.json()).toMatchObject({ error: { code: 'conflict', message: '移出组的节点仍有规则指向组内出站：节点 新加坡 02 → SG-OUT' } })
+    // 退组会让那条规则悬空：节点侧 409，原样不动
     r = await nodeRouting(target.id)
     expect((await call('PUT', `/v1/nodes/${target.id}/route-groups`, { row_version: r.row_version, group_ids: [] })).status).toBe(409)
-    expect((await call('DELETE', `/v1/route-groups/${g.id}`, { row_version: g.row_version + 1 }, 'rm-3')).status).toBe(409)
+    const afterJoin = (await groups()).find((x) => x.id === g.id)!
+    expect((await call('DELETE', `/v1/route-groups/${g.id}`, { row_version: afterJoin.row_version }, 'rm-3')).status).toBe(409)
     // 规则改走后退组：节点侧写推进组的行版本
     const cleared = await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [] })
     expect(cleared.status).toBe(200)
     r = await nodeRouting(target.id)
     expect((await call('PUT', `/v1/nodes/${target.id}/route-groups`, { row_version: r.row_version, group_ids: [] })).status).toBe(200)
-    const after = (await groups()).find((x) => x.id === g.id)!
-    expect(after.row_version).toBe(g.row_version + 2)
-    expect(after.members).toEqual([])
+    const afterLeave = (await groups()).find((x) => x.id === g.id)!
+    expect(afterLeave.row_version).toBe(g.row_version + 2)
+    expect(afterLeave.members).toEqual([])
     // 删组：成员退回只用全局与私有路由
-    expect((await call('DELETE', `/v1/route-groups/${g.id}`, { row_version: after.row_version }, 'rm-4')).status).toBe(200)
+    expect((await call('DELETE', `/v1/route-groups/${g.id}`, { row_version: afterLeave.row_version }, 'rm-4')).status).toBe(200)
     expect((await groups()).some((x) => x.id === g.id)).toBe(false)
     expect((await effective(target.id)).routes.every((x) => x.source.scope !== 'group')).toBe(true)
   })

@@ -134,10 +134,6 @@ var (
 		"cpu_bp", "mem_used_mb", "mem_total_mb", "disk_used_gb", "disk_total_gb", "metrics_at",
 		"binary_sha256", "upgrade", "last_upgrade",
 	}
-	inventoryServerNodeKeys = []string{
-		"id", "name", "serving_status", "node_type", "display_name", "server_host", "server_port",
-		"traffic_rate", "config_validated_at", "last_heartbeat_at", "created_at",
-	}
 )
 
 func TestInventoryRoutesRegistered(t *testing.T) {
@@ -147,13 +143,13 @@ func TestInventoryRoutesRegistered(t *testing.T) {
 		have[r.Method+" "+r.Path] = true
 	}
 	for _, want := range []string{
-		"GET /v1/nodes", "POST /v1/nodes", "PUT /v1/nodes/order", "POST /v1/nodes/config/publish",
+		"GET /v1/nodes", "POST /v1/nodes", "PUT /v1/nodes/order",
 		"POST /v1/nodes/reality-keypair", "PATCH /v1/nodes/:id", "DELETE /v1/nodes/:id",
-		"POST /v1/nodes/:id/copy", "POST /v1/nodes/:id/bind", "POST /v1/nodes/:id/unbind",
+		"POST /v1/nodes/:id/bind", "POST /v1/nodes/:id/unbind",
 		"POST /v1/nodes/:id/activate",
 		"POST /v1/nodes/:id/retire", "GET /v1/node-protocol-schemas",
 		"GET /v1/servers", "POST /v1/servers", "GET /v1/servers/:id", "PATCH /v1/servers/:id",
-		"POST /v1/servers/:id/status", "DELETE /v1/servers/:id", "GET /v1/servers/:id/nodes",
+		"POST /v1/servers/:id/status", "DELETE /v1/servers/:id",
 	} {
 		if !have[want] {
 			t.Fatalf("缺路由 %s（已注册 %v）", want, have)
@@ -184,12 +180,10 @@ func TestInventoryPathIDNotFound(t *testing.T) {
 	e := newInventoryEngine(false)
 	for _, c := range []struct{ method, path, body string }{
 		{http.MethodPatch, "/v1/nodes/nope", `{"row_version":1}`},
-		{http.MethodPost, "/v1/nodes/nope/copy", `{"row_version":1}`},
 		{http.MethodPost, "/v1/nodes/nope/activate", `{"row_version":1}`},
 		{http.MethodPost, "/v1/nodes/nope/bind", `{"row_version":1}`},
 		{http.MethodPost, "/v1/nodes/nope/unbind", `{"row_version":1}`},
 		{http.MethodGet, "/v1/servers/nope", ""},
-		{http.MethodGet, "/v1/servers/nope/nodes", ""},
 		{http.MethodPost, "/v1/servers/nope/status", `{"status":"ready","row_version":1}`},
 	} {
 		w := doInventory(e, c.method, c.path, c.body)
@@ -249,7 +243,6 @@ func TestInventoryFrontendBodiesBind(t *testing.T) {
 		{http.MethodDelete, "/v1/nodes/" + id, `{"row_version":0}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/retire", `{"row_version":0}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/activate", `{"row_version":0}`},
-		{http.MethodPost, "/v1/nodes/" + id + "/copy", `{"row_version":0,"name":"c","copy_routing":true,"server_port":9000}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/bind", `{"server_id":"` + id + `","server_port":8443,"row_version":0}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/unbind", `{"row_version":0}`},
 	} {
@@ -273,8 +266,6 @@ func TestNodeRequestFieldValidation(t *testing.T) {
 		{"改节点池 id 坏", http.MethodPatch, "/v1/nodes/" + id, `{"row_version":1,"pool_id":"x"}`, "pool_id"},
 		{"改节点协议给 null", http.MethodPatch, "/v1/nodes/" + id, `{"row_version":1,"protocol_config":null}`, "protocol_config"},
 		{"改节点协议给数组", http.MethodPatch, "/v1/nodes/" + id, `{"row_version":1,"protocol_config":[]}`, "protocol_config"},
-		{"复制目标服务器 id 坏", http.MethodPost, "/v1/nodes/" + id + "/copy", `{"row_version":1,"target_server_id":"x"}`, "target_server_id"},
-		{"复制端口越界", http.MethodPost, "/v1/nodes/" + id + "/copy", `{"row_version":1,"server_port":70000}`, "server_port"},
 		{"绑定缺服务器", http.MethodPost, "/v1/nodes/" + id + "/bind", `{"row_version":1}`, "server_id"},
 		{"绑定服务器 id 坏", http.MethodPost, "/v1/nodes/" + id + "/bind", `{"row_version":1,"server_id":"x"}`, "server_id"},
 		{"绑定端口越界", http.MethodPost, "/v1/nodes/" + id + "/bind", `{"row_version":1,"server_id":"` + id + `","server_port":70000}`, "server_port"},
@@ -295,29 +286,10 @@ func TestNodeRequestFieldValidation(t *testing.T) {
 	}
 }
 
-func TestNodePublishValidation(t *testing.T) {
-	e := newInventoryEngine(false)
-	id := uuid.NewString()
-	cases := []struct{ body, field string }{
-		{`{"scope":"global","scope_ref":"` + id + `","payload":{}}`, "scope"},
-		{`{"scope":"node","scope_ref":"","payload":{}}`, "scope_ref"},
-		{`{"scope":"node","scope_ref":"x","payload":{}}`, "scope_ref"},
-		{`{"scope":"node","scope_ref":"` + id + `"}`, "payload"},
-		{`{"scope":"node","scope_ref":"` + id + `","payload":null}`, "payload"},
-		{`{"scope":"node","scope_ref":"` + id + `","payload":[]}`, "payload"},
-		{`{"scope":"node","scope_ref":"` + id + `","payload":{"a":1}}`, "payload"},
-	}
-	for _, c := range cases {
-		w := doInventory(e, http.MethodPost, "/v1/nodes/config/publish", c.body)
-		inventoryExpectErr(t, w, errs.ValidationFailed, c.field)
-	}
-}
-
 func TestInventoryReauthRoutes(t *testing.T) {
 	e := newInventoryEngine(true)
 	id := uuid.NewString()
 	for _, c := range []struct{ method, path, body string }{
-		{http.MethodPost, "/v1/nodes/config/publish", `{"scope":"node","scope_ref":"` + id + `","payload":{}}`},
 		{http.MethodDelete, "/v1/nodes/" + id, `{"row_version":1}`},
 		{http.MethodPost, "/v1/nodes/" + id + "/retire", `{"row_version":1}`},
 		{http.MethodDelete, "/v1/servers/" + id, `{"row_version":1}`},
@@ -457,13 +429,6 @@ func TestServerResponseShape(t *testing.T) {
 	}
 	_, m = inventoryKeys(t, serversFrom(nil))
 	if s, ok := m["servers"].([]any); !ok || len(s) != 0 || m["total"] != float64(0) {
-		t.Fatalf("空列表应为 []：%v", m)
-	}
-
-	keys, _ = inventoryKeys(t, serverNodeFrom(service.ServerNode{ServingStatus: "retired"}))
-	inventoryExpectKeys(t, keys, inventoryServerNodeKeys)
-	_, m = inventoryKeys(t, serverNodesFrom(nil))
-	if s, ok := m["nodes"].([]any); !ok || len(s) != 0 {
 		t.Fatalf("空列表应为 []：%v", m)
 	}
 }

@@ -24,7 +24,6 @@ import {
   nodesResponse,
   poolsResponse,
   protocolSchemasResponse,
-  serverNodesResponse,
   serverSchema,
   serversResponse,
 } from '../../src/admin/screens/nodes/schemas'
@@ -94,8 +93,6 @@ const rows: Row[] = [
   { at: 'nodes/queries.ts', seed: '后台 POST servers', path: 'v1/servers', schema: serversResponse },
   // 单取服务器的接口前端目前没有调用处（死 hook 已删），接口仍验一遍
   { at: 'nodes/queries.ts', path: `v1/servers/${s.server_id}`, schema: serverSchema },
-  // 服务器名下节点的接口同样没有调用处（10-16 服务器详情改弹窗后 hook 已删），接口仍验一遍
-  { at: 'nodes/queries.ts', seed: 'nodesim 接入 + POST activate', path: `v1/servers/${s.server_id}/nodes`, schema: serverNodesResponse },
   { at: 'nodes/queries.ts', seed: '后台 POST node-pools', path: 'v1/node-pools', schema: poolsResponse },
   { at: 'nodes/queries.ts', path: `v1/nodes/${s.node_id}/identity`, schema: identitySchema },
   { at: 'nodes/queries.ts', seed: 'nodesim 心跳', path: `v1/nodes/${s.node_id}/metrics`, query: { minutes: 1440 }, schema: metricsSchema },

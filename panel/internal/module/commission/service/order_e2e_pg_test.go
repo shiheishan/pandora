@@ -40,7 +40,6 @@ import (
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	subrepo "github.com/aegispanel/aegis/internal/module/subscription/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -84,19 +83,6 @@ func (a oePromoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uu
 		}
 	}
 	return missing, nil
-}
-
-func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
-	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
-	if p, ok := authn.From(ctx); ok {
-		uid := p.UserID
-		req.UserID = &uid
-	}
-	o, err := a.c.Offer(ctx, priceID, req)
-	if err != nil {
-		return decimal.Zero, err
-	}
-	return o.Price.UnitAmount, nil
 }
 
 // newOEEnv 按 wire.go 装配真 service；commit 为 false 时整例在测试事务里回滚。

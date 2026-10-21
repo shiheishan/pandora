@@ -90,11 +90,6 @@ type routeGroupDeleteRequest struct {
 	RowVersion int64 `json:"row_version"`
 }
 
-type routeGroupMembersRequest struct {
-	RowVersion int64    `json:"row_version"`
-	NodeIDs    []string `json:"node_ids"`
-}
-
 type nodeRouteGroupsRequest struct {
 	RowVersion int64    `json:"row_version"`
 	GroupIDs   []string `json:"group_ids"`
@@ -177,12 +172,6 @@ type groupRoutingResponse struct {
 }
 
 type groupRoutingSavedResponse struct {
-	OK            bool  `json:"ok"`
-	RowVersion    int64 `json:"row_version"`
-	AffectedNodes int   `json:"affected_nodes"`
-}
-
-type groupMembersSavedResponse struct {
 	OK            bool  `json:"ok"`
 	RowVersion    int64 `json:"row_version"`
 	AffectedNodes int   `json:"affected_nodes"`

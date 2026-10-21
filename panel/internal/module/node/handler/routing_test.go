@@ -137,8 +137,6 @@ func TestRoutingBadBody(t *testing.T) {
 func TestRoutingBadIDLists(t *testing.T) {
 	e := newRoutingEngine(&routingKitStub{})
 	id := uuid.NewString()
-	routingExpectErr(t, doRouting(e, http.MethodPut, "/v1/route-groups/"+id+"/members", `{"row_version":1,"node_ids":["bad"]}`),
-		http.StatusUnprocessableEntity, errs.ValidationFailed, "node_ids")
 	routingExpectErr(t, doRouting(e, http.MethodPut, "/v1/nodes/"+id+"/route-groups", `{"row_version":1,"group_ids":["bad"]}`),
 		http.StatusUnprocessableEntity, errs.ValidationFailed, "group_ids")
 }
@@ -152,12 +150,11 @@ func TestRoutingReauthRequired(t *testing.T) {
 		{http.MethodPatch, "/v1/route-groups/" + id},
 		{http.MethodDelete, "/v1/route-groups/" + id},
 		{http.MethodPut, "/v1/route-groups/" + id + "/routing"},
-		{http.MethodPut, "/v1/route-groups/" + id + "/members"},
 	} {
 		routingExpectErr(t, doRouting(e, c.method, c.path, `{"row_version":1}`), http.StatusForbidden, errs.ReauthRequired, "")
 	}
-	if stub.reauthCalls != 5 {
-		t.Fatalf("重认证调用 %d 次，期望 5", stub.reauthCalls)
+	if stub.reauthCalls != 4 {
+		t.Fatalf("重认证调用 %d 次，期望 4", stub.reauthCalls)
 	}
 
 	// 单节点路由、节点所在组、新建空组不要求重认证：走到 service 的纯校验
@@ -178,7 +175,7 @@ func TestRoutingIdempotencyScopes(t *testing.T) {
 	newRoutingEngine(stub)
 	want := []string{
 		"node_routing_global_publish", "route_group_create", "route_group_update",
-		"route_group_delete", "route_group_routing_publish", "route_group_members_update",
+		"route_group_delete", "route_group_routing_publish",
 	}
 	if len(stub.scopes) != len(want) {
 		t.Fatalf("幂等作用域 %v，期望 %v", stub.scopes, want)

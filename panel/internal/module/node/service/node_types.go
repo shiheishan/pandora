@@ -101,27 +101,11 @@ type ServerPatch struct {
 	Notes         *string
 }
 
-// ServerNode 是服务器名下的一个节点（GET /servers/:id/nodes，含已退役）。
-type ServerNode struct {
-	ID                uuid.UUID
-	Name              string
-	ServingStatus     string
-	NodeType          *string
-	DisplayName       *string
-	ServerHost        *string
-	ServerPort        *int
-	TrafficRate       decimal.Decimal
-	ConfigValidatedAt *time.Time
-	// LastHeartbeatAt 取所在服务器的心跳（心跳是服务器级的）
-	LastHeartbeatAt *time.Time
-	CreatedAt       time.Time
-}
-
 // ---------------------------------------------------------------------------
 // 节点：写接口
 // ---------------------------------------------------------------------------
 
-// AdminNode 是节点写接口（建、改、复制、迁移、上线、退役）回的节点；ProtocolConfig 已抹掉敏感值。
+// AdminNode 是节点写接口（建、改、绑定、上线、退役）回的节点；ProtocolConfig 已抹掉敏感值。
 type AdminNode struct {
 	ID                    uuid.UUID
 	NodeNo                int64
@@ -228,18 +212,6 @@ type NodePatch struct {
 	TrafficResetDay   OptionalInt
 	// TrafficRateSchedule 为 nil 不改，给了就整体替换（空切片 = 清空）
 	TrafficRateSchedule *[]RateRangeInput
-}
-
-// NodeCopyInput 是复制节点的输入：TargetServerID、PoolID 为 nil 沿用原节点；Name 为空取「原名-copy」；
-// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 时连节点私有路由与所在路由组一起复制。
-type NodeCopyInput struct {
-	RowVersion     int64
-	Name           string
-	TargetServerID *uuid.UUID
-	PoolID         *uuid.UUID
-	SortOrder      *int
-	ServerPort     *int
-	CopyRouting    bool
 }
 
 // NodeOrderItem 是排序的一项。

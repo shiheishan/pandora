@@ -247,34 +247,6 @@ func TestServerDeleteRetiredDetachesNodes(t *testing.T) {
 	}
 }
 
-func TestListServerNodesAndMissingServer(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	s := e.server(t, ctx, "ls-nodes")
-	n1 := e.ssNode(t, ctx, s.ID, "ord-a", 21005)
-	n2 := e.ssNode(t, ctx, s.ID, "ord-b", 21006)
-	if err := e.svc.ReorderNodes(ctx, []NodeOrderItem{
-		{ID: n1.ID, RowVersion: n1.RowVersion, SortOrder: 20},
-		{ID: n2.ID, RowVersion: n2.RowVersion, SortOrder: 10},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.svc.RetireNode(ctx, n2.ID, n2.RowVersion+1, ""); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := e.svc.ListServerNodes(ctx, s.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) < 2 {
-		t.Fatalf("应含退役节点：%d", len(rows))
-	}
-	if len(rows) != 2 || rows[0].ID != n2.ID || rows[1].ID != n1.ID || rows[0].ServingStatus != NodeRetired {
-		t.Fatalf("应按 sort_order 列出、含已退役：%+v", rows)
-	}
-	_, err = e.svc.ListServerNodes(ctx, uuid.New())
-	_ = invWantCode(t, err, errs.NotFound)
-}
-
 func TestServerSetStatusBumpsEpochsCommitted(t *testing.T) {
 	e, ctx := newInvEnvCommitted(t)
 	s := e.server(t, ctx, "epoch-srv")

@@ -72,6 +72,26 @@ func rtGroup(t *testing.T, ctx context.Context, e *invEnv, name string, sortOrde
 	return g
 }
 
+// joinRouteGroup 把节点逐个加进路由组：走节点侧 SetNodeRouteGroups，节点原来所在的组保留。
+// 每个节点调用一次，组 row_version 每加一个节点 +1；入组后要用组版本的，用 routeGroupRow 重新读。
+func joinRouteGroup(t *testing.T, ctx context.Context, e *invEnv, groupID uuid.UUID, nodeIDs ...uuid.UUID) {
+	t.Helper()
+	for _, nid := range nodeIDs {
+		rows, err := e.svc.repo.NodeRouteGroups(ctx, []uuid.UUID{nid})
+		if err != nil {
+			t.Fatalf("joinRouteGroup 读节点所在组: %v", err)
+		}
+		groups := make([]uuid.UUID, 0, len(rows)+1)
+		for _, r := range rows {
+			groups = append(groups, r.GroupID)
+		}
+		groups = append(groups, groupID)
+		if _, err := e.svc.SetNodeRouteGroups(ctx, nid, rtNodeVersion(t, ctx, e, nid), groups); err != nil {
+			t.Fatalf("joinRouteGroup: %v", err)
+		}
+	}
+}
+
 // rtCleanupGroups 真提交环境用：按 tag 删本用例建的路由组。
 func rtCleanupGroups(t *testing.T, e *invEnv) {
 	t.Helper()

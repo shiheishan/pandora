@@ -135,17 +135,3 @@ func (h *Handler) deleteServer(c *gin.Context) {
 	}
 	httpx.OK(c, serverDeletedResponse{OK: true, ID: id})
 }
-
-func (h *Handler) listServerNodes(c *gin.Context) {
-	id, err := inventoryPathID(c)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	list, err := h.svc.ListServerNodes(c.Request.Context(), id)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.OK(c, serverNodesFrom(list))
-}

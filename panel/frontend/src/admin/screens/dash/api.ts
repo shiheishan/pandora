@@ -13,8 +13,8 @@ const decimalBytes = z.string().regex(/^\d+$/)
 
 // ---------------------------------------------------------------------------
 // GET v1/dashboard/backlog/notifications（DASH-01 冻结）
-// 仪表盘已不显示通知积压（10-16 设计稿：归「系统状态」）；schema 只剩 tests/smoke 在核对，
-// 后端接口下线时连同 smoke 那一行一起删
+// 仪表盘已不显示通知积压（10-16 设计稿：归「系统状态」）；schema 只剩 tests/smoke 在核对。
+// 后端接口保留：容量测试 panel/tests/perf/k6/bulk_mail.js 靠它看群发后队列积压清空曲线（10-21 核实）
 // ---------------------------------------------------------------------------
 export const backlogSchema = z.object({
   as_of: z.string(),

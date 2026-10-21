@@ -49,7 +49,6 @@ export interface User {
   email: string
   display_name: string | null
   status: 'pending' | 'active' | 'suspended' | 'banned' | 'deletion_scheduled' | 'anonymized' | 'deleted'
-  risk_level: 'trusted' | 'normal' | 'elevated' | 'high'
   group_id: string | null
   created_at: string
   last_login_at: string | null
@@ -160,8 +159,6 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     email,
     display_name: i % 4 === 0 ? `用户${i + 1}` : null,
     status: i % 15 === 9 ? 'suspended' : i % 23 === 17 ? 'banned' : i % 19 === 11 ? 'pending' : 'active',
-    // Go 没有任何代码写 users.risk_level（迁移缺省 normal）；风险由画像按共用 IP 推出（security.ts）
-    risk_level: 'normal',
     group_id: i % 5 === 1 ? GROUPS[0]!.id : i % 11 === 4 ? GROUPS[1]!.id : i % 13 === 6 ? GROUPS[2]!.id : null,
     created_at: iso((i * 3 + 2) * DAY),
     // i % 19 === 11 是 pending：Go 只让 active 账号登录成功，没激活的从没登录过
@@ -298,7 +295,6 @@ function row(u: User) {
     email: u.email,
     display_name: u.display_name,
     status: u.status,
-    risk_level: u.risk_level,
     group_name: groupName(u.group_id),
     group_id: u.group_id,
     created_at: u.created_at,

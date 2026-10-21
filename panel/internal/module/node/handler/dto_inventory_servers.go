@@ -116,26 +116,6 @@ type serversResponse struct {
 	Total   int              `json:"total"`
 }
 
-// serverNodeResponse 是服务器名下的一个节点（serverNodeSchema）。
-type serverNodeResponse struct {
-	ID                uuid.UUID  `json:"id"`
-	Name              string     `json:"name"`
-	ServingStatus     string     `json:"serving_status"`
-	NodeType          *string    `json:"node_type"`
-	DisplayName       *string    `json:"display_name"`
-	ServerHost        *string    `json:"server_host"`
-	ServerPort        *int       `json:"server_port"`
-	TrafficRate       float64    `json:"traffic_rate"`
-	ConfigValidatedAt *time.Time `json:"config_validated_at"`
-	LastHeartbeatAt   *time.Time `json:"last_heartbeat_at"`
-	CreatedAt         time.Time  `json:"created_at"`
-}
-
-type serverNodesResponse struct {
-	Nodes []serverNodeResponse `json:"nodes"`
-	Total int                  `json:"total"`
-}
-
 type serverDeletedResponse struct {
 	OK bool      `json:"ok"`
 	ID uuid.UUID `json:"id"`
@@ -211,30 +191,4 @@ func serversFrom(list []service.Server) serversResponse {
 		out = append(out, serverFrom(s))
 	}
 	return serversResponse{Servers: out, Total: len(out)}
-}
-
-// serverNodeFrom 把服务器名下的节点转成响应。
-func serverNodeFrom(n service.ServerNode) serverNodeResponse {
-	return serverNodeResponse{
-		ID:                n.ID,
-		Name:              n.Name,
-		ServingStatus:     n.ServingStatus,
-		NodeType:          n.NodeType,
-		DisplayName:       n.DisplayName,
-		ServerHost:        n.ServerHost,
-		ServerPort:        n.ServerPort,
-		TrafficRate:       n.TrafficRate.InexactFloat64(),
-		ConfigValidatedAt: n.ConfigValidatedAt,
-		LastHeartbeatAt:   n.LastHeartbeatAt,
-		CreatedAt:         n.CreatedAt,
-	}
-}
-
-// serverNodesFrom 把服务器名下的节点列表转成响应（切片非 nil）。
-func serverNodesFrom(list []service.ServerNode) serverNodesResponse {
-	out := make([]serverNodeResponse, 0, len(list))
-	for _, n := range list {
-		out = append(out, serverNodeFrom(n))
-	}
-	return serverNodesResponse{Nodes: out, Total: len(out)}
 }

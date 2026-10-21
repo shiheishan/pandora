@@ -76,16 +76,6 @@ type nodePatchRequest struct {
 	TrafficRateSchedule *[]nodeRateRangeRequest `json:"traffic_rate_schedule"`
 }
 
-type nodeCopyRequest struct {
-	RowVersion     int64  `json:"row_version"`
-	Name           string `json:"name"`
-	TargetServerID string `json:"target_server_id"`
-	PoolID         string `json:"pool_id"`
-	CopyRouting    bool   `json:"copy_routing"`
-	SortOrder      *int   `json:"sort_order"`
-	ServerPort     *int   `json:"server_port"`
-}
-
 // nodeBindRequest 是绑定 / 改绑服务器的请求体：server_port 不给就沿用节点已有端口。
 type nodeBindRequest struct {
 	ServerID   string `json:"server_id"`
@@ -133,12 +123,6 @@ type nodeRetireRequest struct {
 type nodeDeleteRequest struct {
 	RowVersion int64  `json:"row_version"`
 	Reason     string `json:"reason"`
-}
-
-type nodePublishRequest struct {
-	Scope    string          `json:"scope"`
-	ScopeRef string          `json:"scope_ref"`
-	Payload  json.RawMessage `json:"payload"`
 }
 
 // nodeParseOptionalID 解析请求体里可空的 uuid 字段：空串返回 nil，格式不对回 422。
@@ -351,13 +335,6 @@ type nodeRealityKeypairResponse struct {
 	PublicKey  string `json:"public_key"`
 	ShortID    string `json:"short_id"`
 	Hint       string `json:"hint"`
-}
-
-type nodePublishResponse struct {
-	ConfigID      uuid.UUID `json:"config_id"`
-	Version       int64     `json:"version"`
-	Scope         string    `json:"scope"`
-	AffectedNodes int       `json:"affected_nodes"`
 }
 
 type nodeDeletedResponse struct {

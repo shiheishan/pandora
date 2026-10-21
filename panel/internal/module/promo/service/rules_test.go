@@ -289,14 +289,6 @@ func TestInvalidCodeNotFound(t *testing.T) {
 		if fe := errs.As(err); fe.Code == errs.Internal {
 			t.Fatalf("Reserve %q 不应 Internal", code)
 		}
-		pid, prid := uuid.New(), uuid.New()
-		_, err = s.Preview(ctx, tg.UserID, code, PreviewItem{PlanID: pid, PriceID: prid})
-		if !errors.Is(err, ErrCouponNotFound) {
-			t.Fatalf("Preview %q: %v", code, err)
-		}
-		if fe := errs.As(err); fe.Code == errs.Internal {
-			t.Fatalf("Preview %q 不应 Internal", code)
-		}
 	}
 	got, err := s.Evaluate(ctx, "   ", tg)
 	if err != nil || got != nil {

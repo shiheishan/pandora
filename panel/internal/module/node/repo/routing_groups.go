@@ -174,20 +174,6 @@ func uuidArray(ids []uuid.UUID) string {
 	return b.String()
 }
 
-// ReplaceGroupMembers 整体替换一个组的成员列表。
-func (r *Repo) ReplaceGroupMembers(ctx context.Context, groupID uuid.UUID, nodeIDs []uuid.UUID) error {
-	if err := r.d.Conn(ctx).Exec(`DELETE FROM route_group_members WHERE group_id = ?`, groupID).Error; err != nil {
-		return err
-	}
-	if len(nodeIDs) == 0 {
-		return nil
-	}
-	return r.d.Conn(ctx).Exec(
-		`INSERT INTO route_group_members (group_id, node_id) SELECT ?, unnest(CAST(? AS uuid[]))`,
-		groupID, uuidArray(nodeIDs),
-	).Error
-}
-
 // ReplaceNodeGroups 整体替换一个节点所属的路由组列表。
 func (r *Repo) ReplaceNodeGroups(ctx context.Context, nodeID uuid.UUID, groupIDs []uuid.UUID) error {
 	if err := r.d.Conn(ctx).Exec(`DELETE FROM route_group_members WHERE node_id = ?`, nodeID).Error; err != nil {
@@ -221,24 +207,6 @@ func (r *Repo) NodeRouteGroups(ctx context.Context, nodeIDs []uuid.UUID) ([]Node
 		return []NodeGroupRow{}, nil
 	}
 	return rows, nil
-}
-
-// ExistingNodeIDs 返回 ids 里未删除的节点 id。
-func (r *Repo) ExistingNodeIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
-	if len(ids) == 0 {
-		return []uuid.UUID{}, nil
-	}
-	var out []uuid.UUID
-	err := r.d.Conn(ctx).Raw(
-		`SELECT id FROM nodes WHERE id IN ? AND deleted_at IS NULL`, ids,
-	).Scan(&out).Error
-	if err != nil {
-		return nil, err
-	}
-	if out == nil {
-		return []uuid.UUID{}, nil
-	}
-	return out, nil
 }
 
 // ExistingRouteGroupIDs 返回 ids 里存在的路由组 id。

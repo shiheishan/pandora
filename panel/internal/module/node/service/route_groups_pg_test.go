@@ -45,10 +45,7 @@ func TestRouteGroupListMembersCountsPG(t *testing.T) {
 	active := rtNode(t, ctx, e, srv, "active", 21001)
 	gone := rtNode(t, ctx, e, srv, "active", 21002)
 	g := rtGroup(t, ctx, e, "list-g", 5)
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{active, gone}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, active, gone)
 	// 入组之后再删：成员数只算未删除的节点（加成员时就拒绝已删节点）
 	if err := e.exec(ctx, `UPDATE nodes SET serving_status = 'retired', retired_at = now(), deleted_at = now() WHERE id = ?`, gone); err != nil {
 		t.Fatal(err)
@@ -109,11 +106,8 @@ func TestRouteGroupPatchSortOrderAffectedPG(t *testing.T) {
 	n1 := rtNode(t, ctx, e, srv, "active", 21010)
 	n2 := rtNode(t, ctx, e, srv, "retired", 21011)
 	g := rtGroup(t, ctx, e, "patch-so", 0)
+	joinRouteGroup(t, ctx, e, g.ID, n1, n2)
 	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{n1, n2}); err != nil {
-		t.Fatal(err)
-	}
-	gr = routeGroupRow(t, ctx, e, g.ID)
 	so := 99
 	updated, affected, err := e.svc.UpdateRouteGroup(ctx, g.ID, RouteGroupPatch{RowVersion: gr.RowVersion, SortOrder: &so})
 	if err != nil {
@@ -132,11 +126,8 @@ func TestRouteGroupPatchNameOnlyAffectedPG(t *testing.T) {
 	srv := rtServer(t, ctx, e, "ready")
 	n1 := rtNode(t, ctx, e, srv, "active", 21012)
 	g := rtGroup(t, ctx, e, "patch-nm", 0)
+	joinRouteGroup(t, ctx, e, g.ID, n1)
 	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{n1}); err != nil {
-		t.Fatal(err)
-	}
-	gr = routeGroupRow(t, ctx, e, g.ID)
 	nm := e.name("renamed")
 	_, affected, err := e.svc.UpdateRouteGroup(ctx, g.ID, RouteGroupPatch{RowVersion: gr.RowVersion, Name: &nm})
 	if err != nil {
@@ -186,10 +177,7 @@ func TestRouteGroupRoutingConflictAndRefsPG(t *testing.T) {
 		t.Fatalf("组 row_version %d", wr.RowVersion)
 	}
 
-	mr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, mr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	ver = rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[3]}`, "gin")},
@@ -203,35 +191,6 @@ func TestRouteGroupRoutingConflictAndRefsPG(t *testing.T) {
 	_ = invWantCode(t, err, errs.Conflict)
 }
 
-func TestRouteGroupMembersValidationPG(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	srv := rtServer(t, ctx, e, "ready")
-	n1 := rtNode(t, ctx, e, srv, "active", 21030)
-	g := rtGroup(t, ctx, e, "mem", 0)
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	bad := uuid.New()
-	_, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{bad})
-	_ = invWantCode(t, err, errs.ValidationFailed)
-	if fieldErr(err, "node_ids") == "" {
-		t.Fatal("期望 node_ids")
-	}
-
-	verBefore := rtNodeVersion(t, ctx, e, n1)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{n1, n1}); err != nil {
-		t.Fatal(err)
-	}
-	if rtNodeVersion(t, ctx, e, n1) != verBefore+1 {
-		t.Fatal("进组应 +1 节点 row_version")
-	}
-	gr = routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{}); err != nil {
-		t.Fatal(err)
-	}
-	if rtNodeVersion(t, ctx, e, n1) != verBefore+2 {
-		t.Fatal("出组应再 +1")
-	}
-}
-
 func TestRouteGroupMemberDanglingOnLeavePG(t *testing.T) {
 	e, ctx := newInvEnv(t)
 	srv := rtServer(t, ctx, e, "ready")
@@ -243,18 +202,14 @@ func TestRouteGroupMemberDanglingOnLeavePG(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	ver := rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[4]}`, "inner")},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	gr = routeGroupRow(t, ctx, e, g.ID)
-	_, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{})
+	_, err := e.svc.SetNodeRouteGroups(ctx, nid, rtNodeVersion(t, ctx, e, nid), nil)
 	_ = invWantCode(t, err, errs.Conflict)
 }
 
@@ -296,10 +251,6 @@ func TestRouteGroupNodeGroupsSyncPG(t *testing.T) {
 	if routeGroupRow(t, ctx, e, g2.ID).RowVersion != gv2 {
 		t.Fatal("未变的组 row_version 不变")
 	}
-
-	gr := routeGroupRow(t, ctx, e, g2.ID)
-	_, err = e.svc.SetRouteGroupMembers(ctx, g2.ID, gr.RowVersion+1, []uuid.UUID{nid})
-	_ = invWantCode(t, err, errs.Conflict)
 }
 
 func TestRouteGroupDeletePG(t *testing.T) {
@@ -317,10 +268,7 @@ func TestRouteGroupDeletePG(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	gr = routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	ver := rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[5]}`, "delob")},
@@ -336,10 +284,7 @@ func TestRouteGroupDeletePG(t *testing.T) {
 		t.Fatal(err)
 	}
 	g = rtGroup(t, ctx, e, "del2", 0)
-	gr = routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	nodeVer := rtNodeVersion(t, ctx, e, nid)
 	grt, _ = e.svc.GetGroupRouting(ctx, g.ID)
 	if _, err := e.svc.SetGroupRouting(ctx, g.ID, grt.RowVersion, RoutingInput{
@@ -374,10 +319,7 @@ func TestRouteGroupConfigEpochMembersPG(t *testing.T) {
 	nid := rtNode(t, ctx, e, srv, "active", 21060)
 	before := e.epoch(t, ConfigEpochKey)
 	g := rtGroup(t, ctx, e, "ep-m", 0)
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	if e.epoch(t, ConfigEpochKey) != before+1 {
 		t.Fatal("active 成员进组应 +1 纪元")
 	}
@@ -400,10 +342,7 @@ func TestRouteGroupConfigEpochRetiredOnlyPG(t *testing.T) {
 	nid := rtNode(t, ctx, e, srv, "retired", 21061)
 	before := e.epoch(t, ConfigEpochKey)
 	g := rtGroup(t, ctx, e, "ep-ret", 0)
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	grt, _ := e.svc.GetGroupRouting(ctx, g.ID)
 	if _, err := e.svc.SetGroupRouting(ctx, g.ID, grt.RowVersion, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[7]}`, "direct")},

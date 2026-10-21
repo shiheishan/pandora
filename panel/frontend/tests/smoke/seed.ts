@@ -665,7 +665,6 @@ const lists: Array<[string, string, string, string?]> = [
   [ADM, '/v1/coupons', admin],
   [ADM, `/v1/coupons/${couponId}/redemptions`, admin],
   [ADM, '/v1/revenue/adjustments', admin],
-  [ADM, '/v1/traffic-resets', admin],
   [ADM, '/v1/late-payments', admin],
   [ADM, '/v1/withdrawals', admin],
   [ADM, '/v1/plugin-hooks', admin],

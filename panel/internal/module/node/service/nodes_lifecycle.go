@@ -1,6 +1,6 @@
 package service
 
-// 节点的批量改状态、上线、退役、删除与强制重新下发。
+// 节点的批量改状态、上线、退役与删除。
 
 import (
 	"context"
@@ -342,36 +342,4 @@ func (s *Service) DeleteNode(ctx context.Context, id uuid.UUID, rowVersion int64
 			"name": n.Name, "serving_status_before": n.ServingStatus, "reason": reason,
 		})
 	})
-}
-
-// RepublishNode 强制重新下发一个节点的配置：版本加一并推进配置纪元，返回新版本。
-func (s *Service) RepublishNode(ctx context.Context, id uuid.UUID) (int64, error) {
-	var version int64
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		n, found, err := s.repo.NodeByID(ctx, id, true)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return errs.New(errs.NotFound)
-		}
-		if n.ServingStatus == NodeRetired {
-			return inventoryConflict("节点已退役，没有可下发的配置")
-		}
-		v, ok, err := s.repo.BumpNodeVersion(ctx, id)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errs.New(errs.NotFound)
-		}
-		version = v
-		s.nodeChanged(ctx, realtime.OpUpdate, id)
-		if err := s.nodeAudit(ctx, "node.config.publish", id, map[string]any{"row_version": v}); err != nil {
-			return err
-		}
-		s.MarkConfigChanged(ctx)
-		return nil
-	})
-	return version, err
 }

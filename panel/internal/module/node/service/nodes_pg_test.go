@@ -1,13 +1,12 @@
 package service
 
-// 节点建改、复制、排序与纪元通知的 PG 集成测试。
+// 节点建改、排序与纪元通知的 PG 集成测试。
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -199,37 +198,9 @@ func TestNodePatchEpochOnlyWhenNeededCommitted(t *testing.T) {
 	}
 }
 
-func TestNodeCopyAndReorder(t *testing.T) {
+func TestNodeReorder(t *testing.T) {
 	e, ctx := newInvEnv(t)
-	srv := e.server(t, ctx, "nd-copy")
-	other := e.server(t, ctx, "nd-copy2")
-	src := e.ssNode(t, ctx, srv.ID, "src", 22040)
-	_, err := e.svc.CopyNode(ctx, src.ID, NodeCopyInput{RowVersion: src.RowVersion})
-	if ee := invWantCode(t, err, errs.Conflict); !strings.Contains(ee.Fields["server_port"], src.Name) {
-		t.Fatalf("同机同端口应点名原节点：%v", ee.Fields)
-	}
-	port := 22041
-	dup, err := e.svc.CopyNode(ctx, src.ID, NodeCopyInput{RowVersion: src.RowVersion, ServerPort: &port})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dup.ServingStatus != NodeDraft || dup.Name != e.name("src")+"-copy" {
-		t.Fatalf("副本：%+v", dup)
-	}
-	var cfgSrc, cfgCopy string
-	if err := e.row(ctx, `SELECT protocol_config::text FROM nodes WHERE name = ?`, src.Name).Scan(&cfgSrc); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.row(ctx, `SELECT protocol_config::text FROM nodes WHERE id = ?`, dup.ID).Scan(&cfgCopy); err != nil {
-		t.Fatal(err)
-	}
-	if cfgSrc != cfgCopy {
-		t.Fatalf("protocol_config 应相同\n%q\n%q", cfgSrc, cfgCopy)
-	}
-	_, err = e.svc.CopyNode(ctx, src.ID, NodeCopyInput{RowVersion: src.RowVersion, Name: e.name("src-other"), TargetServerID: &other.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	srv := e.server(t, ctx, "nd-reorder")
 	a := e.ssNode(t, ctx, srv.ID, "ord-1", 22050)
 	b := e.ssNode(t, ctx, srv.ID, "ord-2", 22051)
 	if err := e.svc.ReorderNodes(ctx, []NodeOrderItem{
@@ -246,7 +217,7 @@ func TestNodeCopyAndReorder(t *testing.T) {
 	}
 	a, _ = e.svc.GetAdminNode(ctx, a.ID)
 	b, _ = e.svc.GetAdminNode(ctx, b.ID)
-	err = e.svc.ReorderNodes(ctx, []NodeOrderItem{
+	err := e.svc.ReorderNodes(ctx, []NodeOrderItem{
 		{ID: a.ID, RowVersion: a.RowVersion - 1, SortOrder: 99},
 		{ID: b.ID, RowVersion: b.RowVersion, SortOrder: 88},
 	})
@@ -255,72 +226,5 @@ func TestNodeCopyAndReorder(t *testing.T) {
 	_ = e.row(ctx, `SELECT sort_order FROM nodes WHERE id = ?`, b.ID).Scan(&sb)
 	if sa != 5 || sb != 15 {
 		t.Fatalf("版本冲突后排序不应变：%d/%d", sa, sb)
-	}
-}
-
-// 复制节点勾选复制路由：私有出站、规则和路由组成员一起复制，组版本推进；不勾选时副本没有路由。
-func TestNodeCopyRouting(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	srv := rtServer(t, ctx, e, "ready")
-	src := rtNode(t, ctx, e, srv, "active", 21101)
-	g := rtGroup(t, ctx, e, "copy-g", 0)
-	gr, _ := e.svc.GetGroupRouting(ctx, g.ID)
-	if _, err := e.svc.SetGroupRouting(ctx, g.ID, gr.RowVersion, RoutingInput{
-		Outbounds: []RoutingOutbound{ob("gout", "socks")},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.svc.SetNodeRouteGroups(ctx, src, rtNodeVersion(t, ctx, e, src), []uuid.UUID{g.ID}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.svc.SetNodeRouting(ctx, src, rtNodeVersion(t, ctx, e, src), RoutingInput{
-		Outbounds: []RoutingOutbound{ob("priv", "socks")},
-		Routes:    []RoutingRule{rule(`{"port":[1]}`, "priv"), rule(`{"port":[2]}`, "gout")},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	groupVersion := routeGroupRow(t, ctx, e, g.ID).RowVersion
-
-	port := 21102
-	dup, err := e.svc.CopyNode(ctx, src, NodeCopyInput{RowVersion: rtNodeVersion(t, ctx, e, src), ServerPort: &port, CopyRouting: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := e.svc.GetNodeRouting(ctx, dup.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Outbounds) != 1 || got.Outbounds[0].Tag != "priv" || len(got.Routes) != 2 {
-		t.Fatalf("副本的私有路由：%+v", got)
-	}
-	if len(got.Groups) != 1 || got.Groups[0].ID != g.ID {
-		t.Fatalf("副本的路由组：%+v", got.Groups)
-	}
-	if v := routeGroupRow(t, ctx, e, g.ID).RowVersion; v != groupVersion+1 {
-		t.Fatalf("组加了成员，版本应 +1：%d → %d", groupVersion, v)
-	}
-
-	plainPort := 21103
-	plain, err := e.svc.CopyNode(ctx, src, NodeCopyInput{RowVersion: rtNodeVersion(t, ctx, e, src), Name: e.name("copy-plain"), ServerPort: &plainPort})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err = e.svc.GetNodeRouting(ctx, plain.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Outbounds) != 0 || len(got.Routes) != 0 || len(got.Groups) != 0 {
-		t.Fatalf("不勾选复制路由，副本应没有路由：%+v", got)
-	}
-
-	// 源节点有一条悬空规则（接口写不进去，直接插库）：复制路由会给副本造出新的悬空引用，拒绝
-	if err := e.exec(ctx, `INSERT INTO node_routes (node_id, priority, sort_order, matcher, outbound_tag)
-		VALUES (?, 9, 9, '{"port":[9]}'::jsonb, 'nope')`, src); err != nil {
-		t.Fatal(err)
-	}
-	brokenPort := 21104
-	_, err = e.svc.CopyNode(ctx, src, NodeCopyInput{RowVersion: rtNodeVersion(t, ctx, e, src), Name: e.name("copy-broken"), ServerPort: &brokenPort, CopyRouting: true})
-	if ee := invWantCode(t, err, errs.Conflict); !strings.Contains(ee.Message, "nope") {
-		t.Fatalf("应点名悬空的出站：%s", ee.Message)
 	}
 }
