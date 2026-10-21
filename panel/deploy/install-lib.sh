@@ -966,7 +966,7 @@ pandora_print_summary() {
         ;;
     esac
     case "${PANDORA_ADMIN_STATE:-manual}" in
-      created) printf '    %s\n' "用刚建的管理员 ${PANDORA_ADMIN_EMAIL:-} 登录，然后尽快绑定两步验证" ;;
+      created) printf '    %s\n' "用刚建的管理员 ${PANDORA_ADMIN_EMAIL:-} 登录" ;;
       existing) printf '    %s\n' "用库里已有的管理员登录" ;;
     esac
   else

@@ -63,7 +63,7 @@ pandora_resolve_public_base_url() {
   fi
   if [[ -z "$url" && -n "$fallback" ]]; then
     url="$fallback"
-    printf '    没有给对外地址，用本机公网 IPv4：%s（以后有了域名，改 /etc/pandora/config.yaml 的 public_base_url 后 systemctl restart pandora-serve pandora-worker，再 sudo /opt/pandora/deploy/edge-tls.sh setup）\n' "$url" >&2
+    printf '    没有给对外地址，用本机公网 IPv4：%s（以后有了域名：还没装节点时，改 /etc/pandora/config.yaml 的 public_base_url 后 systemctl restart pandora-serve pandora-worker，再 sudo /opt/pandora/deploy/edge-tls.sh setup；已经装了节点就别改它，按 RUNBOOK 第 15 章在后台改主域名）\n' "$url" >&2
   fi
   if [[ -z "$url" ]]; then
     printf '%s\n' \

@@ -395,7 +395,7 @@ export function NodeCreateWizard({
   const selectedPool = basic.poolId ? (pools.data ?? []).find((p) => p.id === basic.poolId) : undefined
   const poolHint =
     selectedPool && selectedPool.plan_names.length === 0
-      ? '这个节点池还没绑套餐：节点上线后暂不服务用户，到「套餐」页在套餐版本里选上它'
+      ? '这个节点池还没绑套餐：节点上线后暂不服务用户，到「套餐」详情的「线路」页签里打开它'
       : '节点只服务所在节点池绑定的套餐'
 
   return (

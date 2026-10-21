@@ -451,7 +451,7 @@ function PoolsTab({
             <>
               {warning && <Callout>{warning}</Callout>}
               {pools.length === 0 ? (
-                <p className={css.mutedSmall}>还没有可用的节点池，先到「节点 › 节点池」建一个。</p>
+                <p className={css.mutedSmall}>还没有可用的节点池，先到「节点与服务器 › 节点池」建一个。</p>
               ) : (
                 <RowList label="可用线路">
                   {pools.map((pool) => {

@@ -2,6 +2,8 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
+**第一次搭面板，从 [上手教程](docs/quickstart.md) 开始**：买服务器、域名解析、放行端口、一条命令安装、配支付、加节点、建套餐，到测试用户买到套餐、连上节点，一步一步写好了。
+
 本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.agents/skills/verify/](.agents/skills/verify/SKILL.md)。
 
 ## 架构
@@ -133,7 +135,7 @@ panel/internal/
 
 - 仪表盘：收入、用户、订单、订阅、节点、流量、工单统计；收入调整；趋势；节点 / 用户流量排行。
 - 用户（含批量建用户、风控与 IP 归属地）、套餐、订单、优惠券、礼品卡、支付渠道、待复核佣金与提现。
-- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制。节点入站证书由节点机自己的 certbot / acme.sh 签发，面板只填路径（见 docs/node-certificates.md）。
+- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制。节点入站证书缺省由节点端自动向 Let's Encrypt 申请并续期（要节点机的 80 端口），也可以手填节点机上已有证书的路径（见 docs/node-certificates.md）。
 - 公告、知识库、主题、插件、工单、审计日志、降级开关。
 - 后台权限只分有和没有：是管理员就能做全部后台操作；会话绝对寿命 7 天、空闲 2 小时退出；管理后台路径是安装时生成的高熵串。
 
@@ -250,6 +252,8 @@ Go 版本按各自 `go.mod` 的 go 指令（现在是 1.26.10）。更新的 Go 
 pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-256 的 `manifest.json`。Ubuntu runner 的 race/vet 与双架构构建门禁见 `.github/workflows/pandora-native.yml`。Windows / macOS 交叉构建不能替代真实 Linux race。
 
 ## 部署
+
+第一次装、想照着一步一步做的，看 [上手教程](docs/quickstart.md)；本节是参考说明。
 
 一条命令装完。提供两种装法：裸机部署（第 1–4 节，`install.sh` 脚本托管于 systemd）与 Docker / Compose / 1Panel 部署（第 5 节）；两套方案共用同一个二进制、同一套 `PANDORA_*` 配置键与数据库迁移，根据机器条件选一种装即可。
 
@@ -514,8 +518,9 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 ## 相关文档
 
+- [docs/quickstart.md](docs/quickstart.md)：上手教程，从买服务器到测试用户买到套餐、连上节点。
 - [docs/architecture.md](docs/architecture.md)：换栈的设计全文（技术选型、模块与表属主、鉴权与会话、钱、节点通道、任务、配置、分步计划与产品结论）。
-- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（放在节点机上的 file 模式）。
+- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（缺省自动申请，也可以手填节点机上的证书路径）。
 - [docs/perf-test-plan.md](docs/perf-test-plan.md)：P8 第一轮性能测试范围。
 - [docs/backlog.md](docs/backlog.md)：面板待办清单；前后端接口以代码为准：后端看各模块 `panel/internal/module/*/handler`，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。

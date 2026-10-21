@@ -38,6 +38,14 @@ func TestNodePortPanelReserved(t *testing.T) {
 		_, err := p.checkReserved(443, p.panelHost(addrs))
 		_ = nodeTestErr(t, err, errs.ValidationFailed)
 	}
+	// 节点通道 gRPC 与本机运维入口同样是面板机自己的端口
+	for _, port := range []int{9080, 9443} {
+		_, err := p.checkReserved(port, p.panelHost([]string{"127.0.0.1"}))
+		e := nodeTestErr(t, err, errs.ValidationFailed)
+		if purpose := nodePortPurpose(port); purpose == "" || !strings.Contains(fmt.Sprint(e.Fields), purpose) {
+			t.Fatalf("%d 的说明应写明用途：%v", port, e.Fields)
+		}
+	}
 	// 普通公网地址：判断不了是不是面板机，只提示
 	w, err := p.checkReserved(443, p.panelHost([]string{"203.0.113.10", "edge.example.test"}))
 	if err != nil || w == "" {

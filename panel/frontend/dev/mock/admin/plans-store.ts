@@ -679,7 +679,7 @@ export function publishProblems(p: { prices: Price[]; pool_ids: string[] }): Rec
   }
   const assignable = p.pool_ids.filter(livePool)
   if (assignable.length === 0) {
-    return { pool_ids: '绑定的节点池都已停用：先在「线路 · 节点池」里启用，或换绑一个启用中的池' }
+    return { pool_ids: '绑定的节点池都已停用：先在「节点与服务器 › 节点池」里启用，或换绑一个启用中的池' }
   }
   const totalActiveNodes = p.pool_ids.reduce((sum, pid) => sum + activeNodesInPool(pid), 0)
   if (totalActiveNodes === 0) {

@@ -39,7 +39,7 @@ type nodePortPolicy struct {
 // defaultNodePortPolicy 是缺省的保留表。
 var defaultNodePortPolicy = nodePortPolicy{
 	Reserved:      []nodePortRange{{22, 22}, {25, 25}, {53, 53}, {80, 80}},
-	PanelReserved: []nodePortRange{{80, 80}, {443, 443}, {5432, 5432}, {6379, 6379}, {9000, 9003}},
+	PanelReserved: []nodePortRange{{80, 80}, {443, 443}, {5432, 5432}, {6379, 6379}, {9000, 9003}, {9080, 9080}, {9443, 9443}},
 }
 
 // nodePortNames 是常见保留端口的用途，只用于文案。
@@ -47,6 +47,7 @@ var nodePortNames = map[int]string{
 	22: "SSH", 25: "SMTP", 53: "DNS", 80: "HTTP，预留给证书 HTTP-01 验证",
 	443: "面板 HTTPS", 5432: "PostgreSQL", 6379: "Redis",
 	9000: "面板网关", 9001: "面板网关", 9002: "面板网关", 9003: "面板网关",
+	9080: "面板本机运维入口", 9443: "节点连面板的 gRPC",
 }
 
 func nodePortPurpose(port int) string {
