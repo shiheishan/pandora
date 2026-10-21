@@ -240,10 +240,15 @@ describe('dashboard/tasks', () => {
       ],
     }).items
     expect(navBadges(badgeItems)).toEqual({
-      tickets: { count: 7, hot: true },
-      billing: { count: 2 },
-      nodes: { count: 3 },
+      tickets: { count: 7, label: '待处理工单 7 个', hot: true },
+      billing: { count: 2, label: '超时未支付订单 2 个：下单超过 60 分钟还没到账，与「待处理到账」无关' },
+      nodes: { count: 3, label: '离线节点 3 个' },
     })
+    const withdrawals = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'withdrawals_pending', count: 3, amount: 12000 }],
+    }).items
+    expect(navBadges(withdrawals)).toEqual({ marketing: { count: 3, label: '提现待审核 3 笔' } })
     expect(navBadges(undefined)).toEqual({})
   })
 
