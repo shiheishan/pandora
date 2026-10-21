@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { ledgerLabel } from '../../../portal/screens/wallet/model'
 import { extendedSchema, rotatedSchema, userDetailSchema, usersSchema } from './api'
 import {
+  BALANCE_KINDS,
   balanceCents,
+  balanceDeltaView,
+  balanceKindLabel,
   currentSubscription,
   deviceLimitLabel,
   deviceView,
@@ -296,5 +300,17 @@ describe('订单状态叫法（报告 2.3-13）', () => {
     expect(ORDER_STATUS_VIEW.cancelled.label).toBe('已取消')
     expect(ORDER_STATUS_VIEW.expired.label).toBe('超时取消')
     expect(Object.values(ORDER_STATUS_VIEW).map((v) => v.label)).not.toContain('已过期')
+  })
+})
+
+describe('余额流水叫法', () => {
+  it('类型中文名与用户端钱包逐条一致', () => {
+    for (const kind of BALANCE_KINDS) expect(balanceKindLabel(kind, 1)).toBe(ledgerLabel(kind))
+    expect(balanceKindLabel('order_paid', -100)).toBe('余额支出')
+    expect(balanceKindLabel('whatever', 100)).toBe('余额入账')
+  })
+  it('金额带正负号', () => {
+    expect(balanceDeltaView(1000)).toEqual({ text: '+¥10.00', out: false })
+    expect(balanceDeltaView(-350)).toEqual({ text: '−¥3.50', out: true })
   })
 })

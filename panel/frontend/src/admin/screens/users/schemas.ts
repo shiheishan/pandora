@@ -121,3 +121,18 @@ export type ProfileRisk = z.output<typeof profileRisk>
 type UserProfile = z.output<typeof profileSchema>
 /** 画像 IP 表里只用到时间与去重时的字段（测试夹具不必带 geo / network_kind / risk） */
 export type ProfileIpActivity = Pick<UserProfile['ips'][number], 'ip' | 'count' | 'first' | 'last' | 'accounts'>
+
+// ---------------------------------------------------------------------------
+// GET v1/users/{id}/balance-entries：后台余额流水（ledger handler 的 userBalanceEntriesResponse，无 omitempty）
+// 与用户端钱包 GET v1/me/balance 的 history 是同一个科目的同一批分录；金额是分，delta 入账为正
+// ---------------------------------------------------------------------------
+const balanceEntrySchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  delta: int,
+  balance_after: int,
+  memo: z.string(),
+  order_id: z.string().nullable(),
+  at: time,
+})
+export const balanceEntriesSchema = z.object({ entries: z.array(balanceEntrySchema), total: count })

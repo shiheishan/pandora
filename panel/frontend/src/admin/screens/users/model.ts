@@ -1,4 +1,4 @@
-import { formatBytes } from '../../../core/format'
+import { formatBytes, formatMoney } from '../../../core/format'
 import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, ProfileIpActivity, ProfileRisk, Quota, SubscriptionRow, SubStatus, UserGroup, UserRow, UserStatus, UsersParams } from './api'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
@@ -65,6 +65,33 @@ export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone 
   fulfilled: { label: '已支付', tone: 'ok' },
   cancelled: { label: '已取消', tone: 'neutral' },
   expired: { label: '超时取消', tone: 'neutral' },
+}
+
+/**
+ * 余额流水的类型中文名：与用户端钱包 `portal/screens/wallet/model.ts` 的 LEDGER 逐条一致（守卫在 model.test.ts），
+ * 客服对着用户的截图能认出是哪一笔；认不出的按正负写「余额入账 / 余额支出」，同用户端
+ */
+const BALANCE_KIND_LABELS: Readonly<Record<string, string>> = {
+  balance_topup: '充值',
+  balance_hold: '下单用余额',
+  plan_change_refund: '换套餐退回',
+  balance_release: '订单取消退回',
+  balance_adjusted: '人工调整',
+  commission_to_balance: '佣金转入',
+  gift_card_balance: '礼品卡',
+  late_payment_applied: '挂账转入',
+  late_payment_suspense: '挂账转入',
+}
+export const BALANCE_KINDS = Object.keys(BALANCE_KIND_LABELS)
+
+export function balanceKindLabel(kind: string, delta: number): string {
+  return BALANCE_KIND_LABELS[kind] ?? (delta < 0 ? '余额支出' : '余额入账')
+}
+
+/** 金额列：「+¥10.00」/「−¥3.00」（减号用 U+2212，同用户端），out 表示出账 */
+export function balanceDeltaView(delta: number): { text: string; out: boolean } {
+  const out = delta < 0
+  return { text: `${out ? '−' : '+'}${formatMoney(Math.abs(delta))}`, out }
 }
 
 /** 画像风险：后端按共用 IP 推出（identity clusterRisk，与「安全与运维 › 风控」同一条规则）；空串 = 没有和别的账号共用 IP */
