@@ -50,10 +50,11 @@ const columns: TableColumn<AuditEvent>[] = [
       <span className={css.auditWho} title={`${ACTOR_LABEL[e.actor_kind]}${e.actor_email ? ` · ${e.actor_email}` : ''}`}>
         <span className={`${css.ellipsis} ${css.auditWhoMain}`}>{actorLabel(e)}</span>
         <span className={css.auditWhoSub}>{ACTOR_LABEL[e.actor_kind]}</span>
-        {/* 手机上隐藏了时间与动作两列，挪到这里一行 */}
+        {/* 手机上隐藏了时间、动作与对象几列，挪到这里：动作 · 时间一行，对象一行 */}
         <span className={`${css.auditWhoSub} m-only`}>
           <span>{actionLabel(e.action)}</span> · {clockTime(e.occurred_at)}
         </span>
+        {objectLabel(e) !== '—' && <span className={`${css.auditWhoSub} m-only`}>{objectLabel(e)}</span>}
       </span>
     ),
   },

@@ -339,15 +339,22 @@ function AccountRanking({ win }: { win: TraceWindow }) {
       key: 'user',
       header: '账号',
       render: (r) => (
-        <a href={href(`/users/list/${r.user_id}`)}>
-          {traceUserLabel({ id: r.user_id, email: r.email, status: r.status })}
-        </a>
+        <>
+          <a href={href(`/users/list/${r.user_id}`)}>
+            {traceUserLabel({ id: r.user_id, email: r.email, status: r.status })}
+          </a>
+          {/* 手机上收起了关联 IP 与登录次数两列（四列时账号列只剩一个字宽），挪到账号下一行 */}
+          <span className={`${css.muted} m-only`}>
+            关联 IP {r.linked_ips} · 登录 {r.logins.toLocaleString('zh-CN')} 次
+          </span>
+        </>
       ),
     },
     {
       key: 'linked_ips',
       header: <span className={sec.term} title={TERM_HINT.linkedIps}>关联 IP</span>,
       align: 'right',
+      hideOnMobile: true,
       sortable: true,
       render: (r) => r.linked_ips,
     },
@@ -355,6 +362,7 @@ function AccountRanking({ win }: { win: TraceWindow }) {
       key: 'logins',
       header: '登录次数',
       align: 'right',
+      hideOnMobile: true,
       sortable: true,
       render: (r) => r.logins.toLocaleString('zh-CN'),
     },

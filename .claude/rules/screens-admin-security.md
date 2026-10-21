@@ -21,11 +21,12 @@ paths:
 - av4（样稿 admin-v4）：
   - 访问日志是亮底白框（不再是深色终端）：头部两行——第一行 `StatusDot`（监控中 / 已暂停 / 查看更早的记录）+ 说明 + 第一页的「暂停 / 继续」，第二行 `FilterTabs` 分段；事件行是 5 列 grid（时间、分类标签、结果、IP、账号 · 动作；时间列 104 放得下跨天的「MM-DD HH:mm:ss」），手机（≤639）分两行：时间、分类、结果、IP 一行，账号 · 动作占满第二行；页脚常显，「回到最新」第一页置灰。结果色档在 `logic.ts` 的 `accessTone`：成功绿、订阅拉取 `rate_limited` 黄、其余非成功红、无结果灰。
   - 风控每个聚类一张卡：一行头部（IP、归属地、风险标签、账号数、「标记正常」「禁用账号…」）+ 成员行（四格：邮箱链接、状态、套餐、「登录记录」；手机分两行：邮箱 + 状态 / 套餐 + 登录记录），复核结论（如「已标记为正常，MM-DD 前不再提示」）在卡片最下一行；有效标记正常的卡整张淡显。
-  - 审计日志：「导出」在页头 `PageActions`；表格 `Table boxed`，表尾一页时「共 N 条」、多页 `<Pager inline>`；手机上只留操作人与结果（其余列 `hideOnMobile`），动作与时间挪到操作人下一行（全局类 `m-only`）。结果色档 `OUTCOME_TONE`：成功绿、失败红、拒绝黄、部分成功蓝。
+  - 审计日志：「导出」在页头 `PageActions`；表格 `Table boxed`，表尾一页时「共 N 条」、多页 `<Pager inline>`；手机上只留操作人与结果（其余列 `hideOnMobile`），动作 · 时间挪到操作人下一行、对象（`objectLabel`，「—」不显示）再下一行（全局类 `m-only`；10-21 测试员在手机上看不出改的是哪个套餐）。结果色档 `OUTCOME_TONE`：成功绿、失败红、拒绝黄、部分成功蓝。
   - 降级开关：`Card flush` 里一项一行，暂停中整行 `--danger-soft` 底、开关 `Switch tone="danger"`（红）；缺行的开关不能切换。
   - 注册防护（`users/SignupForm.tsx` 的 security 段）：「人机验证」「注册限制」两节 `SectionTitle variant="group"`，每项一个 kit `SettingRow`（打开才展开配置）；「开启人机验证」= `captcha_provider !== ''`，关掉时前端记住上次选的服务，第一次打开默认 Turnstile；验证服务用 `RadioCards`；邮箱后缀是 `TagInput`（上限 100，表单字段是数组）；整页一个 `SaveBar`（提示「保存时要再验证一次身份」），只提交改过的字段。
 - 溯源总览（`TraceTab.tsx`，数据层 `trace.ts`，10-20）：
   - 时间窗 24h / 7d / 30d（`Segmented`，24h 不带 `window` 参数）；选 30d 时提示拉取日志只保留 31 天。概览与 IP 排行是同一个请求（`/v1/trace/ips`），订阅、账号两张排行只在切到时才发请求；都不在 SSE 里、不轮询，换窗口保留上一份数据（`placeholderData`）；整窗聚合较重，`staleTime` 5 分钟、关掉 `refetchOnWindowFocus`，工具条上手动「刷新」（`useRefreshTrace` 作废 `TRACE_KEY` 整组）。「失败」= 拉取结果不是 ok，含到期提示与被限流（页面说明里写明）。
   - IP 默认打码（后端给 `ip_masked` 与 `token`），点「显示」调 `/v1/trace/reveal`，每次都写审计，所以结果不进 react-query 缓存，只放组件状态；关联账号在单元格里展开，链接 `/users/list/<id>`，已注销显示 `traceUserLabel`（与 `userLabel` 同口径）。
+  - 账号排行手机上只留「账号」「与他人共用 IP」两列，关联 IP 与登录次数挪到账号下一行（`m-only`；四列时账号列只剩一个字宽）。
   - 排序都是降序、由后端排（`SUB_SORTS` / `ACC_SORTS`，列 key 与 sort 值一致）；订阅排行的「地区数」只在本页内排（`sortByRegions`）。
   - schema 与 `identity/handler/trace.go` 的 DTO 逐键一致、全部必有；假后端在 `dev/mock/admin/security-trace.ts`，由审计行与拉取日志现算（与访问日志、审计页对得上，口径与不同处见 frontend-mock），校验文案与 Go 相同。
