@@ -17,16 +17,9 @@ type getPortalPageResponse struct {
 	Page portalPageView `json:"page"`
 }
 
-type okResponse struct {
-	OK bool `json:"ok"`
-}
-
 func visibleFilter(c *gin.Context, withQuery bool) service.VisibleFilter {
 	f := service.VisibleFilter{
-		Kind:          c.Query("kind"),
-		Platform:      c.Query("platform"),
-		ClientVersion: c.Query("client_version"),
-		Locale:        c.Query("locale"),
+		Kind: c.Query("kind"),
 	}
 	if withQuery {
 		f.Query = c.Query("q")
@@ -69,29 +62,4 @@ func (h *Handler) getPortalPage(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, getPortalPageResponse{Page: portalPageFrom(page)})
-}
-
-// submitFeedback 记录「这篇文章有帮助吗」。
-func (h *Handler) submitFeedback(c *gin.Context) {
-	c.Header("Cache-Control", "no-store")
-	var req feedbackRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	if req.Helpful == nil {
-		httpx.Fail(c, errs.Invalid(map[string]string{"helpful": "必填"}))
-		return
-	}
-	p, ok := authn.FromGin(c)
-	if !ok {
-		httpx.Fail(c, errs.New(errs.Unauthorized))
-		return
-	}
-	slug := c.Param("slug")
-	if err := h.svc.SubmitFeedback(c.Request.Context(), p.UserID, slug, req.Version, *req.Helpful, visibleFilter(c, false)); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.OK(c, okResponse{OK: true})
 }

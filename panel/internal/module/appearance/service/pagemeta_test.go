@@ -107,7 +107,7 @@ func TestPageMetaCache_get_loadFailure(t *testing.T) {
 
 	// 先成功再失败：沿用上次成功值
 	c2 := &pageMetaCache{}
-	okVal := PageMeta{SiteName: "上次", Tagline: "t", Logo: "data:image/png;base64,AA=="}
+	okVal := PageMeta{SiteName: "上次", Tagline: "t"}
 	_ = c2.get(ctx, 0, base, func(context.Context) (PageMeta, error) { return okVal, nil }, func(error) {})
 	got2 := c2.get(ctx, 0, base.Add(pageMetaTTL+time.Second), func(context.Context) (PageMeta, error) {
 		return PageMeta{}, boom

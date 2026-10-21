@@ -1,4 +1,4 @@
-// 入口页与门户外观用的站点信息快照：站点名取系统设置 site.name，标语与 Logo 取生效主题的 branding（已按白名单过滤）；
+// 入口页与门户外观用的站点信息快照：站点名取系统设置 site.name，标语取生效主题的 branding（已按白名单过滤）；
 // SEO 关键词、描述、是否允许收录与站点对外根地址取系统设置；robots.txt 也读这份快照。
 //
 // 入口页是门户最热的地址，不能每次回源都查库，所以缓存进程内快照：
@@ -25,12 +25,11 @@ import (
 // DefaultSiteName 是读不到站点设置时的站点名，与 settings 的缺省站点名一致。
 const DefaultSiteName = "Pandora"
 
-// PageMeta 是入口页 <head> 与门户外观用的站点信息：站点名取系统设置 site.name，标语与 Logo 取生效主题（已按白名单过滤）；
+// PageMeta 是入口页 <head> 与门户外观用的站点信息：站点名取系统设置 site.name，标语取生效主题（已按白名单过滤）；
 // SEO 设置与站点对外根地址取系统设置。
 type PageMeta struct {
 	SiteName       string // 永不为空：读不到时是 DefaultSiteName
 	Tagline        string // 没有为空
-	Logo           string // data:image/…；没有为空
 	SEOKeywords    string // 站点设置的关键词；没有为空
 	SEODescription string // 站点设置的描述；没有为空（入口页再退回标语）
 	AllowIndexing  bool   // 是否允许搜索引擎收录门户首页；读不到时是 settingsvc.DefaultSiteAllowIndexing
@@ -129,7 +128,7 @@ func (c *pageMetaCache) get(ctx context.Context, gen uint64, now time.Time, load
 }
 
 // PageMeta 返回进程内快照（入口页每次回源都会调，不能每次查库）：
-// 站点名取系统设置 site.name，标语与 Logo 取生效主题；读失败时沿用上次成功的值，从没成功过时站点名是缺省值。
+// 站点名取系统设置 site.name，标语取生效主题；读失败时沿用上次成功的值，从没成功过时站点名是缺省值。
 func (s *Service) PageMeta(ctx context.Context) PageMeta {
 	return s.meta.get(ctx, s.metaGen.Load(), s.clock(), s.loadPageMeta, func(err error) {
 		plog.From(ctx).Warn("读取站点信息失败，入口页沿用上次的值", zap.Error(err))
@@ -168,7 +167,6 @@ func (s *Service) loadPageMeta(ctx context.Context) (PageMeta, error) {
 		var branding map[string]string
 		if err := json.Unmarshal(filterBranding(json.RawMessage(m.Branding)), &branding); err == nil {
 			out.Tagline = branding["tagline"]
-			out.Logo = branding["logo"]
 		}
 	}
 	return out, nil

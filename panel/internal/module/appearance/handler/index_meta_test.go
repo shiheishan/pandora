@@ -19,11 +19,10 @@ func (f fakeMeta) PageMeta(context.Context) service.PageMeta {
 func TestIndexMeta(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. PageMeta{SiteName: "夜海加速", Tagline: "一路畅通", Logo: "data:image/png;base64,AAAA"} + PagePortal
+	// 1. PageMeta{SiteName: "夜海加速", Tagline: "一路畅通"} + PagePortal
 	src1 := fakeMeta{
 		SiteName: "夜海加速",
 		Tagline:  "一路畅通",
-		Logo:     "data:image/png;base64,AAAA",
 	}
 	f1 := IndexMeta(src1, PagePortal)
 	got1 := f1(ctx)
@@ -31,7 +30,7 @@ func TestIndexMeta(t *testing.T) {
 		Title:       "夜海加速",
 		Description: "一路畅通",
 		AppName:     "夜海加速",
-		Icon:        "data:image/png;base64,AAAA",
+		Icon:        DefaultIcon,
 		Robots:      robotsNoIndex,
 		OpenGraph:   true,
 	}
@@ -46,12 +45,17 @@ func TestIndexMeta(t *testing.T) {
 		Title:       "夜海加速 控制台",
 		Description: "一路畅通",
 		AppName:     "夜海加速",
-		Icon:        "data:image/png;base64,AAAA",
+		Icon:        DefaultIcon,
 		Robots:      robotsNoIndex,
 		OpenGraph:   false,
 	}
 	if got2 != want2 {
 		t.Fatalf("got %+v, want %+v", got2, want2)
+	}
+
+	// 门户、后台两种 Page 的 Icon 都等于 DefaultIcon
+	if got1.Icon != DefaultIcon || got2.Icon != DefaultIcon {
+		t.Fatalf("门户、后台两种 Page 的 Icon 都应等于 DefaultIcon: got portal=%s admin=%s", got1.Icon, got2.Icon)
 	}
 
 	// 3. PageMeta{SiteName: "  "} + PagePortal → Title == "Pandora"、Description == "Pandora"、Icon == DefaultIcon
@@ -77,18 +81,7 @@ func TestIndexMeta(t *testing.T) {
 		t.Fatal("portal must enable OpenGraph")
 	}
 
-	// 4. Logo: "https://evil.test/a.png" → Icon == DefaultIcon
-	src4 := fakeMeta{
-		SiteName: "测试",
-		Logo:     "https://evil.test/a.png",
-	}
-	f4 := IndexMeta(src4, PagePortal)
-	got4 := f4(ctx)
-	if got4.Icon != DefaultIcon {
-		t.Fatalf("icon: got %q, want DefaultIcon", got4.Icon)
-	}
-
-	// 5. DefaultIcon 以 data:image/svg+xml;base64, 开头，base64 解码后含 <svg
+	// 4. DefaultIcon 以 data:image/svg+xml;base64, 开头，base64 解码后含 <svg
 	prefix := "data:image/svg+xml;base64,"
 	if !strings.HasPrefix(DefaultIcon, prefix) {
 		t.Fatalf("DefaultIcon 缺少前缀 %q: %s", prefix, DefaultIcon)

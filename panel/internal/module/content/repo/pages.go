@@ -3,10 +3,8 @@ package repo
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm/clause"
 
 	"github.com/aegispanel/aegis/internal/module/content/model"
 	"github.com/aegispanel/aegis/internal/pkg/db"
@@ -27,14 +25,14 @@ type AdminFilter struct {
 
 const adminDerivedCols = `,
 		(SELECT max(a.version) FROM content_pages a WHERE a.slug = cp.slug) AS latest_version,
-		NOT EXISTS (SELECT 1 FROM content_pages n WHERE n.slug = cp.slug AND n.version > cp.version AND n.locale = cp.locale AND n.target_platforms = cp.target_platforms AND n.min_client_version = cp.min_client_version AND n.max_client_version = cp.max_client_version AND n.target_plan_ids = cp.target_plan_ids AND n.visibility = cp.visibility) AS is_latest_in_audience`
+		NOT EXISTS (SELECT 1 FROM content_pages n WHERE n.slug = cp.slug AND n.version > cp.version AND n.target_plan_ids = cp.target_plan_ids AND n.visibility = cp.visibility) AS is_latest_in_audience`
 
-const adminPageColsNoBody = `cp.id, cp.slug, cp.kind, cp.category, cp.version, cp.title, cp.summary, '' AS body, cp.locale, cp.sanitizer_version,
-		cp.target_platforms, cp.min_client_version, cp.max_client_version, cp.target_plan_ids, cp.visibility, cp.status,
+const adminPageColsNoBody = `cp.id, cp.slug, cp.kind, cp.category, cp.version, cp.title, cp.summary, '' AS body, cp.sanitizer_version,
+		cp.target_plan_ids, cp.visibility, cp.status,
 		cp.review_due_at, cp.published_at, cp.created_by, cp.created_at, cp.updated_at`
 
-const adminPageColsWithBody = `cp.id, cp.slug, cp.kind, cp.category, cp.version, cp.title, cp.summary, cp.body, cp.locale, cp.sanitizer_version,
-		cp.target_platforms, cp.min_client_version, cp.max_client_version, cp.target_plan_ids, cp.visibility, cp.status,
+const adminPageColsWithBody = `cp.id, cp.slug, cp.kind, cp.category, cp.version, cp.title, cp.summary, cp.body, cp.sanitizer_version,
+		cp.target_plan_ids, cp.visibility, cp.status,
 		cp.review_due_at, cp.published_at, cp.created_by, cp.created_at, cp.updated_at`
 
 // ListAdmin 后台分页列出内容版本（不含正文）。
@@ -100,7 +98,7 @@ func (r *Repo) LatestVersionForUpdate(ctx context.Context, slug string) (int, er
 
 // Audience 描述「同一受众」的维度（数组字段为 JSON 原文）。
 type Audience struct {
-	Slug, Locale, TargetPlatforms, MinClientVersion, MaxClientVersion, TargetPlanIDs, Visibility string
+	Slug, TargetPlanIDs, Visibility string
 }
 
 // Superseded 是被归档的同受众已发布版本。
@@ -115,14 +113,10 @@ func (r *Repo) ArchivePublishedInAudience(ctx context.Context, a Audience) ([]Su
 	err := r.d.Conn(ctx).Raw(`
 		UPDATE content_pages SET status = 'archived', updated_at = now()
 		 WHERE slug = ? AND status = 'published'
-		   AND locale = ?
-		   AND target_platforms = ?::jsonb
-		   AND min_client_version = ?
-		   AND max_client_version = ?
 		   AND target_plan_ids = ?::jsonb
 		   AND visibility = ?
 		 RETURNING id, version`,
-		a.Slug, a.Locale, a.TargetPlatforms, a.MinClientVersion, a.MaxClientVersion, a.TargetPlanIDs, a.Visibility,
+		a.Slug, a.TargetPlanIDs, a.Visibility,
 	).Scan(&out).Error
 	if err != nil {
 		return nil, mapErr(err)
@@ -164,11 +158,9 @@ func (r *Repo) ArchivePage(ctx context.Context, id uuid.UUID, version int) (bool
 
 // VisibleQuery 是门户可见内容的查询条件。
 type VisibleQuery struct {
-	Kind, Slug, Locale, Query string
-	AnyPlatform               bool
-	Platform                  string
-	PlanIDs                   []string
-	IncludeBody               bool
+	Kind, Slug, Query string
+	PlanIDs           []string
+	IncludeBody       bool
 }
 
 // VisibleRow 是门户查询的一行，带搜索是否命中。
@@ -189,8 +181,6 @@ func (r *Repo) Visible(ctx context.Context, q VisibleQuery) ([]VisibleRow, error
 	args = append(args, q.Query, q.Query)
 	where = append(where, "cp.status = 'published'")
 	where = append(where, "cp.visibility = 'authenticated'")
-	where = append(where, "cp.locale = ?")
-	args = append(args, q.Locale)
 
 	if strings.TrimSpace(q.Kind) != "" {
 		where = append(where, "cp.kind = ?")
@@ -200,14 +190,6 @@ func (r *Repo) Visible(ctx context.Context, q VisibleQuery) ([]VisibleRow, error
 		where = append(where, "cp.slug = ?")
 		args = append(args, q.Slug)
 	}
-	if !q.AnyPlatform {
-		if q.Platform == "" {
-			where = append(where, "jsonb_array_length(cp.target_platforms) = 0")
-		} else {
-			where = append(where, "(jsonb_array_length(cp.target_platforms) = 0 OR cp.target_platforms @> jsonb_build_array(?::text))")
-			args = append(args, q.Platform)
-		}
-	}
 	if len(q.PlanIDs) == 0 {
 		where = append(where, "jsonb_array_length(cp.target_plan_ids) = 0")
 	} else {
@@ -215,8 +197,8 @@ func (r *Repo) Visible(ctx context.Context, q VisibleQuery) ([]VisibleRow, error
 		args = append(args, q.PlanIDs)
 	}
 
-	sql := `SELECT cp.id, cp.slug, cp.kind, cp.category, cp.version, cp.title, cp.summary, ` + bodyCol + `, cp.locale, cp.sanitizer_version,
-		cp.target_platforms, cp.min_client_version, cp.max_client_version, cp.target_plan_ids, cp.visibility, cp.status,
+	sql := `SELECT cp.id, cp.slug, cp.kind, cp.category, cp.version, cp.title, cp.summary, ` + bodyCol + `, cp.sanitizer_version,
+		cp.target_plan_ids, cp.visibility, cp.status,
 		cp.review_due_at, cp.published_at, cp.created_by, cp.created_at, cp.updated_at,
 		(? = '' OR strpos(lower(cp.title || ' ' || cp.summary || ' ' || cp.body), lower(?)) > 0) AS matched
 		FROM content_pages cp WHERE ` + strings.Join(where, " AND ") + `
@@ -230,35 +212,4 @@ func (r *Repo) Visible(ctx context.Context, q VisibleQuery) ([]VisibleRow, error
 		rows = []VisibleRow{}
 	}
 	return rows, nil
-}
-
-// PublishedVersionExists 该 slug+version 是否曾作为门户文章发布过。
-func (r *Repo) PublishedVersionExists(ctx context.Context, slug string, version int) (bool, error) {
-	var ok bool
-	err := r.d.Conn(ctx).Raw(`
-		SELECT EXISTS (
-		  SELECT 1 FROM content_pages
-		   WHERE slug = ? AND version = ? AND visibility = 'authenticated' AND published_at IS NOT NULL)`,
-		slug, version,
-	).Scan(&ok).Error
-	if err != nil {
-		return false, mapErr(err)
-	}
-	return ok, nil
-}
-
-// UpsertFeedback 写入或更新用户对某版本的「有帮助」反馈。
-func (r *Repo) UpsertFeedback(ctx context.Context, f *model.Feedback) error {
-	now := time.Now().UTC()
-	f.UpdatedAt = now
-	if f.CreatedAt.IsZero() {
-		f.CreatedAt = now
-	}
-	return mapErr(r.d.Conn(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "page_slug"}, {Name: "page_version"}, {Name: "user_id"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"helpful":    f.Helpful,
-			"updated_at": now,
-		}),
-	}).Create(f).Error)
 }

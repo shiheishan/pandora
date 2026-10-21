@@ -242,7 +242,7 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 		orderh.New(svc.order, svc.limiter),
 		giftcardh.New(svc.giftcard, svc.limiter),
 		commissionh.New(svc.commission),
-		contenth.New(svc.content, svc.limiter, r.cfg.RateLimit.AccountPerMin),
+		contenth.New(svc.content),
 		appearanceh.New(svc.appearance),
 		supporth.New(svc.support, svc.limiter),
 		pluginh.New(svc.plugin),
