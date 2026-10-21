@@ -136,3 +136,14 @@
 .allOrdersLink:hover {
   text-decoration: underline;
 }
+
+/* 余额流水：入账绿色、出账照常；原因列可换行 */
+.deltaIn {
+  color: var(--ok);
+}
+
+.entryNote {
+  white-space: normal;
+  word-break: break-word;
+  color: var(--text-2);
+}

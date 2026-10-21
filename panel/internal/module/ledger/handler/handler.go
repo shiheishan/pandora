@@ -1,4 +1,4 @@
-// Package handler 是 ledger 模块的 HTTP 层：门户余额查询与后台人工调账。
+// Package handler 是 ledger 模块的 HTTP 层：门户余额查询、后台余额流水与人工调账。
 package handler
 
 import (
@@ -8,6 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/pagination"
 	"github.com/aegispanel/aegis/internal/pkg/route"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 type Service interface {
 	MyWallet(ctx context.Context) (service.Wallet, error)
 	AdjustBalance(ctx context.Context, a service.Adjustment) (service.AdjustResult, error)
+	UserBalanceEntries(ctx context.Context, userID uuid.UUID, limit, offset int) (service.BalanceEntryPage, error)
 }
 
 var _ Service = (*service.Service)(nil)
@@ -28,6 +30,12 @@ type Handler struct{ svc Service }
 // New 构造 Handler。
 func New(svc Service) *Handler { return &Handler{svc: svc} }
 
+// BalanceEntriesPageDefault 是后台余额流水列表的缺省分页大小。
+const BalanceEntriesPageDefault = 20
+
+// BalanceEntriesPageMax 是后台余额流水列表的最大分页大小。
+const BalanceEntriesPageMax = 100
+
 // AdjustIdempotencyScope 是后台人工调账的幂等作用域。
 const AdjustIdempotencyScope = "admin_user_balance_adjust"
 
@@ -38,6 +46,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 
 // RegisterAdmin 注册后台路由。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
+	v1.GET("/users/:id/balance-entries", k.RequireAuth, h.userBalanceEntries)
 	v1.POST("/users/:id/balance", k.RequireAuth, k.RecentReauth, k.Idempotency(AdjustIdempotencyScope), h.adjustBalance)
 }
 
@@ -98,4 +107,53 @@ func (h *Handler) adjustBalance(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, adjustBalanceResponse{Balance: bal})
+}
+
+func (h *Handler) userBalanceEntries(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpx.Fail(c, errs.New(errs.NotFound))
+		return
+	}
+	limit, offset, err := pagination.Parse(c, BalanceEntriesPageDefault, BalanceEntriesPageMax)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	page, err := h.svc.UserBalanceEntries(c.Request.Context(), id, limit, offset)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	views := make([]adminBalanceEntryView, 0, len(page.Entries))
+	for _, item := range page.Entries {
+		delta, err := money.ToCents(item.Delta)
+		if err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+		balAfter, err := money.ToCents(item.BalanceAfter)
+		if err != nil {
+			httpx.Fail(c, err)
+			return
+		}
+		var orderID *string
+		if item.OrderID != nil {
+			s := item.OrderID.String()
+			orderID = &s
+		}
+		views = append(views, adminBalanceEntryView{
+			ID:           item.ID.String(),
+			Kind:         item.Kind,
+			Delta:        delta,
+			BalanceAfter: balAfter,
+			Memo:         item.Memo,
+			OrderID:      orderID,
+			At:           item.At,
+		})
+	}
+	httpx.OK(c, userBalanceEntriesResponse{
+		Entries: views,
+		Total:   page.Total,
+	})
 }

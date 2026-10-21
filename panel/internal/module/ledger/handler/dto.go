@@ -26,3 +26,20 @@ type adjustBalanceRequest struct {
 type adjustBalanceResponse struct {
 	Balance int64 `json:"balance"`
 }
+
+// userBalanceEntriesResponse 对应 GET /v1/users/:id/balance-entries 的 JSON 响应。
+type userBalanceEntriesResponse struct {
+	Entries []adminBalanceEntryView `json:"entries"`
+	Total   int64                   `json:"total"`
+}
+
+// adminBalanceEntryView 是后台余额流水的一条；金额是整数分，delta 入账为正、出账为负。
+type adminBalanceEntryView struct {
+	ID           string    `json:"id"`
+	Kind         string    `json:"kind"`
+	Delta        int64     `json:"delta"`
+	BalanceAfter int64     `json:"balance_after"`
+	Memo         string    `json:"memo"`
+	OrderID      *string   `json:"order_id"`
+	At           time.Time `json:"at"`
+}

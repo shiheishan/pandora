@@ -265,7 +265,7 @@ export function groupByMonth<T extends Pick<OrderRow, 'created_at' | 'status' | 
   return groups
 }
 
-const METHOD_NAMES: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', wechat: '微信支付', qqpay: 'QQ 钱包', offline: '线下' }
+const METHOD_NAMES: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', wechat: '微信支付', qqpay: 'QQ 钱包', offline: '线下收款' }
 
 /**
  * 付款方式的用户叫法（支付宝、微信支付）：按 payments.method 认，不用渠道的商户名；

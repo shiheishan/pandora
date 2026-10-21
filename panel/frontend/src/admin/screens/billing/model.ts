@@ -89,7 +89,7 @@ export function queriedView(r: OrderQueried): { tone: Tone; text: string } {
   if (r.quarantine_kind)
     return {
       tone: 'warn',
-      text: `渠道确认已付款，但订单已${status}，款项已补记进待处理到账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「待处理到账」里处理。`,
+      text: `渠道确认已付款，但订单状态是「${status}」，款项已补记进待处理到账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「待处理到账」里处理。`,
     }
   if (r.reconciled) return { tone: 'ok', text: `渠道确认已付款，已按回调同一流程补记入账。订单：${status}。` }
   return { tone: 'warn', text: `渠道确认已付款，但没有补记，订单：${status}。` }
@@ -104,6 +104,7 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
 // 系统写的取消原因是代码（后台取消写的是管理员填的原文，原样显示）
 const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
   account_deleted: '账号已注销',
+  expired: '超时未支付',
   plan_archived: '套餐已归档，实付已转入用户余额',
   user_cancelled: '用户自己取消',
 }

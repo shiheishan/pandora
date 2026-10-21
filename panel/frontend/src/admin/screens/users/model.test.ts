@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { ledgerLabel } from '../../../portal/screens/wallet/model'
 import { extendedSchema, rotatedSchema, userDetailSchema, usersSchema } from './api'
+import { balanceEntryNote } from './ledger'
 import {
+  BALANCE_KINDS,
   balanceCents,
+  balanceDeltaView,
+  balanceKindLabel,
   currentSubscription,
   deviceLimitLabel,
   deviceView,
@@ -14,6 +19,7 @@ import {
   isPermanent,
   isRescue,
   listParams,
+  ORDER_STATUS_VIEW,
   loginIps7d,
   orderWhat,
   parseExtendDays,
@@ -290,3 +296,37 @@ describe('schema', () => {
   })
 })
 
+
+describe('订单状态叫法（报告 2.3-13）', () => {
+  it('与用户端一致：超时未付归「已取消」一类，后台写「超时取消」区分', () => {
+    expect(ORDER_STATUS_VIEW.cancelled.label).toBe('已取消')
+    expect(ORDER_STATUS_VIEW.expired.label).toBe('超时取消')
+    expect(Object.values(ORDER_STATUS_VIEW).map((v) => v.label)).not.toContain('已过期')
+  })
+})
+
+describe('余额流水叫法', () => {
+  it('类型中文名与用户端钱包逐条一致', () => {
+    for (const kind of BALANCE_KINDS) expect(balanceKindLabel(kind, 1)).toBe(ledgerLabel(kind))
+    expect(balanceKindLabel('order_paid', -100)).toBe('余额支出')
+    expect(balanceKindLabel('whatever', 100)).toBe('余额入账')
+  })
+  it('金额带正负号', () => {
+    expect(balanceDeltaView(1000)).toEqual({ text: '+¥10.00', out: false })
+    expect(balanceDeltaView(-350)).toEqual({ text: '−¥3.50', out: true })
+  })
+})
+
+describe('余额流水原因列', () => {
+  it('订单取消退回的原因码翻成中文，认不出的英文码不显示，原话照写', () => {
+    expect(balanceEntryNote('balance_release', 'expired')).toBe('超时未支付')
+    expect(balanceEntryNote('balance_release', 'user_cancelled')).toBe('用户自己取消')
+    expect(balanceEntryNote('balance_release', 'account_deleted')).toBe('账号已注销')
+    expect(balanceEntryNote('balance_release', 'some_new_code')).toBe('')
+    expect(balanceEntryNote('balance_release', '管理员取消：重复下单')).toBe('管理员取消：重复下单')
+    expect(balanceEntryNote('balance_adjusted', ' 补偿：节点故障 ')).toBe('补偿：节点故障')
+    expect(balanceEntryNote('balance_hold', '')).toBe('')
+    expect(balanceEntryNote('balance_adjusted', 'refund1')).toBe('refund1')
+    expect(balanceEntryNote('balance_topup', '余额充值')).toBe('余额充值')
+  })
+})

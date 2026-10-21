@@ -5,9 +5,11 @@ import {
   isEntityItem,
   nodeItems,
   normalizeEntityQuery,
+  ORDER_STATUS_TEXT,
   orderItems,
   userItems,
 } from './entity-search'
+import { ORDER_STATUS_VIEW } from './screens/users/model'
 
 // 数据全是虚构值（example.test），只测纯函数
 const user = (over: Partial<Parameters<typeof userItems>[0][number]> = {}) => ({
@@ -178,3 +180,10 @@ describe('normalizeEntityQuery', () => {
 function formatMoneyShape(sub: string | undefined): void {
   expect(sub).toMatch(/^¥68\.00 · /)
 }
+
+describe('订单状态文案', () => {
+  it('与订单页 ORDER_STATUS_VIEW 逐条一致（超时未付写「超时取消」）', () => {
+    for (const [status, view] of Object.entries(ORDER_STATUS_VIEW)) expect(ORDER_STATUS_TEXT[status]).toBe(view.label)
+    expect(Object.keys(ORDER_STATUS_TEXT).sort()).toEqual(Object.keys(ORDER_STATUS_VIEW).sort())
+  })
+})

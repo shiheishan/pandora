@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule } from '../types.ts'
 import { editRoutes } from './users-edit.ts'
+import { ledgerRoutes, recordAdjust, type LedgerDeps } from './users-ledger.ts'
 import { opsRoutes } from './users-ops.ts'
 import { subEditRoutes } from './users-sub-edit.ts'
 
@@ -368,6 +369,12 @@ export function setOrderSource(source: (userId: string) => OrderView[]): void {
   orderSource = source
 }
 
+/** 余额流水（users-ledger.ts）要用户的订单：与详情的最近订单同一份 */
+const ledgerDeps: LedgerDeps = {
+  users,
+  ordersOf: (u) => (orderSource ? orderSource(u.id) : seedOrders(u).map(listView)),
+}
+
 function detail(u: User) {
   const orders: OrderView[] = orderSource ? orderSource(u.id) : seedOrders(u).map(listView)
   const referrer = users.find((r) => r.id === u.referrer)
@@ -563,6 +570,7 @@ const users_: MockModule = {
         const u = findUser(ctx)
         if (!u) return { status: 404, body: envelope('not_found', '资源不存在或无权访问') }
         if (u.balance + amount < 0) return { status: 409, body: envelope('conflict', '余额不足，无法扣减') }
+        recordAdjust(u, ledgerDeps, amount, String(body.reason))
         u.balance += amount
         return { status: 200, body: { balance: u.balance } }
       })
@@ -601,6 +609,8 @@ const users_: MockModule = {
     // 后台改邮箱 / 显示名与备注 / 邀请人、注销（users-edit.ts）；改单份订阅的到期与流量上限（users-sub-edit.ts）
     ...editRoutes({ users }),
     ...subEditRoutes({ users }),
+    // 余额流水（只读，users-ledger.ts）
+    ...ledgerRoutes(ledgerDeps),
   },
 }
 
