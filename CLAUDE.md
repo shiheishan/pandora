@@ -133,7 +133,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）。
 - 本机 Go：缺省 1.27.x（Homebrew，10-20 为 1.27.2），比 go.mod 的 1.26.10 新。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.10`（模块缓存里已有，`GOPROXY=off` 也能切），结论才与 CI 同口径，报告里注明本机 Go 版本。pdnd 去掉 sing-box 后已能在 1.27 下链接（10-14）；还依赖 sing-box 的只剩 subscription-e2e 的 tools 模块，升 Go 1.27 前先处理它，见 deps-upgrade skill。
-- 本机（这台 Mac）没有 docker：冒烟栈、Playwright 购买路径、Docker 类部署测试本机跑不了，以 CI 为准。PG18 与 Redis 用 Homebrew 装了（用户 10-21 同意），不常驻：`.agents/skills/verify/scripts/local-db.sh start|stop`，PG 用例与迁移往返推送前在本机跑（verify skill「本机 PG」，要 `TZ=UTC`）。本机是 16G 内存的笔记本：注意磁盘、CPU、内存占用，用完停库，不同时开多路全量、`-race` 留给 CI。
+- 本机（这台 Mac）没有 docker：冒烟栈、Playwright 购买路径、要 Docker 起 Redis 或 PG 的部署测试、要 root 的真 nginx 测试本机跑不了，以 CI 为准（生产装法只有 install.sh，10-21 删了 Docker 装法）。PG18 与 Redis 用 Homebrew 装了（用户 10-21 同意），不常驻：`.agents/skills/verify/scripts/local-db.sh start|stop`，PG 用例与迁移往返推送前在本机跑（verify skill「本机 PG」，要 `TZ=UTC`）。本机是 16G 内存的笔记本：注意磁盘、CPU、内存占用，用完停库，不同时开多路全量、`-race` 留给 CI。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请我解锁；不改走 HTTPS。
 - 测试机上起后台进程一律 `ssh -n host 'cd /root/x; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；远端 `pkill -f` 的模式要锚定（`pkill -f '^vmstat'`），否则会误杀自己的 ssh 会话；限时的故障注入在远端自带撤销（`setsid -f sh -c 'sleep N; iptables -D …'`）。本机是 macOS，没有 setsid。
 - 性能闸门的测试机用 ssh 别名指定（主目录 `ops-local/netcup-perf/gate.env`），机器规矩先读 `~/ai/servers/` 下它的 `AGENTS.md`：只放虚构数据、测试端口只听回环、不改系统设置；机上日志可能带后台路径前缀，引用前先打码（`gate.sh` 的输出已打码）。一次运行约 30 分钟，放后台跑，同一时间只跑一个。
