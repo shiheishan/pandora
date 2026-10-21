@@ -29,6 +29,12 @@ panel 与 pdnd 是两个独立的 Go module。两端之间的契约分两类：�
 
 ## 节点入站证书
 
-- 面板不签发、不下发节点入站证书，pdnd 也没有证书包或证书存储模块；入站证书由节点机上的 certbot / acme.sh 放进约定目录，见 `docs/node-certificates.md`。约定目录两端各有一份：面板 `node/protocol/validate_policy.go` 的 `nodeCertificateDir`，与文档第 1 节。
-- 以后要做面板下发，按节点 gRPC 会话设计新的消息，两端一起改，不恢复旧的 HPKE 证书包。
-- proto 里的 `Certificate` 消息是节点 mTLS 客户端证书的续期结果，不是入站证书，别混用。
+- 两种来源，协议配置的 `cert_mode`：`acme`（节点端向 Let's Encrypt 自动申请，新建默认）/ `file`（节点机上的 certbot / acme.sh 放进约定目录，缺省）。用户文档 `docs/node-certificates.md`。
+- 面板不签发、不下发证书，私钥不离开节点机。面板只做三件事：
+  - 校验（`node/protocol/cert.go`、`validate_kernel.go`）；
+  - 在配置文档里写 `cert_identifier`（`node/service/config_docs.go`，SNI 否则节点地址）；
+  - 收心跳里的 `NodeRuntime.cert` 落 `nodes.cert_*`（迁移 00061，node 模块属主），给后台列表、详情与仪表盘「证书异常」（report 经 node 的 `CertAttentionNodes` 读）。
+- 标识符规整两端各一份、必须一致：面板 `protocol.NormalizeCertIdentifier` 与 pdnd `core.NormalizeCertIdentifier`。
+- 中转：父节点 acme 时，渲染补 `server_name = 父节点标识符`（IP 也补），SNI 覆盖必须等于它（`relays_sni.go`、`node_source_relay.go`）。
+- file 模式的约定目录两端各一份：面板 `node/protocol/validate_policy.go` 的 `nodeCertificateDir`，与文档第 2 节。
+- proto 里的 `Certificate` 消息是节点 mTLS 客户端证书的续期结果，不是入站证书，别混用；入站证书状态是 `CertStatus`。

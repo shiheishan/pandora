@@ -99,6 +99,8 @@ sudo grep -h '<req_id>' /var/log/pandora/serve.log /var/log/pandora/worker.log
 
 面板自己的数据巡检（worker 的 `report:integrity`，每 30 分钟）不走 `healthcheck.sh`：告警发到后台配置的 Telegram 管理员群组，文案以 `数据巡检发现异常` 开头，后台仪表盘「要处理」出红色的「数据巡检」格，见 [16. 数据巡检告警](#16-数据巡检告警)。
 
+后台仪表盘「要处理」出「证书异常」格（节点证书申请失败或快到期）同样不走 `healthcheck.sh`，见 [11.5 节点证书申请失败](#115-节点证书申请失败cert_pending-久不消失cert_expired仪表盘证书异常)。
+
 **巡检怎么跑。**
 
 - `healthcheck.sh` 与 `pandora-health.service` / `pandora-health.timer` 随安装器装好，首装与升级都 `enable --now`。看它在不在跑：`systemctl list-timers pandora-health.timer`。
@@ -673,11 +675,11 @@ sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/se
 
 ## 11. 节点机侧（pdnd）
 
-面板这头看到的症状是「节点显示 降级 / 生效失败」，原因在节点机上：端口被占、入站起不来、UDP 缓冲偏小、接入装到一半。节点失联、心跳进不来看第 3 章。本章命令在节点机上以 root 跑，日志用 `journalctl -u pandora-native` 看。
+面板这头看到的症状是「节点显示 降级 / 生效失败 / 等待证书」，原因在节点机上：端口被占、入站起不来、证书申请失败、UDP 缓冲偏小、接入装到一半。节点失联、心跳进不来看第 3 章。本章命令在节点机上以 root 跑，日志用 `journalctl -u pandora-native` 看。
 
 ### 怎么确认
 
-节点自己会把运行状态随 gRPC 会话报给面板，状态只有 `running` 和 `degraded`，原因是一个机器可读串：
+节点自己会把运行状态随 gRPC 会话报给面板，状态有 `running`、`degraded` 和 `down`，原因是一个机器可读串：
 
 | 原因（`runtime_reason`） | 后台节点列表显示 | 意思 |
 |---|---|---|
@@ -686,6 +688,8 @@ sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/se
 | `not_started` | 生效失败：入站没有起来 | 入站没起来（首个配置就没装上、回滚也失败，或刚重启） |
 | `config_apply_failed` | 生效失败：新配置装不上，仍在用旧配置服务 | 新配置装不上，上一版仍在服务 |
 | `serving_cached_config` | 降级：用缓存服务 | 面板还没确认，节点正用落盘缓存的配置服务（面板不可达时的正常降级，先看第 3 章） |
+| `cert_pending` | 等待证书 | 自动申请的证书还没到：新节点不起入站，原来在服务的继续用旧配置（看 11.5） |
+| `cert_expired` | 证书已过期 | 在服务的证书过期了（续期一直失败），入站照常开着但客户端校验会失败（看 11.5） |
 
 库里看（只读）：
 
@@ -696,7 +700,7 @@ pg -c "SELECT name, runtime_status, runtime_reason, runtime_state_at FROM nodes 
 节点机上：
 
 ```bash
-journalctl -u pandora-native -n 200 --no-pager | grep -E '节点降级运行|新配置应用失败|入站已就绪|重试之前装不上的配置|UDP 缓冲偏小'
+journalctl -u pandora-native -n 200 --no-pager | grep -E '节点降级运行|新配置应用失败|入站已就绪|重试之前装不上的配置|UDP 缓冲偏小|证书'
 ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 ```
 
@@ -711,7 +715,7 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 
 ### 11.2 入站起不来（`not_started` 或 `config_apply_failed`）
 
-- **看日志里的 `err`**：`address already in use` 转 11.1；证书读不进来，核对节点配置的 `cert_path` / `key_path` 与文件权限（`docs/node-certificates.md` 第 1 节）；其它报错带着整段日志提给开发。
+- **看日志里的 `err`**：`address already in use` 转 11.1；手填的证书读不进来，核对节点配置的 `cert_path` / `key_path` 与文件权限（`docs/node-certificates.md` 第 2 节）；自动申请的证书看 11.5；其它报错带着整段日志提给开发。
 - **`新配置应用失败，已恢复上一版本`**：新版装不上，上一版在服务，用户不受影响。原因修好后自动重试，不用手动回滚。
 - **面板明确拒绝这个节点（身份吊销、服务器被删）时**，节点不会用落盘缓存起服务：转第 3 章「身份失效」。
 
@@ -733,9 +737,47 @@ ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
 - 指纹不符：命令里的 `--ca-sha256` 与面板 CA 不一致，或者 `--panel` 指到了别的服务，按后台给的命令原样复制。连不上 9443：防火墙放行，或 `config.yaml` 的 `grpc.node.public_host` 不是节点能连到的地址。
 - 身份目录 `/var/lib/pandora-native/identity/` 属 `pandora` 用户、0700，里面的 `key.pem` 是私钥，不要贴出来。
 
+### 11.5 节点证书申请失败（`cert_pending` 久不消失、`cert_expired`、仪表盘「证书异常」）
+
+自动申请的证书由节点端自己向 Let's Encrypt 申请（`docs/node-certificates.md` 第 1 节），验证走 HTTP-01：Let's Encrypt 从公网连节点机的 80/TCP。
+
+**怎么确认**
+
+- 后台节点详情右侧「证书」一行：中文原因、Let's Encrypt 的原话、下次重试时间。原因码与下表对应。
+- 库里看（只读）：
+
+  ```bash
+  pg -c "SELECT name, cert_identifier, cert_not_after, cert_error_code, cert_next_attempt_at, cert_state_at FROM nodes WHERE deleted_at IS NULL AND (cert_error_code IS NOT NULL OR cert_not_after < now() + interval '14 days') ORDER BY cert_not_after NULLS FIRST LIMIT 50;"
+  ```
+
+- 节点机上：`journalctl -u pandora-native -n 500 --no-pager | grep -E '证书申请或续期失败|证书已更新'`。失败的那行带原因码与原话。
+
+| 原因码（`cert_error_code`） | 意思 | 处理 |
+|---|---|---|
+| `challenge_port_busy` | 节点机上别的程序占着 80 | `ss -lntp \| grep -E ':80\b'` 找出来停掉（nginx、caddy、面板等）。每 5 分钟自动重试一次，不消耗 Let's Encrypt 额度 |
+| `validation_failed` | Let's Encrypt 连不上节点机的 80，或连到了别的机器 | 防火墙、云安全组放行入站 80/TCP；域名的 A / AAAA 记录要指向这台节点机（有 AAAA 时 IPv6 也要通）；前面有 CDN（如开了代理的 Cloudflare）的关掉代理 |
+| `dns_failed` | 域名解析不到 | 补 A / AAAA 记录，等生效 |
+| `caa_forbidden` | 域名的 CAA 记录不允许 Let's Encrypt | CAA 里加 `0 issue "letsencrypt.org"` |
+| `rejected_identifier` | Let's Encrypt 拒签这个名字 | 名字是内网地址、保留域名或被封禁：换成公网域名或公网 IP（后台改 SNI 或节点地址） |
+| `rate_limited` | 触发了 Let's Encrypt 的频率限制 | 节点端按 Let's Encrypt 给的时间自动重试（「下次重试」一栏）。常见原因是同一个名字一小时内验证失败太多次：先把上面的验证问题修好，别反复重启 |
+| `paused` | 同一个名字连续失败太久，被 Let's Encrypt 暂停申请 | 先把验证问题修好，再打开原话（`cert_error_detail`）里 Let's Encrypt 给的解除暂停链接，按页面操作；解除后等下一次重试或重启 pdnd |
+| `acme_unreachable` | 节点机连不上 Let's Encrypt | 节点机出站 443 被拦、DNS 坏了：`curl -sI https://acme-v02.api.letsencrypt.org/directory` |
+| `account_failed` | 注册 ACME 账户失败 | 多半也是出站网络问题；持续出现就升级处理 |
+| `store_failed` | 证书写盘失败 | `/var/lib/pandora-native/acme/` 的属主应为 `pandora`、0700；`df -h /var/lib` 看磁盘（第 8 章） |
+| `profile_unsupported` / `unknown` | 其他 | 带上原话升级处理 |
+
+**处理**
+
+1. 按上表修好原因。
+2. 不用手动重试：节点端按「下次重试」的时间自动再申请（15 分钟起、翻倍、最长 4 小时；频率限制按 Let's Encrypt 给的时间）。证书一到立刻装上入站，后台徽标随下一拍心跳消失。
+3. 想马上重试：**【写】** `systemctl restart pandora-native`。重启会清掉退避计时、立即重新申请，也会断开这台节点上的用户连接。在频率限制或暂停期间重启没用，反而会多耗一次失败额度。
+4. `cert_expired`：入站还开着，但客户端校验会失败，订阅里它已经排到后面、有别的节点时被摘掉。修好续期后自动恢复。急的话先在后台把节点改成手填证书（`docs/node-certificates.md` 第 2 节），或者先停用。
+5. **不要**手动删 `/var/lib/pandora-native/acme/`：账户和证书会一起丢，重新申请会多耗额度。
+
 ### 什么时候升级处理
 
 - 端口确实空闲，节点仍长时间报 `port_in_use` 或 `not_started`：带上节点 id、`ss -lntup` 输出和最近 200 行 `journalctl -u pandora-native`。
+- 证书：80 已放行、解析正确，仍连续 24 小时报 `validation_failed`，或出现 `account_failed`、`profile_unsupported`、`unknown`：带上节点 id、证书名字、`cert_error_detail` 原话和含「证书」的日志行。
 - 同一令牌重跑 `enroll` 仍然失败、或新令牌也被拒：带上安装脚本的完整输出（里面不含令牌）和面板 `serve.log` 里含这台服务器 id 的行。
 
 ---

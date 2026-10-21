@@ -35,3 +35,8 @@ paths:
 - 表单说明在 schema `Hints`（`schema_hints.go`）；`policy_test.go` 的 `TestSchemaEnumsMatchPolicyLists` 要求 hint 指向真实字段。
 - ECH（`protocol/ech.go`）：`GenerateECHKey` 出的 ECHConfigList 与 Xboard 同格式（版本 0xfe0d、X25519、套件 (1,1)(1,3)、max_name_len 0、扩展为空，只放一个 ECHConfig）；`ECHCapable` / `ECHUnsupportedReason` 按**翻译后的内核配置**判（vless/vmess/trojan 要 `tls == true` 且非 REALITY、network 非 xhttp-h3/mkcp；anytls 要有证书；naive 要 TLS），节点端 `kernel/inbound_tls_ech.go` 的取值范围与它一致。
 - `country_code` 只在管理端节点 DTO 输出（`panel/internal/module/node/handler/dto_inventory_nodes.go`）；门户与订阅（`panel/internal/module/subscription/`）的任何接口都不得输出（产品「保留规则 3」）。
+
+## 证书来源 cert_mode（10-20）
+- 带证书的 8 个协议（hysteria2、juicity、socks、http、naive、tuic、anytls、trojan）有 `cert_mode`：`acme` / `file`，缺省按 file（旧数据不迁移）。vless / vmess 不加（普通 TLS 未开放，xhttp-h3 只手填）。
+- schema 的 `Required` 含 `cert_mode` 与证书路径，只给前端用：被 `show_if` 藏起来的必填不拦保存；后端在 `validate_kernel.go` 按模式校验（`certModeOf`：acme 时填了路径反而报错，取值只认两种）。表单新建默认 acme，路径与 `allow_insecure` 只在 file 时显示（`certModeFields`、`clientTLSFieldsForCertMode`）；acme 不许 `allow_insecure=true`（`takeClientTLSHints`）。
+- `protocol/cert.go`：`UsesCertificate` / `CertMode` / `CertIdentifier`（SNI 否则节点地址）/ `NormalizeCertIdentifier`（与 pdnd `core` 同口径）/ `CertIdentifierProblem`（拦内网与保留 IP、单段名、通配符、内网后缀）/ `ValidateCertIdentity`（service 保存节点时按地址再查）。
