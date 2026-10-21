@@ -173,6 +173,14 @@ ADMIN_TOKEN=$(curl -sS -X POST "http://127.0.0.1:9001/v1/auth/login" \
 EOF
 )
 
+# 改邮件设置要近期重新验证：用同一个口令换一枚重新验证过的 token
+ADMIN_TOKEN=$(curl -sS -X POST "http://127.0.0.1:9001/v1/auth/reauth" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  --data @- <<EOF | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])'
+{"password":"$(cat /root/.admin_pass)"}
+EOF
+)
+
 # 写入 Mailpit 配置
 curl -sS -X POST "http://127.0.0.1:9001/v1/settings/mail" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \

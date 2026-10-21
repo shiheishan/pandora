@@ -41,6 +41,12 @@ sec "1. 没配邮件服务时入口关闭"
 ATOK=$(json -X POST "$ADM/v1/auth/login" -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASS\"}" | jqr "['access_token']")
 [ -n "$ATOK" ] && ok "管理员已登录" || { bad "管理员登录失败" "响应已隐藏"; exit 1; }
 AH="Authorization: Bearer $ATOK"
+# 改邮件设置要近期重新验证（RecentReauth）：换成重新验证后的令牌
+admin_reauth(){
+  local tok
+  tok=$(json -X POST "$ADM/v1/auth/reauth" -H "$AH" -d "{\"password\":\"$ADMIN_PASS\"}" | jqr "['access_token']")
+  [ -n "$tok" ] && AH="Authorization: Bearer $tok"
+}
 MAIL_ORIG=$(curl -s "$ADM/v1/settings/mail" -H "$AH")
 echo "$MAIL_ORIG" | jqr "['smtp_port']" >/dev/null || { bad "读不到邮件设置" ""; exit 1; }
 
@@ -51,6 +57,7 @@ import sys,json
 d=json.load(sys.stdin)
 print(json.dumps({'smtp_host':d['smtp_host'],'smtp_port':d['smtp_port'] or 465,'encryption':d['encryption'] or 'ssl',
   'smtp_username':d['smtp_username'],'smtp_password':'','from_address':d['from_address'],'from_name':d['from_name']}))")
+  admin_reauth || echo "  [WARN] 恢复邮件设置前重新验证失败"
   C=$(code -X POST "$ADM/v1/settings/mail" -H "$AH" -H 'Content-Type: application/json' -d "$body")
   [ "$C" = 200 ] && echo "  邮件设置已恢复" || echo "  [WARN] 邮件设置恢复失败 HTTP $C"
 }
@@ -70,6 +77,7 @@ fi
 sec "2. 配好 SMTP 后打开（指向一个收不到信的本机端口，信只留在队列里）"
 
 trap restore_mail EXIT
+admin_reauth || { bad "管理员重新验证失败" ""; exit 1; }
 C=$(code -X POST "$ADM/v1/settings/mail" -H "$AH" -H 'Content-Type: application/json' \
   -d '{"smtp_host":"127.0.0.1","smtp_port":9,"encryption":"none","smtp_username":"","smtp_password":"","from_address":"noreply@example.test","from_name":"E2E"}')
 [ "$C" = 200 ] && ok "SMTP 已配置" || { bad "配置 SMTP 失败" "HTTP $C"; exit 1; }
