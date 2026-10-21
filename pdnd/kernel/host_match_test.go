@@ -90,7 +90,7 @@ func TestNativeHTTPFrontEndsAcceptHostWithPort(t *testing.T) {
 			return serveNativeHTTPUpgrade(ln, "/up", "node.example.com", ctx, onConn)
 		}, "GET /up HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"},
 		{"grpc", func(ln net.Listener) (*http.Server, error) {
-			return serveNativeGRPC(ln, "/svc/Tun", "node.example.com", 16<<20, true, onConn)
+			return serveNativeGRPC(ln, "/svc/Tun", "node.example.com", 16<<20, onConn)
 		}, "POST /svc/Tun HTTP/1.1\r\nHost: %s\r\nContent-Type: application/grpc\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"},
 	}
 	for _, fe := range fronts {

@@ -17,7 +17,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/route"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/http2"
 )
 
 // 每个协议至少有一条失败路径真的走到 AdapterHooks.OnConnError。
@@ -208,15 +207,12 @@ func TestConnErrorHookNaiveNonConnect(t *testing.T) {
 	certPath, keyPath := testXHTTPServerCertFiles(t)
 	raw := map[string]any{"tls": true, "cert_path": certPath, "key_path": keyPath}
 	_, rec := startHookedAdapter(t, "naive", port, raw, refusePlane{}, hookUser)
-	tlsConn, err := tls.Dial("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http2.NextProtoTLS}}) //nolint:gosec -- ephemeral test certificate.
+	tlsConn, err := tls.Dial("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec -- ephemeral test certificate.
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tlsConn.Close()
-	client, err := (&http2.Transport{}).NewClientConn(tlsConn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := h2OverConn(tlsConn)
 	req, err := http.NewRequest(http.MethodGet, "https://probe.test/", nil)
 	if err != nil {
 		t.Fatal(err)

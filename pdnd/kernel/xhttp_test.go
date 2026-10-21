@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/apernet/quic-go/http3"
-	"golang.org/x/net/http2"
 )
 
 func TestParseXHTTPConfigAndRequestMeta(t *testing.T) {
@@ -233,12 +232,7 @@ func TestXHTTPServerH2CSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer httpServer.Close()
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
-		},
-	}
+	transport := h2cTestTransport(nil)
 	client := &http.Client{Transport: transport}
 	defer client.CloseIdleConnections()
 	url := "http://" + listener.Addr().String() + "/xhttp/session-h2/1/"

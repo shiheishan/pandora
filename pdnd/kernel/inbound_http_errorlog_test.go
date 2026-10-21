@@ -3,7 +3,6 @@ package kernel
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"log/slog"
@@ -14,9 +13,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/aegispanel/nodeagent/core"
 )
@@ -155,7 +151,7 @@ func TestInboundHTTPErrorLogLines(t *testing.T) {
 	}
 }
 
-// h2c 上 handler panic 也要记下（x/net/http2 的写法是「http2: panic serving」），
+// h2c 上 handler panic 也要记下（HTTP/2 的写法是「http2: panic serving」），
 // 对端地址截网段。
 func TestInboundHTTPServerLogsH2CPanic(t *testing.T) {
 	out := captureSlog(t)
@@ -163,17 +159,13 @@ func TestInboundHTTPServerLogsH2CPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := newInboundHTTPServer(h2c.NewHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	server := newInboundHTTPServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("device-wiring-h2c-panic")
-	}), &http2.Server{}), 64<<10)
+	}), 64<<10)
+	server.Protocols = inboundH2Protocols()
 	go func() { _ = server.Serve(ln) }()
 	defer server.Close()
-	client := &http.Client{Timeout: 3 * time.Second, Transport: &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		},
-	}}
+	client := &http.Client{Timeout: 3 * time.Second, Transport: h2cTestTransport(nil)}
 	if resp, err := client.Get("http://" + ln.Addr().String() + "/"); err == nil {
 		_ = resp.Body.Close()
 	}

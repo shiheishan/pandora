@@ -85,11 +85,11 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 
 | 地方 | 依赖的标准库或 x/net 行为 | 守卫 |
 |---|---|---|
-| naive 入站：`kernel/naive.go`（`http2.ConfigureServer`） | net/http 的 CONNECT 与 HTTP/2。1.26.9 后，错误口令的 CONNECT 回 502，不再回落 | `kernel/probe_resistance_test.go` 的 `TestNaiveProbesServeFallback` |
-| 防探测回落：`kernel/probe_fallback.go`（`http2.Server.ServeConn`）、`probe_fallback_http.go`（`httputil.ReverseProxy`） | 回落站点的 HTTP/1.1、HTTP/2 响应形状 | 同一文件里的其余测试：Reality / TLS / Trojan 回落、`TestParseProbeFallback` |
+| naive 入站：`kernel/naive.go`（`http.Server.Protocols` 开 HTTP/1 与 h2） | net/http 的 CONNECT 与 HTTP/2。1.26.9 后，错误口令的 CONNECT 回 502，不再回落 | `kernel/probe_resistance_test.go` 的 `TestNaiveProbesServeFallback` |
+| 防探测回落：`kernel/probe_fallback.go`（x/net 的 `http2.Server.ServeConn`，理由见代码注释；升 Go 1.27 时 ServeConn 改由 net/http 实现，到时重采 HTTP/2 指纹再看能不能换掉）、`probe_fallback_http.go`（`httputil.ReverseProxy`） | 回落站点的 HTTP/1.1、HTTP/2 响应形状 | 同一文件里的其余测试：Reality / TLS / Trojan 回落、`TestParseProbeFallback` |
 | ShadowTLS 诱饵中继 | TLS 记录层与超时 | `internal/nativewire/shadowtls/service_test.go` |
 | REALITY over QUIC / H3 | `internal/reality` 与 `internal/realityquic` 对标准库 crypto 的引用 | `kernel` 的 `TestNativeRealityH3RoundTrip`、`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` |
-| XHTTP 服务端：`kernel/xhttp_server.go` | net/http 的 HTTP/2 响应写出 | `-tags interop` 的 Xray XHTTP 测试 |
+| gRPC 与 XHTTP 服务端：`kernel/grpc_stream.go`、`kernel/xhttp_server.go`（`inboundH2Protocols`：TLS 上 h2、明文与 REALITY 上 prior knowledge） | net/http 的 HTTP/2 与明文 HTTP/2 分派（非 `*tls.Conn` 且没有返回 `tls.ConnectionState` 的 `ConnectionState()` 方法才走明文 h2） | `-tags interop` 的 Xray XHTTP 测试 |
 | 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
 
 **本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发；`<go.mod 版本>` 取 `pdnd/go.mod` 的 go 指令，如 `go1.26.9`）：

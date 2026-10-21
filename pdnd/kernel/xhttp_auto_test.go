@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/google/uuid"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/http2"
 )
 
 // startAutoXHTTPVLESS 起一个不写 mode（缺省 auto）的 VLESS+XHTTP 明文入站，上游是回显。
@@ -65,15 +63,6 @@ func startAutoXHTTPVLESS(t *testing.T, ctx context.Context, userID int64, id uui
 	return "http://127.0.0.1:" + strconv.Itoa(port), adapter
 }
 
-func h2cTransport() *http2.Transport {
-	return &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
-		},
-	}
-}
-
 func vlessTCPRequestHeader(id uuid.UUID) []byte {
 	header := append([]byte{vlessVersion}, id[:]...)
 	return append(header, 0, vlessTCP, 0x01, 0xbb, 1, 127, 0, 0, 1)
@@ -100,7 +89,7 @@ func TestXHTTPAutoAcceptsEveryClientMode(t *testing.T) {
 	defer cancel()
 	id := uuid.New()
 	base, adapter := startAutoXHTTPVLESS(t, ctx, 7301, id)
-	transport := h2cTransport()
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 
 	t.Run("stream-one 大于 1MB 的上行不被截断", func(t *testing.T) {

@@ -42,7 +42,7 @@ func TestNativeGRPCInteropWithXrayGunClient(t *testing.T) {
 			}
 		}
 	}
-	server, err := serveNativeGRPC(ln, "/svc/Tun", "node.example.com", 16<<20, true, echo)
+	server, err := serveNativeGRPC(ln, "/svc/Tun", "node.example.com", 16<<20, echo)
 	if err != nil {
 		t.Fatal(err)
 	}

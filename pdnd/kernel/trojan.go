@@ -299,7 +299,6 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			}
 			return pathErr
 		}
-		h2cMode := a.tlsConfig == nil
 		if a.tlsConfig != nil {
 			grpcTLS := a.tlsConfig.Clone()
 			grpcTLS.NextProtos = []string{"h2"}
@@ -322,7 +321,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			defer a.removeActive(conn)
 			_ = a.handleConn(connCtx, conn, nil)
 		}
-		server, serveErr := serveNativeGRPC(listener, path, host, 16<<20, h2cMode, onConn)
+		server, serveErr := serveNativeGRPC(listener, path, host, 16<<20, onConn)
 		if serveErr != nil {
 			_ = listener.Close()
 			if a.cancel != nil {

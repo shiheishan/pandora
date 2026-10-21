@@ -28,7 +28,6 @@ import (
 	utls "github.com/refraction-networking/utls"
 	M "github.com/sagernet/sing/common/metadata"
 	upstreamreality "github.com/xtls/reality"
-	"golang.org/x/net/http2"
 )
 
 // probeResult 是一次探测在探测方眼里的全部可观测结果。
@@ -124,14 +123,9 @@ func probeTLSGet(addr, sni string, alpn []string, path string) probeResult {
 	out.handshake, out.alpn, out.certCN = true, state.NegotiatedProtocol, state.PeerCertificates[0].Subject.CommonName
 	start := time.Now()
 	var resp *http.Response
-	if state.NegotiatedProtocol == http2.NextProtoTLS {
-		clientConn, err := (&http2.Transport{}).NewClientConn(conn)
-		if err != nil {
-			out.err = err
-			return out
-		}
+	if state.NegotiatedProtocol == "h2" {
 		req, _ := http.NewRequest(http.MethodGet, "https://"+sni+path, nil)
-		resp, err = clientConn.RoundTrip(req)
+		resp, err = h2OverConn(conn).RoundTrip(req)
 		if err != nil {
 			out.err = err
 			return out
@@ -507,7 +501,7 @@ func TestNaiveProbesServeFallback(t *testing.T) {
 				assertNoBrand(t, "naive GET", got)
 			}
 			for _, padding := range []string{"!!!!!!!!!!!!!!!!", ""} {
-				tr := &http2.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec -- 测试证书。
+				tr := h2TLSTestTransport()
 				req, _ := http.NewRequest(http.MethodConnect, "https://"+addr, nil)
 				req.Host = "www.example.com:443"
 				if padding != "" {

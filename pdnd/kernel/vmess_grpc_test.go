@@ -2,7 +2,6 @@ package kernel
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	vmessref "github.com/sagernet/sing-vmess"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/http2"
 )
 
 type vmessGRPCClientConn struct {
@@ -132,12 +130,7 @@ func TestVMessNativeGRPCH2CLoopback(t *testing.T) {
 	}
 
 	requestReader, requestWriter := io.Pipe()
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
-		},
-	}
+	transport := h2cTestTransport(nil)
 	// The adapter's h2c endpoint exposes one long-lived gRPC POST. VMess bytes
 	// are framed as gRPC messages by vmessGRPCClientConn below.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+itoa(port)+"/VMessService/Tun", requestReader)
@@ -253,11 +246,7 @@ func TestVMessNativeGRPCTLSLoopback(t *testing.T) {
 	}
 
 	requestReader, requestWriter := io.Pipe()
-	transport := &http2.Transport{
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			return (&tls.Dialer{NetDialer: &net.Dialer{}, Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}}}).DialContext(ctx, network, address) //nolint:gosec -- test certificate is ephemeral.
-		},
-	}
+	transport := h2TLSTestTransport()
 	defer transport.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://127.0.0.1:"+itoa(port)+"/VMessTLSService/Tun", requestReader)
 	if err != nil {

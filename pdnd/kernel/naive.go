@@ -19,7 +19,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/route"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/http2"
 )
 
 // naiveAdapter implements the NaiveProxy HTTP/2 CONNECT wire contract in
@@ -101,7 +100,7 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 	tlsConfig = tlsConfig.Clone()
 	// 与真 Web 服务器一样同时宣告 h2 与 http/1.1；只给 h2 时 http/1.1 客户端
 	// 握完 TLS 就被关，是一眼可辨的特征。naive 客户端只用 h2。
-	tlsConfig.NextProtos = []string{http2.NextProtoTLS, "http/1.1"}
+	tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 	listen := spec.Config.Listen
 	if listen == "" {
 		listen = "0.0.0.0"
@@ -119,12 +118,9 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 	server.BaseContext = func(net.Listener) context.Context { return a.ctx }
 	// TLS 在 tls.NewListener 里、由 net/http 握手：失败只出现在 ErrorLog，接到 connErr。
 	server.ErrorLog = inboundHTTPErrorLog(a.connErr)
-	if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {
-		_ = ln.Close()
-		a.cancel()
-		a.mu.Unlock()
-		return err
-	}
+	server.Protocols = new(http.Protocols)
+	server.Protocols.SetHTTP1(true)
+	server.Protocols.SetHTTP2(true)
 	a.listener, a.server = ln, server
 	a.mu.Unlock()
 	a.wg.Add(1)

@@ -43,12 +43,6 @@ linters:
       - internal/nativewire/hysteria2
       - internal/nativewire/tuic
     rules:
-      # golang.org/x/net/http2 与 h2c 在新版 x/net 里标了弃用（让位给 net/http 的 Protocols）。
-      # 内核的 gRPC / XHTTP / naive 入站与探测回落、测试里的客户端都还用它；换成 net/http 会改
-      # HTTP/2 的握手与设置帧，牵涉防探测的指纹，单独做、单独验证（防探测回落、interop），不在 lint 里顺手改
-      - linters:
-          - staticcheck
-        text: 'SA1019: .*(golang\.org/x/net/http2|\[http\.(Transport|Server)[].]|http2\.ServeConnOpts)'
       # 测试里的 xhttp / gRPC / naive 响应体是长连接流，由对端或辅助函数关，bodyclose 认不出这类写法
       - path: _test\.go
         linters:

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/google/uuid"
-	"golang.org/x/net/http2"
 )
 
 // encodeGunHunk 按 gun 传输把数据包成一条 Hunk（客户端视角，测试用）。
@@ -132,9 +130,7 @@ func TestVLESSNativeGRPCH2CLoopback(t *testing.T) {
 	request.Header.Set("Content-Type", "application/grpc")
 	request.Header.Set("grpc-encoding", "gzip")
 	request.Header.Set("TE", "trailers")
-	transport := &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, address)
-	}}
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 	payload := []byte("native-vless-grpc")
 	vlessHeader := []byte{vlessVersion}
@@ -212,9 +208,7 @@ func TestTrojanNativeGRPCH2CLoopback(t *testing.T) {
 	}
 	request.Header.Set("Content-Type", "application/grpc")
 	request.Header.Set("TE", "trailers")
-	transport := &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, address)
-	}}
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 	payload := []byte("native-trojan-grpc")
 	header := []byte(trojanPasswordProof(password) + "\r\n")

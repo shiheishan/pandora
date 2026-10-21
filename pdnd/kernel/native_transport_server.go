@@ -23,6 +23,18 @@ func newInboundHTTPServer(handler http.Handler, maxHeaderBytes int) *http.Server
 		ErrorLog: inboundHTTPErrorLog(connErrorReporter{})}
 }
 
+// inboundH2Protocols 是 gRPC 与 XHTTP 承载的协议集：TLS 连接按 ALPN 走 HTTP/1.1 或 h2；
+// 明文与 REALITY 解出的流（不是 *tls.Conn）由客户端直接发 HTTP/2 连接前言（prior knowledge），
+// 其余按 HTTP/1.1。不认 Upgrade: h2c（nginx 等主流服务端也不认，Xray、sing-box、mihomo 的
+// 客户端都不发）。
+func inboundH2Protocols() *http.Protocols {
+	p := new(http.Protocols)
+	p.SetHTTP1(true)
+	p.SetHTTP2(true)
+	p.SetUnencryptedHTTP2(true)
+	return p
+}
+
 // serveNativeWebSocket and serveNativeHTTPUpgrade are shared HTTP front ends
 // for protocol adapters whose wire decoder already speaks a net.Conn stream.
 // The request context is intentionally not passed through: net/http cancels

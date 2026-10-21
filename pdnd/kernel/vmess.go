@@ -341,7 +341,6 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.cancel()
 			return pathErr
 		}
-		h2cMode := a.tlsConfig == nil
 		if a.tlsConfig != nil {
 			grpcTLS := a.tlsConfig.Clone()
 			grpcTLS.NextProtos = []string{"h2"}
@@ -370,7 +369,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 				a.mu.Unlock()
 			}
 		}
-		server, serveErr := serveNativeGRPC(ln, path, host, 16<<20, h2cMode, onConn)
+		server, serveErr := serveNativeGRPC(ln, path, host, 16<<20, onConn)
 		if serveErr != nil {
 			_ = ln.Close()
 			a.cancel()

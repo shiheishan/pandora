@@ -21,7 +21,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	xnet "github.com/xtls/xray-core/common/net"
 	xrayreality "github.com/xtls/xray-core/transport/internet/reality"
-	"golang.org/x/net/http2"
 )
 
 func TestNativeRealityXHTTPXrayClientInterop(t *testing.T) {
@@ -140,8 +139,7 @@ func TestNativeRealityXHTTPXrayClientInterop(t *testing.T) {
 	// REALITY clients select HTTP/2 for XHTTP. The same Pandora listener must
 	// accept an h2 prior-knowledge session after the REALITY handshake instead
 	// of only passing an HTTP/1.1 smoke test.
-	h2Transport := &http2.Transport{AllowHTTP: true}
-	h2Transport.DialTLSContext = func(dialCtx context.Context, network, _ string, _ *tls.Config) (net.Conn, error) {
+	h2Transport := h2cTestTransport(func(dialCtx context.Context, network, _ string) (net.Conn, error) {
 		raw, dialErr := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(dialCtx, network, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if dialErr != nil {
 			return nil, dialErr
@@ -152,7 +150,7 @@ func TestNativeRealityXHTTPXrayClientInterop(t *testing.T) {
 			return nil, realityErr
 		}
 		return rc, nil
-	}
+	})
 	h2Client := &http.Client{Transport: h2Transport, Timeout: 5 * time.Second}
 	h2Payload := []byte("reality-xhttp-h2-native")
 	h2Header := append([]byte{vlessVersion}, id[:]...)
