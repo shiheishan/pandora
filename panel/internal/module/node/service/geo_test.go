@@ -68,6 +68,26 @@ func TestRegionText(t *testing.T) {
 			want: "日本 东京",
 		},
 		{
+			name: "省州与城市同名只留一段",
+			loc:  geoip.Location{Country: "Austria", Region: "Vienna", City: "Vienna"},
+			want: "Austria Vienna",
+		},
+		{
+			name: "同名比较忽略大小写与首尾空白",
+			loc:  geoip.Location{Country: "Singapore", Region: " singapore ", City: "SINGAPORE"},
+			want: "Singapore",
+		},
+		{
+			name: "缺省份时国家与城市同名也去重",
+			loc:  geoip.Location{Country: "新加坡", City: "新加坡"},
+			want: "新加坡",
+		},
+		{
+			name: "不相邻的同名不去重",
+			loc:  geoip.Location{Country: "Luxembourg", Region: "Canton", City: "Luxembourg"},
+			want: "Luxembourg Canton Luxembourg",
+		},
+		{
 			name: "超长截到 64 字",
 			loc:  geoip.Location{Country: strings.Repeat("长", 40), Region: strings.Repeat("名", 40)},
 			want: strings.Repeat("长", 40) + " " + strings.Repeat("名", 23),

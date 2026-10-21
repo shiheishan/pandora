@@ -466,6 +466,27 @@ export function mapProtocolErrors(fields: readonly ProtocolField[], errors: Read
 export const realityEnabled = (nodeType: string, values: FormValues) => (nodeType === 'vless' || nodeType === 'trojan') && values.tls === '2'
 export const REALITY_KEYS = { private_key: 'reality_settings.private_key', public_key: 'reality_settings.public_key', short_id: 'reality_settings.short_id' } as const
 
+/**
+ * 「生成密钥对」的结果写回表单：私钥、公钥总是换新；short_id 已填（去掉首尾空白非空）就保留管理员填的，空着才用生成的。
+ * keptShortId 为 true 表示保留了原值（提示里要说）。
+ */
+export function withRealityKeypair(values: FormValues, k: { private_key: string; public_key: string; short_id: string }): { values: FormValues; keptShortId: boolean } {
+  const keptShortId = Boolean(values[REALITY_KEYS.short_id]?.trim())
+  return {
+    values: {
+      ...values,
+      [REALITY_KEYS.private_key]: k.private_key,
+      [REALITY_KEYS.public_key]: k.public_key,
+      [REALITY_KEYS.short_id]: keptShortId ? values[REALITY_KEYS.short_id] : k.short_id,
+    },
+    keptShortId,
+  }
+}
+
+/** 生成密钥对后的提示：保留了 short_id 时写明 */
+export const realityKeypairToast = (keptShortId: boolean) =>
+  keptShortId ? '已生成 REALITY 密钥对，short_id 保留你填的值；私钥保存后不再回显' : '已生成 REALITY 密钥对，私钥保存后不再回显'
+
 /** VLESS 的 Vision 流控：只有 REALITY + tcp 能用（后端 validateVLESSFlow） */
 export const VISION_FLOW = 'xtls-rprx-vision'
 const visionEligible = (nodeType: string, v: FormValues) => nodeType === 'vless' && v.tls === '2' && (v.network || 'tcp') === 'tcp'

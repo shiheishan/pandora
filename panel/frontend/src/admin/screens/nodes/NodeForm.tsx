@@ -24,6 +24,7 @@ import {
   protocolLabel,
   protocolNotices,
   realityEnabled,
+  realityKeypairToast,
   serverAcceptsNodes,
   toFormValues,
   toProtocolConfig,
@@ -31,6 +32,7 @@ import {
   validateBasic,
   visibleFields,
   withProtocolDefaults,
+  withRealityKeypair,
   type BasicForm,
   type FormValues,
   type ProtocolField,
@@ -348,13 +350,9 @@ export function NodeCreateWizard({
   const reality = useMutation({
     mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
     onSuccess: (k) => {
-      setValues({
-        ...current,
-        [REALITY_KEYS.private_key]: k.private_key,
-        [REALITY_KEYS.public_key]: k.public_key,
-        [REALITY_KEYS.short_id]: k.short_id,
-      })
-      toast('已生成 REALITY 密钥对，私钥保存后不再回显')
+      const next = withRealityKeypair(current, k)
+      setValues(next.values)
+      toast(realityKeypairToast(next.keptShortId))
     },
     onError: (error) => fail(error),
   })
@@ -693,13 +691,9 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
   const reality = useMutation({
     mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
     onSuccess: (k) => {
-      setValues({
-        ...current,
-        [REALITY_KEYS.private_key]: k.private_key,
-        [REALITY_KEYS.public_key]: k.public_key,
-        [REALITY_KEYS.short_id]: k.short_id,
-      })
-      toast('已生成 REALITY 密钥对，私钥保存后不再回显')
+      const next = withRealityKeypair(current, k)
+      setValues(next.values)
+      toast(realityKeypairToast(next.keptShortId))
     },
     onError: (error) => fail(error),
   })
