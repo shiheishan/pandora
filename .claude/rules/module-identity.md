@@ -63,3 +63,9 @@ paths:
 - 账号排行：缺省按关联 IP（两路 IP 合并去重）；共用 IP 只在各自一路内判断再按明文去重；按「机房命中」排时只在关联 IP 选出的候选里重排。
 - IP 只给打码串（`maskIP`：IPv4 `a.b.*.*`，IPv6 前两段加 `:*`，前端 `users/RiskTab.tsx` 的 `maskIp` 同口径）与「显示」令牌：`base64url(Seal("unix|ip", AAD "identity.trace_reveal:"+管理员 id))`，2 小时有效，换管理员解不开。`TraceReveal` 先写 `security.source_ip_viewed`（`data.view = trace`，`data.filter` 里是 `masked` 与 `ip_hash`：`traceAuditIPHash`，与审计 ip_hash 同口径）再返回明文，审计写不进去就不给明文；令牌失效（篡改、过期、别的管理员签发）回 422 `fields.token`、不写审计。用例在 `trace_reveal_test.go`（假 auditOps）与 `trace_reveal_pg_test.go`。
 - 路由 `GET /v1/trace/{ips,subscribers,accounts,reveal}` 挂在后台安全页同组，只要 `RequireAuth`；window / sort 的取值在 service 校验（422 `fields.window` / `fields.sort`）。
+
+## 后台安全读路径（`service/ops_*.go`）
+
+- 访问明细 `AccessLog`：按账号筛选时给 audit 传 `TargetActions: [actionLoginFailed]`，冲着这个账号的匿名登录失败也列出；匿名登录失败的被试账号由 `accessTarget` 取（操作者为空、动作 `user.login_failed`、对象 user），放进 `TargetUserID` / `TargetUserEmail`，与操作人邮箱同一次 `Emails` 查完；别的匿名事件（如 `session.refresh_reuse`）不挂到人身上。`actionLoginFailed` 与 auth 的 `loginFailedAction` 同值（identity 不能 import auth）。守卫 `ops_access_test.go` 的 `TestAccessTarget`、`ops_risk_pg_test.go` 的 `TestPGAccessLog`。
+- 用户画像 `UserProfile`：每个 IP 读时 `locate` 出归属地与网络类型；近 90 天与别的账号共用（`Accounts > 1`）时按 `clusterRisk` 给 `Risk`（与风控聚类同一条规则），顶层 `Risk` 取最高一档（`higherRisk`）。`users.risk_level` 列没有任何代码写（永远 normal），后台不再用它判断风险；要删列另做迁移。
+- 读访问明细、聚类列表、画像都会先记 `security.source_ip_viewed`（后台访问日志第一页 5 秒轮询时每次都记）。
