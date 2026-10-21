@@ -3,7 +3,7 @@
 -- marketing 类只有 admin.broadcast 的 email 模板，模板由 registry.go 固定、后台不能新建。删掉存量行，
 -- 并加 CHECK 让营销类只剩 email，与 service 的偏好目录（inbox.go 的 preferenceCatalog）一致。
 --
--- 锁与耗时（整个迁移在一个事务里，锁持到提交）：notification_preferences 只存用户改过的项（每人至多 6 行）：
+-- 锁与耗时（整个迁移在一个事务里，锁持到提交）：notification_preferences 只存用户改过的项（迁移前每人至多 6 行，之后 5 行）：
 --   ADD CONSTRAINT CHECK 拿 ACCESS EXCLUSIVE 并整表扫一遍，与行数成正比，十万行级在 1 秒内；期间改偏好的请求等锁。
 --   预检：SELECT count(*) FROM notification_preferences; 到百万行级时把 CHECK 改成 NOT VALID 再另起迁移 VALIDATE。
 --   失败回滚：任一步失败（含 lock_timeout 超时）整笔回滚，库停在 00064 原样，换低峰重试即可。

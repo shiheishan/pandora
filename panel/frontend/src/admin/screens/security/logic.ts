@@ -618,8 +618,8 @@ interface SwitchMeta {
   desc: string
   /** 连带影响，显示在说明下方 */
   note?: string
-  /** 缺行时的实际效果：R58 的四个新开关缺行视为开启（true），auth.registration 缺行即关闭（false）；undefined = 缺行不显示 */
-  whenMissing?: boolean
+  /** 缺行时的实际效果：R58 的四个新开关缺行视为开启（true），auth.registration 缺行即关闭（false） */
+  whenMissing: boolean
 }
 
 /** 按显示顺序。D-A-3 已决（5.A.2、R102）：设计稿的「订阅下发使用缓存」不做；三个没有代码读取的开关（ops.bulk_export / ops.reports / node.autoscale）后端从种子删除，字典也不再收；三个核心项（auth.login / subscription.renewal / client.config_sync）没有代码读取，迁移 00064 删去，essential 一并取消 */
@@ -643,7 +643,6 @@ export interface SwitchView {
   degraded: boolean
   reason: string | null
   status: string
-  tone: 'danger' | 'muted'
 }
 
 const metaOrder = (code: string) => {
@@ -655,11 +654,11 @@ export function switchViews(rows: readonly SwitchRow[]): SwitchView[] {
   const views: SwitchView[] = rows.map((r) => {
     const meta = SWITCH_META[r.code]
     const base = { code: r.code, title: meta?.title ?? r.code, desc: meta?.desc ?? '前端字典里还没有这个开关的说明；打开「已开启」即关闭这项功能（后端 enabled=false）。', note: meta?.note, reason: r.reason }
-    return { ...base, kind: 'toggle', degraded: !r.enabled, status: r.enabled ? '关闭' : '已开启', tone: r.enabled ? 'muted' : 'danger' }
+    return { ...base, kind: 'toggle', degraded: !r.enabled, status: r.enabled ? '关闭' : '已开启' }
   })
   const present = new Set(rows.map((r) => r.code))
   for (const [code, meta] of Object.entries(SWITCH_META)) {
-    if (present.has(code) || meta.whenMissing === undefined) continue
+    if (present.has(code)) continue
     const degraded = !meta.whenMissing
     views.push({
       code,
@@ -670,7 +669,6 @@ export function switchViews(rows: readonly SwitchRow[]): SwitchView[] {
       degraded,
       reason: null,
       status: degraded ? '已开启' : '关闭',
-      tone: degraded ? 'danger' : 'muted',
     })
   }
   return views.sort((a, b) => metaOrder(a.code) - metaOrder(b.code) || a.code.localeCompare(b.code))

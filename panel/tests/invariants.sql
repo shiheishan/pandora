@@ -830,7 +830,7 @@ $sql$);
 SELECT _reject('OPS-005', '营销类没有 Telegram 偏好', $sql$
   INSERT INTO notification_preferences (user_id, category, channel, enabled)
   VALUES ('00000000-0000-7000-8000-000000000101', 'marketing', 'telegram', false);
-$sql$);
+$sql$, 'notification_preferences_marketing_email_only');
 
 --------------------------------------------------------------------------------
 -- OPS-001 内部备注只能由客服或系统写（00027_support.sql）

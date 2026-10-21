@@ -15,7 +15,7 @@ description: pandora 后台加一个设置项（站点设置、开关、限制�
 | 是什么 | 放哪 | 先例 |
 |---|---|---|
 | 运营在后台改、改了要生效的值（文案、上限、开关、渠道参数、密钥） | **设置组**：`settings` 表的键，缺行取 Go 里的缺省值，**迁移不种设置行** | `home.*`（`service/home.go`）、`purchase.*`（`service/purchase.go`） |
-| 出事时紧急停用一项功能的总闸 | **降级开关**：`feature_switches` 一行，要新迁移种行（见 new-migration skill）、`keys.go` 的 `Switch*` 常量与 `SeedSwitches`（`TestSeedSwitchesMatchMigration` 对照迁移），路由上挂 `k.Switch(code)` | `billing.checkout`（`order/handler/handler.go`） |
+| 出事时紧急停用一项功能的总闸 | **降级开关**：`feature_switches` 一行，要新迁移种行（见 new-migration skill）、`keys.go` 的 `Switch*` 常量与 `SeedSwitches`（按 code 升序插入，`TestSeedSwitchesMatchMigration` 对照迁移），路由上挂 `k.Switch(code)` | `billing.checkout`（`order/handler/handler.go`） |
 | 启动就要、改了要重启、或属于部署的东西（库地址、主密钥、监听端口） | **部署配置**：viper 配置，不进后台 | `public_base_url` 是配置值，后台的 `site.url` 只是覆盖 |
 
 缺省值、可选范围、谁看得到是**产品规则**：任务说明没写就停下问用户，不自己定。工程上的事（键名、存法、生效机制）按下面自己定。

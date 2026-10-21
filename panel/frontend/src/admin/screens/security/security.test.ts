@@ -325,9 +325,9 @@ describe('degradation switches', () => {
 
   it('flips the polarity: enabled=false means the pause is on', () => {
     const [reg] = switchViews([row('auth.registration', false, '机器注册潮')])
-    expect(reg).toMatchObject({ kind: 'toggle', title: '暂停新用户注册', degraded: true, status: '已开启', tone: 'danger', reason: '机器注册潮' })
+    expect(reg).toMatchObject({ kind: 'toggle', title: '暂停新用户注册', degraded: true, status: '已开启', reason: '机器注册潮' })
     const [checkout] = switchViews([row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
-    expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭', tone: 'muted' })
+    expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭' })
   })
 
   it('orders switches by the dictionary order', () => {
