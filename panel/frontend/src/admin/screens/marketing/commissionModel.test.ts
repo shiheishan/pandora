@@ -27,7 +27,7 @@ describe('commission', () => {
     expect(withdrawalState('requested')).toMatchObject({ label: '待审核', canReview: true, canPay: false })
     expect(withdrawalState('approved')).toMatchObject({ label: '待打款', canReview: false, canPay: true })
     expect(withdrawalState('paid')).toMatchObject({ label: '已打款', canReview: false, canPay: false })
-    expect(withdrawalState('rejected')).toMatchObject({ label: '已拒绝', canReview: false, canPay: false })
+    expect(withdrawalState('rejected')).toMatchObject({ label: '已驳回', canReview: false, canPay: false })
     expect(withdrawalState('other')).toMatchObject({ label: 'other', canReview: false, canPay: false })
   })
 

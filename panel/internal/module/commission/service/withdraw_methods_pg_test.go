@@ -159,6 +159,22 @@ func TestMarkPaidUSDT(t *testing.T) {
 	if !paidUSDT.Equal(dec2("2.123456")) || ref != hash || status != WithdrawalPaid {
 		t.Fatalf("打款后行不对: usdt=%s ref=%s status=%s", paidUSDT, ref, status)
 	}
+	mc, err := e.svc.MyCommission(ctx, referrer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, w := range mc.Withdrawals {
+		if w.ID == id {
+			found = true
+			if w.TxHash != hash {
+				t.Fatalf("MyCommission TxHash %q，应为 %q", w.TxHash, hash)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("未找到提现 %s", id)
+	}
 
 	id2, err := e.svc.RequestWithdrawal(uctx, referrer, dec2("10.00"), "usdt_trc20", testTRC20Addr)
 	if err != nil {
@@ -166,6 +182,22 @@ func TestMarkPaidUSDT(t *testing.T) {
 	}
 	if _, err := e.svc.ReviewWithdrawal(actx, id2, true, ""); err != nil {
 		t.Fatal(err)
+	}
+	mc2, err := e.svc.MyCommission(ctx, referrer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found2 bool
+	for _, w := range mc2.Withdrawals {
+		if w.ID == id2 {
+			found2 = true
+			if w.TxHash != "" {
+				t.Fatalf("未打款的提现 TxHash 应为空串，得 %q", w.TxHash)
+			}
+		}
+	}
+	if !found2 {
+		t.Fatalf("未找到提现 %s", id2)
 	}
 	badAmt := dec2("1.1234567")
 	if err := e.svc.MarkWithdrawalPaid(actx, id2, hash, &badAmt); !assertValidationFieldErr(err, "paid_usdt_amount") {
@@ -194,6 +226,22 @@ func TestMarkPaidNonUSDTRejectsAmount(t *testing.T) {
 	}
 	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0001", nil); err != nil {
 		t.Fatalf("alipay 无实付应成功: %v", err)
+	}
+	mc, err := e.svc.MyCommission(ctx, referrer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, w := range mc.Withdrawals {
+		if w.ID == id {
+			found = true
+			if w.Status != WithdrawalPaid || w.TxHash != "" {
+				t.Fatalf("alipay 打款后 status=%s tx_hash=%q，应为 paid 且空串", w.Status, w.TxHash)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("未找到提现 %s", id)
 	}
 	var paidUSDT *decimal.Decimal
 	if err := e.row(ctx, `SELECT paid_usdt_amount FROM withdrawals WHERE id = ?`, id).Scan(&paidUSDT); err != nil {

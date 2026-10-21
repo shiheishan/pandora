@@ -266,6 +266,43 @@
   color: var(--text-2);
 }
 
+/* USDT 提现的交易哈希行 */
+.tx {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+}
+
+.txCode {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.txAct {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--brand);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.txAct:hover {
+  text-decoration: underline;
+}
+
+.txAct:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* 邀请记录的打码邮箱（样稿 .who-e） */
 .whoE {
   font-family: var(--font-display);

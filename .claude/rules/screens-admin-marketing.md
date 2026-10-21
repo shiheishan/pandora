@@ -17,7 +17,7 @@ paths:
 - 后端恒回的字段在 schema 里必填、不写降级分支：`gift-cards/stats` 的 `balance_issued`，模板的 `price_archived`，`commission/overview` 的 `total_earned` / `invited_users` / `scope`（后端缺设置时已兜底 `every_order`）。
 - 前端校验的错误键与后端 422 `fields` 同名（各 model 文件的表单构建），改字段名两边一起改。
 - 佣金与提现的二级切换是带计数的 `FilterTabs`：待复核佣金（count = `need_review`）、提现申请（count = `waiting_withdrawals`）、规则设置。待复核与提现都是 `Card flush` + kit `RowList`；「待结科目余额不足」那条说明用红字。规则设置是一张 Card 三段（返佣规则 / 三级分销 / 开放提现）+ 底栏保存。
-- 提现筛选「处理中 / 已完成 / 全部」：处理中 = `requested,approved`，已完成 = `paid,rejected`，全部不带 status（`queries.ts` 的 `WITHDRAWAL_FILTER_STATUS`，后端 status 收逗号分隔多状态）。提现只有这四态（`withdrawalState`）。「通过」先弹确认框；拒绝必填理由（用户可见）。
+- 提现筛选「处理中 / 已完成 / 全部」：处理中 = `requested,approved`，已完成 = `paid,rejected`，全部不带 status（`queries.ts` 的 `WITHDRAWAL_FILTER_STATUS`，后端 status 收逗号分隔多状态）。提现只有这四态（`withdrawalState`）。「通过」先弹确认框；驳回必填理由（用户可见）。提现被拒两端都叫「已驳回」（按钮「驳回」、理由「驳回理由」），与注销时「驳回提现」同一说法。
 - 佣金规则合成一张表单（`CommissionSettings.tsx`，`levelsModel.ts` 的 `settingsToForm` / `buildSettingsConfig`）：返佣比例、冻结期、计佣范围、三级分销开关与三级比例、开放提现开关、最低提现、提现方式，一次 `POST v1/commission/config` 发全部 10 个字段。三级之和与开启全 0 的错误都挂 `distribution_l1`；提现方式开关两种状态都至少选一种（关着时留着的方式在重新开放时直接生效）。关闭提现 = 佣金解冻即自动转入余额。文件名 `levelsModel.ts` 不要和组件文件只差大小写。
 - 单独佣金设置（`CommissionOverrides.tsx`，放在规则设置页签表单下面）：按邮箱设，比例或范围留空 = 跟全局，再保存整行覆盖；增删都要 reauth、不带幂等键。
 - 打 USDT 提现的款：流水号填链上交易哈希（前端只看形状），实付 USDT 数量可选、十进制字符串；面板不发起链上转账，文案不要暗示会自动打款。

@@ -160,10 +160,10 @@ func TestRejectWithdrawal(t *testing.T) {
 		t.Fatalf("拒绝: %s %v", st, err)
 	}
 	if err := e.svc.MarkWithdrawalPaid(actx, id, "TX-0001", nil); !errors.Is(err, ErrWithdrawalNotPayable) {
-		t.Fatalf("已拒绝的打款应拒绝: %v", err)
+		t.Fatalf("已驳回的打款应拒绝: %v", err)
 	}
 	if _, err := e.svc.ReviewWithdrawal(actx, id, true, ""); !errors.Is(err, ErrWithdrawalHandled) {
-		t.Fatalf("已拒绝的再批准应拒绝: %v", err)
+		t.Fatalf("已驳回的再批准应拒绝: %v", err)
 	}
 
 	mc, err := e.svc.MyCommission(ctx, referrer)
