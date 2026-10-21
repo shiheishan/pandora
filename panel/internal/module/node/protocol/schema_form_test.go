@@ -265,16 +265,6 @@ func assertFieldDefault(t *testing.T, schema Schema, path string, want any) {
 	}
 }
 
-func assertFieldNoDefault(t *testing.T, schema Schema, path string) {
-	f := findField(schema, path)
-	if f == nil {
-		t.Fatalf("协议 %s 缺少字段 %s", schema.NodeType, path)
-	}
-	if f.Default != nil {
-		t.Fatalf("协议 %s 字段 %s：不应有 Default，实际 %v", schema.NodeType, path, f.Default)
-	}
-}
-
 func assertFieldShowIf(t *testing.T, schema Schema, path string, want map[string][]string) {
 	f := findField(schema, path)
 	if f == nil {
