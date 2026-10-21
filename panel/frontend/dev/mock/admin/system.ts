@@ -390,6 +390,7 @@ export const system: MockModule = {
       ctx.send(200, { ok: true, to })
     },
     'POST /v1/settings/mail': async (ctx) => {
+      if (!ctx.requireReauth()) return
       reply(ctx, await saveMail(ctx))
     },
 
@@ -440,6 +441,7 @@ export const system: MockModule = {
       ctx.send(200, { sent: true })
     },
     'POST /v1/settings/telegram': async (ctx) => {
+      if (!ctx.requireReauth()) return
       reply(ctx, await saveTelegram(ctx))
     },
 

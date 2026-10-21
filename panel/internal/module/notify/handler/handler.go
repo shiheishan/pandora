@@ -95,7 +95,7 @@ func (h *Handler) RegisterPublic(v1 *gin.RouterGroup, k route.Kit) {
 // RegisterAdmin 注册管理端路由。
 func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/settings/mail", k.RequireAuth, h.getMailSettings)
-	v1.POST("/settings/mail", k.RequireAuth, h.setMailSettings)
+	v1.POST("/settings/mail", k.RequireAuth, k.RecentReauth, h.setMailSettings)
 	v1.POST("/settings/mail/test", k.RequireAuth, h.testMailSettings)
 	v1.GET("/mail/templates", k.RequireAuth, h.listTemplates)
 	v1.POST("/mail/templates/preview", k.RequireAuth, h.previewTemplate)

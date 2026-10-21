@@ -169,7 +169,7 @@ func TestGetMailSettingsKeys(t *testing.T) {
 
 func TestSetMailSettingsPasswordAndOptional(t *testing.T) {
 	fake := &fakeNotify{}
-	e, _ := setupEngine(fake)
+	e, k := setupEngine(fake)
 	base := `{"smtp_host":"","smtp_port":25,"encryption":"none","smtp_username":"","from_address":"","from_name":""`
 
 	for _, tc := range []struct {
@@ -214,6 +214,10 @@ func TestSetMailSettingsPasswordAndOptional(t *testing.T) {
 	var ok okResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &ok); err != nil || !ok.OK {
 		t.Fatalf("ok resp %s", rec.Body.String())
+	}
+	// 改 SMTP 口令与注册方式，和其他设置写接口一样要近期重新验证（每次请求过一次）
+	if k.reauthCalls != 4 {
+		t.Fatalf("reauth calls %d, want 4", k.reauthCalls)
 	}
 }
 
