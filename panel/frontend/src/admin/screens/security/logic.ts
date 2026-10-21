@@ -690,3 +690,12 @@ export function validateSwitchReason(degrade: boolean, reason: string): string {
 export function switchBody(degrade: boolean, reason: string): { enabled: boolean; reason: string } {
   return { enabled: !degrade, reason: reason.trim() }
 }
+
+/** 术语的一句话解释：表头与标签悬停（title）用，口径照 Go（identity/service/trace_merge.go、ops_access.go 的 clusterRisk） */
+export const TERM_HINT = {
+  datacenterHits: '来自机房 IP（云服务器、VPN 出口）的登录等行为与订阅拉取次数；正常用户多用家里宽带或手机网络，次数多要留意',
+  uaKinds: '用过几种不同的客户端标识（User-Agent：某个浏览器、Clash、sing-box 各算一种），登录等行为与订阅拉取两路各自去重后相加',
+  sharedIps: '这些 IP 也被别的账号用过（两路合并去重）：可能是一家人或同一公司出口，也可能是共享、倒卖账号',
+  linkedIps: '登录等行为用过的 IP 与订阅拉取用过的 IP 合并去重后的个数',
+  clusterRisk: '机房出口或 5 个以上账号为高风险，3–4 个为中风险，2 个为低风险',
+} as const

@@ -1,10 +1,31 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { formatCount, formatDateTime } from '../../../core/format'
+import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Modal, Pager, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { PageActions } from '../../kit'
-import { ACTOR_LABEL, actorLabel, AUDIT_PAGE, authLabel, clockTime, EMPTY_AUDIT_FILTER, exportQuery, hasAuditFilter, objectLabel, OUTCOME_LABEL, OUTCOME_TONE, validateExportRange, type AuditFilter } from './logic'
+import { DebouncedInput } from './DebouncedInput'
+import {
+  ACTOR_LABEL,
+  actorLabel,
+  actionLabel,
+  AUDIT_PAGE,
+  AUDIT_SEARCH_PLACEHOLDER,
+  auditFromQuery,
+  auditToQuery,
+  authLabel,
+  clockTime,
+  EMPTY_AUDIT_FILTER,
+  exportQuery,
+  hasAuditFilter,
+  objectLabel,
+  OUTCOME_LABEL,
+  OUTCOME_TONE,
+  reasonLabel,
+  validateExportRange,
+  type AuditFilter,
+} from './logic'
 import { useAudit, useFailure, useInvalidateSecurity } from './queries'
 import { ACTOR_KINDS, OUTCOMES, type ActorKind, type AuditEvent, type Outcome } from './schemas'
 import css from './security.module.css'
@@ -31,7 +52,7 @@ const columns: TableColumn<AuditEvent>[] = [
         <span className={css.auditWhoSub}>{ACTOR_LABEL[e.actor_kind]}</span>
         {/* 手机上隐藏了时间与动作两列，挪到这里一行 */}
         <span className={`${css.auditWhoSub} m-only`}>
-          <span className="mono">{e.action}</span> · {clockTime(e.occurred_at)}
+          <span>{actionLabel(e.action)}</span> · {clockTime(e.occurred_at)}
         </span>
       </span>
     ),
@@ -39,23 +60,30 @@ const columns: TableColumn<AuditEvent>[] = [
   {
     key: 'action',
     header: '动作',
-    mono: true,
     hideOnMobile: true,
-    render: (e) => (
-      <span className={`${css.ellipsis} ${css.cellAction}`} title={e.action}>
-        {e.action}
-      </span>
-    ),
+    render: (e) => {
+      const label = actionLabel(e.action)
+      return (
+        <span className={css.auditWho} title={`${label}（${e.action}）`}>
+          <span className={`${css.ellipsis} ${css.auditWhoMain} ${css.cellAction}`}>{label}</span>
+          {label !== e.action && <span className={`${css.auditWhoSub} mono`}>{e.action}</span>}
+        </span>
+      )
+    },
   },
   {
     key: 'object',
     header: '对象',
     hideOnMobile: true,
-    render: (e) => (
-      <span className={`${css.ellipsis} ${css.cellObject}`} title={e.reason ? `原因：${e.reason}` : (e.resource_id ?? undefined)}>
-        {objectLabel(e)}
-      </span>
-    ),
+    render: (e) => {
+      const reason = reasonLabel(e.reason)
+      return (
+        <span className={css.auditWho} title={e.resource_id ?? undefined}>
+          <span className={`${css.ellipsis} ${css.auditWhoMain} ${css.cellObject}`}>{objectLabel(e)}</span>
+          {reason && <span className={css.auditWhoSub}>原因：{reason}</span>}
+        </span>
+      )
+    },
   },
   {
     key: 'ip',
@@ -85,30 +113,14 @@ const columns: TableColumn<AuditEvent>[] = [
 ]
 
 export function AuditTab() {
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<AuditFilter>(EMPTY_AUDIT_FILTER)
-  const [offset, setOffset] = useState(0)
+  const location = useHashLocation()
+  const { filter, offset } = auditFromQuery(location.query)
   const [exporting, setExporting] = useState(false)
   const audit = useAudit(filter, offset)
 
-  // 搜索框防抖：停手 300ms 再查，免得每个字一次请求
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setFilter((f) => (f.q === search ? f : { ...f, q: search }))
-      setOffset(0)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [search])
-
-  const patch = (next: Partial<AuditFilter>) => {
-    setFilter((f) => ({ ...f, ...next }))
-    setOffset(0)
-  }
-  const clear = () => {
-    setSearch('')
-    setFilter(EMPTY_AUDIT_FILTER)
-    setOffset(0)
-  }
+  const go = (f: AuditFilter, o: number) => navigate('/security/audit', { replace: true, query: auditToQuery(f, o) })
+  const patch = (next: Partial<AuditFilter>) => go({ ...filter, ...next }, 0)
+  const clear = () => go(EMPTY_AUDIT_FILTER, 0)
   const filtered = hasAuditFilter(filter)
 
   return (
@@ -118,8 +130,14 @@ export function AuditTab() {
       </PageActions>
 
       <div className={css.toolbar}>
-        <Input size="sm" aria-label="搜索审计日志" fieldClassName={css.search} placeholder="操作人、动作或对象" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Input size="sm" mono aria-label="动作前缀" fieldClassName={css.prefix} placeholder="动作前缀，如 order." value={filter.action} onChange={(e) => patch({ action: e.target.value })} />
+        <DebouncedInput
+          value={filter.q}
+          onChange={(q) => go({ ...filter, q }, 0)}
+          placeholder={AUDIT_SEARCH_PLACEHOLDER}
+          aria-label="搜索审计日志"
+          fieldClassName={css.search}
+        />
+        <Input size="sm" mono aria-label="动作前缀" fieldClassName={css.prefix} placeholder="动作代号开头，如 plan、order." value={filter.action} onChange={(e) => patch({ action: e.target.value })} />
         <Select size="sm" aria-label="操作者类型" emptyOption="全部操作者" value={filter.actor} options={ACTOR_KINDS.map((k) => ({ value: k, label: ACTOR_LABEL[k] }))} onChange={(e) => patch({ actor: e.target.value as ActorKind | '' })} />
         <Select size="sm" aria-label="结果" emptyOption="全部结果" value={filter.outcome} options={OUTCOMES.map((o) => ({ value: o, label: OUTCOME_LABEL[o] }))} onChange={(e) => patch({ outcome: e.target.value as Outcome | '' })} />
       </div>
@@ -131,7 +149,12 @@ export function AuditTab() {
           isEmpty={(d) => d.events.length === 0}
           empty={
             filtered ? (
-              <Empty bare title="没有符合条件的审计记录" description="换个关键词，或清空筛选再看。" action={<Button size="sm" onClick={clear}>清空筛选</Button>} />
+              <Empty
+                bare
+                title="没有符合条件的审计记录"
+                description="搜索只认邮箱、动作代号和对象 ID，套餐名、节点名这类名称搜不到；可以换成动作前缀（如 plan）再看。"
+                action={<Button size="sm" onClick={clear}>清空筛选</Button>}
+              />
             ) : (
               <Empty bare title="还没有审计记录" description="后台与用户端的写操作、登录和系统任务都会记在这里。" />
             )
@@ -144,7 +167,7 @@ export function AuditTab() {
               columns={columns}
               rows={page.events}
               rowKey={(e) => e.id}
-              footer={page.total > AUDIT_PAGE ? <Pager inline total={page.total} limit={AUDIT_PAGE} offset={offset} onChange={setOffset} /> : <span>共 {formatCount(page.total)} 条</span>}
+              footer={page.total > AUDIT_PAGE ? <Pager inline total={page.total} limit={AUDIT_PAGE} offset={offset} onChange={(o) => go(filter, o)} /> : <span>共 {formatCount(page.total)} 条</span>}
             />
           )}
         </QueryView>
