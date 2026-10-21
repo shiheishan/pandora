@@ -12,7 +12,7 @@ paths:
 - 兑换事务与执行顺序：
   - `Redeem` 严格在同一事务中按序执行：拒已注销账号（identity `IsDeleted`，给用户行加共享锁，`ErrAccountDeleted` 409）→ 锁码（`CodeByHash` FOR UPDATE）→ 校验状态（未用）、有效期与模板状态 → 校验模板限制与每人限额（`LockUserTemplate`）→ 发放前判定并校验落点选择（落点失败回 422，事务回滚，卡不被消耗）→ 状态更新为 `used`（`UpdateCodeStatus` 乐观条件 `WHERE status = 'unused'`）→ 执行发放（`grant` 发放余额、时长、套餐、流量等）→ 写兑换流水（`InsertRedemption`）→ 审计与完成幂等。
   - 兑换失败对外统一返回中性错误 `ErrCodeUnusable`，防止利用不同报错探测卡密存在性。
-- 模板字段：领取条件只有仅新用户 / 仅付费用户（付费记录经 order 的 `PaidHistory` 端口），使用限制只有每人限兑次数（`max_use_per_user`）。说明、主题色、需邀请、限定套餐（`gift_card_template_plans`）、冷却小时后台建不出，10-21 前后端连库删了（迁移 00065），门户卡面小字只按卡型给固定文案，不要加回。
+- 模板字段：领取条件只有仅新用户 / 仅付费用户（付费记录经 order 的 `PaidHistory` 端口），使用限制只有每人限兑次数（`max_use_per_user`）。说明、主题色、需邀请、限定套餐（`gift_card_template_plans`）、冷却小时后台建不出，10-21 前后端连库删了（迁移 00066），门户卡面小字只按卡型给固定文案，不要加回。
 - 套餐卡与落点机制：
   - 卡提供内容（`offerOf`）涉及订阅时，落点必须由用户选择（`Preview` 下发选项，`Redeem` 传入 choice 并在事务内二次校验）。
   - 套餐卡模板必须有价格档（库里 CHECK `gift_card_templates_plan_needs_price`）：订阅套餐选一档周期价，一次性套餐选它唯一的价；保存时价格必须在售且属于该套餐。
