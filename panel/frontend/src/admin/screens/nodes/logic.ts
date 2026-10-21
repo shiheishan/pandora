@@ -1,5 +1,5 @@
 import { relativeTime } from '../../../core/format'
-import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
+import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServerStatus, ServingStatus } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -175,6 +175,9 @@ export function bindBlock(n: Pick<NodeRow, 'serving_status' | 'movable'>): strin
   if (!n.movable) return '节点在役，先停用再改绑 / 解绑'
   return null
 }
+
+/** 服务器下拉里能不能选：与后端 lockServerForNodes 一致，新建、绑定、复制都只拒已退役（容量满由后端 409 标到表单） */
+export const serverAcceptsNodes = (s: { status: ServerStatus }) => s.status !== 'retired'
 
 /** 绑定弹窗的校验：服务器必选，端口 1–65535 必填 */
 export function validateBind(serverId: string, port: string): Record<string, string> {

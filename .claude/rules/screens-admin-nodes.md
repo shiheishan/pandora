@@ -25,7 +25,7 @@ paths:
 - 「协议参数」是只读键值摘要（`logic.protocolSummary`：按后端 schema 的中文名与 `option_labels` 生成，敏感字段写「不回显」，隐藏字段不列），「编辑」开 760 弹窗装 NodeForm（`NodeProtocol.tsx`）；弹窗里有未保存修改时关闭要确认（NodeForm 的 `onDirtyChange`）。
 - 「路由与流量」是三块只读摘要（路由 / 流量与标签 / 访问，`NodeSettings.tsx`），「编辑」各开一个弹窗装现成的编辑器（`NodeRouting`、`NodeTraffic`、`NodeAccess`）。节点池选择在「访问」弹窗里单独保存（`NodePoolSection`，PATCH 只带 `row_version` 与 `pool_id`）；ECH 也在「访问」。
 - 「身份与操作」：`NodeIdentity`（kit KvList + CopyButton）+「所在服务器」（未绑：绑定服务器；已绑：改绑 + DangerRow 解绑，确认框）+ DangerRow 吊销身份 / 退役（确认框、二次认证照旧）。退役后留在详情页显示已退役，文案「退役后不可恢复」，不写「可以删除」。
-- 绑定 / 改绑弹窗选服务器 + 端口，`POST v1/nodes/:id/bind`（`logic.validateBind`、`bindBody`），端口冲突 / 容量满的 409 标到表单；解绑 `POST v1/nodes/:id/unbind`。能不能操作只看后端 `movable`（草稿或停用）经 `logic.bindBlock`，在役置灰写「节点在役，先停用再改绑 / 解绑」。没绑服务器时页头「上线节点」置灰（`logic.activateBlock`），右栏服务器写「未绑定 · 去绑定」链到「身份与操作」，列表服务器列写「未绑定」。
+- 绑定 / 改绑弹窗选服务器 + 端口，`POST v1/nodes/:id/bind`（`logic.validateBind`、`bindBody`）；弹窗与新建向导的服务器下拉都经 `logic.serverAcceptsNodes` 置灰（与后端 `lockServerForNodes` 同口径：只拒已退役，容量满靠 409）；端口冲突 / 容量满的 409 标到表单；解绑 `POST v1/nodes/:id/unbind`。能不能操作只看后端 `movable`（草稿或停用）经 `logic.bindBlock`，在役置灰写「节点在役，先停用再改绑 / 解绑」。没绑服务器时页头「上线节点」置灰（`logic.activateBlock`），右栏服务器写「未绑定 · 去绑定」链到「身份与操作」，列表服务器列写「未绑定」。
 - 节点列表一次取 1000 条并总带 `include_retired=1`：「全部」里藏掉已退役是前端筛选的事，刚退役的节点详情页还要能继续显示。
 - 列表的筛选 `f`、搜索 `q`、标签 `tag` 都在地址查询串里（`logic.parseNodeFilter`；replace 回写，搜索框本地状态 + 300ms 防抖写回）；勾选后实心 BulkBar（kit）替换筛选行；标签筛选是 Menu；页脚常驻「共 N 个节点 · M 个在线」（`logic.nodeCounts`），超过一页走服务端分页时换成 `<Pager inline>`；「新建节点」在 PageActions；≤639 次要列隐藏，名称下折一行摘要。
 - 节点只有 `serving_status` 一个状态（接口里没有 `status`）。草稿节点用详情页头「上线节点」（activate）一步推到 active 并让服务器就绪（服务器没就绪也能用）；草稿时「启用」置灰并指向「上线」。停用后再恢复用「启用」（要求服务器已就绪）。

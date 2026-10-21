@@ -24,6 +24,7 @@ import {
   protocolLabel,
   protocolNotices,
   realityEnabled,
+  serverAcceptsNodes,
   toFormValues,
   toProtocolConfig,
   UNBOUND_HINT,
@@ -543,7 +544,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
                   options={(servers.data ?? []).map((s) => ({
                     value: s.id,
                     label: `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`,
-                    disabled: s.status !== 'ready' && s.status !== 'draft',
+                    disabled: !serverAcceptsNodes(s),
                   }))}
                 />
               </div>

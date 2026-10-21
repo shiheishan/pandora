@@ -269,6 +269,8 @@ const store: Node[] = [
     },
     4,
   ),
+  // 没绑服务器的草稿：节点先作为配置存着（不占端口、不下发），详情「身份与操作」里绑定后才能上线
+  node({ name: '伦敦 01（未绑定）', node_type: 'trojan', serving_status: 'draft', server_id: null, country_code: 'GB', last_heartbeat_at: null, identity_serial: null, protocol_config: { network: 'tcp' } }),
 ]
 keepAlive(store, (n) => n.serving_status !== 'retired' && !n.deleted && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }

@@ -481,7 +481,9 @@ const users_: MockModule = {
     'GET /v1/users/:id/profile': (ctx) => {
       const u = findUser(ctx)
       const n = u ? users.indexOf(u) : 0
-      const ip = (k: number) => `112.64.${(n * 7 + k) % 250}.${(k * 31 + 18) % 250}`
+      // 只用文档段（RFC 5737 的三个 /24），k 不同末段就不同
+      const DOC_NETS = ['192.0.2', '198.51.100', '203.0.113']
+      const ip = (k: number) => `${DOC_NETS[(n * 7 + k) % 3]}.${((n * 7 + k * 31 + 18) % 254) + 1}`
       const shared = n % 4 === 2
       ctx.send(200, {
         events: Array.from({ length: 6 }, (_, k) => ({ action: k % 3 ? 'auth.login' : 'user.password_changed', outcome: k === 4 ? 'failure' : 'success', ip: ip(k % 2), ua: 'Mozilla/5.0', domain: 'public', at: iso((k * 9 + 1) * 3_600_000) })),

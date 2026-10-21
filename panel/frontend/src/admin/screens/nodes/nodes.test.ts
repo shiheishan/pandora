@@ -9,6 +9,7 @@ import {
   bindBlock,
   bindBody,
   canTransition,
+  serverAcceptsNodes,
   createBody,
   emptyBasic,
   filterNodes,
@@ -428,6 +429,11 @@ describe('basic info and PATCH', () => {
     expect(bindBlock({ serving_status: 'disabled', movable: true })).toBeNull()
     expect(bindBlock({ serving_status: 'active', movable: false })).toBe('节点在役，先停用再改绑 / 解绑')
     expect(bindBlock({ serving_status: 'retired', movable: false })).toBe('节点已退役')
+  })
+
+  it('serverAcceptsNodes 与后端 lockServerForNodes 一致：只拒已退役', () => {
+    for (const status of ['draft', 'ready', 'draining', 'maintenance'] as const) expect(serverAcceptsNodes({ status })).toBe(true)
+    expect(serverAcceptsNodes({ status: 'retired' })).toBe(false)
   })
 
   it('validateBind and bindBody', () => {

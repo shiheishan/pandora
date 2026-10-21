@@ -13,6 +13,7 @@ import {
   bindBlock,
   bindBody,
   canActivate,
+  serverAcceptsNodes,
   UNBOUND_HINT,
   validateBind,
 } from './logic'
@@ -234,7 +235,7 @@ function NodeServerBinding({
             options={(servers.data ?? []).map((s) => ({
               value: s.id,
               label: `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`,
-              disabled: s.status === 'retired',
+              disabled: !serverAcceptsNodes(s),
             }))}
           />
           <Input
