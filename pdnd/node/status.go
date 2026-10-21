@@ -3,8 +3,11 @@ package node
 import (
 	"errors"
 	"strings"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
+
+	"github.com/aegispanel/nodeagent/core"
 )
 
 // 运行状态如实上报。
@@ -14,7 +17,8 @@ import (
 //
 //	RUNNING   入站在服务，面板最新确认过的配置已装上
 //	DEGRADED  新配置装不上、旧配置仍在服务（config_apply_failed 或具体原因）；
-//	          面板还没确认、正靠落盘缓存服务（serving_cached_config）
+//	          面板还没确认、正靠落盘缓存服务（serving_cached_config）；
+//	          cert_expired：在服务，但证书已过期（续期一直失败），客户端会校验失败
 //	DOWN      入站没起来（not_started 或具体原因）
 //
 // 原因是纯 ASCII 的机器可读串。端口冲突时内核给 port_in_use:<端口>/<tcp|udp>:<占用者节点 id 或 other>，
@@ -31,7 +35,7 @@ const (
 )
 
 // runtime 是这个节点要上报的运行状态。
-func (n *Node) runtime() *nodev1.NodeRuntime {
+func (n *Node) runtime(now time.Time) *nodev1.NodeRuntime {
 	rt := &nodev1.NodeRuntime{NodeId: n.id}
 	var reason string
 	switch {
@@ -44,10 +48,14 @@ func (n *Node) runtime() *nodev1.NodeRuntime {
 	case n.fromCache:
 		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED
 		reason = reasonServingCached
+	case n.certExpired(now):
+		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED
+		reason = core.ReasonCertExpired
 	default:
 		rt.Status = nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING
 	}
 	rt.Reason, rt.ReasonNodeId = splitPortReason(reason)
+	rt.Cert = n.certStatus()
 	return rt
 }
 
@@ -103,7 +111,7 @@ func (s *Server) sendHeartbeat() {
 		if n == nil {
 			continue
 		}
-		rt := n.runtime()
+		rt := n.runtime(s.clock())
 		if rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
 			n.log.Warn("节点降级运行", "状态", rt.Status.String(), "原因", rt.Reason, "err", n.lastApplyErr)
 		}

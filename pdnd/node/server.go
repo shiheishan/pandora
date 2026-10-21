@@ -53,6 +53,8 @@ type Options struct {
 	HostMetrics func() *nodev1.HostMetrics
 	// Upgrader 在线升级助手；nil 表示本机不支持在线升级，收到指令一律忽略。
 	Upgrader Upgrader
+	// Certs 自动申请证书管理；nil 表示不自动申请。
+	Certs CertManager
 }
 
 // Server 是一台服务器的编排。
@@ -62,6 +64,7 @@ type Server struct {
 	// 端口冲突时可以写出对方节点 id。
 	scope  string
 	kernel core.Core
+	certs  CertManager
 	log    *slog.Logger
 	cache  *serverCache
 	now    func() time.Time
@@ -119,6 +122,7 @@ func New(o Options) *Server {
 		log:               o.Logger.With("server", o.ServerID),
 		now:               now,
 		metric:            metric,
+		certs:             o.Certs,
 		nodes:             make(map[string]*Node),
 		pushInterval:      defaultPushInterval,
 		heartbeatInterval: defaultHeartbeatInterval,
@@ -177,6 +181,10 @@ func (s *Server) Run(ctx context.Context, link Link) {
 	defer heartbeat.Stop()
 	defer house.Stop()
 	curPush, curHeartbeat := s.pushInterval, s.heartbeatInterval
+	var certUpdates <-chan string
+	if s.certs != nil {
+		certUpdates = s.certs.Updates()
+	}
 
 	for {
 		select {
@@ -186,6 +194,8 @@ func (s *Server) Run(ctx context.Context, link Link) {
 			s.handleEvent(ev)
 		case out := <-s.upgradeDone:
 			s.onUpgradeDone(out)
+		case id := <-certUpdates:
+			s.onCertReady(id)
 		case <-push.C:
 			s.report()
 			push.Reset(panel.Jitter(s.pushInterval))
@@ -237,12 +247,17 @@ func (s *Server) handleEvent(ev panel.Event) {
 
 // stopAllForTombstone 处理身份失效（面板发 Tombstone，或建流被拒并要求重新接入）：立刻停掉全部入站、删掉落盘缓存。
 // 产品定（10-13）：服务器退役、删除或身份被吊销后，机器不能在面板管不到（不扣量、不按到期摘人）的情况下继续服务；
-// 缓存一并删掉，进程重启也不会靠缓存恢复服务，只能在后台生成新令牌重新接入。
+// 缓存一并删掉（连同自动申请的证书与 ACME 账户），进程重启也不会靠缓存恢复服务，只能在后台生成新令牌重新接入。
 func (s *Server) stopAllForTombstone(reason string) {
 	for _, n := range s.nodes {
 		s.removeNode(n)
 	}
 	s.order = nil
+	if s.certs != nil {
+		if err := s.certs.Purge(); err != nil {
+			s.log.Warn("清空自动申请证书失败", "err", err)
+		}
+	}
 	if s.cache != nil {
 		if err := s.cache.saveOrder(nil); err != nil {
 			s.log.Warn("清空节点顺序缓存失败", "err", err)

@@ -37,10 +37,18 @@ func (n *Node) registerInboundOwner() {
 }
 
 // applyConfig 装一份配置并记下结果：失败原因留给心跳上报，成功即清空。
+// 证书没到（acme）不碰内核，旧配置（若有）继续服务，走坏版本台账。
 // 主循环按 ServerConfig 的顺序逐个装，同机端口天然先到先得，不用另外排队。
 func (n *Node) applyConfig(cfg map[string]any, nodeType string) error {
+	if err := n.certPrecheck(cfg); err != nil {
+		n.lastApplyErr = err
+		return err
+	}
 	err := n.applyConfigOnce(cfg, nodeType)
 	n.lastApplyErr = err
+	if err == nil {
+		n.fileCertNotAfter = fileCertNotAfter(cfg)
+	}
 	return err
 }
 

@@ -77,6 +77,8 @@ func (s *Server) applyServerConfig(cfg *nodev1.ServerConfig) {
 	if cfg == nil {
 		return
 	}
+	// 先把全部 acme 标识符交给证书管理（不论这次能不能装上），新出现的立即排队申请。
+	s.wantCerts(cfg.GetNodes())
 	seen := make(map[string]bool, len(cfg.GetNodes()))
 	order := make([]string, 0, len(cfg.GetNodes()))
 	for _, nc := range cfg.GetNodes() {

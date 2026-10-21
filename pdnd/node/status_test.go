@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 )
@@ -51,20 +52,20 @@ func TestRuntimeStates(t *testing.T) {
 	ts.welcome()
 	ts.config(portConfig(t, "n1", "vless", 20001))
 	n := ts.node(t, "n1")
-	if rt := n.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING || rt.Reason != "" {
+	if rt := n.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING || rt.Reason != "" {
 		t.Fatalf("装上后 = %v", rt)
 	}
 	k.failAddInbound = 1
 	ts.config(portConfig(t, "n1", "vless", 20009))
-	if rt := n.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonApplyFailed {
+	if rt := n.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonApplyFailed {
 		t.Fatalf("新配置装不上时 = %v", rt)
 	}
 	fresh := &Node{id: "n9"}
-	if rt := fresh.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN || rt.Reason != reasonNotStarted {
+	if rt := fresh.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN || rt.Reason != reasonNotStarted {
 		t.Fatalf("没起来的节点 = %v", rt)
 	}
 	cached := &Node{id: "n8", started: true, fromCache: true}
-	if rt := cached.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
+	if rt := cached.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
 		t.Fatalf("靠缓存服务的节点 = %v", rt)
 	}
 }

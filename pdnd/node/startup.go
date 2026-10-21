@@ -3,6 +3,8 @@ package node
 import (
 	"context"
 
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
+
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
 )
@@ -21,6 +23,7 @@ func (s *Server) Start() {
 		s.log.Info("没有可用的落盘缓存，等面板下发配置", "err", err)
 		return
 	}
+	var cached []*nodev1.NodeConfig
 	for _, id := range order {
 		if _, dup := s.nodes[id]; dup || id == "" {
 			continue
@@ -28,6 +31,14 @@ func (s *Server) Start() {
 		nc, err := s.cache.node(id).loadConfig()
 		if err != nil {
 			s.log.Warn("节点的落盘配置不可用，等面板下发", "node", id, "err", err)
+			continue
+		}
+		cached = append(cached, nc)
+	}
+	s.wantCerts(cached)
+	for _, nc := range cached {
+		id := nc.GetNodeId()
+		if _, dup := s.nodes[id]; dup || id == "" {
 			continue
 		}
 		n := s.newNode(id, nc.GetNodeType())

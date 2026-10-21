@@ -11,7 +11,7 @@ import (
 
 func runtimeOf(t *testing.T, ts *testServer, id string) *nodev1.NodeRuntime {
 	t.Helper()
-	return ts.node(t, id).runtime()
+	return ts.node(t, id).runtime(time.Time{})
 }
 
 // 全量配置按列表装；同一份再发不重装；回执每条流各报一次。

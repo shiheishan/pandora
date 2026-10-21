@@ -2,6 +2,7 @@ package node
 
 import (
 	"testing"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
@@ -105,7 +106,7 @@ func TestRollbackFailureThenStagedUsers(t *testing.T) {
 	k.failAddInbound = 2
 	ts.config(portConfig(t, "n1", "vless", 20002))
 	n := ts.node(t, "n1")
-	if n.started || len(n.known) != 0 || n.runtime().Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN {
+	if n.started || len(n.known) != 0 || n.runtime(time.Time{}).Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DOWN {
 		t.Fatal("回滚失败后应停、镜像作废")
 	}
 	assertStrings(t, "回执", ts.link.usersAcksOf("n1"), "u1-a:ok", "u1-a:resync")
@@ -159,11 +160,11 @@ func TestColdStartFromCacheWithUsers(t *testing.T) {
 	if len(configs) != 1 || configs[0].ContentSha256 != nc.ContentSha256 || len(users) != 1 || users[0].Version != "u1-a" {
 		t.Fatalf("Hello 快照 = %v %v", configs, users)
 	}
-	if rt := ts.node(t, "n1").runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
+	if rt := ts.node(t, "n1").runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
 		t.Fatalf("冷启动状态 = %v", rt)
 	}
 	ts.welcome()
-	if rt := ts.node(t, "n1").runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
+	if rt := ts.node(t, "n1").runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
 		t.Fatalf("Welcome 后状态 = %v", rt)
 	}
 }
