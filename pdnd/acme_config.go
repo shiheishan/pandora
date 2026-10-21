@@ -18,6 +18,7 @@ import (
 // 这几项只给验收与测试（pebble、LE staging）改。
 type acmeConfig struct {
 	// DirectoryURL 是 ACME 目录地址（https）；空 = Let's Encrypt 生产环境。
+	// 改了只影响以后的申请：已落盘的证书照常服务到续期，要立刻换得删掉 <cache_dir>/acme/certs/（docs/node-certificates.md 1.8）。
 	DirectoryURL string `json:"directory_url"`
 	// HTTPPort 是 HTTP-01 验证在本机监听的端口；0 = 80。CA 总是连公网 80，只有 80 前面另有转发时才改。
 	HTTPPort int `json:"http_port"`

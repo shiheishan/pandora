@@ -112,6 +112,7 @@ vless / vmess 的普通 TLS 还没开放；它们的 xhttp-h3 只支持手填。
 ```
 
 - `directory_url`：ACME 目录地址，必须是 https；空的时候用 Let's Encrypt 生产环境。
+  改了它只影响以后的申请：账户会在新 CA 上重新注册，但已经落盘的证书照常服务，到续期时才换成新 CA 签的。要立刻换（比如 staging 验收完切回生产），停掉 `pandora-native`，删掉 `/var/lib/pandora-native/acme/certs/`，再启动，节点会重新申请。
 - `http_port`：HTTP-01 在本机监听的端口，0 表示 80。CA 总是连公网 80，只有 80 前面另有转发时才改。
 - `ca_file`：额外信任的 CA 证书（PEM），连 pebble 这类自签 CA 时用。
 

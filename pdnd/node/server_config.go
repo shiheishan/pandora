@@ -13,6 +13,7 @@ import (
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
+	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
 )
 
@@ -165,6 +166,12 @@ func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 			f.nextRetry = now.Add(panel.Jitter(stoppedRetryInterval))
 		}
 		s.sendConfigAck(n, sha, nodev1.ConfigPhase_CONFIG_PHASE_FAILED, f.reason, f.detail)
+		if f.reason == core.ReasonCertPending {
+			// 首次申请证书时必经这一步，不算故障：证书一到就重装（onCertReady），申请失败由证书管理器自己报 Warn
+			n.log.Info("等证书申请下来再装入站", "版本", sha, "证书", configACMEIdentifier(nc), "第几次", f.attempts,
+				"旧配置仍在服务", n.started)
+			return
+		}
 		n.log.Error("配置装不上", "版本", sha, "原因", f.reason, "第几次", f.attempts,
 			"旧配置仍在服务", n.started, "下次重试", f.nextRetry.Sub(now).Round(time.Second), "err", err)
 		return

@@ -118,7 +118,7 @@ paths:
   回收在锁内复核「仍闲置满 7 天」再删；注册账户期间被 `Purge`（gen 变了）就不挂回账户、删掉写回的 account.json。
   读盘的证书冷启动即可用；`Certificate` 只做原子读（写时复制的 map），内核握手路径上不加锁。
 - 编排（`node/certs.go`）：每次 ServerConfig（与冷启动的缓存）先把全部 acme 标识符整体交给 `Want`，不论这次能不能装上；
-  装之前 `certPrecheck`：证书没到返回 `*core.CertPendingError`、不碰内核，走坏版本台账；`Updates()` 一到，因这个标识符 cert_pending 的节点立刻重装。
+  装之前 `certPrecheck`：证书没到返回 `*core.CertPendingError`、不碰内核，走坏版本台账（日志只打 Info「等证书申请下来再装入站」，首次申请必经、不算故障；申请失败由 Manager 打 Warn）；`Updates()` 一到，因这个标识符 cert_pending 的节点立刻重装。
   `Want` 的集合 = 本次下发的标识符 ∪ 正在服务的旧版本的标识符（换标识符时新证书没到前旧证书不被回收），装上新版本后再同步一次。冷启动缓存装不上也记进坏版本台账，证书一到即装、不等面板。
   在服务的证书过期报 DEGRADED `cert_expired`。Tombstone 时 `Purge` 删掉账户与全部证书。node 包只认 `CertManager` 接口，不 import `certs` 与 `kernel`。
 - 装配（`main.go`）：内核 `SetCertSource` 与 `node.Options.Certs` 在冷启动之前就位；Manager 建不起来只记错，手填证书的节点照常服务。
