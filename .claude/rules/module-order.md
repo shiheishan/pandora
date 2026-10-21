@@ -54,6 +54,7 @@ paths:
   - 后台开单落点由人选（`planPlacements` / `candidatesFrom` 最多 50 份，生效中优先、新的优先）：同款订阅套餐是续费、同款一次性是叠加（`PlacementStack`），换掉生效中的永不自动默认。
   - 人工开单（`CreateManualOrder`）：原因必填 5–500 字，审计 `order.manual_created`；结算方式收 `grant`（赠送履约）、`pending`、`offline`（同一事务调 `RecordOffline`），不接受 `balance`。
 - 账本与佣金：
+  - 后台余额流水（只读，用户 10-21 定）：`GET v1/users/:id/balance-entries`（ledger handler，只要 RequireAuth、不要 RecentReauth；`pagination.Parse` 缺省 20、上限 100），响应 `{ entries: [{ id, kind, delta, balance_after, memo, order_id|null, at }], total }`，金额整数分。与门户钱包 `GET v1/me/balance` 是同一个科目（`user_balance`）的同一批分录、同序（分录 `created_at DESC, id DESC`）。变动后余额：`repo.BalanceEntries` 一条语句用窗口函数给出开户以来到这条为止的贷方、借方合计（SQL 只聚合），service `runningBalance` 相减；每次扫这个用户该科目的全部分录（`ledger_entries_account_idx`），后台只读、单人量级可以接受。`order_id` 只在交易来源是订单（`SourceOrder`）时给。并发交易的分录 created_at 是事务开始时刻，中途某行的变动后余额可能是提交顺序上没出现过的中间值，最新一行总等于科目余额。只读 ledger 自己的表，不补用户邮箱、订单号（前端从用户详情取）。
   - 账本科目按 id 升序加锁（见上面「科目怎么加锁」）。`Post` 拒收专用 kind（`KindBalanceHold`, `KindBalanceRelease`, `KindOrderPaid`, `KindBalanceAdjusted` 须调专用方法）。
   - 后台提现列表 `GET v1/withdrawals?status=`：逗号分隔多个状态取并集（与订单、工单列表的多状态筛选同写法，handler 拆、service 的 `withdrawalStatusFilter` 校验去重），任一不是 requested / approved / rejected / paid 整体 422 `status`；不带为全部，最多 200 笔。后台「处理中」= requested,approved，「已完成」= paid,rejected。
   - 可用佣金唯一口径：`available = Available - InFlight - Paid - TransferTotal - ForfeitTotal`（`ForfeitTotal` 是注销时作废的可提现佣金，`commission_forfeitures`）。提现申请 `RequestWithdrawal` 与转余额都先 `LockUser`。提现申请与审批只改状态，打款 `MarkWithdrawalPaid` 才记账。
