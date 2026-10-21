@@ -175,10 +175,10 @@ func (s *Service) ReviewWithdrawal(ctx context.Context, id uuid.UUID, approve bo
 	reason = strings.TrimSpace(reason)
 	switch {
 	case approve && reason != "":
-		return "", errs.Invalid(map[string]string{"reason": "批准时不能填写拒绝理由"})
+		return "", errs.Invalid(map[string]string{"reason": "批准时不能填写驳回理由"})
 	case !approve && reason == "":
-		// 拒绝必须给理由：用户会来问，「不知道为什么被拒」最容易升级成工单
-		return "", errs.Invalid(map[string]string{"reason": "拒绝时必须填写理由"})
+		// 驳回必须给理由：用户会来问，「不知道为什么被驳回」最容易升级成工单
+		return "", errs.Invalid(map[string]string{"reason": "驳回时必须填写理由"})
 	case strings.ContainsRune(reason, 0):
 		return "", errs.Invalid(map[string]string{"reason": "理由含有非法字符"})
 	case utf8.RuneCountInString(reason) > MaxRejectReasonRunes:
@@ -208,7 +208,7 @@ func (s *Service) ReviewWithdrawal(ctx context.Context, id uuid.UUID, approve bo
 				return err
 			}
 		}
-		// 只有申请中的可以审批：已打款的再被「拒绝」会让钱既出去了又记成拒绝
+		// 只有申请中的可以审批：已打款的再被「驳回」会让钱既出去了又记成驳回
 		if !CanWithdrawalTransition(w.Status, to) {
 			return ErrWithdrawalHandled
 		}
