@@ -82,7 +82,7 @@ func (s *Service) MyInvite(ctx context.Context, userID uuid.UUID) (Invite, []Inv
 	invitees := make([]Invitee, 0, len(rows))
 	for _, r := range rows {
 		invitees = append(invitees, Invitee{
-			Email:    maskEmail(r.Email),
+			Email:    MaskEmail(r.Email),
 			BoundAt:  r.BoundAt,
 			RiskFlag: r.RiskFlag,
 		})
@@ -226,7 +226,15 @@ func newInviteCode() (string, error) {
 	return string(out), nil
 }
 
-func maskEmail(e string) string {
+// DeletedAccountLabel 是已注销账号在用户端的显示名：占位邮箱（DeletedEmail）打码后仍像个邮箱，用户看不懂。
+const DeletedAccountLabel = "已注销的账号"
+
+// MaskEmail 给用户端看的邮箱打码：保留 @ 前至多两个字符与域名（本地部分不超过两个字符时只留一个），
+// 不是邮箱回 "***"；已注销账号的占位邮箱回 DeletedAccountLabel。邀请记录、佣金来源都用这一套（commission 经它打码）。
+func MaskEmail(e string) string {
+	if reservedEmail(e) {
+		return DeletedAccountLabel
+	}
 	at := strings.IndexByte(e, '@')
 	if at <= 1 {
 		return "***"

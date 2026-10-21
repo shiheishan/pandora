@@ -41,7 +41,7 @@ type AdminTicketInput struct {
 // adminTicketBodyMax 是工单提醒里正文最多带的字数（Telegram 单条上限 4096）。
 const adminTicketBodyMax = 1500
 
-// maskEmail 给邮箱打码：保留 @ 前两个字符（不足三个字符全打码）与域名；不是邮箱时返回 "***"（与 commission.MaskEmail 同一规则）。
+// maskEmail 给邮箱打码：保留 @ 前两个字符（不足三个字符全打码）与域名；不是邮箱时返回 "***"。只给管理员群组看；用户端的打码在 identity 的 MaskEmail（已注销写「已注销的账号」）。
 func maskEmail(e string) string {
 	for i := 0; i < len(e); i++ {
 		if e[i] == '@' {

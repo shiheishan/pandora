@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -97,7 +98,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	for _, e := range entries {
 		from := ""
 		if e.Level == 1 {
-			from = MaskEmail(emails[e.RefereeUserID])
+			from = identitysvc.MaskEmail(emails[e.RefereeUserID])
 		}
 		out.Entries = append(out.Entries, EntryView{
 			Amount:       e.CommissionAmount,
@@ -151,19 +152,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		})
 	}
 	return out, nil
-}
-
-// MaskEmail 给邮箱打码：保留 @ 前两个字符（不足三个字符全打码）与域名；不是邮箱时返回 "***"。
-func MaskEmail(e string) string {
-	for i := 0; i < len(e); i++ {
-		if e[i] == '@' {
-			if i <= 2 {
-				return "***" + e[i:]
-			}
-			return e[:2] + "***" + e[i:]
-		}
-	}
-	return "***"
 }
 
 // AdminOverview 返回后台分销概览：全站金额与笔数合计、当前参数；「本月」按站点时区的月初算。

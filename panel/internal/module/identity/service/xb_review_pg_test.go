@@ -55,7 +55,7 @@ func TestPGAdminSetEmailInvalidatesOldEmail(t *testing.T) {
 	if d["before_hmac"] != e.svc.auditEmailHMAC(oldEmail) || d["after_hmac"] != e.svc.auditEmailHMAC(newEmail) {
 		t.Fatalf("审计应带邮箱 HMAC 供对照: %s", data)
 	}
-	if d["before"] != maskEmail(oldEmail) || d["after"] != maskEmail(newEmail) {
+	if d["before"] != MaskEmail(oldEmail) || d["after"] != MaskEmail(newEmail) {
 		t.Fatalf("审计应带打码邮箱: %s", data)
 	}
 }
