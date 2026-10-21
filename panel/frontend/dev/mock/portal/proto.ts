@@ -1,9 +1,9 @@
-import { PROTO_PLANS, type CatalogPlan } from './catalog.ts'
+import { PROTO_PLANS, GIB, type CatalogPlan } from './catalog.ts'
 import { makeSub, type PortalState, type SubFixture } from './fixtures.ts'
 import type { ProtoScenario } from './scenario.ts'
 
 // ---------------------------------------------------------------------------
-// 购买流程原型（.claude/purchase-proto/index.html）的 11 个场景，数据照原型 SCENARIOS：
+// 购买流程原型（.claude/purchase-proto/index.html）的场景，数据照原型 SCENARIOS：
 // 原型的「今天」固定 10 月 7 日，这里换成相对今天的天数（10/19 = 12 天后，10/4 = 3 天前）。
 // 每份一期 30 天、按月价付费；已用流量按 GB 给。给新手做首次点击测试，任务见原型各场景的 hint。
 //   proto-s1   一份标准版，流量只剩 8G
@@ -18,6 +18,7 @@ import type { ProtoScenario } from './scenario.ts'
 //   proto-s7c  余额 ¥29.50，剩 5 毛低于支付最低额
 //   proto-s8   标准版 3 天前已过期
 //   proto-s7d  余额 ¥0.20，用优惠码 LUCKY99 续费只要 ¥0.30：还差 ¥0.10，低于最低额下不了单
+//   proto-s9   套餐改了用量：标准版那份下期起每期 100G、3 台（现在 50G、2 台）；另一份「备用机」是注册试用的基础版
 // ---------------------------------------------------------------------------
 const [BASIC, STD] = PROTO_PLANS as [CatalogPlan, CatalogPlan, CatalogPlan]
 const DAY_MS = 86_400_000
@@ -33,12 +34,14 @@ interface ProtoSub {
   sources?: number
   /** 到期再往后推几分钟：让「按下单那一刻算」的剩余天数在测试与点击之间不掉过整天（S4 的 ¥24 正好） */
   slackMin?: number
+  oldUsage?: SubFixture['oldUsage']
+  trial?: boolean
 }
 
 function sub(o: ProtoSub): SubFixture {
   const plan = o.plan ?? STD
   const days = o.days ?? 12
-  return makeSub({
+  const fixture = makeSub({
     planId: plan.id,
     priceId: plan.prices[0]!.id,
     status: days <= 0 ? 'expired' : 'active',
@@ -51,6 +54,13 @@ function sub(o: ProtoSub): SubFixture {
     label: o.label ?? null,
     tail: o.tail ?? 'a3f9',
   })
+  if (o.oldUsage) {
+    fixture.oldUsage = o.oldUsage
+    fixture.limitBytes = o.oldUsage.trafficBytes
+    fixture.deviceLimit = o.oldUsage.maxDevices
+  }
+  if (o.trial) fixture.trial = true
+  return fixture
 }
 
 const xiaowang = (leak: boolean) => ({
@@ -76,6 +86,13 @@ const DATA: Readonly<Record<ProtoScenario, () => { balance: number; subs: SubFix
   'proto-s8': () => single({ days: -3, used: 47 }),
   // 余额 ¥0.20，优惠码 LUCKY99 把续费压到 ¥0.30：用尽余额还差 ¥0.10，低于在线支付最低额（A 路 below_minimum）
   'proto-s7d': () => single({}, 20),
+  'proto-s9': () => ({
+    balance: 0,
+    subs: [
+      sub({ label: '我的', days: 20, used: 30, tail: 'a3f9', oldUsage: { trafficBytes: 50 * GIB, maxDevices: 2, throttleKbps: null } }),
+      sub({ label: '备用机', plan: BASIC, days: 1, used: 1, tail: '5e60', trial: true }),
+    ],
+  }),
 }
 
 /** 每个场景开始时进入的页面（原型 start；兑换场景从钱包的兑换页开始） */
@@ -92,6 +109,7 @@ export const PROTO_START: Readonly<Record<ProtoScenario, string>> = {
   'proto-s7c': '/subs',
   'proto-s8': '/subs',
   'proto-s7d': '/subs',
+  'proto-s9': '/subs',
 }
 
 export function buildProto(s: ProtoScenario): PortalState {

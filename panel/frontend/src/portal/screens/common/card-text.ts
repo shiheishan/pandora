@@ -1,4 +1,4 @@
-import { gbParts } from './catalog'
+import { gbParts, throttleNote } from './catalog'
 import { day, dayTime, daysLeft, gb, isLow, leftOf, moneyShort, perPeriod, resetsLeft } from './purchase'
 import type { Subscription, SubscriptionLink } from './subscriptions'
 
@@ -67,6 +67,27 @@ export function eyebrowText(site: string, sub: Pick<Subscription, 'label' | 'pla
 
 /** 贴纸上的名字（卡片标题，浏览器测试按它找卡片）：备注名，没有就是套餐名 */
 export const titleOf = (sub: Pick<Subscription, 'label' | 'plan_name'>) => sub.label || sub.plan_name
+
+/**
+ * 套餐改了用量、这一份下个周期才切过去（P4，用户 10-21 定）：「下期起每期 200 GB」。
+ * 只列和现在不同的项，几项不同用「，」连起来：「下期起每期 200 GB，5 台设备同时用，限速 50 Mbps」。
+ * 一次性套餐不受新版本影响（服务端 next_usage 恒为 null），没有不同返回 null。
+ */
+export function nextUsageText(sub: Pick<Subscription, 'plan_kind' | 'usage' | 'next_usage'>): string | null {
+  const next = sub.next_usage
+  if (!next || sub.plan_kind !== 'subscription') return null
+  const parts: string[] = []
+  if (next.traffic_bytes !== sub.usage.traffic_bytes) {
+    parts.push(next.traffic_bytes === null ? '每期不限流量' : `每期 ${gb(next.traffic_bytes)}`)
+  }
+  if (next.device_limit !== sub.usage.device_limit) {
+    parts.push(next.device_limit === null ? '设备数不限' : `${next.device_limit} 台设备同时用`)
+  }
+  if (next.throttle_kbps !== sub.usage.throttle_kbps) {
+    parts.push(throttleNote(next.throttle_kbps) ?? '不限速')
+  }
+  return parts.length ? `下期起${parts.join('，')}` : null
+}
 
 /** 右上角胶囊：过期写「已到期」，其余同 expiryText 的主句 */
 export function pillText(sub: Pick<Subscription, 'status' | 'current_period_end' | 'permanent'>, now: Date = new Date()): string {

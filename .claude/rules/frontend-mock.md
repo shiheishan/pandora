@@ -59,6 +59,7 @@ paths:
   - 基础六个：`default` / `empty` / `multi` / `legacy` / `error` / `slow`（说明在 `fixtures.ts` 文件头）
   - `proto-*`（`portal/proto.ts`、名单在 `portal/scenario.ts` 的 `PROTO_SCENARIOS`）：购买流程原型的场景，给首次点击测试用，数据照原型 SCENARIOS、套餐换成原型的三档目录，「今天」换成相对天数
     - `proto-s1`…`proto-s8`（含 `s5a` / `s5b`、`s7b` / `s7c`）照原型；`proto-s7d` 是余额 ¥0.20 加优惠码 `LUCKY99`，续费应付低于最低额下不了单
+    - `proto-s9`（10-21）：标准版那份锁定旧用量（`SubFixture.oldUsage` 50G / 2 台，目录 100G / 3 台），卡上写「下期起每期 100G，3 台设备同时用」；另一份是注册试用（`trial`）的基础版。`next_usage` 照 Go `nextUsageOf` 由 `oldUsage` 与目录现算；续费恢复、叠加、换套餐清掉 `oldUsage`（`billing.ts`）
     - 每个场景的起始页在 `proto.ts` 的 `PROTO_START`，加场景要同时登记 `PROTO_SCENARIOS` 与 `PROTO_START`
   - 测试用的两个接口（都只在假后端里，不进 Go）：
     - `GET /v1/__mock/proto?s=<proto-场景>&to=<门户地址>`：匿名可调，切到该场景（重建状态）后 302 跳到 `/#<to>`，不带 `to` 跳场景的起始页；`to` 只收 `/` 开头的门户地址。登录态在浏览器里，切场景不登出，测试员每个任务开一次这个地址就从头来

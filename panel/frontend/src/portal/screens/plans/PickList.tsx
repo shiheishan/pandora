@@ -57,7 +57,7 @@ export function PickList({ plans, h, className }: PickListProps) {
                 )}
               </span>
               <span className={css.pkS}>
-                {planTraffic(plan)} · {plan.max_devices === null ? '不限台数' : `${plan.max_devices} 台`}
+                {planTraffic(v.shown)} · {v.shown.max_devices === null ? '不限台数' : `${v.shown.max_devices} 台`}
               </span>
               <span className={css.pkP}>
                 <b>
@@ -68,7 +68,8 @@ export function PickList({ plans, h, className }: PickListProps) {
             </button>
             <div id={`pk-${plan.id}`} className={css.pkB} hidden={!open}>
               <PlanAltPrices plan={plan} className={css.alt} />
-              <PlanFacts plan={plan} skip={['traffic', 'devices']} />
+              <PlanFacts plan={v.shown} skip={['traffic', 'devices']} />
+              {v.nextUsage && <p className={css.nextUsage}>{v.nextUsage}</p>}
               <div className={css.act}>
                 <Btn
                   full

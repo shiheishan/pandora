@@ -79,6 +79,9 @@ export function sub(over: Partial<Subscription> & { usedGiB?: number; capGiB?: n
     client_name: `Pandora · ${rest.label ?? rest.plan_name ?? '标准版'}`,
     changeable: live,
     renew_until: live ? '2026-11-19T12:00:00Z' : null,
+    usage: { traffic_bytes: capGiB * GIB, device_limit: 3, throttle_kbps: null },
+    next_usage: null,
+    is_trial: false,
     ...rest,
   })
 }

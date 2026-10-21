@@ -4,6 +4,7 @@ import {
   Bar,
   BigNumber,
   Btn,
+  Chip,
   Eyebrow,
   Hero,
   Meta,
@@ -21,6 +22,7 @@ import {
   leakSources,
   lowTip,
   metaLine,
+  nextUsageText,
   noRenewNote,
   pillText,
   expiryText,
@@ -87,7 +89,10 @@ export function Copy(props: {
           pillTone={expiryText(sub, now).tone === 'ok' ? 'plain' : 'bad'}
         >
           <Eyebrow>{eyebrowText(site, sub)}</Eyebrow>
-          <Sticker as="h2">{titleOf(sub)}</Sticker>
+          <div className={css.titleRow}>
+            <Sticker as="h2">{titleOf(sub)}</Sticker>
+            {sub.is_trial && <Chip className={css.trial}>试用</Chip>}
+          </div>
           {(() => {
             const t = heroTraffic(sub)
             return (
@@ -122,6 +127,10 @@ export function Copy(props: {
             )
           })()}
           <Meta size="sm">{metaLine(sub, now)}</Meta>
+          {(() => {
+            const next = nextUsageText(sub)
+            return next ? <Meta size="sm" className={css.nextUsage}>{next}</Meta> : null
+          })()}
           {(() => {
             const note = noRenewNote(sub, now)
             return note ? <p className={css.note}>{note}</p> : null
@@ -186,7 +195,10 @@ export function Copy(props: {
         /* B. 已到期的那份 */
         <Hero tone="off" pill="已到期" pillTone="bad">
           <Eyebrow>{eyebrowText(site, sub)}</Eyebrow>
-          <Sticker as="h2">{titleOf(sub)}</Sticker>
+          <div className={css.titleRow}>
+            <Sticker as="h2">{titleOf(sub)}</Sticker>
+            {sub.is_trial && <Chip className={css.trial}>试用</Chip>}
+          </div>
           <div className={css.gone}>{goneText(sub, now)}</div>
           <Meta className={css.scope}>
             节点已经停了。续费后链接不变，App 里更新一次就能接着用。
