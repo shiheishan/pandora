@@ -165,6 +165,29 @@ const staffByEmail = (email: string | null) => STAFF.find((s) => s.email === ema
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 Safari/605.1.15'
 const ua = (i: number) => (i % 3 === 0 ? MOBILE_UA : BROWSER)
 
+/** 别的模块（套餐等）的后台写操作经这里记审计：操作者是当前登录的管理员，来源 IP 与 UA 同本文件的后台写；
+ *  审计只归本文件所有，调用方单向 import（本文件不 import 调用方，不成环） */
+export function recordAdminAudit(
+  ctx: MockContext,
+  ev: { action: string; resource_type: string | null; resource_id: string | null; reason?: string | null; outcome?: string; auth_context?: 'session' | 'reauth' },
+): void {
+  record({
+    actor_kind: 'admin',
+    actor_id: ctx.user.userId,
+    actor_email: ctx.user.email,
+    action: ev.action,
+    resource_type: ev.resource_type,
+    resource_id: ev.resource_id,
+    resource_label: null,
+    api_domain: 'admin',
+    outcome: ev.outcome ?? 'success',
+    reason: ev.reason ?? null,
+    auth_context: ev.auth_context ?? (ctx.reauthed ? 'reauth' : 'session'),
+    source_ip: ADMIN_IP,
+    user_agent: BROWSER,
+  })
+}
+
 const sessionId = () => randomUUID()
 /** 工单号照迁移 00027 的 CHECK：TK + 8 位日期 + '-' + 8 位 [A-Z2-7] */
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
