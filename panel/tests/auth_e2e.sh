@@ -5,7 +5,7 @@
 #   3. 跨域令牌：门户令牌进不了后台，后台令牌进不了门户；
 #   4. IAM-006：口令错、邮箱不存在、非管理员账号登后台，对外完全一样；
 #   5. 重认证：口令错 401，口令对发新令牌；
-#   6. 停用即吊销：停用后令牌与 refresh 立即失效，口令对也登不进（与口令错一样）；
+#   6. 停用即吊销：停用后令牌与 refresh 立即失效；口令对回 403「账号已停用」、口令错照旧 401（用户 10-21 定），都不发令牌；
 #   7. 改密：门户保留当前会话、吊销其余；旧口令失效；
 #   8. 同一账号 15 分钟失败 10 次暂停，第 11 次口令对也 429，门户与后台共用；
 #   9. 登录失败审计记 anonymous，被撞账号只作资源。
@@ -156,7 +156,9 @@ C=$(code -X POST "$PUB/v1/auth/refresh" -b "$TMP/u3")
 [ "$C" = 401 ] && ok "停用后 refresh 401" || bad "停用后 refresh 仍可用" "HTTP $C"
 S1=$(json -X POST "$PUB/v1/auth/login" -H 'X-Real-IP: 192.0.2.21' -d "{\"email\":\"$UE\",\"password\":\"$UP\"}" | errsig)
 S2=$(json -X POST "$PUB/v1/auth/login" -H 'X-Real-IP: 192.0.2.22' -d "{\"email\":\"$UE\",\"password\":\"wrong-pass-e2e\"}" | errsig)
-[[ "$S1" == unauthorized\|* ]] && [ "$S1" = "$S2" ] && ok "停用账号口令对也与口令错一样：$S1" || bad "停用状态可被探知" "$S1 / $S2"
+# 只有口令对的人才看得到停用；口令错与邮箱不存在一样（IAM-006）
+[ "$S1" = "forbidden|账号已停用" ] && ok "停用账号口令对：$S1" || bad "停用账号口令对没回「账号已停用」" "$S1"
+[[ "$S2" == unauthorized\|* ]] && ok "停用账号口令错照旧：$S2" || bad "停用账号口令错的回应变了" "$S2"
 C=$(code -X POST "$ADM/v1/users/$UID_/status" -H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json' \
   -d '{"status":"active","reason":""}')
 [ "$C" = 200 ] && ok "恢复用户" || bad "恢复失败" "HTTP $C"

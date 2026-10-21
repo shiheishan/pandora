@@ -22,7 +22,8 @@ paths:
 - 订阅与设备页签（`tabs.tsx` 的 `SubscriptionsTab`）：每份订阅一行（当前订阅排第一）：备注名优先 + 版本、类型与到期、流量与设备（在线台数 / 生效上限）、状态、「操作」。用 kit `RowList` 装进带框盒子而不是 ui `Table`——`Table` 的横向滚动容器会裁掉行内的弹出菜单。每行「操作」菜单（ui `Menu`）的项与灰着的原因来自 `detail.ts` 的 `subActions`：加时长、改到期、加流量、重置流量、改流量上限、改设备上限（`DeviceLimitDialog.tsx`：具体台数 / 不限 / 恢复套餐默认）、续费这一份（一次性写「给这份开单」，跳 `#/billing/orders?new=<用户 id>&sub=<订阅 id>`，要同步 `billing/OrdersTab.tsx`）、换发订阅链接。已注销用户没有操作列。设计稿的逐 IP 在线设备表与余额流水后端没有，不做。
 - 加流量（`GrantTrafficDialog.tsx`，`POST v1/subscriptions/{id}/traffic-pack`，路径沿用旧名，reauth + 幂等）：只对还在用的这一份；送的量订阅套餐加到本周期上限、周期结束作废，一次性加到总量上；按 GB 整数填、提交字节（上限 10240 GB）；回执 `bonus_bytes` 是这一份本期送的量合计。没有流量包、没有「未分配」余量。
 - 重置流量（`SubEditDialogs.tsx` 的 `ResetTrafficDialog`，`POST v1/subscriptions/{id}/traffic-reset`，reauth + 幂等）：只重置点的这一份，原因 5–500 字。
-- 调整余额（`dialogs.tsx` 的 `BalanceForm`，在「订单与余额」页签里展开）：「增加 / 扣减」单选 + 正金额（`balanceCents`），提交前确认框，原因必填；请求体只有 `{ amount, reason }`（只有人民币）。
+- 停用 / 封禁 / 启用确认框（`dialogs.tsx` 的 `StatusDialog`）以后端为准写三段：立即生效（会话失效、节点断开、套餐不能用、到期照走不顺延）；用户再登录时口令对看到「账号已停用」、口令错仍是「邮箱或密码不正确」，找回密码收不到邮件；停用与封禁效果一样、只是记的状态不同。启用写「可以重新登录，没到期的套餐恢复可用（停用期间的时间不补）」。改后端口径（module-identity「账号枚举防护」）时同步这里。
+- 调整余额（`dialogs.tsx` 的 `BalanceForm`，在「订单与余额」页签里展开）：「增加 / 扣减」单选 + 正金额（`balanceCents`），提交前确认框，原因必填，标签「原因（用户能看到）」（原样显示在用户钱包「人工调整」流水里，用户 10-21 定不拆字段）；请求体只有 `{ amount, reason }`（只有人民币）。
 - 批量导出没有 cookie，只能 fetch 带 Bearer 取回再存文件，要 reauth。
 - 用户相关的地址被别处引用：仪表盘排行、工单「查看用户」、订单抽屉、⌘K 都跳 `#/users/list/<用户 id>`，订单标签跳 `#/billing/orders?user_id=`；改地址格式要同步这些入口。
 - 批量运营是上下两张卡、各三步（批量操作用户：筛选 → 命中名单〔预览表〕→ 三张操作卡选一个〔导出 CSV / 群发邮件 / 批量封禁〕再在下面填；批量生成用户：账号格式 → 归属与原因 → 提交）；生成记录是表格（最近 5 次，结果列 `jobs.ts` 的 `jobResultView`），进度条用 `--info`。批量生成是后台任务：提交回 202 与任务，`useGenerationJob` 轮询到结束为止，进度条按 completed/total；结果 CSV 只能从服务端下（`requestRaw`，只有提交人、要 reauth、24 小时内）。任务与加流量的 schema 在 `opsSchemas.ts`，用户列表行、详情与重置回执的 schema 在 `schemas.ts`（都不依赖 React，node 侧的假后端测试只从这两个文件取 schema，不 import `api.ts`）。

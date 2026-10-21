@@ -73,6 +73,7 @@ export function InviteCodesCard() {
           ))}
         </Rows>
       )}
+      {data?.single_use && <p className={css.cap}>每个邀请码只能邀请 1 人，有人用它注册后就失效，可以再生成新的。</p>}
       <p className={css.cap}>访问次数按 IP 去重，只作参考。</p>
       {data && !canCreate && <p className={css.cap}>最多同时持有 {maxCodes} 个有效邀请码。</p>}
     </section>

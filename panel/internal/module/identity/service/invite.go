@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/module/identity/model"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -19,6 +20,9 @@ import (
 )
 
 const inviteCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+// personalCodeSingleUse 报告个人邀请码是否用一次就失效（设置「邀请码永不失效」关闭时）；后台发的码不受影响，由调用方再看 OwnerUserID。
+func personalCodeSingleUse(cfg settingssvc.Signup) bool { return !cfg.InviteNeverExpire }
 
 // MyInvite 返回用户自己的邀请码（没有就生成一个）与邀请来的人（最多 100 个，邮箱打码）。
 func (s *Service) MyInvite(ctx context.Context, userID uuid.UUID) (Invite, []Invitee, error) {
@@ -113,8 +117,9 @@ func (s *Service) MyInviteCodes(ctx context.Context, userID uuid.UUID) (MyInvite
 		})
 	}
 	return MyInviteCodes{
-		Codes:    codes,
-		MaxCodes: cfg.InviteMaxCodes,
+		Codes:     codes,
+		MaxCodes:  cfg.InviteMaxCodes,
+		SingleUse: personalCodeSingleUse(cfg),
 	}, nil
 }
 

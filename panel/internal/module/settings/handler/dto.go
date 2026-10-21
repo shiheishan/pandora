@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// siteConfigResponse 是门户站点能力开关；password_reset 同时要求 SMTP 已配置且 notify.email 未暂停。
 type siteConfigResponse struct {
 	RegistrationMode  string `json:"registration_mode"`
 	EmailVerification bool   `json:"email_verification"`
@@ -24,10 +25,15 @@ func (h *Handler) siteConfig(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	emailOn, err := h.svc.SwitchEnabled(ctx, service.SwitchNotifyEmail)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 	httpx.OK(c, siteConfigResponse{
 		RegistrationMode:  p.Mode,
 		EmailVerification: p.EmailVerification,
-		PasswordReset:     ok,
+		PasswordReset:     ok && emailOn,
 	})
 }
 

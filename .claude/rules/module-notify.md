@@ -9,6 +9,7 @@ paths:
 - 补派用固定 TaskID（`kickTaskID`）：已在排队或运行就不再入队，另有每 30 秒的周期派发兜底；入队失败只记日志。
 - 派发认领 `ClaimDeliveries`（`panel/internal/module/notify/repo/deliveries.go`）用 `FOR UPDATE SKIP LOCKED` 把 `next_retry_at` 推到租约之后、`attempts` 加 1：认领即算一次尝试，处理中途崩溃的行也会走到上限，由 `FailExhausted` 收尾。
 - `notify.email` 降级开关关闭时派发不认领邮件，记录留在队列里，恢复后按原顺序发。
+  - 发信入口也看这个开关（报告 2.1-8，各模块经 `settings.SwitchEnabled(SwitchNotifyEmail)` 读，3 秒缓存）：关闭时要验证邮箱的注册第 1 步、找回密码第 1 步、邮件链接登录第 1 步直接回 503（「邮件发送暂停，暂时无法注册 / 找回密码 / 用邮件登录，请稍后再试」，只看设置、不看邮箱存不存在，不写码不发信）；site-config 的 `password_reset`、signup-config 的 `mail_link_login` 为 false，门户不给这两个入口。找回密码第 2 步不看开关，暂停前发出的验证码照常可用。
 - 投递表只存收件地址的 HMAC（`recipientHash`）；地址与变量封存在 `payload_enc`，AAD 绑定投递 id（`deliveryAAD`），防止密文被挪到别的行。日志不带收件地址。
 - 每件事的通知都要带去重键（`NotifyUser` 的 `dedupeKey` 必填、不超过 200 字）：先插去重键，撞了就什么都不写。定时扫描每轮都会扫到同一批订阅，靠它保证只通知一次。
   - 到期类的键带周期末 Unix 秒（`expiring:`、`expired:`、`recall:`），流量预警带档位与配额当期起点（`quota:<订阅>:<档>:<起点>`）；不带周期的话续费后的下一期再也发不出。

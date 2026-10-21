@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { isApiError } from '../core/api'
 import { useRuntime } from '../shell/runtime'
 import { Input } from '../ui/Input'
+import { PasswordInput } from '../ui/PasswordInput'
 import { useCaptcha } from './Captcha'
 import captchaCss from './Captcha.module.css'
 import css from './AuthPage.module.css'
@@ -151,9 +152,8 @@ export function PasswordResetForm({ onDone, onCancel }: { onDone: (email: string
               error={errors.code}
               hint={started.dev_code ? `开发模式验证码：${started.dev_code}` : undefined}
             />
-            <Input
+            <PasswordInput
               label="新密码"
-              type="password"
               autoComplete="new-password"
               hint="至少 8 位，同时包含字母和数字"
               value={password}

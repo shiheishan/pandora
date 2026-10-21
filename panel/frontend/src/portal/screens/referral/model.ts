@@ -51,8 +51,15 @@ export function codeStatusLabel(status: InviteCode['status']): string {
   }
 }
 
-/** 邀请码有使用上限时的一句说明；没有上限返回 null */
-export function inviteUsage(invite: Invite['invite']): { text: string; exhausted: boolean } | null {
+/**
+ * 邀请链接下面的一句说明：个人邀请码用一次就失效（single_use）时先说这个；
+ * 否则有使用上限时说还剩几次；都没有返回 null。
+ */
+export function inviteUsage(data: Pick<Invite, 'invite' | 'single_use'>): { text: string; exhausted: boolean } | null {
+  const { invite } = data
+  if (data.single_use) {
+    return { text: '每个邀请码只能邀请 1 人：一个链接只发给一位朋友，有人用它注册后，这里会换成新的邀请码。', exhausted: false }
+  }
   if (invite.max_uses === null) return null
   const exhausted = invite.invited >= invite.max_uses
   return {

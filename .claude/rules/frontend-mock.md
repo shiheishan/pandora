@@ -75,4 +75,8 @@ paths:
 - 状态都在内存里，vite 重启即复原
   - `POST /__mock/expire-reauth` 让所有会话的 rat 立即过期，用来走 reauth 流程
   - refresh 照 Go 记每条会话的当前、上一枚 cookie、更早各代（`retired`）与轮换时间（`RefreshFamily`）：上一枚 30 秒宽限内还能换 access，并把当前那一枚原样再发一遍（不改状态）；超过宽限再用上一枚、或用更早的一代判为重放、删整条；对不上或被拒的 401 清 cookie（没带 cookie 的 401 不清）。`POST /__mock/expire-refresh-grace` 把所有会话的轮换时间拨到宽限之外，用来测重放（守卫 `tests/mock-api.test.ts` 的 refresh cookie 那组）
-  - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`
+  - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`；另有门户停用账号 `MOCK_DISABLED_ACCOUNT`（`disabled@example.test`，不在用户表里）：口令对登录回 403「账号已停用」、口令错 401，与 Go 一致
+- 门户的注册与发信配置在 `portal/signup.ts`（`site-config`、`signup-config`、注册 / 找回 / 邮件登录第 1 步、`GET v1/me/invite` 的 `single_use` 都按它回）：
+  - 缺省同 Go：开放注册、不验证邮箱、邀请码永不失效、两个降级开关都没停用；演示环境另外当作已配好发信、开着邮件链接登录（Go 缺省关），好走找回与邮件登录
+  - 后台假后端是另一个进程，后台里改注册方式、降级开关、注册设置传不到门户（三项分在 `admin/system.ts`、`admin/security.ts`、`admin/signup-settings.ts`，`node_modules` 又是各 worktree 共用的链接，不做文件共享）；测试与演示用只在假后端里的 `POST /__mock/portal-signup`（匿名，只改给出的键，`reset: true` 先复原，多余键或类型错 422 什么都不改），切门户场景时复原
+  - 演示里唯一有效的邀请码是 `PANDORA`（开放注册时选填、填了要有效，同 Go `resolveInviteAtStart`）；要验证邮箱时 `dev_code` 固定 123456

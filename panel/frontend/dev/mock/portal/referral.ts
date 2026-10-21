@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto'
 import type { MockModule } from '../types.ts'
 import { BillingError, readStrict } from './billing.ts'
 import { gate, portalState, scenario, type PortalState } from './fixtures.ts'
+import { personalCodeSingleUse } from './signup.ts'
 
 const DAY_MS = 86_400_000
 const RATE_PERCENT = 20
@@ -250,6 +251,7 @@ export const referral: MockModule = {
         invitees: c.invitees.slice(0, 100),
         codes: sortInviteCodes(c.codes),
         max_codes: MAX_CODES,
+        single_use: personalCodeSingleUse(),
       })
     },
 

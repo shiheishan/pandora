@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../core/api'
 import { useRuntime } from '../shell/runtime'
-import { Button, Input, Modal, useToast } from '../ui'
+import { Button, Modal, PasswordInput, useToast } from '../ui'
 import css from './ChangePasswordDialog.module.css'
 
 const changedSchema = z.object({ ok: z.literal(true) })
@@ -77,18 +77,16 @@ function ChangePasswordForm({ onClose }: { onClose: () => void }) {
       }
     >
       <form className={css.form} onSubmit={submit} noValidate>
-        <Input
+        <PasswordInput
           label="当前密码"
-          type="password"
           autoComplete="current-password"
           data-autofocus=""
           value={current}
           onChange={(e) => setCurrent(e.target.value)}
           error={errors.current}
         />
-        <Input
+        <PasswordInput
           label="新密码"
-          type="password"
           autoComplete="new-password"
           value={next}
           onChange={(e) => setNext(e.target.value)}

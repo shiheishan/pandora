@@ -3,7 +3,7 @@ import { useState, useSyncExternalStore, type FormEvent } from 'react'
 import { isApiError } from '../core/api'
 import { useApi } from '../shell/runtime'
 import { Button } from '../ui/Button'
-import { Input } from '../ui/Input'
+import { PasswordInput } from '../ui/PasswordInput'
 import { Modal } from '../ui/Modal'
 import { ME_QUERY_KEY } from './me'
 import css from './ReauthDialog.module.css'
@@ -61,9 +61,8 @@ function ReauthForm({ controller }: { controller: ReauthController }) {
     >
       <form onSubmit={submit} noValidate>
         <p className={css.lead}>这项操作需要确认是你本人。输入当前登录密码后，刚才的操作会自动继续执行。</p>
-        <Input
+        <PasswordInput
           label="当前登录密码"
-          type="password"
           autoComplete="current-password"
           data-autofocus=""
           value={password}

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { Logo } from '../shell/Logo'
 import { useRuntime } from '../shell/runtime'
 import { useToast } from '../ui/Toast'
+import { usePasswordReveal } from '../ui/usePasswordReveal'
 import { hasLoginErrors, loginFailure, validateLogin, type LoginErrors } from './login-form'
 import css from './LoginPage.module.css'
 import { documentSiteName } from './site-name'
@@ -23,12 +24,13 @@ export function LoginPage() {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [errors, setErrors] = useState<LoginErrors>({})
   const [busy, setBusy] = useState(false)
 
   const emailInputRef = useRef<HTMLInputElement>(null)
   const passwordInputRef = useRef<HTMLInputElement>(null)
+  // 显示 / 隐藏密码：与门户共用同一个开关（点按钮不抢焦点、换类型后光标留在原处）
+  const reveal = usePasswordReveal(passwordInputRef)
 
   useEffect(() => {
     document.title = `登录 · ${site} 控制台`
@@ -131,7 +133,7 @@ export function LoginPage() {
                   <input
                     ref={passwordInputRef}
                     id="login-password"
-                    type={showPassword ? 'text' : 'password'}
+                    type={reveal.type}
                     autoComplete="current-password"
                     placeholder="输入密码"
                     value={password}
@@ -145,15 +147,9 @@ export function LoginPage() {
                     aria-describedby={errors.password ? 'login-password-error' : undefined}
                     className={`${css.input} ${css.inputWithToggle}${errors.password ? ` ${css.inputInvalid}` : ''}`}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((prev) => !prev)}
-                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
-                    aria-pressed={showPassword}
-                    className={css.togglePwBtn}
-                  >
+                  <button {...reveal.buttonProps} className={css.togglePwBtn}>
                     <HugeiconsIcon
-                      icon={showPassword ? ViewOffSlashIcon : ViewIcon}
+                      icon={reveal.shown ? ViewOffSlashIcon : ViewIcon}
                       size={16}
                       strokeWidth={1.75}
                       aria-hidden="true"

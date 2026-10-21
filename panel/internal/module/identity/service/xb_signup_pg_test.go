@@ -69,6 +69,9 @@ func TestPGInviteCodes(t *testing.T) {
 	if list.Codes[0].Status != "active" || list.Codes[1].Status != "active" {
 		t.Fatalf("both active: %+v", list.Codes)
 	}
+	if list.SingleUse {
+		t.Fatalf("SingleUse default want false got %v", list.SingleUse)
+	}
 }
 
 func TestPGRecordInviteVisit(t *testing.T) {
@@ -263,6 +266,13 @@ func TestPGInviteSingleUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := inv.Code
+	codes, err := e.svc.MyInviteCodes(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !codes.SingleUse {
+		t.Fatalf("SingleUse want true got %v", codes.SingleUse)
+	}
 
 	bEmail := uniqEmail(t, "invB")
 	startB, err := e.svc.StartRegistration(ctx, bEmail, code, "")

@@ -4,6 +4,7 @@ import { isApiError, type ApiClient } from '../core/api'
 import type { TokenStore } from '../core/token'
 import { useRuntime } from '../shell/runtime'
 import { Input } from '../ui/Input'
+import { PasswordInput } from '../ui/PasswordInput'
 import { Segmented } from '../ui/Segmented'
 import { useToast } from '../ui/Toast'
 import css from './AuthPage.module.css'
@@ -193,9 +194,8 @@ function LoginForm({
       <form className={css.form} onSubmit={submit} noValidate>
         <Input label="邮箱" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
         <div className={css.pwField}>
-          <Input
+          <PasswordInput
             label="密码"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => {
@@ -438,9 +438,8 @@ function RegisterForm({
               />
             </>
           )}
-          <Input
+          <PasswordInput
             label="设置密码"
-            type="password"
             autoComplete="new-password"
             hint="至少 8 位，同时包含字母和数字"
             value={password}
@@ -485,9 +484,8 @@ function RegisterForm({
           onChange={(e) => setInviteCode(e.target.value)}
           error={errors.invite}
         />
-        <Input
+        <PasswordInput
           label="设置密码"
-          type="password"
           autoComplete="new-password"
           hint="至少 8 位，同时包含字母和数字"
           value={password}

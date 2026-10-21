@@ -63,9 +63,9 @@ describe('佣金概况 schema', () => {
   it('邀请：max_uses 可为 null，invitees 不收 null；codes 与 max_codes 必填', () => {
     const invite = { code: 'ZW8KQ4TM', invited: 0, max_uses: null, created_at: '2026-09-01T00:00:00Z' }
     const code = { code: 'ZW8KQ4TM', status: 'active' as const, invited: 0, visits: 12, max_uses: null, created_at: '2026-09-01T00:00:00Z' }
-    expect(inviteSchema.parse({ invite, invitees: [], codes: [code], max_codes: 5 }).invite.max_uses).toBeNull()
+    expect(inviteSchema.parse({ invite, invitees: [], codes: [code], max_codes: 5, single_use: false }).invite.max_uses).toBeNull()
     expect(inviteSchema.safeParse({ invite, invitees: null }).success).toBe(false)
-    expect(inviteSchema.safeParse({ invite, invitees: [], codes: [], max_codes: 5 }).success).toBe(true)
+    expect(inviteSchema.safeParse({ invite, invitees: [], codes: [], max_codes: 5, single_use: false }).success).toBe(true)
   })
 })
 
@@ -113,11 +113,16 @@ describe('邀请横幅', () => {
     expect(ratePercentText(1250)).toBe('12.5')
   })
 
-  it('邀请码用量：无上限不说，用满警示', () => {
+  it('邀请码用量：无上限不说，用满警示；single_use 时固定说明', () => {
     const base = { code: 'X', created_at: '' }
-    expect(inviteUsage({ ...base, invited: 3, max_uses: null })).toBeNull()
-    expect(inviteUsage({ ...base, invited: 3, max_uses: 10 })).toEqual({ text: '这个邀请码已有 3 人注册，还能再邀请 7 人。', exhausted: false })
-    expect(inviteUsage({ ...base, invited: 6, max_uses: 6 })?.exhausted).toBe(true)
+    const invite = (over: { invited: number; max_uses: number | null }) => ({ invite: { ...base, ...over }, single_use: false })
+    expect(inviteUsage(invite({ invited: 3, max_uses: null }))).toBeNull()
+    expect(inviteUsage(invite({ invited: 3, max_uses: 10 }))).toEqual({ text: '这个邀请码已有 3 人注册，还能再邀请 7 人。', exhausted: false })
+    expect(inviteUsage(invite({ invited: 6, max_uses: 6 }))?.exhausted).toBe(true)
+    expect(inviteUsage({ invite: { ...base, invited: 0, max_uses: null }, single_use: true })).toEqual({
+      text: '每个邀请码只能邀请 1 人：一个链接只发给一位朋友，有人用它注册后，这里会换成新的邀请码。',
+      exhausted: false,
+    })
   })
 })
 

@@ -86,7 +86,8 @@ func (s *Service) Login(ctx context.Context, audience, email, password string) (
 }
 
 // login 是名额占好之后的登录本体。counted 为 true 表示这是一次算数的凭据失败（口令错、账号不存在、
-// 停用、登后台的不是管理员）；其余错误（故障、后台人员登门户等口令其实是对的）由调用方退回名额。
+// 停用、登后台的不是管理员；停用账号口令对时对外回 errAccountDisabled（后台只对管理员））；
+// 其余错误（故障、后台人员登门户等口令其实是对的）由调用方退回名额。
 func (s *Service) login(ctx context.Context, audience, email, password, eh string, uid0 uuid.UUID) (Tokens, bool, error) {
 	now := s.now()
 	// 纪元在验口令之前读：验口令到建会话之间改了密，建会话会被拒
@@ -110,8 +111,14 @@ func (s *Service) login(ctx context.Context, audience, email, password, eh strin
 		}
 		switch {
 		case errors.Is(err, identitysvc.ErrAccountInactive):
+			// identity 只在口令校验通过之后才回 ErrAccountInactive：到这里说明口令是对的。
+			// 后台入口先看是不是管理员：不是的照旧与口令错相同（IAM-006），是的才明确提示停用。
+			disabled, derr := s.disabledLoginError(ctx, audience, knownUID)
+			if derr != nil {
+				return Tokens{}, false, derr
+			}
 			s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive)
-			return Tokens{}, true, errInvalidCredentials
+			return Tokens{}, true, disabled
 		case errs.As(err).Code == errs.Unauthorized, errs.As(err).Code == errs.NotFound:
 			s.loginFailed(ctx, audience, eh, knownUID, reasonInvalidCredentials)
 			return Tokens{}, true, errInvalidCredentials
@@ -129,8 +136,12 @@ func (s *Service) login(ctx context.Context, audience, email, password, eh strin
 	}
 
 	if u.Status != UserStatusActive {
+		disabled, derr := s.disabledLoginError(ctx, audience, knownUID)
+		if derr != nil {
+			return Tokens{}, false, derr
+		}
 		s.loginFailed(ctx, audience, eh, knownUID, reasonAccountInactive)
-		return Tokens{}, true, errInvalidCredentials
+		return Tokens{}, true, disabled
 	}
 
 	admin, err := s.store.IsAdmin(ctx, u.ID)
@@ -198,6 +209,25 @@ func (s *Service) login(ctx context.Context, audience, email, password, eh strin
 		Refresh:        refresh,
 		RefreshExpires: rec.AbsExp,
 	}, false, nil
+}
+
+// disabledLoginError 是停用账号口令正确时回给登录方的错误：门户一律 errAccountDisabled；
+// 后台入口只有管理员名单里的人才回 errAccountDisabled，其余回 errInvalidCredentials（与口令错、不是管理员相同）。
+func (s *Service) disabledLoginError(ctx context.Context, audience string, uid *uuid.UUID) (reply, err error) {
+	if audience != authn.AudienceAdmin {
+		return errAccountDisabled, nil
+	}
+	if uid == nil {
+		return errInvalidCredentials, nil
+	}
+	admin, err := s.store.IsAdmin(ctx, *uid)
+	if err != nil {
+		return nil, errs.Wrap(errs.Internal, err)
+	}
+	if !admin {
+		return errInvalidCredentials, nil
+	}
+	return errAccountDisabled, nil
 }
 
 // ClearLoginFailures 清掉该账号的登录失败计数与暂停（pandora admin reset-password 成功后调用：运维重置口令就是要恢复登录）。
@@ -270,7 +300,7 @@ func (s *Service) ConsumeQuickLogin(ctx context.Context, token string) (Tokens, 
 		return Tokens{}, err
 	}
 	if u.Status != UserStatusActive {
-		return Tokens{}, errs.Newf(errs.Forbidden, "账号当前不可登录")
+		return Tokens{}, errAccountDisabled
 	}
 
 	admin, err := s.store.IsAdmin(ctx, uid)

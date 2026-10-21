@@ -31,11 +31,32 @@ describe('mock api · portal referral', () => {
     expect(res.status).toBe(200)
     const body = inviteSchema.parse(await res.json())
     expect(body.max_codes).toBe(5)
+    expect(body.single_use).toBe(false)
     expect(body.codes.length).toBeGreaterThan(0)
     expect(body.codes[0]).toMatchObject({ visits: expect.any(Number) })
     // active 在前：第一个非 active 的码之后不再出现 active
     const firstInactive = body.codes.findIndex((c) => c.status !== 'active')
     if (firstInactive >= 0) expect(body.codes.slice(firstInactive).every((c) => c.status !== 'active')).toBe(true)
+  })
+
+  it('GET /v1/me/invite 在「邀请码永不失效」关闭时 single_use 为 true', async () => {
+    expect((await mockFetch(base, auth, 'POST', '/v1/__mock/portal-scenario', { name: 'default' })).status).toBeLessThan(300)
+    const patch = await fetch(`${base}/__mock/portal-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invite_never_expire: false }),
+    })
+    expect(patch.status).toBe(200)
+    const res = await mockFetch(base, auth, 'GET', '/v1/me/invite')
+    expect(res.status).toBe(200)
+    const body = inviteSchema.parse(await res.json())
+    expect(body.single_use).toBe(true)
+    const reset = await fetch(`${base}/__mock/portal-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reset: true }),
+    })
+    expect(reset.status).toBe(200)
   })
 
   it('POST /v1/me/invite/codes 满 5 个有效码后回 409', async () => {
