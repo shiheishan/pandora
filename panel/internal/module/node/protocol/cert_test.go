@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/json"
-	"net"
 	"testing"
 )
 
@@ -45,9 +44,13 @@ func TestNormalizeCertIdentifier(t *testing.T) {
 	if got := NormalizeCertIdentifier("[2001:DB8::1]"); got != "2001:db8::1" {
 		t.Fatalf("ipv6 got %q", got)
 	}
-	// Go 的 net.ParseIP 会把 192.0.2.010 解析成 192.0.2.10（前导零按十进制段处理）。
-	if got := NormalizeCertIdentifier("192.0.2.010"); got != net.ParseIP("192.0.2.010").String() {
+	// 带前导零的点分写法 net.ParseIP 不认（Go 1.17 起拒绝，免得八进制歧义），按名字原样留着，
+	// 保存时由 CertIdentifierProblem 以「末段全是数字」拒掉
+	if got := NormalizeCertIdentifier("192.0.2.010"); got != "192.0.2.010" {
 		t.Fatalf("dotted decimal got %q", got)
+	}
+	if CertIdentifierProblem("192.0.2.010") == "" {
+		t.Fatal("192.0.2.010 should be rejected")
 	}
 }
 

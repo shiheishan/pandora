@@ -50,10 +50,8 @@ func mergeShowIf(base map[string][]string, extra map[string][]string) map[string
 		return nil
 	}
 	out := make(map[string][]string)
-	if base != nil {
-		for k, v := range base {
-			out[k] = append([]string(nil), v...)
-		}
+	for k, v := range base {
+		out[k] = append([]string(nil), v...)
 	}
 	for k, v := range extra {
 		out[k] = append([]string(nil), v...)
