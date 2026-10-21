@@ -9,6 +9,8 @@
    所以后台的细滚动条只给 body 里面的滚动容器（见下）。 */
 html {
   scrollbar-gutter: stable;
+  /* 手机浏览器缺省给点到的东西盖一层高亮（Android Chrome 是蓝色方块）：关掉，按下反馈由各组件的 :active 给 */
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,

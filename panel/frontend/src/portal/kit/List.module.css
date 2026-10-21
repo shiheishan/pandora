@@ -24,7 +24,8 @@
   background: transparent;
 }
 
-.row:hover {
+.row:hover,
+.row:active {
   background: var(--surface-2);
   color: var(--text);
   text-decoration: none;
@@ -51,7 +52,8 @@ button.row {
   font: inherit;
 }
 
-button.row:hover {
+button.row:hover,
+button.row:active {
   background: var(--surface-2);
 }
 
@@ -65,7 +67,8 @@ button.row:disabled {
   cursor: not-allowed;
 }
 
-button.row:disabled:hover {
+button.row:disabled:hover,
+button.row:disabled:active {
   background: transparent;
 }
 
@@ -74,7 +77,8 @@ button.row:disabled:hover {
   cursor: default;
 }
 
-.rowStatic:hover {
+.rowStatic:hover,
+.rowStatic:active {
   background: transparent;
 }
 
