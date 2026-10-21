@@ -25,7 +25,7 @@ import (
 var configDocReservedKeys = []string{
 	"server_port", "protocol",
 	"outbounds", "routes", "final",
-	"ech_keys",
+	"ech_keys", "cert_identifier",
 }
 
 // ServerConfigs 一次算出这些服务器上每个该跑的节点（repo.ServedOnServerCond）的生效配置文档：
@@ -122,6 +122,10 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 		if row.ServerPort != nil {
 			port = *row.ServerPort
 		}
+		host := ""
+		if row.ServerHost != nil {
+			host = *row.ServerHost
+		}
 		protoCfg := ""
 		if row.ProtocolConfig != nil {
 			protoCfg = *row.ProtocolConfig
@@ -132,7 +136,7 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 		}
 		layers := layersByNode[*row.NodeID]
 		ech := echByNode[*row.NodeID]
-		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, protoCfg, layers, ech, psk)
+		doc, err := buildNodeConfigDoc(*row.NodeID, nodeType, port, host, protoCfg, layers, ech, psk)
 		if err != nil {
 			skips[*row.NodeID] = configSkip{ServerID: row.ServerID, Reason: err.Error()}
 			continue
@@ -148,8 +152,8 @@ func assembleServerConfigs(rows []repo.ConfigNodeRow, layersByNode map[uuid.UUID
 }
 
 // buildNodeConfigDoc 组装一个节点的配置文档：协议字段经 protocol.KernelConfig 翻译后摊平在顶层，
-// 加 server_port（入站端口），shadowsocks 2022 方法加 password（服务端身份密钥，ss2022.go）；有路由时加 outbounds / routes / final；协议支持且提供了密钥时加 ech_keys。
-func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolConfig string, layers []routingLayer, ech []echDocKey, psk PSKDeriver) (NodeConfigDoc, error) {
+// 加 server_port（入站端口），shadowsocks 2022 方法加 password（服务端身份密钥，ss2022.go）；acme 证书的节点加 cert_identifier（SNI，没有就用节点地址；节点端按它申请与取证书）；有路由时加 outbounds / routes / final；协议支持且提供了密钥时加 ech_keys。
+func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, host string, protocolConfig string, layers []routingLayer, ech []echDocKey, psk PSKDeriver) (NodeConfigDoc, error) {
 	storedText := protocolConfig
 	if strings.TrimSpace(protocolConfig) == "" {
 		storedText = "{}"
@@ -167,6 +171,19 @@ func buildNodeConfigDoc(nodeID uuid.UUID, nodeType string, port int, protocolCon
 	// 协议配置不能顶替基础字段、也不能夹带路由；shadowtls 握手端口已由 KernelConfig 折进 server，文档 server_port 永远是入站端口。
 	for _, k := range configDocReservedKeys {
 		delete(doc, k)
+	}
+	if protocol.CertMode(nodeType, doc) == protocol.CertModeACME {
+		id := protocol.CertIdentifier(doc, host)
+		if id == "" {
+			return NodeConfigDoc{}, fmt.Errorf("节点 %s：自动申请证书需要节点地址或客户端 SNI", nodeID)
+		}
+		if problem := protocol.CertIdentifierProblem(id); problem != "" {
+			return NodeConfigDoc{}, fmt.Errorf("节点 %s：%s", nodeID, problem)
+		}
+		doc["cert_mode"] = protocol.CertModeACME
+		doc["cert_identifier"] = id
+		delete(doc, "cert_path")
+		delete(doc, "key_path")
 	}
 	if err := applySS2022ServerPSK(psk, nodeID, nodeType, doc); err != nil {
 		return NodeConfigDoc{}, fmt.Errorf("节点 %s: %w", nodeID, err)

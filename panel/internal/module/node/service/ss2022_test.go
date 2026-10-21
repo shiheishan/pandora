@@ -112,7 +112,7 @@ func TestBuildNodeConfigDocSS2022(t *testing.T) {
 	d := testPSKDeriver()
 
 	// 2022 方法配置
-	doc2022, err := buildNodeConfigDoc(id, "shadowsocks", 8388, `{"cipher":"2022-blake3-aes-128-gcm"}`, nil, nil, d)
+	doc2022, err := buildNodeConfigDoc(id, "shadowsocks", 8388, "node.example.com", `{"cipher":"2022-blake3-aes-128-gcm"}`, nil, nil, d)
 	if err != nil {
 		t.Fatalf("buildNodeConfigDoc error: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestBuildNodeConfigDocSS2022(t *testing.T) {
 	}
 
 	// 经典方法配置
-	docClassic, err := buildNodeConfigDoc(id, "shadowsocks", 8388, `{"cipher":"aes-128-gcm"}`, nil, nil, d)
+	docClassic, err := buildNodeConfigDoc(id, "shadowsocks", 8388, "node.example.com", `{"cipher":"aes-128-gcm"}`, nil, nil, d)
 	if err != nil {
 		t.Fatalf("buildNodeConfigDoc error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestBuildNodeConfigDocSS2022(t *testing.T) {
 	}
 
 	// 2022 配置传 nil 派生器返回错误
-	_, err = buildNodeConfigDoc(id, "shadowsocks", 8388, `{"cipher":"2022-blake3-aes-128-gcm"}`, nil, nil, nil)
+	_, err = buildNodeConfigDoc(id, "shadowsocks", 8388, "node.example.com", `{"cipher":"2022-blake3-aes-128-gcm"}`, nil, nil, nil)
 	if err == nil {
 		t.Fatal("2022 配置传 nil 派生器应报错，实际为 nil")
 	}

@@ -1,6 +1,7 @@
 package service
 
 // 中转 SNI 与父节点 TLS 配置的对照：REALITY 父节点的 SNI 覆盖必须是父节点 server_names 之一（否则握手必然失败）；
+// 父节点用自动申请的证书（ACME）时，中转 SNI 只能填该证书标识符或留空沿用父节点；
 // 父节点地址是 IP、开了 TLS 又没配 server_name 时，中转不填 SNI 就会按中转地址握手，后台给一句提示。
 // 口径与 relayRenderNode（node_source_relay.go）一致：判定都按翻译后的内核配置。
 
@@ -18,6 +19,7 @@ import (
 type relayParentTLS struct {
 	reality     bool
 	serverNames []string // 只在 reality 时有意义
+	acmeID      string   // 父节点是 acme 证书时的标识符，非 acme 为 ""
 	// needSNI：父节点地址是 IP、开了 TLS、没配 server_name，中转不填 SNI 会按中转地址握手
 	needSNI bool
 }
@@ -28,6 +30,11 @@ func relayParentTLSOf(parent model.Node) relayParentTLS {
 	if sec, _ := kernel["security"].(string); strings.EqualFold(strings.TrimSpace(sec), "reality") {
 		out.reality = true
 		out.serverNames = kernelStrings(kernel["server_names"])
+		return out
+	}
+	if protocol.CertMode(protocol.CanonicalType(nodeStr(parent.NodeType)), kernel) == protocol.CertModeACME {
+		out.acmeID = protocol.CertIdentifier(kernel, nodeStr(parent.ServerHost))
+		out.needSNI = false
 		return out
 	}
 	tlsOn, _ := kernel["tls"].(bool)
@@ -63,16 +70,19 @@ func kernelStrings(v any) []string {
 	return nil
 }
 
-// relayCheckSNI 校验中转的 SNI 覆盖与父节点是否对得上：REALITY 父节点只允许填父节点 server_names 之一（422 sni）。
-// sni 为 nil 表示不覆盖，沿用父节点，总是允许。
+// relayCheckSNI 校验中转的 SNI 覆盖与父节点是否对得上：REALITY 父节点只允许填父节点 server_names 之一（422 sni）；
+// acme 父节点只允许填 acmeID（422 sni）。sni 为 nil 或空串表示不覆盖，沿用父节点，总是允许。
 func relayCheckSNI(parent model.Node, sni *string) error {
-	if sni == nil {
+	if sni == nil || strings.TrimSpace(*sni) == "" {
 		return nil
 	}
 	p := relayParentTLSOf(parent)
 	if p.reality && !slices.Contains(p.serverNames, *sni) {
 		return inventoryInvalid("sni", fmt.Sprintf("父节点是 REALITY，SNI 只能填父节点 server_names 之一（%s），或留空沿用父节点",
 			strings.Join(p.serverNames, "、")))
+	}
+	if p.acmeID != "" && protocol.NormalizeCertIdentifier(*sni) != p.acmeID {
+		return inventoryInvalid("sni", fmt.Sprintf("父节点用自动申请的证书（%s），SNI 只能填它或留空沿用父节点", p.acmeID))
 	}
 	return nil
 }
@@ -83,6 +93,8 @@ func relaySNIHint(parent model.Node) string {
 	switch {
 	case p.reality:
 		return fmt.Sprintf("父节点是 REALITY：SNI 只能填父节点 server_names 之一（%s），留空沿用父节点。", strings.Join(p.serverNames, "、"))
+	case p.acmeID != "":
+		return ""
 	case p.needSNI:
 		return "父节点地址是 IP 且没配 server_name：中转不填 SNI 时会按中转地址握手，请给每条中转填 SNI。"
 	}
