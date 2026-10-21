@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { MockModule, MockResult } from '../types.ts'
 import { assertNoOpenChange, BillingError, createdView, fulfill, isUuid, placeOrder, readStrict, sweepExpired } from './billing.ts'
-import { findPlan, MIN_PAYMENT, PAY_METHODS, type PayMethod } from './catalog.ts'
+import { findPlan, PAY_METHODS, type PayMethod } from './catalog.ts'
 import { gate, isLiveSub, isRevivable, portalState, type PortalState } from './fixtures.ts'
 import { normalizeLabel, profileName } from './purchase.ts'
 import { assertNoPendingNew, quoteRows, quoteTime, settle } from './quote.ts'
@@ -109,6 +109,7 @@ export const checkout: MockModule = {
             label: m.label,
             fee_fixed: m.fee_fixed,
             fee_percent: m.fee_percent,
+            min_amount: m.min_amount,
           }
           if (amount !== null) {
             const fee = surchargeOf(amount, m)
@@ -139,7 +140,7 @@ export const checkout: MockModule = {
               const msg =
                 plan.kind === 'one_time'
                   ? '你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份'
-                  : '你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变'
+                  : '你已经有一份这个套餐，请续在原来那份上（链接不变），或选择另开一份'
               throw new BillingError(409, 'conflict', msg)
             }
           }
@@ -282,7 +283,7 @@ export const checkout: MockModule = {
       if (!channel) return ctx.fail(404, 'not_found', '未知的支付渠道')
       if (order.status !== 'pending_payment') return ctx.fail(409, 'conflict', '该订单当前状态不可支付')
       if (order.payable_amount <= 0) return ctx.fail(409, 'conflict', '该订单无需外部支付')
-      if (order.payable_amount < MIN_PAYMENT) return ctx.fail(409, 'conflict', '支付金额低于该付款方式的最低额')
+      if (order.payable_amount < channel.min_amount) return ctx.fail(409, 'below_method_minimum', `这个付款方式最低付 ¥${(channel.min_amount / 100).toFixed(2)}，请换一种付款方式`)
       const origin = `http://${ctx.req.headers.host}`
       const returnUrl = typeof body.return_url === 'string' && body.return_url.startsWith(`${origin}/`) ? body.return_url : `${origin}/#orders`
       const existing = [...intents.entries()].find(([, v]) => v.orderId === order.id && v.provider === channel.provider && v.method === channel.method)

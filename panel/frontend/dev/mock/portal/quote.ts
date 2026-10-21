@@ -156,14 +156,14 @@ function ownedSub(state: PortalState, id: unknown): SubFixture {
 
 function assertSubActive(sub: SubFixture, at: number) {
   if (!isLiveSub(sub) && !isRevivable(sub, at)) {
-    throw new BillingError(409, 'conflict', '订阅已过期太久，不能再续费')
+    throw new BillingError(409, 'conflict', '这一份已过期超过 30 天，不能再续费，请重新买一份（会是新链接）')
   }
 }
 
 function changeCheck(sub: SubFixture, plan: CatalogPlan, at: number) {
   if (plan.id === sub.plan_id) throw new BillingError(409, 'conflict', '与当前套餐相同，请使用续费')
   if (!plan.allowUpgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
-  if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
+  if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '这一份已过期超过 30 天，不能再续费，请重新买一份（会是新链接）')
 }
 
 const changeSpec = (sub: SubFixture, plan: CatalogPlan, price: CatalogPrice, at: number): RowSpec => ({
@@ -181,6 +181,20 @@ export interface QuoteInput {
   plan_id?: unknown
   coupon_code?: unknown
   new_copy?: unknown
+}
+
+/** 每人份数上限（Go order/service/limits.go 的 subscriptionCap 同口径）：手里的份（生效的 + 过期但还能续费的）+ 全部待付新购单（不看付款期限）。没开（0）或没到上限回 null */
+export function subscriptionCapRefusal(state: PortalState, at: number): string | null {
+  const max = state.maxSubscriptions ?? 0
+  if (max <= 0) return null
+  const held = state.subs.filter((s) => !isDead(s, at)).length
+  const pendingNew = state.orders.filter((o) => o.kind === 'new' && o.status === 'pending_payment').length
+  const have = held + pendingNew
+  if (have < max) return null
+  let msg = `每人最多 ${max} 份套餐（过期不到 30 天、还能续费的也算），你已经有 ${have} 份`
+  if (pendingNew > 0) msg += `（含 ${pendingNew} 张没付款的新买订单）`
+  msg += '。可以给已有的一份续费或换套餐'
+  return msg
 }
 
 /** 按 action 展开报价行；strictCoupon 见 row */
@@ -229,7 +243,7 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
         return plan.prices.map((price) => row(state, changeSpec(sub, plan, price, at), coupon, strictCoupon))
       }
       if (sub) {
-        if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
+        if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '这一份已过期超过 30 天，不能再续费，请重新买一份（会是新链接）')
         return plansNow()
           .filter((p) => p.id !== sub.plan_id && p.allowUpgrade && p.prices.length > 0)
           .slice(0, MAX_ROWS)
@@ -242,7 +256,7 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
           .slice(0, MAX_ROWS)
           .flatMap((s) => plan.prices.map((price) => row(state, changeSpec(s, plan, price, at), coupon, strictCoupon)))
       }
-      throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '订阅与套餐至少给一个' })
+      throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '要换的那一份与目标套餐至少给一个' })
     }
     case 'new': {
       if (!isUuid(req.plan_id)) throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '必填' })
@@ -256,10 +270,12 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
           const msg =
             plan.kind === 'one_time'
               ? '你已有这个一次性套餐，可以叠加到原来那一份，或选择另开一份'
-              : '你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变'
+              : '你已经有一份这个套餐，请续在原来那份上（链接不变），或选择另开一份'
           throw new BillingError(409, 'conflict', msg)
         }
       }
+      const capped = subscriptionCapRefusal(state, at)
+      if (capped) throw new BillingError(409, 'subscription_limit_reached', capped)
       return plan.prices.map((price) => row(state, { sub: null, plan, price, start: at, endMs: null, credit: null }, coupon, strictCoupon))
     }
     case 'reset': {
@@ -352,7 +368,8 @@ export const quote: MockModule = {
       const state = portalState(ctx.user.userId)
       const at = Date.now()
       const subs = landingCandidates(state, at)
-      const options: Array<{ mode: string; subscription_id?: string }> = [{ mode: 'new' }]
+      const capped = subscriptionCapRefusal(state, at)
+      const options: Array<{ mode: string; subscription_id?: string; disabled_reason?: string }> = [capped ? { mode: 'new', disabled_reason: capped } : { mode: 'new' }]
       for (const sub of subs) {
         if (sub.plan_id === plan.id) {
           if (plan.kind === 'one_time') options.push({ mode: 'stack', subscription_id: sub.id })
@@ -381,6 +398,19 @@ export const quote: MockModule = {
         if (!(e instanceof BillingError)) throw e
         ctx.fail(e.status, e.code, e.message, e.fields)
       }
+    },
+
+    // 测试用：设本人的每人份数上限（Go 后台「购买限制」的 max_subscriptions），0 = 不限
+    'POST /v1/__mock/purchase-limits': async (ctx) => {
+      const body = await readStrict(ctx, ['max_subscriptions'])
+      if (!body) return
+      const raw = body.max_subscriptions
+      const n = typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : NaN
+      if (Number.isNaN(n)) {
+        return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { max_subscriptions: '须为非负整数' })
+      }
+      portalState(ctx.user.userId).maxSubscriptions = n
+      ctx.send(200, { max_subscriptions: n })
     },
   },
 }

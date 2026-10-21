@@ -1,6 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { portalState } from '../dev/mock/portal/fixtures'
 import { subscriptionsSchema } from '../src/portal/subscription-schema'
 import { quoteSchema } from '../src/portal/screens/common/quote-schema'
 import { applyBalance, waiveSmallDue } from '../dev/mock/portal/purchase'
@@ -18,6 +19,7 @@ describe('mock api · portal checkout (purchase model)', () => {
   let server: Server
   let base: string
   let auth: Record<string, string>
+  let userId: string
   let n = 0
   const key = () => `k-${++n}`
   const call = (method: string, path: string, body?: unknown, idem = false) => mockFetch(base, auth, method, path, body, idem ? key() : undefined)
@@ -31,7 +33,9 @@ describe('mock api · portal checkout (purchase model)', () => {
 
   beforeAll(async () => {
     ;({ server, base } = await serve('portal'))
-    auth = bearer((await loginAs(base, MOCK_ACCOUNTS.portal)).access_token)
+    const cred = await loginAs(base, MOCK_ACCOUNTS.portal)
+    userId = cred.user_id
+    auth = bearer(cred.access_token)
   })
   afterAll(() => close(server))
   beforeEach(() => scenario('proto-s4'))
@@ -221,5 +225,68 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect(after.current_period_end).toBe(r.period_end)
     const detail = (await (await call('GET', `/v1/orders/${order.order_id}`)).json()) as { order: { kind: string; status: string } }
     expect(detail.order).toMatchObject({ kind: 'stack', status: 'fulfilled' })
+  })
+
+  it('付款方式带各自最低额；站点最低额取最小的', async () => {
+    await scenario('proto-s3')
+    const res = await call('GET', '/v1/payment-methods')
+    expect(res.status).toBe(200)
+    const methods = ((await res.json()) as { methods: Array<{ provider: string; method: string; min_amount: number }> }).methods
+    expect(methods.find((m) => m.provider === 'epay' && m.method === 'alipay')!.min_amount).toBe(100)
+    expect(methods.find((m) => m.provider === 'btcpay')!.min_amount).toBe(2000)
+    const q = await quote({ action: 'new', plan_id: BASIC, new_copy: true })
+    expect(q.min_payment).toBe(100)
+  })
+
+  it('应付低于所选方式最低额：发起支付回 below_method_minimum，换个方式能付', async () => {
+    await scenario('proto-s3')
+    const q = await quote({ action: 'new', plan_id: BASIC, new_copy: true })
+    const r = q.quotes[0]!
+    expect(r.total).toBe(1500)
+    const created = await call(
+      'POST',
+      '/v1/orders',
+      { plan_id: BASIC, price_id: r.price_id, new_copy: true, as_of: q.as_of, expect: { total: r.total, balance_applied: 0, payable: r.total } },
+      true,
+    )
+    expect(created.status).toBe(201)
+    const order = (await created.json()) as { order_id: string }
+    const payBody = { provider: 'btcpay', method: '', return_url: `${base}/#/x` }
+    const first = await call('POST', `/v1/orders/${order.order_id}/pay`, payBody)
+    expect(first.status).toBe(409)
+    const err = (await first.json()) as { error: { code: string; message: string } }
+    expect(err.error.code).toBe('below_method_minimum')
+    expect(err.error.message).toBe('这个付款方式最低付 ¥20.00，请换一种付款方式')
+    const second = await call('POST', `/v1/orders/${order.order_id}/pay`, { provider: 'epay', method: 'alipay', return_url: `${base}/#/x` })
+    expect(second.status).toBe(201)
+  })
+
+  it('每人份数上限：落点新开那项带原因，报价与建单回 subscription_limit_reached；0 不限', async () => {
+    await scenario('proto-s3')
+    const q = await quote({ action: 'new', plan_id: BASIC, new_copy: true })
+    const r = q.quotes[0]!
+    portalState(userId).maxSubscriptions = 1
+    const land = await call('GET', `/v1/me/checkout/landings?plan_id=${BASIC}`)
+    expect(land.status).toBe(200)
+    const options = ((await land.json()) as { options: Array<{ mode: string; disabled_reason?: string }> }).options
+    expect(options[0]).toMatchObject({ mode: 'new' })
+    expect(options[0]?.disabled_reason).toMatch(/^每人最多 1 份套餐/)
+    for (const opt of options.slice(1)) expect(opt.disabled_reason).toBeUndefined()
+    const quoted = await call('POST', '/v1/me/checkout/quote', { action: 'new', plan_id: BASIC, new_copy: true })
+    expect(quoted.status).toBe(409)
+    expect(((await quoted.json()) as { error: { code: string } }).error.code).toBe('subscription_limit_reached')
+    const ordered = await call(
+      'POST',
+      '/v1/orders',
+      { plan_id: BASIC, price_id: r.price_id, new_copy: true, as_of: q.as_of, expect: { total: r.total, balance_applied: 0, payable: r.total } },
+      true,
+    )
+    expect(ordered.status).toBe(409)
+    expect(((await ordered.json()) as { error: { code: string } }).error.code).toBe('subscription_limit_reached')
+    expect((await call('POST', '/v1/__mock/purchase-limits', { max_subscriptions: 0 })).status).toBe(200)
+    const land2 = await call('GET', `/v1/me/checkout/landings?plan_id=${BASIC}`)
+    const options2 = ((await land2.json()) as { options: Array<{ mode: string; disabled_reason?: string }> }).options
+    expect(options2[0]?.disabled_reason).toBeUndefined()
+    expect((await call('POST', '/v1/me/checkout/quote', { action: 'new', plan_id: BASIC, new_copy: true })).status).toBe(200)
   })
 })
