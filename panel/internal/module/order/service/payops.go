@@ -14,9 +14,6 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 )
 
-// defaultPayTitle 是没有订单行（充值单）时收银台的商品名。
-const defaultPayTitle = "订阅服务"
-
 // Pay 门户发起支付：在事务里锁住自己的待付订单、核对可付，由 payment 占住支付意图（或复用在途的）；提交后再在事务外去渠道建单（渠道可能联网，不能占着库连接和订单锁）。
 func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult, error) {
 	userID, err := portalUser(ctx)
@@ -85,7 +82,7 @@ func (s *Service) Pay(ctx context.Context, in PayInput) (paymentsvc.IntentResult
 	return s.payments.CompleteIntent(ctx, draft)
 }
 
-// payTitle 取收银台商品名：首条订单行的快照名，没有订单行时用兜底名。
+// payTitle 取收银台商品名：首条订单行的快照名；没有订单行的是充值单，用「余额充值」（与订单列表同名）。
 func (s *Service) payTitle(ctx context.Context, o model.Order) (string, error) {
 	items, err := s.repo.ItemsByOrders(ctx, []uuid.UUID{o.ID})
 	if err != nil {
@@ -94,7 +91,7 @@ func (s *Service) payTitle(ctx context.Context, o model.Order) (string, error) {
 	if len(items) > 0 && items[0].SnapshotName != "" {
 		return items[0].SnapshotName, nil
 	}
-	return defaultPayTitle, nil
+	return topupItemName, nil
 }
 
 // Query 门户主动查单（订单须是本人的）。payment.Query 要在事务外、不持订单锁时调。

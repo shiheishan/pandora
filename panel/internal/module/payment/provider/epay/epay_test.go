@@ -479,8 +479,8 @@ func TestSanitizeSubject(t *testing.T) {
 		"标准套餐":      "标准套餐",
 		"A&B":       "A＆B",
 		"x=y":       "x＝y",
-		"":          "订阅服务",
-		"  ":        "订阅服务",
+		"":          "订单付款",
+		"  ":        "订单付款",
 		"line1\nl2": "line1 l2",
 	}
 	for in, want := range cases {

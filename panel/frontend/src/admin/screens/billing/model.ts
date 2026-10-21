@@ -105,6 +105,7 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
 const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
   account_deleted: '账号已注销',
   plan_archived: '套餐已归档，实付已转入用户余额',
+  user_cancelled: '用户自己取消',
 }
 
 export function cancelReasonLabel(reason: string): string {

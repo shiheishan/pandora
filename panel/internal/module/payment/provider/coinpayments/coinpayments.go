@@ -362,7 +362,7 @@ func sanitizeSubject(s string) string {
 	s = strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
 	s = strings.TrimSpace(s)
 	if s == "" {
-		s = "订阅服务"
+		s = "订单付款"
 	}
 	r := []rune(s)
 	if len(r) > 64 {

@@ -29,8 +29,8 @@ const LEDGER: Readonly<Record<string, string>> = {
   balance_adjusted: '人工调整',
   commission_to_balance: '佣金转入',
   gift_card_balance: '礼品卡',
-  late_payment_applied: '挂账转入',
-  late_payment_suspense: '挂账转入',
+  late_payment_applied: '待处理到账转入',
+  late_payment_suspense: '待处理到账转入',
 }
 export const ledgerLabel = (kind: string): string | null => LEDGER[kind] ?? null
 
