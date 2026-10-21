@@ -477,6 +477,12 @@ func TestPackagedUpgradeUnitsContract(t *testing.T) {
 		"User=root",
 		"ExecStart=/usr/local/bin/pandora-native upgrade-apply",
 		"TimeoutStartSec=600",
+		// 加固（upgrade-node 审查 S6）
+		"ProtectSystem=strict",
+		"ReadWritePaths=/usr/local/bin -/var/lib/pandora-native",
+		"CapabilityBoundingSet=CAP_DAC_OVERRIDE",
+		"PrivateNetwork=true",
+		"RestrictAddressFamilies=AF_UNIX",
 	} {
 		if !strings.Contains(serviceContent, want) {
 			t.Errorf("升级 service 单元缺少 %q", want)
