@@ -3,11 +3,17 @@ import type { SseEvent } from '../core/sse'
 
 // ---------------------------------------------------------------------------
 // 实时事件的纯函数模型。事件只说「哪张表哪一行变了」，没有业务内容（10-16 用户定）：
-// 标题按 topic + op 生成通用条目，meta 只带区域名与短 id（或开关 code），点击跳到
-// 对应后台地址。已读状态只在内存里，不持久化，刷新即清。
+// 通用标题与 meta 仍按 topic + op 生成，打开弹层后再按 lookup 查单条接口补上可读内容（见 events-lookup.ts）。
+// 点击跳到对应后台地址。已读状态只在内存里，不持久化，刷新即清。
 // ---------------------------------------------------------------------------
 export type EventTone = 'ok' | 'warn' | 'danger' | 'info'
 export type EventTab = 'all' | 'orders' | 'subscriptions' | 'tickets' | 'nodes' | 'other'
+
+export type LookupTable = 'orders' | 'tickets' | 'nodes' | 'servers' | 'plans'
+export interface EventLookup {
+  table: LookupTable
+  id: string
+}
 
 export const EVENT_TABS: ReadonlyArray<readonly [EventTab, string]> = [
   ['all', '全部'],
@@ -31,6 +37,8 @@ export interface EventItem {
   /** 点击后去的后台地址（hash 路径，如 /billing/orders/<id>）；null = 不跳转 */
   path: string | null
   unread: boolean
+  /** 要查的那一行；null = 没有单条接口、删除事件或没有 id，只显示通用文案 */
+  lookup: EventLookup | null
 }
 
 // 载荷 schema 沿用现有契约：全部字段可选；data 不是 JSON 或解析失败时按空载荷处理。
@@ -74,6 +82,7 @@ interface TopicSpec {
   path: (id: string | undefined, payload: Payload) => string | null
   /** meta 第二段：短 id，或开关 code；空串 = 不显示 */
   metaId: (payload: Payload) => string
+  lookup?: (payload: Payload) => LookupTable | null
 }
 
 /** 短 id：前 8 位，没有就空串 */
@@ -89,6 +98,7 @@ const TOPICS: Record<string, TopicSpec> = {
     title: titles('新订单', '订单有变化', '订单已删除'),
     path: detailPath('/billing/orders', (id) => `/billing/orders/${id}`),
     metaId: (p) => shortId(p.id),
+    lookup: (p) => (!p.table || p.table === 'orders' ? 'orders' : null),
   },
   'subscriptions.changed': {
     tab: 'subscriptions',
@@ -110,6 +120,7 @@ const TOPICS: Record<string, TopicSpec> = {
     // ticket_messages 的 id 是消息 id，定位不到工单，恒回工单列表
     path: (id, payload) => (payload.table === 'ticket_messages' || !id ? '/tickets' : `/tickets/${encodeURIComponent(id)}`),
     metaId: (p) => shortId(p.id),
+    lookup: (p) => (!p.table || p.table === 'tickets' ? 'tickets' : null),
   },
   'ticket.updated': {
     tab: 'tickets',
@@ -130,6 +141,7 @@ const TOPICS: Record<string, TopicSpec> = {
         : titles('新节点', '节点有变化', '节点已删除')(payload, op),
     path: (id, payload) => (payload.table === 'servers' ? detailPath('/nodes/servers', (x) => `/nodes/servers/${x}`)(id) : detailPath('/nodes/nodes', (x) => `/nodes/nodes/${x}`)(id)),
     metaId: (p) => shortId(p.id),
+    lookup: (p) => (p.table === 'servers' ? 'servers' : !p.table || p.table === 'nodes' ? 'nodes' : null),
   },
   'plans.changed': {
     tab: 'other',
@@ -142,6 +154,7 @@ const TOPICS: Record<string, TopicSpec> = {
     // plan_versions、prices 等子表的 id 不是套餐 id，恒回套餐列表
     path: (id, payload) => (payload.table === 'plans' || !payload.table ? detailPath('/plans', (x) => `/plans/${x}`)(id) : '/plans'),
     metaId: (p) => shortId(p.id),
+    lookup: (p) => (!p.table || p.table === 'plans' ? 'plans' : null),
   },
   'announcements.changed': {
     tab: 'other',
@@ -178,6 +191,8 @@ export function describeEvent(event: SseEvent, key: number, at: Date = new Date(
   const tone: EventTone =
     event.event === 'switches.changed' && payload.enabled !== undefined ? (payload.enabled ? 'ok' : 'warn') : spec.tone
   const metaId = spec.metaId(payload)
+  const lookupTable = op !== 'DELETE' && payload.id ? (spec.lookup?.(payload) ?? null) : null
+  const lookup: EventLookup | null = lookupTable && payload.id ? { table: lookupTable, id: payload.id } : null
   return {
     key,
     title: spec.title(payload, op),
@@ -188,6 +203,7 @@ export function describeEvent(event: SseEvent, key: number, at: Date = new Date(
     // 删掉的行打不开详情，退回列表
     path: spec.path(op === 'DELETE' ? undefined : payload.id, payload),
     unread: true,
+    lookup,
   }
 }
 

@@ -10,10 +10,12 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { relativeTime } from '../core/format'
 import type { SseEvent } from '../core/sse'
 import { useRealtime } from '../shell/runtime'
 import css from './EventsCapsule.module.css'
+import { eventLookupKey, eventText, lookupId, useEventLookups } from './events-lookup'
 import {
   describeEvent,
   eventsInTab,
@@ -58,12 +60,17 @@ export function EventsProvider({ onOpen, children }: { onOpen: (path: string) =>
   const [freshKey, setFreshKey] = useState<number | null>(null)
   const seq = useRef(0)
   const [, setTick] = useState(0)
+  const queryClient = useQueryClient()
 
-  const onEvent = useCallback((event: SseEvent) => {
-    const item = describeEvent(event, ++seq.current)
-    setFreshKey(item.key)
-    setItems((list) => pushEvent(list, item))
-  }, [])
+  const onEvent = useCallback(
+    (event: SseEvent) => {
+      const item = describeEvent(event, ++seq.current)
+      setFreshKey(item.key)
+      setItems((list) => pushEvent(list, item))
+      if (item.lookup) void queryClient.invalidateQueries({ queryKey: eventLookupKey(item.lookup), exact: true })
+    },
+    [queryClient],
+  )
   const status = useRealtime(true, onEvent)
 
   // 相对时间每 30 秒刷新一次
@@ -170,6 +177,7 @@ function EventsPanel({
   const [tab, setTab] = useState<EventTab>('all')
   const unread = unreadCount(items)
   const visible = eventsInTab(items, tab)
+  const lookups = useEventLookups(visible)
 
   // 页签上左右方向键移动并切换
   const onTabKey = (event: ReactKeyboardEvent) => {
@@ -216,7 +224,9 @@ function EventsPanel({
         ) : visible.length === 0 ? (
           <div className={css.empty}>这一类暂时没有事件</div>
         ) : (
-          visible.map((item) => (
+          visible.map((item) => {
+            const text = eventText(item, item.lookup ? lookups.get(lookupId(item.lookup)) : undefined)
+            return (
             <button
               key={item.key}
               type="button"
@@ -225,15 +235,16 @@ function EventsPanel({
             >
               <span className={css.evDot} aria-hidden="true" />
               <span className={css.text}>
-                <span className={css.title}>{item.title}</span>
-                {item.meta && <span className={css.meta}>{item.meta}</span>}
+                <span className={css.title}>{text.title}</span>
+                {text.meta && <span className={css.meta}>{text.meta}</span>}
               </span>
               <span className={css.rightCol}>
                 <span className={css.at}>{relativeTime(item.at)}</span>
                 {item.unread && <span className={css.srOnly}>未读</span>}
               </span>
             </button>
-          ))
+            )
+          })
         )}
       </div>
       <div className={css.footer}>
