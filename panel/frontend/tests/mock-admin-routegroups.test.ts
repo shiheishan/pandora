@@ -57,7 +57,7 @@ describe('mock api · admin route groups (00096)', () => {
     const g = (await groups()).find((x) => x.name === '新加坡 · 测试')!
     const target = (await nodes()).find((n) => n.name === '新加坡 02')!
     let r = await nodeRouting(target.id)
-    const joined = await call('PUT', `/v1/nodes/${target.id}/route-groups`, { row_version: r.row_version, group_ids: [g.id] }, 'rm-1')
+    const joined = await call('PUT', `/v1/nodes/${target.id}/route-groups`, { row_version: r.row_version, group_ids: [g.id] })
     expect(joined.status).toBe(200)
     expect(await joined.json()).toMatchObject({ ok: true })
     // 节点私有规则可以指向所在组的出站，按 tag 原样精确比较：大小写不同即 422，内置名不分大小写

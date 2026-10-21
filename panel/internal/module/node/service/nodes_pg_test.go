@@ -200,7 +200,7 @@ func TestNodePatchEpochOnlyWhenNeededCommitted(t *testing.T) {
 
 func TestNodeReorder(t *testing.T) {
 	e, ctx := newInvEnv(t)
-	srv := e.server(t, ctx, "nd-copy")
+	srv := e.server(t, ctx, "nd-reorder")
 	a := e.ssNode(t, ctx, srv.ID, "ord-1", 22050)
 	b := e.ssNode(t, ctx, srv.ID, "ord-2", 22051)
 	if err := e.svc.ReorderNodes(ctx, []NodeOrderItem{
