@@ -15,6 +15,10 @@ paths:
   - 到期类的键带周期末 Unix 秒（`expiring:`、`expired:`、`recall:`），流量预警带档位与配额当期起点（`quota:<订阅>:<档>:<起点>`）；不带周期的话续费后的下一期再也发不出。
 - 内置模板登记在 `registry.go`，后台只能改内容不能新建；默认内容与迁移 `00007_notify.sql`、`00026_notify_inbox.sql` 的种子逐字一致，「恢复默认」回到代码里的值，改一处必须同改另一处（PG 测试对照）。模板变量走白名单，主题去换行防邮件头注入（`headerSafe`）。后台保存、恢复默认、测试发送模板都挂 `RecentReauth`（模板就是找回密码、验证码邮件的正文，用户 10-21 定），预览不挂；`TestAdminRoutesRequireAuth` 的 reauth 一列逐条钉住。
 - 模板类别：transactional 不可退订；service 用户可按渠道关；marketing 是营销与群发。
+- 后台对用户的操作通知（用户 10-21 定，`registry_admin_ops.go`、`notice_admin_ops.go`，种子迁移 00063）：只有后台换链接 `subscription.link_rotated`（subscription 的 `AdminRotate` 经 `LinkNotifier` 调 `NotifyLinkRotated`，去重键 `link-rotated:<订阅>:<换的时刻微秒>`）与后台开待付单 `order.pending_created`（order 的人工开单 pending 经 `PendingNotifier` 调 `NotifyOrderPending`，去重键 `order-pending:<订单>`）；加时长、加流量、重置流量、门户自己换链接、赠送与线下开单都不通知。
+  - 两个都是 transactional、邮件 / 站内信 / Telegram 三渠道：别人替用户做的、改变能不能用或要不要付钱的事，关掉了用户会连不上或错过付款期限，不让退订（与 `order.paid` 同类）。
+  - 都在调用方事务里经 `NotifyUser` 写，写失败业务回滚；app 适配器在 `internal/app/adapters.go`（`subLinkNotifier`、`orderPendingNotifier`），subscription / order 不 import notify。
+  - 套餐名经 `Plans` 读，换链接带备注名（`备注名 · 套餐名`，与门户卡片一致）；付款期限按站点时区到分钟（`noticeTime`），金额两位小数加「 元」；链接只经 settings 的 `SiteURL` 拼（`portalURL`：`<主域名>/#/subs`、`/#/orders/<订单号>`）。文案按门户叫法（套餐、一份、链接、App），不出现门户禁用词。
 - 扫描 `notify:scan` 约每 5 分钟：先按游标写支付成功通知（`scan_paid.go`，停机多久都不漏，第一次只回看 `paidLookback`），再扫到期提醒、过期召回与流量预警。每轮最多写 `scanBatch` 件，余下的下一轮接着写（一轮写完会超任务时限）。时刻按站点时区显示到分钟；永久的一次性套餐（`subsvc.IsPermanent`）的到期写「永久」（`paidExpiry`）。
   支付成功只有 `order.paid` 一套模板（新购、续费、叠加、换套餐共用）；剩余流量取配额行的 `Remaining`，已含本期赠送（`bonus_value`），TG `/traffic` 的「共」按已用 + 剩余算。
 - `SaveMailSettings` 在一个事务里先写 SMTP 设置再写注册设置：开启邮箱验证的校验要读到新的 SMTP 值。

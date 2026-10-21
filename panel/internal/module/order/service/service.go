@@ -141,8 +141,9 @@ type Service struct {
 	users    Users
 	idem     idempotency
 	audit    auditWriter
-	hook     PaidHook       // UsePaidHook 注入，可为 nil
-	limits   PurchaseLimits // UsePurchaseLimits 注入；nil 时不限（测试）
+	hook     PaidHook        // UsePaidHook 注入，可为 nil
+	limits   PurchaseLimits  // UsePurchaseLimits 注入；nil 时不限（测试）
+	pending  PendingNotifier // UsePendingNotifier 注入（manual_notify.go）
 	now      func() time.Time
 	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 }
@@ -235,6 +236,7 @@ func (s *Service) MissingPorts() []string {
 	}{
 		{"PaidHook", s.hook != nil},
 		{"PurchaseLimits", s.limits != nil},
+		{"PendingNotifier", s.pending != nil},
 		{"PluginEvents", s.events != nil},
 		{"Realtime", s.rt != nil},
 	} {

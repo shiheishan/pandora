@@ -60,6 +60,7 @@ paths:
 - 门户换链：仅 `StateLive`；过期回 `ErrRotateWhileExpired`（`service/rotate.go`）
 - `rotateLocked`：吊销凭据、签新凭据、`RotateProxyUUID`、事件 `link_rotated`、审计、`notifyRoster`（`service/rotate.go`）
 - 门户限频：`handler/delivery.go` 的 `rotateRules`（间隔 10 分钟、每份 24h 5 次、账号 24h 20 次）；后台 `AdminRotate` 不限频、要原因进审计
+- 后台换链接通知属主（用户 10-21 定）：`AdminRotate` 在同一事务里调 `LinkNotifier.LinkRotatedByAdmin`（`service/link_notify.go`，app 适配到 notify 的 `NotifyLinkRotated`，模板 `subscription.link_rotated`），返回错误时换链接一起回滚；门户 `MyRotate` 不通知。加时长、加流量、重置流量不通知。`LinkNotifier` 在 `MissingPorts` 里
 - 备注名：`NormalizeLabel`（`service/label.go`），配置名 `render.ProfileName`（`render/profile.go`）；路由 `sub_rename` 每分钟 10 次（`handler/handler.go`）
 
 ## 到期与续费窗口

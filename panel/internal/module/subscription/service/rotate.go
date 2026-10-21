@@ -95,11 +95,24 @@ func (s *Service) AdminRotate(ctx context.Context, subID uuid.UUID, reason strin
 		if err := s.rotateLocked(ctx, sub, actorFrom(p), "admin"); err != nil {
 			return err
 		}
-		return s.writeAudit(ctx, ActionLinkRotatedByAdmin, sub.ID, map[string]any{
+		if err := s.writeAudit(ctx, ActionLinkRotatedByAdmin, sub.ID, map[string]any{
 			"reason":                reason,
 			"user_id":               sub.UserID.String(),
 			"old_revoked":           true,
 			"node_password_rotated": true,
+		}); err != nil {
+			return err
+		}
+		// 后台换的要告诉用户：旧链接已失效，App 里要重新添加（门户自己换的不通知）
+		if s.linkNotifier == nil {
+			return nil
+		}
+		label := ""
+		if sub.Label != nil {
+			label = *sub.Label
+		}
+		return s.linkNotifier.LinkRotatedByAdmin(ctx, LinkRotatedNotice{
+			UserID: sub.UserID, SubscriptionID: sub.ID, PlanID: sub.PlanID, Label: label, RotatedAt: s.clock(),
 		})
 	})
 	if err != nil {
