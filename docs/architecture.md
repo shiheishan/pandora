@@ -447,7 +447,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | 只升不降 | 清单 serial 必须大于本机 build_serial；本地自动回退只用 `.prev`，不经面板指令 |
 | 能力协商 | pdnd 在发布构建、内置公钥非空、二进制在 `/usr/local/bin/pandora-native`、root 助手的 path 单元已装时才声明 `upgrade_v1`；面板只对协商出这项的会话下发 `Command.upgrade` |
 | 节点进程 | 验签 → 解析 → 本机架构 → serial → 下载（https，5 分钟、128 MiB）→ 核摘要，暂存到 `/var/lib/pandora-native/upgrade/`，最后写 `request`；回 STAGED 或 FAILED + 原因码 |
-| root 助手 | `pandora-native-upgrade.path` 触发 `pandora-native upgrade-apply`：把暂存件以 O_NOFOLLOW、只认普通文件、有上限的方式拷进 root 0700 工作区再用自己内置的公钥与 build_serial 验一遍；留 `.prev`、换上新版、重启，在确认时限（面板给 180 秒）内等新进程拿到 Welcome 后写的 `healthy`，等不到就装回 `.prev`（ROLLED_BACK + `confirm_timeout`）。被打断后按当前二进制摘要续做，不来回循环 |
+| root 助手 | `pandora-native-upgrade.path` 触发 `pandora-native upgrade-apply`：把暂存件以 O_NOFOLLOW、只认普通文件、有上限的方式拷进 root 0700 工作区再用自己内置的公钥与 build_serial 验一遍；留 `.prev`、换上新版、重启，在确认时限（面板给 180 秒）内等新进程拿到 Welcome 后写的 `healthy`，等不到就装回 `.prev`（ROLLED_BACK + `confirm_timeout`）。被打断后（含确认窗口里整机重启）由 `.prev` 跑助手、按当前二进制摘要续做，不来回循环：那时装着的新版可能一启动就崩 |
 | 结局 | 失败与回退写结果文件，经 Hello 的 `last_upgrade` 或会话里的 UpgradeReport 报给面板。成功不靠回报：面板看新 Hello 的 binary_sha256 等于目标 |
 | 原因码 | `download_failed`、`sha256_mismatch`、`signature_invalid`、`manifest_invalid`、`serial_not_newer`、`busy`、`apply_failed`、`confirm_timeout`、`rollback_failed`，两端同一张表 |
 

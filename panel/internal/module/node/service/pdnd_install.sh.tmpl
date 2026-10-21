@@ -364,7 +364,7 @@ Description=Pandora NativeCore upgrade helper
 [Service]
 Type=oneshot
 User=root
-ExecStart=${INSTALL_DIR}/${SERVICE} upgrade-apply
+ExecStart=/bin/sh -c 'if [ -e /var/lib/pandora-native-upgrade/applying ] && [ -x ${INSTALL_DIR}/${SERVICE}.prev ]; then exec ${INSTALL_DIR}/${SERVICE}.prev upgrade-apply; fi; exec ${INSTALL_DIR}/${SERVICE} upgrade-apply'
 TimeoutStartSec=600
 UMask=0077
 StateDirectory=pandora-native-upgrade

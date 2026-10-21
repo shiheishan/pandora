@@ -83,7 +83,7 @@ paths:
   `upgrade_v1` 只在四项都满足时声明（`upgradeEnv.upgradeUnsupported`）：serial > 0、内置公钥非空、二进制就是 `/usr/local/bin/pandora-native`、装了 `/etc/systemd/system/pandora-native-upgrade.path`。
 - 节点进程（`upgrade.Agent`）只写 `/var/lib/pandora-native/upgrade/`：下载只走 https（`upgrade.allow_http` 只给验收），不跟随降到 http 的跳转，5 分钟、128 MiB；
   日志与回报里的地址去掉查询串。`next.tmp` 核过摘要才 rename，`request` 最后写；任一步失败不留半截。`request` 或 `applying` 已在 = `busy`。
-- root 助手（`upgrade-apply`，`upgrade.Helper`）：不收参数，路径全用固定值，不信 request 里的任何路径。暂存目录一律经 `os.Root`；每个文件 Lstat 只认普通文件、大小上限、
+- root 助手（`upgrade-apply`，`upgrade.Helper`）：单元平时跑装着的二进制，工作区有 `applying`（被打断要续做）且 `.prev` 在时改跑 `.prev`——续做时装着的是还没确认的新版，它一启动就崩的话回退跑不起来（10-21 真机测出）。不收参数，路径全用固定值，不信 request 里的任何路径。暂存目录一律经 `os.Root`；每个文件 Lstat 只认普通文件、大小上限、
   `O_NOFOLLOW|O_NONBLOCK` 打开后 `SameFile` 核对、链接数必须为 1（防硬链接），先拷进 root 0700 工作区 `/var/lib/pandora-native-upgrade/` 再验，验过的那份才装。
   工作区 `applying` 记 installing / installed / rolling_back，被打断后按当前二进制摘要续做；只补一次确认窗口（`Resumed`），回退不来回循环；记录最后删。
   重启前必须写成暂存 `applying` 并删掉旧 `healthy`（`prepareMarker`）：写不了就不重启、直接装回 `.prev`，结局 `apply_failed`（否则新进程写不出 healthy、面板却在新 Hello 上记成功、随后必然回退）。删不掉暂存 `request` 时报错退出，免得 path 单元空转。

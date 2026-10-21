@@ -475,7 +475,8 @@ func TestPackagedUpgradeUnitsContract(t *testing.T) {
 	for _, want := range []string{
 		"Type=oneshot",
 		"User=root",
-		"ExecStart=/usr/local/bin/pandora-native upgrade-apply",
+		// 续做交给 .prev（新版一启动就崩时照样能回退），新请求用装着的版本
+		"then exec /usr/local/bin/pandora-native.prev upgrade-apply; fi; exec /usr/local/bin/pandora-native upgrade-apply",
 		"TimeoutStartSec=600",
 		// 加固（upgrade-node 审查 S6）
 		"ProtectSystem=strict",
