@@ -8,7 +8,6 @@ import { orderRowSchema } from '../billing/schemas'
 // ---------------------------------------------------------------------------
 // deleted：后台注销并匿名化（迁移 00040），邮箱换成占位值，界面显示「已注销 #<短 id>」
 const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized', 'deleted'] as const
-const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
 const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
@@ -38,7 +37,6 @@ const userRowShape = {
   email: z.string(),
   display_name: z.string().nullable(),
   status: z.enum(USER_STATUSES),
-  risk_level: z.enum(RISK_LEVELS),
   group_name: z.string(),
   group_id: z.string().nullable(),
   created_at: time,

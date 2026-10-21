@@ -157,7 +157,7 @@ type UserProfile struct {
 	Fetches        []FetchRecord
 	FetchSources7d int
 	RegisteredIP   string
-	// Risk 各 IP 风险里最高的一档；没有共用 IP 为空串。users.risk_level 列没有任何代码写，后台不再用它判断风险
+	// Risk 各 IP 风险里最高的一档；没有共用 IP 为空串
 	Risk string
 }
 

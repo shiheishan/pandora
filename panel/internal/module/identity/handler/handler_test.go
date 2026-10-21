@@ -90,7 +90,7 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 	current := sub
 	return service.UserDetail{
 		UserRow: service.UserRow{
-			ID: id, Email: "u@example.test", Status: "active", RiskLevel: "normal",
+			ID: id, Email: "u@example.test", Status: "active",
 			GroupName: "默认",
 			Balance:   decimal.RequireFromString("1.00"), SubscriptionCount: 1,
 			Current: &current,
@@ -335,12 +335,12 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	}
 	f := &fakeSvc{rows: []service.UserRow{
 		{
-			ID: withCurrent, Email: "with@example.test", Status: "active", RiskLevel: "normal",
+			ID: withCurrent, Email: "with@example.test", Status: "active",
 			GroupName: "g", Balance: decimal.RequireFromString("9.99"),
 			SubscriptionCount: 1, Current: curSub,
 		},
 		{
-			ID: noCurrent, Email: "none@example.test", Status: "active", RiskLevel: "normal",
+			ID: noCurrent, Email: "none@example.test", Status: "active",
 			GroupName: "g", Balance: decimal.Zero,
 			SubscriptionCount: 0, Current: nil,
 		},
@@ -357,7 +357,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 		t.Fatalf("users len %d", len(users))
 	}
 	rowKeys := []string{
-		"id", "email", "display_name", "status", "risk_level", "group_name", "group_id",
+		"id", "email", "display_name", "status", "group_name", "group_id",
 		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "current_subscription",
 	}
 	for i, u := range users {
