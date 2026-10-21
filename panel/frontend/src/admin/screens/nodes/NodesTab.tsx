@@ -22,6 +22,7 @@ import {
   type NodeFilter,
   type NodeLineData,
 } from './logic'
+import { nodeCreatedToast } from './infra'
 import { runState, certBadge, sameRunState, type RunState } from './runtime'
 import { NodeBatchEdit } from './NodeBatchEdit'
 import { NodeCreateWizard } from './NodeForm'
@@ -68,7 +69,8 @@ export function NodesTab() {
   const invalidate = useInvalidateNodes()
   const batchIntent = useIntentKey()
   // 证书剩余天数按分钟走，不在渲染里读时钟
-  const now = useNow().getTime()
+  const nowDate = useNow()
+  const now = nowDate.getTime()
 
   const filter = parseNodeFilter(location.query.get('f'))
   const preselect = location.query.get('new')
@@ -317,7 +319,7 @@ export function NodesTab() {
             ) : list.data?.nodes.some((n) => n.serving_status !== 'retired') || filter === 'retired' ? (
               <Empty bare title="没有匹配的节点" description="换个筛选条件或搜索词试试。" />
             ) : (
-              <Empty bare title="还没有节点" description="新建节点后，用一键安装命令把它接入面板。" />
+              <Empty bare title="还没有节点" description="新建节点，绑到已接入的服务器后上线，就开始服务用户。" />
             )
           }
         >
@@ -376,15 +378,7 @@ export function NodesTab() {
         onCreated={(saved) => {
           setCreating(false)
           const server = saved.server_id ? (servers.data ?? []).find((sv) => sv.id === saved.server_id) : undefined
-          let msg: string
-          if (!saved.server_id) {
-            msg = '节点已创建为草稿，还没绑服务器：要上线时在详情「身份与操作」里绑定服务器'
-          } else if (!server || !server.enrolled) {
-            msg = '节点已创建为草稿。所在服务器还没接入：到「服务器」页签发安装令牌，在机器上用 root 执行后再回来上线'
-          } else {
-            msg = '节点已创建为草稿，所在服务器已接入：在节点详情右上角点「上线」'
-          }
-          toast(msg, 'ok')
+          toast(nodeCreatedToast(Boolean(saved.server_id), server, nowDate), 'ok')
           if (preselect) navigate('/nodes/nodes', { replace: true, query: listQueryParams(filter, query, tag) })
           navigate(`/nodes/nodes/${saved.id}/proto`)
         }}

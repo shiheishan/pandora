@@ -353,7 +353,7 @@ export function NodeOps({ node }: { node: NodeRow }) {
       <ConfirmModal
         open={confirm === 'revoke'}
         title={`吊销「${node.name}」的身份？`}
-        body="节点会被拒绝接入，要重新签发安装令牌并注册才能恢复。服务状态不变，心跳停止后显示为离线。"
+        body="节点会被拒绝接入，要到「服务器」页重新签发安装令牌、在机器上重新执行安装命令才能恢复。服务状态不变，心跳停止后显示为离线。"
         confirmLabel="吊销身份"
         tone="danger"
         onConfirm={() => {

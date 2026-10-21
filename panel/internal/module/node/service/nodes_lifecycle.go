@@ -28,7 +28,7 @@ const (
 const serverNoActiveNodeMsg = "服务器还没有在役节点，不能投入服务：先新建节点或把节点绑到这台，再在节点上用「上线」（上线时这台会自动投入服务）"
 
 // serverNotEnrolledMsg 是上线时服务器还没有有效接入身份的提示。
-const serverNotEnrolledMsg = "服务器还没接入（先在服务器页生成安装命令完成接入）"
+const serverNotEnrolledMsg = "服务器还没接入：先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令"
 
 // nodeUnboundActivateMsg 是没绑服务器的节点上线 / 启用时的提示。
 const nodeUnboundActivateMsg = "节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线"

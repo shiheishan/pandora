@@ -17,7 +17,7 @@ paths:
 生命周期与服务器：
 
 - 10-16 设计稿删掉了节点的复制、删除与「发布配置」入口（复制与发布配置的后端接口 10-21 已删；`GET v1/servers/:id/nodes` 同日删，卡片节点标签取 `GET v1/nodes` 按 server_id 分组），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。旧的「迁移」接口 10-20 已删，换成绑定 / 解绑（见下）。
-- 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。服务器下拉给没接入的（`enrolled` 为 false）标「（未接入）」，节点池下拉给没绑套餐的（`plan_names` 空）标「· 没绑套餐，暂不服务用户」，两个 hint 随所选写下一步；建成后的 toast 按没绑 / 服务器没接入 / 已接入分三句（`NodesTab` 的 `onCreated`）。列表地址带 `?new=<服务器 id>` 时自动打开向导并预选这台（服务器页的安装弹窗与草稿卡片的「新建节点」这样跳），关掉或建成后把 `new` 从地址去掉。编辑时 NodeForm 不再有节点池（`validateBasic` 只在新建时要求节点池）。
+- 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。服务器下拉给没接入的（`enrolled` 为 false）标「（未接入）」，节点池下拉给没绑套餐的（`plan_names` 空）标「· 没绑套餐，暂不服务用户」，两个 hint 随所选写下一步。服务器那句与建成后的 toast（`NodesTab` 的 `onCreated`）共用 `infra.serverLink`（列表没取到 unknown / 没接入 unenrolled / 接入但从没心跳 never / 心跳断了 offline / 在线 online；ready 看 `heartbeat_online`，其余按 `last_heartbeat_at` 90 秒判），文案在 `infra.wizardServerHint` / `nodeCreatedToast`：只有没接入才叫去签发安装令牌，在线的说可以直接上线，列表没到不猜。「生成密钥对」（REALITY）经 `logic.withRealityKeypair` 写回：私钥公钥换新，short_id 已填就保留、空着才用生成的（向导与编辑表单共用）。列表地址带 `?new=<服务器 id>` 时自动打开向导并预选这台（服务器页的安装弹窗与草稿卡片的「新建节点」这样跳），关掉或建成后把 `new` 从地址去掉。编辑时 NodeForm 不再有节点池（`validateBasic` 只在新建时要求节点池）。
 - 节点可以不绑服务器（用户 2026-10-20 定）：向导的服务器下拉缺省「暂不绑定」（`Select` 的 `emptyOption`，说明 `logic.UNBOUND_HINT`）；`validateBasic(b, creating, live)` 选了服务器才要端口、在役（live）才要地址；`createBody` 没选服务器 / 没填端口时不带这两个键，`patchBody` 不发空端口。
 - 节点详情是整页（`NodeDetailPage.tsx`，kit `DetailPage`；外框 `DETAIL_ROUTES` 已登记 `nodes:nodes`），4 个页签 概览 / 协议参数 / 设置 / 身份与操作（`DETAIL_TABS`；「设置」10-21 由「路由与流量」改名，地址段仍是 `settings`），地址 `/nodes/nodes/<id>/<metrics|proto|settings|ops>`；`index.tsx` 按 `rest[0]` 分发到列表或详情。数据以 `useNodeDetail` 为主，列表缓存里有这一行时先拿来秒出，404 交给 QueryView。返回链接与切页签都带上列表的查询串（筛选不丢）。
 - 页头：地区码 + 名称 + StatusDot，副行 地址 · 协议 · 服务器；右侧上线 / 停用（`NodeOps.tsx` 的 `NodeHeaderAction`，停用要确认）。右栏 SideFacts 六项：服务器（链到服务器详情）、地区（去掉「HK · 」前缀）、节点池、是否下发、本周期用量、运行状态（`runState`）。样稿的「内核」后端没有，不显示。
@@ -38,6 +38,7 @@ paths:
 - 服务器只有 draft / ready / draining / maintenance / retired 五态；卡片「标记维护」发 `draining`（显示「维护中」），maintenance 是进一步停机；草稿没有「投入服务」快捷按钮（后端进 ready 要有在役节点，草稿在节点「上线」时自动投入服务），改写一句下一步 `infra.serverNextStep`：没接入「还没接入：签发安装令牌，在机器上用 root 执行」，已接入且 90 秒内有心跳「已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务」，另有心跳断了 / 从没心跳两句；草稿的心跳按 `last_heartbeat_at` 自己判（后端 `heartbeat_online` 只对 ready 为真）。没接入的草稿「安装令牌」是主按钮，已接入的草稿多一个「新建节点」。服务器详情页头的动作与卡片一致（快捷状态、安装令牌、新建节点、编辑）。退役要先标记维护；`infra.ts` 与 mock 的状态边表照后端 `serverStatusTransitions` 原样写，`infra.test.ts` 逐边钉住。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
+- 叫法（10-21 统一）：后台签发的是「安装令牌」（动作一律说「签发安装令牌」，按钮「安装令牌」「添加并签发安装令牌」），在机器上用 root 执行的是「安装命令」（令牌就在命令里）；不说「生成安装命令」「注册」。Go 的 `serverNotEnrolledMsg` 与假后端副本同一说法。
 - 节点池卡片（`PoolsTab.tsx`）没绑套餐时写「没有绑定套餐，暂时不服务任何用户」；「新建节点池」「添加服务器」都在 PageActions。
 - 签安装令牌在服务器卡片与服务器详情页头（`serverActions.ts` 的 `useIssueServerToken`，`v1/servers/:id/bootstrap-token`），签好后弹安装弹窗（`InstallModal.tsx`；第 1 步一条安装命令，自动换行不横向滚动，令牌就在命令里、脚本不另要；第 2 步「新建节点（预选这台）」跳 `?new=`；关闭即不再显示，别再加「粘贴令牌」那一步）；节点详情「身份与操作」只显示节点 ID、身份、证书指纹（`identity.fingerprint_sha256`）与服务器待用令牌数，不签发令牌、没有单节点令牌（10-14 删了 `v1/nodes/bootstrap-token` 与 UniProxy 服务端令牌）。
 
