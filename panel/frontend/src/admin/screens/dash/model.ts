@@ -1,7 +1,7 @@
 import { formatCount, formatMoney } from '../../../core/format'
 import type { RouteQuery } from '../../../core/router'
 import type { AdminMe } from '../../me'
-import type { ModuleKey } from '../../modules'
+import { modulePath, type ModuleKey } from '../../modules'
 import type { TaskItem } from '../../tasks'
 import type { Overview } from './api'
 
@@ -35,8 +35,16 @@ export function formatDuration(seconds: number): string {
 export interface Target {
   module: ModuleKey
   tab: string | null
+  /** 「打开某一条」：拼在 modulePath(module, tab) 后面（编码后），如节点详情 /nodes/nodes/<id>；只用于 admin/modules.ts 的 DETAIL_ROUTES 登记过的「模块:页签」 */
+  id?: string
   /** 目标页的地址筛选（如订单页 s=pending） */
   query?: RouteQuery
+}
+
+/** 去处的 hash 路径（不含查询串）：modulePath，有 id 时再接一段编码后的 id */
+export function targetPath(target: Target): string {
+  const base = modulePath(target.module, target.tab)
+  return target.id ? `${base}/${encodeURIComponent(target.id)}` : base
 }
 
 // ===========================================================================
@@ -116,9 +124,20 @@ function certMeta(item: Extract<TaskItem, { kind: 'node_certs' }>): string {
   const parts: string[] = []
   if (item.failing > 0) parts.push(`申请失败 ${item.failing} 个`)
   if (item.expiring > 0) parts.push(`快到期 ${item.expiring} 个`)
-  const names = item.sample.slice(0, 2).map((s) => s.name)
-  if (names.length > 0) parts.push(`如 ${names.join('、')}`)
+  if (item.count === 1 && item.sample[0]) {
+    parts.push(item.sample[0].name)
+  } else {
+    const names = item.sample.slice(0, 2).map((s) => s.name)
+    if (names.length > 0) parts.push(`如 ${names.join('、')}`)
+  }
   return parts.join(' · ')
+}
+
+function certTarget(item: Extract<TaskItem, { kind: 'node_certs' }>): Target {
+  if (item.count === 1 && item.sample[0]) {
+    return { module: 'nodes', tab: 'nodes', id: item.sample[0].id }
+  }
+  return { module: 'nodes', tab: 'nodes', query: { f: 'cert' } }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +246,7 @@ export function todoBoard(items: readonly TaskItem[] | undefined, asOf?: string)
       count: nodeCerts.count,
       meta: certMeta(nodeCerts),
       action: '去看看',
-      target: { module: 'nodes', tab: 'nodes' },
+      target: certTarget(nodeCerts),
       hot: nodeCerts.failing > 0,
     })
   }

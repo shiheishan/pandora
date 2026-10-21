@@ -98,9 +98,9 @@ describe('系统状态', () => {
 
     expect(view.rows.find((r) => r.key === 'node_fabric')).toMatchObject({
       tone: 'warn',
-      why: '2 个节点配置未同步',
+      why: '3 个节点离线 · 2 个节点配置未同步',
       metric: '41/44 在线',
-      action: { kind: 'go', target: { module: 'nodes', tab: 'nodes' } },
+      action: { kind: 'go', target: { module: 'nodes', tab: 'nodes', query: { f: 'offline' } } },
     })
     expect(view.rows.find((r) => r.key === 'mail')).toMatchObject({
       tone: 'bad',
@@ -126,6 +126,35 @@ describe('系统状态', () => {
     expect(view.tone).toBe('ok')
     expect(view.rows.every((r) => r.why === '正常')).toBe(true)
     expect(view.rows.map((r) => r.key).at(-1)).toBe('backup')
+  })
+
+  it('node_fabric 调度：无离线时去 nodes 列表且不带 query；有离线时文案说明且带 f=offline 筛选', () => {
+    const laggingOnly: SystemStatus = {
+      ...STATUS_BASE,
+      state: 'degraded',
+      components: [
+        { key: 'node_fabric', state: 'warn', metrics: { total: 44, online: 44, config_lagging: 2 } },
+        { key: 'backup', state: 'ok', metrics: { latest_age_hours: 5, stale: false, identity_configured: true, offsite_configured: true } },
+      ],
+    }
+    const lagging = systemView(laggingOnly).rows.find((r) => r.key === 'node_fabric')!
+    expect(lagging.why).toBe('2 个节点配置未同步')
+    // toEqual：没有离线时 target 不带 query
+    expect(lagging.action).toEqual({ kind: 'go', target: { module: 'nodes', tab: 'nodes' } })
+
+    const offlineOnly: SystemStatus = {
+      ...STATUS_BASE,
+      state: 'degraded',
+      components: [
+        { key: 'node_fabric', state: 'warn', metrics: { total: 44, online: 40, config_lagging: 0 } },
+        { key: 'backup', state: 'ok', metrics: { latest_age_hours: 5, stale: false, identity_configured: true, offsite_configured: true } },
+      ],
+    }
+    const viewOffline = systemView(offlineOnly)
+    expect(viewOffline.rows.find((r) => r.key === 'node_fabric')).toMatchObject({
+      why: '4 个节点离线',
+      action: { kind: 'go', target: { module: 'nodes', tab: 'nodes', query: { f: 'offline' } } },
+    })
   })
 })
 

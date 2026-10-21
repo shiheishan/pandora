@@ -29,6 +29,7 @@ import {
   versionListRows,
   type DetailTab,
   type OverviewGroupKey,
+  type PriceListRow,
   type TierKey,
 } from './model'
 
@@ -301,6 +302,18 @@ function PricesTab({
     }
   }
 
+  const handleRestore = async (row: PriceListRow) => {
+    if (!row.tier) return
+    const res = await run(
+      'put',
+      `v1/plans/${encodeURIComponent(plan.id)}/prices`,
+      tierPriceBody(plan.row_version, row.tier, row.unitAmount),
+    )
+    if (res) {
+      toast('已恢复售卖')
+    }
+  }
+
   const handleAdd = async () => {
     const cents = parseAmount(newAmount)
     if (cents === null) {
@@ -329,7 +342,7 @@ function PricesTab({
   return (
     <>
       <section>
-        <SectionTitle>在售价格</SectionTitle>
+        <SectionTitle>价格</SectionTitle>
         <KvList>
           {rows.map((row) => (
             <KvRow
@@ -339,19 +352,30 @@ function PricesTab({
               action={
                 row.active && live ? (
                   <Button
-                    variant="link"
                     size="xs"
-                    className={css.dangerLink}
+                    variant="secondary"
                     disabled={busy}
+                    aria-label={`停售${row.label}价格`}
                     onClick={() => void handleStop(row.tier)}
                   >
                     停售
                   </Button>
-                ) : !row.active ? (
-                  <span className={css.mutedSmall}>已停售</span>
+                ) : row.restorable && live ? (
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    disabled={busy}
+                    aria-label={`恢复售卖${row.label}价格`}
+                    onClick={() => void handleRestore(row)}
+                  >
+                    恢复售卖
+                  </Button>
                 ) : undefined
               }
             >
+              <Tag tone={row.status.tone} className={css.priceTag}>
+                {row.status.label}
+              </Tag>
               <span className={css.mono}>{row.amount}</span>
               {row.note !== '' && <span className={css.muted}> · {row.note}</span>}
             </KvRow>

@@ -61,22 +61,30 @@ export function taskCount(
 
 export interface NavBadge {
   count: number
+  /** 数字数的是什么（悬停提示）：一个模块下有好几种「待处理」，只看数字容易对错口径 */
+  label: string
   /** 红色（工单）；其余是灰色等宽数字 */
   hot?: boolean
 }
 
-/** 侧栏徽标：工单 = tickets_open（红）、订单与收款 = orders_pending_stale、营销 = withdrawals_pending、节点与服务器 = nodes_offline；为 0 的不返回。证书异常只在仪表盘出卡，不进侧栏徽标 */
+/**
+ * 侧栏徽标：工单 = tickets_open（红）、订单与收款 = orders_pending_stale、营销 = withdrawals_pending、节点与服务器 = nodes_offline；为 0 的不返回。
+ * 证书异常只在仪表盘出卡，不进侧栏徽标。订单与收款的数字与仪表盘「超时未支付订单」同口径，不含「待处理到账」（钱到了没对上订单，另一回事）
+ */
 export function navBadges(items: readonly TaskItem[] | undefined): Partial<Record<ModuleKey, NavBadge>> {
   if (!items) return {}
   const out: Partial<Record<ModuleKey, NavBadge>> = {}
   const tickets = taskCount(items, 'tickets_open')
-  if (tickets > 0) out.tickets = { count: tickets, hot: true }
-  const orders = taskCount(items, 'orders_pending_stale')
-  if (orders > 0) out.billing = { count: orders }
+  if (tickets > 0) out.tickets = { count: tickets, label: `待处理工单 ${tickets} 个`, hot: true }
+  const stale = items.find((i): i is Extract<TaskItem, { kind: 'orders_pending_stale' }> => i.kind === 'orders_pending_stale')
+  if (stale && stale.count > 0) {
+    const minutes = Math.round(stale.threshold_seconds / 60)
+    out.billing = { count: stale.count, label: `超时未支付订单 ${stale.count} 个：下单超过 ${minutes} 分钟还没到账，与「待处理到账」无关` }
+  }
   const withdrawals = taskCount(items, 'withdrawals_pending')
-  if (withdrawals > 0) out.marketing = { count: withdrawals }
+  if (withdrawals > 0) out.marketing = { count: withdrawals, label: `提现待审核 ${withdrawals} 笔` }
   const nodes = taskCount(items, 'nodes_offline')
-  if (nodes > 0) out.nodes = { count: nodes }
+  if (nodes > 0) out.nodes = { count: nodes, label: `离线节点 ${nodes} 个` }
   return out
 }
 

@@ -9,6 +9,7 @@ import {
   integrityLabel,
   kpiTiles,
   percentChange,
+  targetPath,
   todoBoard,
 } from './model'
 
@@ -253,7 +254,7 @@ describe('todoBoard', () => {
       count: 3,
       meta: '申请失败 1 个 · 快到期 2 个 · 如 JP-TYO-03、US-LAX-01',
       hot: true,
-      target: { module: 'nodes', tab: 'nodes' },
+      target: { module: 'nodes', tab: 'nodes', query: { f: 'cert' } },
     })
     expect(board.summary).toBe('1 项 · 1 项紧急')
 
@@ -263,6 +264,31 @@ describe('todoBoard', () => {
     ]
     expect(todoBoard(noFail).cards.find((c) => c.key === 'node_certs')).toMatchObject({ hot: false })
     expect(todoBoard(noFail).summary).toBe('1 项')
+
+    const single: TaskItem[] = [
+      ...base.slice(0, -1),
+      { kind: 'node_certs', count: 1, failing: 1, expiring: 0, sample: [{ id: 'n9', name: '香港 02' }] },
+    ]
+    expect(todoBoard(single).cards.find((c) => c.key === 'node_certs')).toMatchObject({
+      meta: '申请失败 1 个 · 香港 02',
+      target: { module: 'nodes', tab: 'nodes', id: 'n9' },
+    })
+
+    const singleNoSample: TaskItem[] = [
+      ...base.slice(0, -1),
+      { kind: 'node_certs', count: 1, failing: 1, expiring: 0, sample: [] },
+    ]
+    expect(todoBoard(singleNoSample).cards.find((c) => c.key === 'node_certs')).toMatchObject({
+      target: { module: 'nodes', tab: 'nodes', query: { f: 'cert' } },
+    })
+  })
+})
+
+describe('targetPath', () => {
+  it('拼接规范地址与可选的实体 id', () => {
+    expect(targetPath({ module: 'nodes', tab: 'nodes', id: 'a b/c' })).toBe('/nodes/nodes/a%20b%2Fc')
+    expect(targetPath({ module: 'nodes', tab: 'nodes' })).toBe('/nodes/nodes')
+    expect(targetPath({ module: 'tickets', tab: null })).toBe('/tickets')
   })
 })
 
