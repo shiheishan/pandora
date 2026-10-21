@@ -6,6 +6,7 @@ import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Menu, SearchField, Skeleton, Tabs, Tag, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
+import { useNow } from '../../kit'
 import { pageHelp } from '../../page-help'
 import { PageHelpTip } from '../../PageHelp'
 import { escalatedSchema, useInvalidateTickets, useTicketQueue, type QueueParams, type Ticket } from './api'
@@ -206,13 +207,4 @@ function Row({ t, on, now, link }: { t: Ticket; on: boolean; now: Date; link: { 
   )
 }
 
-/** 等待时长每分钟走一次，不必跟着查询刷新 */
-export function useNow(intervalMs = 60_000): Date {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
-  return now
-}
 

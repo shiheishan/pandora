@@ -10,7 +10,7 @@ import { Composer } from './Composer'
 import { useTicketControls } from './Controls'
 import { CATEGORY_LABELS, CLOSED_REASON_LABELS, dayLabel, messageTime, messageView, systemText } from './model'
 import { Props } from './Props'
-import { useNow } from './Queue'
+import { useNow } from '../../kit'
 import css from './Detail.module.css'
 
 function useMediaQuery(query: string): boolean {

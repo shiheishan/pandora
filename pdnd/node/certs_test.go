@@ -327,6 +327,8 @@ func TestColdStartWaitsForCertThenInstalls(t *testing.T) {
 	first.welcome()
 	nc := acmeNodeConfig(t, "n1", "node1.example.com")
 	first.config(nc)
+	first.usersFull("n1", "u-1", "alice-uuid-0001")
+	first.report()
 	if !first.node(t, "n1").started {
 		t.Fatal("证书在时节点没起来")
 	}
@@ -346,5 +348,10 @@ func TestColdStartWaitsForCertThenInstalls(t *testing.T) {
 	restarted.onCertReady("node1.example.com")
 	if !n.started || k.port("n1") != 443 {
 		t.Fatalf("证书到了没装上：started=%v port=%d", n.started, k.port("n1"))
+	}
+	// 面板还没连上：照冷启动的做法带落盘名单，算靠缓存服务
+	assertStrings(t, "名单", k.uuids("n1"), "alice-uuid-0001")
+	if rt := n.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
+		t.Fatalf("面板确认前状态 = %v", rt)
 	}
 }

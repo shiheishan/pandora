@@ -294,6 +294,9 @@ func (s *Server) onWelcome(w *nodev1.Welcome) {
 			n.healthPending = true
 		}
 		n.fromCache = false
+		if n.failed != nil {
+			n.failed.fromCache = false
+		}
 	}
 	s.flushTraffic()
 	s.sendHeartbeat()

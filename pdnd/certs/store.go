@@ -219,7 +219,7 @@ func (s *store) saveCert(id string, certPEM, keyPEM []byte, meta certMeta) (*sto
 	bundlePath := filepath.Join(dir, bundleFile)
 	metaPath := filepath.Join(dir, "meta.json")
 
-	// meta 先写：它只有标识符与 profile，同一标识符每次都一样，新 meta 配旧 bundle 也成立。
+	// meta 先写：读盘时只取它的标识符与 profile（同一标识符每次都一样），到期时间以 bundle 里的叶子证书为准，新 meta 配旧 bundle 也成立。
 	// 私钥与证书链合在一个文件里一次 rename，续期中途被杀也不会留下不配对的一对（certs 审查 S5）。
 	metaBody, err := json.Marshal(sc.meta)
 	if err != nil {

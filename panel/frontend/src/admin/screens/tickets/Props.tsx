@@ -4,7 +4,7 @@ import { Button } from '../../../ui'
 import type { TicketDetail } from './api'
 import type { TicketControls } from './Controls'
 import { CATEGORY_LABELS, CLOSED_REASON_LABELS, PRIORITY_LABELS, slaLines } from './model'
-import { useNow } from './Queue'
+import { useNow } from '../../kit'
 import css from './Props.module.css'
 
 export function Props({ t, controls }: { t: TicketDetail; controls: TicketControls }) {

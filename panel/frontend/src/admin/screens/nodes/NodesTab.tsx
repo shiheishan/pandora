@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
 import { navigate, parseHash, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { BulkAction, BulkBar, PageActions } from '../../kit'
+import { BulkAction, BulkBar, PageActions, useNow } from '../../kit'
 import { Button, Checkbox, Empty, Menu, Pager, QueryView, SearchField, Segmented, Tag, useToast } from '../../../ui'
 import {
   addressLabel,
@@ -21,7 +21,6 @@ import {
   type NodeFilter,
   type NodeLineData,
 } from './logic'
-import { useNow } from '../tickets/Queue'
 import { runState, certBadge, sameRunState, type RunState } from './runtime'
 import { NodeBatchEdit } from './NodeBatchEdit'
 import { NodeCreateWizard } from './NodeForm'

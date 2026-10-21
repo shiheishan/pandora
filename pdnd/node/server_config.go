@@ -52,6 +52,9 @@ type applyFailure struct {
 	nextRetry time.Time
 	reason    string
 	detail    string
+	// fromCache：冷启动用落盘缓存没装上记的（certs 审查 S4）。面板确认（Welcome）之前重装照冷启动的做法
+	// 带落盘名单、装上算「靠缓存服务」；Welcome 时清掉，之后按面板下发走。
+	fromCache bool
 }
 
 // applyError 带原因码的装配置错误（摘要不符、不是 JSON 对象）。
@@ -143,7 +146,10 @@ func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 	if n.started {
 		oldCertID = acmeIdentifier(n.activeConfig)
 	}
+	offline := n.failed != nil && n.failed.fromCache && n.failed.sha == sha
+	n.offlineStart = offline
 	err := s.installNodeConfig(n, nc)
+	n.offlineStart = false
 	if err != nil {
 		f := n.failed
 		if f == nil || f.sha != sha {
@@ -161,6 +167,13 @@ func (s *Server) tryInstall(n *Node, nc *nodev1.NodeConfig) {
 		s.sendConfigAck(n, sha, nodev1.ConfigPhase_CONFIG_PHASE_FAILED, f.reason, f.detail)
 		n.log.Error("配置装不上", "版本", sha, "原因", f.reason, "第几次", f.attempts,
 			"旧配置仍在服务", n.started, "下次重试", f.nextRetry.Sub(now).Round(time.Second), "err", err)
+		return
+	}
+	if offline {
+		// 面板还没连上：回执发不出去，Hello 会报这个版本；与冷启动装上的一样标成靠缓存服务
+		n.fromCache = true
+		n.healthPending = false
+		n.log.Warn("面板确认之前用落盘缓存的配置起服务（冷启动时没装上，重试成功）", "版本", sha, "名单版本", n.userVersion)
 		return
 	}
 	if oldCertID != "" && oldCertID != acmeIdentifier(n.activeConfig) {

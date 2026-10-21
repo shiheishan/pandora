@@ -50,11 +50,11 @@ func (s *Server) Start() {
 		n.offlineStart = false
 		if err != nil {
 			// 记进坏版本台账：缓存的 acme 证书不在（被删或坏了）时，证书一到 onCertReady 就能重装，
-			// 别的原因按「已停」的间隔由内务节拍重试；不记的话面板连上之前这个节点一直不服务（certs 审查 S4）
+			// 别的原因按「已停」的间隔由内务节拍重试，重试照样带落盘名单；不记的话面板连上之前这个节点一直不服务（certs 审查 S4）
 			n.failed = &applyFailure{
 				sha: strings.ToLower(nc.GetContentSha256()), cfg: nc, attempts: 1,
 				nextRetry: s.clock().Add(panel.Jitter(stoppedRetryInterval)),
-				reason:    reasonOf(err), detail: reportDetail(err.Error()),
+				reason:    reasonOf(err), detail: reportDetail(err.Error()), fromCache: true,
 			}
 			n.log.Warn("没能用落盘缓存起服务，等面板下发或稍后重试", "err", err)
 			continue
