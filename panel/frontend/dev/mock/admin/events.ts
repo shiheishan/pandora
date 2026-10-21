@@ -2,15 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { orders } from './billing-store.ts'
 import { liveNodeIds } from './nodes.ts'
 import { plans } from './plans-store.ts'
-import { ticketIds } from './tickets.ts'
+import { freshTicketIds, ticketIds } from './tickets.ts'
 import { userStore } from './users.ts'
 
 // ---------------------------------------------------------------------------
 // 后台 SSE 的模拟变更（mock-api.ts 的 stream 定时调用）。载荷形状照 Go realtime.Publisher.Changed：
 // { table, op, id }，表名照各模块 service/realtime.go。id 尽量取种子里真有的那一行，
 // 页面上点事件能直接打开那一条；对应的种子空了才用随机 id（页面显示「不存在或已删除」）。
-// INSERT 只挑「看起来刚建」的行（待支付单、生效订阅、草稿套餐）；工单与节点模块只导出 id，
-// 看不出状态与建单时间，不发 INSERT，避免「新工单」却点到已解决的旧单。
+// INSERT 只挑「看起来刚建」的行（待支付单、生效订阅、草稿套餐、没人接手的工单）；节点模块只导出 id，
+// 看不出新旧，不发 INSERT，避免「新节点」却点到早就在跑的旧节点。
 // ---------------------------------------------------------------------------
 
 export interface MockEvent {
@@ -59,13 +59,13 @@ const SOURCES: readonly Source[] = [
     topic: 'tickets.changed',
     table: 'tickets',
     all: ticketIds,
-    // tickets.ts 只导出 id，看不出状态与建单时间，不发 INSERT，免得「新工单」挑到已解决的旧单
+    fresh: freshTicketIds,
   },
   {
     topic: 'nodes.changed',
     table: 'nodes',
     all: liveNodeIds,
-    // nodes.ts 只导出 id，看不出状态与建单时间，不发 INSERT
+    // nodes.ts 只导出 id，看不出新旧，不发 INSERT
   },
   {
     topic: 'subscriptions.changed',
@@ -91,7 +91,7 @@ const SOURCES: readonly Source[] = [
 
 /**
  * 随机挑一条后台变更：多数是 UPDATE。
- * INSERT 仅从 orders / subscriptions / plans 的 fresh 集合挑；tickets、nodes 只发 UPDATE。
+ * INSERT 仅从 orders / subscriptions / plans / tickets 的 fresh 集合挑；nodes 只发 UPDATE。
  * 删除不随机模拟（真删除由各写接口触发，不到这里）。
  */
 export function pickAdminEvent(): MockEvent {

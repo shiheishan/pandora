@@ -281,6 +281,14 @@ function envelope(code: string, message: string, fields?: Record<string, string>
 /** 全部工单 id（实时事件模拟取真实行用，见 events.ts） */
 export const ticketIds = () => rows.map((r) => r.id)
 
+/** 看起来刚建的工单：还没人接手（open）里最新的 3 张，实时事件的 INSERT 只从这里挑（见 events.ts） */
+export const freshTicketIds = () =>
+  rows
+    .filter((r) => r.status === 'open')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 3)
+    .map((r) => r.id)
+
 const notFound: MockResult = { status: 404, body: envelope('not_found', '工单不存在') }
 const touch = (t: Row) => {
   t.updated_at = new Date().toISOString()

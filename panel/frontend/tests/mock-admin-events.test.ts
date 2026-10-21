@@ -3,7 +3,7 @@ import { orders } from '../dev/mock/admin/billing-store'
 import { pickAdminEvent } from '../dev/mock/admin/events'
 import { liveNodeIds } from '../dev/mock/admin/nodes'
 import { plans } from '../dev/mock/admin/plans-store'
-import { ticketIds } from '../dev/mock/admin/tickets'
+import { freshTicketIds, ticketIds } from '../dev/mock/admin/tickets'
 import { userStore } from '../dev/mock/admin/users'
 
 // 期望集合在测试里独立算一遍（不从 events.ts 导出内部函数）：按 ISO 时间降序取前 3，null 排最后
@@ -62,6 +62,8 @@ describe('mock api · admin realtime events', () => {
     const pendingTop = freshPendingOrderIds()
     const activeTop = freshActiveSubIds()
     const draftTop = freshDraftPlanIds()
+    const ticketTop = freshTicketIds()
+    expect(ticketTop.length).toBeGreaterThan(0)
 
     for (let i = 0; i < 300; i++) {
       const { topic, payload } = pickAdminEvent()
@@ -87,6 +89,8 @@ describe('mock api · admin realtime events', () => {
           break
         }
         case 'tickets.changed':
+          expect(ticketTop).toContain(payload.id)
+          break
         case 'nodes.changed':
           expect.fail(`INSERT should not appear on ${topic}`)
           break
