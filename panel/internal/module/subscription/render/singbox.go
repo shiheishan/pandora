@@ -142,19 +142,6 @@ func renderSingbox(rc renderCtx) ([]byte, string, int) {
 	return body, "application/json; charset=utf-8", len(outs)
 }
 
-// singboxDefaultTemplate 返回 sing-box 的内置模板原文。
-// 自定义模板对所有 sing-box 版本原样下发（规则集出口用 download_detour 写法，1.14 起只多一条弃用警告），
-// 按版本切换写法只有内置模板做。
-func singboxDefaultTemplate(opt Options) string {
-	frame := singboxFrame(nil, "节点选择", "自动选择", singboxDialectCompat, opt.Singbox)
-	frame["outbounds"] = []string{"{{outbounds}}"}
-	b, err := json.MarshalIndent(frame, "", "  ")
-	if err != nil {
-		return ""
-	}
-	return string(b) + "\n"
-}
-
 func uniqueTag(base string, used map[string]bool) string {
 	candidate := base
 	for i := 2; used[candidate]; i++ {

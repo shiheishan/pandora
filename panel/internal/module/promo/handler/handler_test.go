@@ -35,11 +35,6 @@ type fakeSvc struct {
 	lastStatus   string
 	lastStatusID uuid.UUID
 	redemptions  []service.Redemption
-	previewUser  uuid.UUID
-	previewCode  string
-	previewItem  service.PreviewItem
-	previewOut   service.Preview
-	previewErr   error
 	genCodes     []string
 }
 
@@ -83,16 +78,6 @@ func (f *fakeSvc) Redemptions(context.Context, uuid.UUID) ([]service.Redemption,
 	return f.redemptions, nil
 }
 
-func (f *fakeSvc) Preview(_ context.Context, userID uuid.UUID, code string, item service.PreviewItem) (service.Preview, error) {
-	f.previewUser = userID
-	f.previewCode = code
-	f.previewItem = item
-	if f.previewErr != nil {
-		return service.Preview{}, f.previewErr
-	}
-	return f.previewOut, nil
-}
-
 func newEngine(svc Service, admin bool, p *authn.Principal) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
@@ -132,16 +117,6 @@ func decMap(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 		t.Fatalf("json: %v body=%s", err, w.Body.String())
 	}
 	return got
-}
-
-func errCode(t *testing.T, w *httptest.ResponseRecorder) string {
-	got := decMap(t, w)
-	errObj, _ := got["error"].(map[string]any)
-	if errObj == nil {
-		t.Fatalf("无 error 信封: %v", got)
-	}
-	code, _ := errObj["code"].(string)
-	return code
 }
 
 func errFields(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
@@ -364,83 +339,5 @@ func TestSetStatusAndRedemptions(t *testing.T) {
 	reds, _ = got["redemptions"].([]any)
 	if reds == nil || len(reds) != 0 {
 		t.Fatalf("空 redemptions 应为 []: %v", got["redemptions"])
-	}
-}
-
-func TestPreview(t *testing.T) {
-	planA := uuid.New()
-	priceB := uuid.New()
-	userID := uuid.New()
-	p := &authn.Principal{UserID: userID, SessionID: "s", Audience: authn.AudiencePublic}
-
-	f := &fakeSvc{
-		previewOut: service.Preview{
-			Subtotal: decFixed(t, "30.00"),
-			Discount: decFixed(t, "3.00"),
-			Payable:  decFixed(t, "27.00"),
-			Applied: &service.Applied{
-				Code: "X",
-				Face: service.Face{Kind: service.KindPercent, PercentBP: 1000},
-			},
-		},
-	}
-	e := newEngine(f, false, p)
-	body := `{"plan_id":"` + planA.String() + `","price_id":"` + priceB.String() + `","coupon_code":"x"}`
-	w := do(e, http.MethodPost, "/v1/coupons/preview", body)
-	if w.Code != http.StatusOK {
-		t.Fatalf("preview %d %s", w.Code, w.Body)
-	}
-	got := decMap(t, w)
-	if got["subtotal"] != float64(3000) || got["discount"] != float64(300) || got["payable"] != float64(2700) {
-		t.Fatalf("金额 %v", got)
-	}
-	coupon, _ := got["coupon"].(map[string]any)
-	if coupon["discount_type"] != "percent" || coupon["discount_value"] != float64(1000) {
-		t.Fatalf("coupon %v", coupon)
-	}
-	if f.previewUser != userID || f.previewItem.PlanID != planA || f.previewItem.PriceID != priceB {
-		t.Fatalf("PreviewItem/user %v %v", f.previewItem, f.previewUser)
-	}
-
-	f.previewOut.Applied = nil
-	f.previewOut.Discount = decimal.Zero
-	w = do(e, http.MethodPost, "/v1/coupons/preview", body)
-	got = decMap(t, w)
-	if got["coupon"] != nil {
-		t.Fatalf("coupon 应为 null: %v", got["coupon"])
-	}
-
-	w = do(e, http.MethodPost, "/v1/coupons/preview", `{}`)
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("empty %d", w.Code)
-	}
-	fields := errFields(t, w)
-	if fields["plan_id"] == nil || fields["price_id"] == nil {
-		t.Fatalf("fields %v", fields)
-	}
-
-	// 只给 price_id 不给 plan_id 回 422 且 fields 里有 plan_id
-	w = do(e, http.MethodPost, "/v1/coupons/preview", `{"price_id":"`+priceB.String()+`"}`)
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("missing plan_id status %d", w.Code)
-	}
-	fields = errFields(t, w)
-	if fields["plan_id"] == nil {
-		t.Fatalf("fields %v", fields)
-	}
-
-	eNoAuth := newEngine(&fakeSvc{}, false, nil)
-	w = do(eNoAuth, http.MethodPost, "/v1/coupons/preview", body)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("未登录 %d", w.Code)
-	}
-
-	f.previewErr = service.ErrCouponUsedUp
-	w = do(e, http.MethodPost, "/v1/coupons/preview", body)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("used up status %d %s", w.Code, w.Body)
-	}
-	if errCode(t, w) != "conflict" {
-		t.Fatalf("code %s", errCode(t, w))
 	}
 }

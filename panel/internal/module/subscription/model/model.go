@@ -132,13 +132,3 @@ type FetchLog struct {
 
 // TableName 固定表名。
 func (FetchLog) TableName() string { return "subscription_fetch_log" }
-
-// SubscriptionTemplate 是 subscription_templates 表的一行：一种订阅格式的后台自定义模板（没有行就用内置模板）。
-type SubscriptionTemplate struct {
-	Format    string    `gorm:"column:format;primaryKey"`
-	Content   string    `gorm:"column:content"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
-}
-
-// TableName 固定表名。
-func (SubscriptionTemplate) TableName() string { return "subscription_templates" }

@@ -633,15 +633,6 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (!s) return reply(ctx, notFound())
       ctx.send(200, serverOut(s, nodes))
     },
-    'GET /v1/servers/:id/nodes': (ctx) => {
-      const s = findServer(ctx.params.id)
-      if (!s) return reply(ctx, notFound())
-      const rows = nodes
-        .filter((n) => n.server_id === s.id)
-        .sort((a, b) => a.sort_order - b.sort_order)
-        .map((n) => ({ id: n.id, name: n.name, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: s.last_heartbeat_at, created_at: n.created_at }))
-      ctx.send(200, { nodes: rows, total: rows.length })
-    },
     'PATCH /v1/servers/:id': async (ctx) => {
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())

@@ -85,10 +85,8 @@ func TestPullInfoNodesAndPrefix(t *testing.T) {
 
 func TestPullUsesCustomTemplate(t *testing.T) {
 	de, ctx, _, _, token := setupPull(t)
-	custom := strings.Replace(render.DefaultTemplate(render.FormatClash, render.Options{}), "mixed-port: 7890", "mixed-port: 7891", 1)
-	if err := de.svc.repo.UpsertTemplate(ctx, string(render.FormatClash), custom, de.svc.clock()); err != nil {
-		t.Fatal(err)
-	}
+	custom := "mixed-port: 7891\n{{proxies}}\nproxy-groups:\n{{proxy_groups}}\nrules:\n  - MATCH,节点选择\n"
+	de.exec(t, ctx, `INSERT INTO subscription_templates (format, content, updated_at) VALUES (?, ?, now())`, string(render.FormatClash), custom)
 	de.svc.extras.snap.Store(nil)
 	res, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token})
 	if err != nil {

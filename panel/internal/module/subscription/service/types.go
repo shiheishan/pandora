@@ -422,36 +422,6 @@ type AdminTrafficGrantResult struct {
 	BonusBytes int64
 }
 
-// ResetLogFilter 是后台流量重置日志的筛选与分页。
-type ResetLogFilter struct {
-	UserID *uuid.UUID
-	// Reason 为空不筛；否则必须是五种原因之一
-	Reason string
-	Limit  int
-	Offset int
-}
-
-// ResetLogView 是后台看到的一条重置日志。
-type ResetLogView struct {
-	ID             uuid.UUID
-	UserEmail      string
-	PlanName       string
-	Metric         string
-	Reason         string
-	ConsumedBefore int64
-	ActorEmail     string
-	Note           string
-	CreatedAt      time.Time
-}
-
-// ResetStats 是近 30 天的重置统计。
-type ResetStats struct {
-	Last30Days  int
-	ByReason    map[string]int
-	FreedBytes  int64
-	ManualCount int
-}
-
 // PullRequest 是一次订阅拉取（GET /{prefix}/{token}）的输入。来源 IP 与 UA 由 service 从 ctx 的 reqmeta 取。
 type PullRequest struct {
 	Prefix string

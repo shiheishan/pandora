@@ -1,6 +1,6 @@
 package service
 
-// 节点生命周期的 PG 测试：批量改状态、上线、退役、删除、迁移、强制重新下发与纪元通知。
+// 节点生命周期的 PG 测试：批量改状态、上线、退役、删除、迁移与纪元通知。
 
 import (
 	"context"
@@ -270,26 +270,6 @@ func TestDeleteNode(t *testing.T) {
 	}
 }
 
-func TestRepublishNode(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	srv := e.server(t, ctx, "pub-a")
-	n := e.ssNode(t, ctx, srv.ID, "n", 21015)
-	v, err := e.svc.RepublishNode(ctx, n.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v != n.RowVersion+1 {
-		t.Fatalf("版本 %d，期望 %d", v, n.RowVersion+1)
-	}
-	if _, err := e.svc.RetireNode(ctx, n.ID, v, ""); err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.RepublishNode(ctx, n.ID)
-	_ = invWantCode(t, err, errs.Conflict)
-	_, err = e.svc.RepublishNode(ctx, uuid.New())
-	_ = invWantCode(t, err, errs.NotFound)
-}
-
 func TestNodeLifecycleEpochs(t *testing.T) {
 	e, ctx := newInvEnvCommitted(t)
 	srv := e.server(t, ctx, "epoch-a")
@@ -304,21 +284,13 @@ func TestNodeLifecycleEpochs(t *testing.T) {
 		t.Fatal("失败的调用不应推进纪元")
 	}
 
-	got, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
+	_, err = e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e.epoch(t, UsersEpochKey) != users+1 || e.epoch(t, ConfigEpochKey) != config+1 {
 		t.Fatalf("上线后纪元应各 +1：users %d→%d config %d→%d",
 			users, e.epoch(t, UsersEpochKey), config, e.epoch(t, ConfigEpochKey))
-	}
-
-	config = e.epoch(t, ConfigEpochKey)
-	if _, err := e.svc.RepublishNode(ctx, got.ID); err != nil {
-		t.Fatal(err)
-	}
-	if e.epoch(t, ConfigEpochKey) != config+1 {
-		t.Fatal("强制重新下发应推进配置纪元")
 	}
 }
 

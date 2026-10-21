@@ -41,7 +41,7 @@ export async function readStrict(ctx: AnonContext, allowed: readonly string[]): 
 // ---------------------------------------------------------------------------
 // 优惠码
 // ---------------------------------------------------------------------------
-/** 返回折扣（分）；码为空时 0；不可用时抛 BillingError（契约 coupons/preview 的错误列表） */
+/** 返回折扣（分）；码为空时 0；不可用时抛 BillingError（与 Go 报价接口 v1/me/checkout/quote 对优惠码的拒绝一致） */
 export function couponCheck(code: unknown, subtotal: number, priceId: string | null): number {
   if (typeof code !== 'string' || code.trim() === '') return 0
   const c = COUPONS[code.trim().toUpperCase()]

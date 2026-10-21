@@ -226,7 +226,7 @@ export function planView(p: CatalogPlan) {
 }
 
 // ---------------------------------------------------------------------------
-// 优惠码：percent 的 value 是万分比。error 模拟后端的各种拒绝（契约 coupons/preview 的错误列表）
+// 优惠码：percent 的 value 是万分比。error 模拟后端的各种拒绝（与 Go 报价接口 v1/me/checkout/quote 对优惠码的拒绝一致）
 // ---------------------------------------------------------------------------
 export interface CatalogCoupon {
   type: 'percent' | 'fixed'

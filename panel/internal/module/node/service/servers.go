@@ -379,38 +379,6 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 	})
 }
 
-// ListServerNodes 列出服务器名下未删除的节点（含已退役）；心跳取服务器的。
-func (s *Service) ListServerNodes(ctx context.Context, id uuid.UUID) ([]ServerNode, error) {
-	srv, found, err := s.repo.ServerByID(ctx, id, false)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, errs.New(errs.NotFound)
-	}
-	rows, err := s.repo.ListServerNodes(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]ServerNode, 0, len(rows))
-	for _, n := range rows {
-		out = append(out, ServerNode{
-			ID:                n.ID,
-			Name:              n.Name,
-			ServingStatus:     n.ServingStatus,
-			NodeType:          n.NodeType,
-			DisplayName:       n.DisplayName,
-			ServerHost:        n.ServerHost,
-			ServerPort:        n.ServerPort,
-			TrafficRate:       n.TrafficRate,
-			ConfigValidatedAt: n.ConfigValidatedAt,
-			LastHeartbeatAt:   srv.LastHeartbeatAt,
-			CreatedAt:         n.CreatedAt,
-		})
-	}
-	return out, nil
-}
-
 // lockServerForNodes 锁服务器行（FOR UPDATE）并检查能不能再放一个节点：不存在 422、已退役 409、容量满 409。
 func (s *Service) lockServerForNodes(ctx context.Context, id uuid.UUID) (model.Server, error) {
 	m, found, err := s.repo.ServerByID(ctx, id, true)

@@ -3,13 +3,12 @@ package render
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 )
 
 // 1. 内置模板与不带模板逐字节相同：对 clash、clash-premium、stash 三种，
-// RenderRequest(Request{Format: f, Nodes: loadNodes(t), ProxyUUID: fixtureUUID, Template: DefaultTemplate(f, Options{})})
+// RenderRequest(Request{Format: f, Nodes: loadNodes(t), ProxyUUID: fixtureUUID, Template: defaultTemplateFor(f, Options{})})
 // 与 renderPlain(f, loadNodes(t), fixtureUUID, "", Options{}) 的 body 完全相同；Nodes 为 nil 时同样相同。
 func TestDefaultTemplateByteForByteWithNoTemplate(t *testing.T) {
 	formats := []Format{FormatClash, FormatClashPremium, FormatStash}
@@ -20,7 +19,7 @@ func TestDefaultTemplateByteForByteWithNoTemplate(t *testing.T) {
 					Format:    f,
 					Nodes:     nodes,
 					ProxyUUID: fixtureUUID,
-					Template:  DefaultTemplate(f, Options{}),
+					Template:  defaultTemplateFor(f, Options{}),
 				})
 				withoutTmpl, ct2, count2 := renderPlain(f, nodes, fixtureUUID, "", Options{})
 				if !bytes.Equal(withTmpl, withoutTmpl) {
@@ -38,11 +37,11 @@ func TestDefaultTemplateByteForByteWithNoTemplate(t *testing.T) {
 	}
 }
 
-// 2. sing-box 自定义模板：用 DefaultTemplate(FormatSingbox, Options{}) 当 Template 渲染 loadGroup(t, groupForm)：
+// 2. sing-box 自定义模板：用 defaultTemplateFor(FormatSingbox, Options{}) 当 Template 渲染 loadGroup(t, groupForm)：
 // JSON 能解析；outbounds 里有 节点选择、自动选择、direct 与节点 tag；没有节点时也能解析，节点选择是 ["direct"] 的 selector。
 // 用 assertSingboxReferencesResolve 核对引用都能解析。
 func TestSingboxCustomTemplate(t *testing.T) {
-	tmpl := DefaultTemplate(FormatSingbox, Options{})
+	tmpl := defaultTemplateFor(FormatSingbox, Options{})
 
 	// 有节点时
 	nodes := loadGroup(t, groupForm)
@@ -257,79 +256,74 @@ func TestInfoNodes(t *testing.T) {
 	}
 }
 
-// 5. ValidateTemplate：六种格式的 DefaultTemplate 都通过（sing-box 用 Options{}）；
-// 缺 {{proxies}}、{{proxies}} 前有空格、YAML 坏（如在末尾加一行 rules: [）、sing-box JSON 坏、
-// sing-box 缺 "{{outbounds}}"、Surfboard 缺 [Proxy]、超过 256 KB、非 UTF-8、FormatURI
-// 各返回 *TemplateError（用 errors.As）且 Reason 含预期子串。
-func TestValidateTemplate(t *testing.T) {
-	// 六种格式的 DefaultTemplate 都通过
-	for _, f := range TemplateFormats {
-		tmpl := DefaultTemplate(f, Options{})
-		if err := ValidateTemplate(f, tmpl); err != nil {
-			t.Errorf("DefaultTemplate(%s) validation failed: %v", f, err)
-		}
+// defaultTemplateFor 返回内置模板原文，测试里当自定义模板用。
+func defaultTemplateFor(f Format, opt Options) string {
+	switch f {
+	case FormatClash, FormatClashPremium, FormatStash:
+		return defaultClashTemplate
+	case FormatSurfboard:
+		return defaultSurfboardTemplate
+	case FormatLoon:
+		return defaultLoonTemplate
+	case FormatSingbox:
+		return singboxDefaultTemplate(opt)
+	default:
+		return ""
 	}
-
-	assertErr := func(t *testing.T, f Format, content, expectSubstring string) {
-		t.Helper()
-		err := ValidateTemplate(f, content)
-		if err == nil {
-			t.Fatalf("expected error containing %q, got nil", expectSubstring)
-		}
-		var te *TemplateError
-		if !errors.As(err, &te) {
-			t.Fatalf("expected *TemplateError, got %T: %v", err, err)
-		}
-		if !strings.Contains(te.Reason, expectSubstring) {
-			t.Fatalf("expected reason containing %q, got %q", expectSubstring, te.Reason)
-		}
-	}
-
-	// 缺 {{proxies}}
-	assertErr(t, FormatClash, "mixed-port: 7890\n{{proxy_groups}}\n", "缺少占位 {{proxies}}")
-
-	// {{proxies}} 前有空格
-	assertErr(t, FormatClash, "mixed-port: 7890\n  {{proxies}}\n{{proxy_groups}}\n", "{{proxies}} 要单独占一行、顶格写")
-
-	// YAML 坏（末尾加一行 rules: [）
-	assertErr(t, FormatClash, defaultClashTemplate+"rules: [\n", "YAML 解析失败：")
-
-	// sing-box JSON 坏
-	assertErr(t, FormatSingbox, "{bad_json: 1, \"outbounds\": [\"{{outbounds}}\"]}", "JSON 解析失败：")
-
-	// sing-box 缺 "{{outbounds}}"
-	assertErr(t, FormatSingbox, "{}", "缺少占位 \"{{outbounds}}\"")
-
-	// 必需占位只能出现一次（注释里多写一处也算）
-	assertErr(t, FormatClash, defaultClashTemplate+"# {{proxies}}\n", "{{proxies}} 只能出现一次")
-	assertErr(t, FormatLoon, DefaultTemplate(FormatLoon, Options{})+"# {{proxies}}\n", "{{proxies}} 只能出现一次")
-	assertErr(t, FormatSingbox, `{"outbounds": ["{{outbounds}}", "{{outbounds}}"]}`, "\"{{outbounds}}\" 只能出现一次")
-
-	// Surfboard 缺 [Proxy]
-	assertErr(t, FormatSurfboard, "[Proxy Group]\n{{proxies}}\n{{proxy_groups}}\n", "缺少 [Proxy] 段")
-
-	// 超过 256 KB
-	assertErr(t, FormatClash, strings.Repeat("a", MaxTemplateBytes+1), "模板不能超过 256 KB")
-
-	// 非 UTF-8
-	assertErr(t, FormatClash, string([]byte{0xff, 0xfe, 0xfd}), "模板不是有效的 UTF-8 文本")
-
-	// FormatURI
-	assertErr(t, FormatURI, "some template", "这种格式没有模板")
 }
 
-// 6. PreviewTemplate：六种格式空 content 都返回非空 body 与节点数 > 0。
-func TestPreviewTemplate(t *testing.T) {
-	for _, f := range TemplateFormats {
-		body, ct, count := PreviewTemplate(f, "", Options{})
-		if len(body) == 0 {
-			t.Errorf("%s preview returned empty body", f)
-		}
-		if ct == "" {
-			t.Errorf("%s preview returned empty content-type", f)
-		}
-		if count <= 0 {
-			t.Errorf("%s preview returned count = %d, want > 0", f, count)
-		}
+func sampleNodes() []Node {
+	return []Node{
+		{
+			Name: "示例 · 香港 01",
+			Type: "shadowsocks",
+			Host: "hk.example.com",
+			Port: 8388,
+			Config: map[string]any{
+				"method": "aes-128-gcm",
+			},
+		},
+		{
+			Name: "示例 · 日本 01",
+			Type: "vmess",
+			Host: "jp.example.com",
+			Port: 443,
+			Config: map[string]any{
+				"network":     "ws",
+				"tls":         true,
+				"server_name": "jp.example.com",
+				"ws_path":     "/ws",
+			},
+		},
+		{
+			Name: "示例 · 美国 01",
+			Type: "trojan",
+			Host: "us.example.com",
+			Port: 443,
+			Config: map[string]any{
+				"server_name": "us.example.com",
+			},
+		},
+		{
+			Name: "示例 · 新加坡 01",
+			Type: "hysteria2",
+			Host: "sg.example.com",
+			Port: 443,
+			Config: map[string]any{
+				"server_name": "sg.example.com",
+			},
+		},
 	}
+}
+
+// singboxDefaultTemplate 按内置框架拼出 sing-box 模板原文（兼容写法），测试里当自定义模板用。
+// 生产拉取不走这里：内置渲染直接用 singboxFrame，自定义模板对所有版本原样下发。
+func singboxDefaultTemplate(opt Options) string {
+	frame := singboxFrame(nil, "节点选择", "自动选择", singboxDialectCompat, opt.Singbox)
+	frame["outbounds"] = []string{"{{outbounds}}"}
+	b, err := json.MarshalIndent(frame, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b) + "\n"
 }

@@ -128,26 +128,10 @@ type OrderRef struct {
 	No string
 }
 
-// PreviewItem 是门户试算的对象：{PlanID, PriceID} 试算套餐（两者必填，handler 已校验）。
-type PreviewItem struct {
-	PlanID  uuid.UUID
-	PriceID uuid.UUID
-}
-
-// Preview 是门户试算的结果；没填码时 Applied 为 nil、Discount 为 0。
-type Preview struct {
-	Subtotal decimal.Decimal
-	Discount decimal.Decimal
-	Payable  decimal.Decimal
-	Applied  *Applied
-}
-
 // CatalogReader 由 catalog 实现（或由 app 写适配器），启动装配时经 UseCatalog 注入。
 type CatalogReader interface {
 	// MissingPlans 返回 ids 里不存在的套餐 ID（已下架、已归档的也算存在）；全部存在时返回空切片。
 	MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
-	// PriceSubtotal 取在售价格的金额，一次 catalog 查询；价格必须属于 planID 这个套餐，不在售或对不上回 errs.NotFound。
-	PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error)
 }
 
 // UserDirectory 由 identity 实现，启动装配时经 UseUsers 注入。

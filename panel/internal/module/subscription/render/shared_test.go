@@ -79,7 +79,7 @@ func TestRenderLeavesCachedNodesUntouched(t *testing.T) {
 		InfoLines:      preprocessInfo,
 		Status:         preprocessStatus,
 		SubscribeURL:   preprocessSubscribe,
-		Template:       DefaultTemplate(FormatSurfboard, Options{}) + "\n# 自定义\n",
+		Template:       defaultTemplateFor(FormatSurfboard, Options{}) + "\n# 自定义\n",
 	})
 
 	want := make([][]byte, len(variants))

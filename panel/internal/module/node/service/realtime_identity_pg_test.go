@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
@@ -19,10 +17,7 @@ func TestRealtimeRouteGroupMembersPG(t *testing.T) {
 	srv := rtServer(t, ctx, e, "ready")
 	nid := rtNode(t, ctx, e, srv, "active", 21060)
 	g := rtGroup(t, ctx, e, "rt-mem", 0)
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	spy.expect(t, realtime.ChannelAdmin(), realtime.TopicNodes, map[string]any{
 		"table": "nodes", "op": "UPDATE", "id": nid.String(),
 	})
@@ -65,10 +60,7 @@ func TestRealtimeRoutingUncommittedDoesNotPublishPG(t *testing.T) {
 	srv := rtServer(t, ctx, e, "ready")
 	nid := rtNode(t, ctx, e, srv, "active", 21061)
 	g := rtGroup(t, ctx, e, "rt-nopub", 0)
-	gr := routeGroupRow(t, ctx, e, g.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g.ID, gr.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g.ID, nid)
 	// ctx 来自 testkit.TxCtx，用例结束回滚；Changed 只在提交后发布，故不应收到推送。
 	spy.expectNone(t, 300*time.Millisecond)
 }

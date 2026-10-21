@@ -24,10 +24,11 @@ paths:
 - SS 的 udp：Loon `udp=true`、Surfboard `udp-relay=true`，与 Clash 的 `udp: true`、sing-box 不写 `network` 同一口径；ShadowTLS 只承载 TCP，Loon 仍 `udp=false`
 - 共享节点缓存不被改：`render/shared_test.go` 覆盖全部 9 种格式与带前处理（前缀、信息节点、types/filter、自定义模板）的 `RenderRequest`，检查机跑 race
 
-## 后台模板（`render/template.go`，表 `subscription_templates`）
-- 可编辑：clash、clash-premium、stash、singbox、surfboard、loon（`TemplateFormats`）；URI、Shadowrocket、SIP008 没有模板。库里没有行就用内置模板（`DefaultTemplate`），恢复缺省 = 删行
-- 占位是纯文本替换（`fillTemplate`，拉取时不解析模板；占位清单 `TemplatePlaceholders`）：Clash 系与 Surfboard 的 `{{proxies}}`、`{{proxy_groups}}` 必需、只出现一次、单独一行顶格，`{{proxy_names}}` 可选；`{{subscribe_url}}` 只有 Surfboard 有（可选）；Loon 只有 `{{proxies}}`（同样只一次、单独一行）；sing-box 是 JSON 数组里带引号的 `"{{outbounds}}"`（必需、只一次）、`"{{proxy_tags}}"`（可选）
-- 保存前 `ValidateTemplate`：≤256KB（与迁移 00039 的 CHECK 一致）、UTF-8、无 NUL、必需占位；Clash 系与 sing-box 再用示例节点与零节点各渲染一次，YAML/JSON 能解析；Surfboard 只查 `[Proxy]`、`[Proxy Group]` 段名，Loon 只查占位，都不试渲染；内置 Clash 模板必须与 golden 逐字节一致（`defaultClashTemplate`）
+## 自定义模板（`render/template.go`，表 `subscription_templates`）
+- 后台的模板编辑接口与保存前校验 `ValidateTemplate`、预览 `PreviewTemplate`、占位清单 `TemplatePlaceholders` 10-21 已删（前端不调）；拉取侧仍按 `Request.Template` 套库里的行，表与这条读取路径留待另起迁移一起删
+- 能套模板的：clash、clash-premium、stash、singbox、surfboard、loon（`TemplateFormats` / `Templatable`）；URI、Shadowrocket、SIP008 没有模板。库里没有行就用内置模板（`defaultClashTemplate` 等；测试里经 `template_admin_test.go` 的 `defaultTemplateFor` 取）
+- 占位是纯文本替换（`fillTemplate`，拉取时不解析模板）：Clash 系与 Surfboard 的 `{{proxies}}`、`{{proxy_groups}}` 必需、只出现一次、单独一行顶格，`{{proxy_names}}` 可选；`{{subscribe_url}}` 只有 Surfboard 有（可选）；Loon 只有 `{{proxies}}`（同样只一次、单独一行）；sing-box 是 JSON 数组里带引号的 `"{{outbounds}}"`（必需、只一次）、`"{{proxy_tags}}"`（可选）
+- 内置 Clash 模板必须与 golden 逐字节一致（`defaultClashTemplate`）
 - 自定义 sing-box 模板对所有版本原样下发，按 1.14 切换规则集写法只有内置模板做
 
 ## sing-box 附带模板（用户 2026-10-07）

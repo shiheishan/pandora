@@ -17,7 +17,7 @@ import {
   validateRouting,
 } from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
-import { copyMemberships, groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
+import { groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
 import {
   applyXB,
   GI,
@@ -761,45 +761,6 @@ export const nodes: MockModule = {
       touch(n)
       ctx.send(200, adminNode(n))
     },
-    'POST /v1/nodes/:id/copy': async (ctx) => {
-      const body = await ctx.body()
-      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('node_copy', () => {
-        const src = findNode(ctx.params.id)
-        if (!src) return notFound('节点不存在')
-        if (body.row_version !== src.row_version) return conflict(src)
-        const name = text(body.name).trim() || `${src.name}-copy`
-        if (store.some((n) => n.name === name && !n.deleted)) return err(409, 'conflict', '节点名称已存在')
-        // 源节点没绑服务器、也没指定目标服务器时，复制出来同样不绑，不查服务器状态
-        const targetId = text(body.target_server_id) || src.server_id
-        const target = targetId ? servers.find((s) => s.id === targetId) : undefined
-        if (targetId && !target) return invalid({ target_server_id: '服务器不存在' })
-        if (target && target.status !== 'ready') return err(409, 'conflict', '目标服务器当前不接受节点')
-        const copy = node({ ...structuredClone({ ...src, routing: body.copy_routing ? src.routing : { outbounds: [], routes: [] } }), name, serving_status: 'draft', online_users: 0, online_ips: 0, traffic_bytes_24h: 0 })
-        // node() 先给新 id 与编号，再被源节点的字段覆盖：复制出来的必须是新节点
-        copy.id = randomUUID()
-        copy.node_no = nodeNo
-        copy.server_id = target?.id ?? null
-        copy.sort_order = src.sort_order + 1
-        copy.row_version = 1
-        copy.xb = {
-          ...xbDefaults(),
-          tags: [...src.xb.tags],
-          limit_bytes: src.xb.limit_bytes,
-          reset_day: src.xb.reset_day,
-          schedule: src.xb.schedule.map((s) => ({ ...s })),
-          used_bytes: 0,
-          exceeded_at: null,
-          reset_at: new Date().toISOString(),
-          relays: [],
-          ech: null,
-          ech_retired: 0,
-        }
-        if (body.copy_routing) copyMemberships(src.id, copy.id)
-        store.push(copy)
-        return { status: 201, body: adminNode(copy) }
-      })
-    },
     // 绑定 / 解绑服务器，照 node/service 的 BindNode / UnbindNode（nodes_binding.go）：幂等、无 reauth；
     // 判断顺序同 Go——版本号非法 422、端口范围 422、服务器 id 必填、节点不存在 404、版本冲突 409、
     // 已退役 / 在役 409、端口为空 422、目标就是当前服务器 200、服务器不存在 422、目标已退役 409、端口被占 409
@@ -961,17 +922,6 @@ export const nodes: MockModule = {
         return reply(ctx, err(409, 'conflict', '这台服务器没有有效的接入身份'))
       }
       ctx.send(200, { ok: true })
-    },
-    'POST /v1/nodes/config/publish': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      const body = await ctx.body()
-      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('node_config_publish', () => {
-        if (!['global', 'pool', 'node'].includes(text(body.scope))) return invalid({ scope: '只支持 global/pool/node' })
-        if (body.scope === 'node' && !findNode(text(body.scope_ref))) return notFound('节点不存在或已退役')
-        if (!body.payload || typeof body.payload !== 'object') return invalid({ payload: '必须是 JSON 对象' })
-        return { status: 201, body: { config_id: randomUUID(), version: 200 + Math.floor(Math.random() * 100), scope: body.scope, affected_nodes: body.scope === 'node' ? 1 : store.length } }
-      })
     },
     'GET /v1/nodes/:id/metrics': (ctx) => {
       const n = findNode(ctx.params.id)

@@ -245,55 +245,6 @@ func TestActivateUnboundNodePG(t *testing.T) {
 	}
 }
 
-func TestCopyUnboundNodePG(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	src, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("copy-src"), NodeType: "shadowsocks", ServerPort: 23010, ProtocolConfig: json.RawMessage(invSSConfig),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 不给目标服务器：副本也不绑
-	cp, err := e.svc.CopyNode(ctx, src.ID, NodeCopyInput{RowVersion: src.RowVersion, Name: e.name("copy-ub")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cp.ServerID != nil {
-		t.Fatalf("源节点没绑、没给目标时副本也不该绑：%v", cp.ServerID)
-	}
-
-	// 给目标服务器：副本绑在那台、沿用源端口
-	srv := e.server(t, ctx, "copy-srv")
-	bound, err := e.svc.CopyNode(ctx, src.ID, NodeCopyInput{
-		RowVersion: src.RowVersion, Name: e.name("copy-b"), TargetServerID: &srv.ID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bound.ServerID == nil || *bound.ServerID != srv.ID {
-		t.Fatalf("副本应绑在目标服务器：%v", bound.ServerID)
-	}
-	if bound.ServerPort == nil || *bound.ServerPort != 23010 {
-		t.Fatalf("副本应沿用源端口 23010：%v", bound.ServerPort)
-	}
-
-	// 源节点没有端口、又要绑到服务器上 → 422
-	bare, err := e.svc.CreateNode(ctx, NodeInput{
-		Name: e.name("copy-bare"), NodeType: "shadowsocks", ProtocolConfig: json.RawMessage(invSSConfig),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.CopyNode(ctx, bare.ID, NodeCopyInput{
-		RowVersion: bare.RowVersion, Name: e.name("copy-bare2"), TargetServerID: &srv.ID,
-	})
-	ee := invWantCode(t, err, errs.ValidationFailed)
-	if ee.Fields["server_port"] == "" {
-		t.Fatalf("没有端口复制到服务器应标在 server_port：%v", ee.Fields)
-	}
-}
-
 func TestBindUnbindBumpEpochsPG(t *testing.T) {
 	e, ctx := newInvEnvCommitted(t)
 	srv := e.server(t, ctx, "bind-ep")

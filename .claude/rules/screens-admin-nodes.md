@@ -16,7 +16,7 @@ paths:
 
 生命周期与服务器：
 
-- 10-16 设计稿删掉了节点的复制、删除与「发布配置」入口（后端接口仍在，前端不再调用），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。旧的「迁移」接口 10-20 已删，换成绑定 / 解绑（见下）。
+- 10-16 设计稿删掉了节点的复制、删除与「发布配置」入口（复制与发布配置的后端接口 10-21 已删；`GET v1/servers/:id/nodes` 同日删，卡片节点标签取 `GET v1/nodes` 按 server_id 分组），以及详情里的「运行信息」区；运行状态只在列表行上标非「运行中」的三种。旧的「迁移」接口 10-20 已删，换成绑定 / 解绑（见下）。
 - 新建节点是三步向导（`NodeForm.tsx` 的 `NodeCreateWizard`）：协议 → 连接信息（名称、地区、地址、端口、所在服务器、节点池，新建时地区与节点池必填）→ 协议参数；建成草稿后跳到详情「协议参数」。服务器下拉给没接入的（`enrolled` 为 false）标「（未接入）」，节点池下拉给没绑套餐的（`plan_names` 空）标「· 没绑套餐，暂不服务用户」，两个 hint 随所选写下一步；建成后的 toast 按没绑 / 服务器没接入 / 已接入分三句（`NodesTab` 的 `onCreated`）。列表地址带 `?new=<服务器 id>` 时自动打开向导并预选这台（服务器页的安装弹窗与草稿卡片的「新建节点」这样跳），关掉或建成后把 `new` 从地址去掉。编辑时 NodeForm 不再有节点池（`validateBasic` 只在新建时要求节点池）。
 - 节点可以不绑服务器（用户 2026-10-20 定）：向导的服务器下拉缺省「暂不绑定」（`Select` 的 `emptyOption`，说明 `logic.UNBOUND_HINT`）；`validateBasic(b, creating, live)` 选了服务器才要端口、在役（live）才要地址；`createBody` 没选服务器 / 没填端口时不带这两个键，`patchBody` 不发空端口。
 - 节点详情是整页（`NodeDetailPage.tsx`，kit `DetailPage`；外框 `DETAIL_ROUTES` 已登记 `nodes:nodes`），4 个页签 概览 / 协议参数 / 设置 / 身份与操作（`DETAIL_TABS`；「设置」10-21 由「路由与流量」改名，地址段仍是 `settings`），地址 `/nodes/nodes/<id>/<metrics|proto|settings|ops>`；`index.tsx` 按 `rest[0]` 分发到列表或详情。数据以 `useNodeDetail` 为主，列表缓存里有这一行时先拿来秒出，404 交给 QueryView。返回链接与切页签都带上列表的查询串（筛选不丢）。

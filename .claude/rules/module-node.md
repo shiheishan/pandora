@@ -34,7 +34,6 @@ paths:
 - 合并只有 `mergeRouting`（`service/routing.go`）：层序节点私有 → 各路由组（`sort_order, id`）→ 全局；规则按层拼接，出站从低到高同 tag 覆盖且保留首次位置。读层用 `nodeRoutingLayers`（`service/routing_layers.go`）。下发配置用 `ServerConfigs`（`service/config_docs.go`），不要另写合并。
 - 内置出站 `direct` / `block` 保存时经 `canonicalRouteTag` 规范成小写；自定义 tag 大小写敏感。
 - 写路由用 `refuseNewDangling`：只拒本次新造成的悬空引用（`service/routing_write.go`）。
-- 复制节点勾选复制路由（`CopyNode` 的 `CopyRouting`）时，在同一事务里经 `copyNodeRouting`（`service/nodes_placement.go`）把私有出站、规则和路由组成员一起复制：先拿路由写锁再锁节点行（与其它改路由的写同一锁序），组成员变了推进组版本，照常 `refuseNewDangling`。
 - 单个节点的文档生成失败只跳过该节点（`assembleServerConfigs` 返回跳过集合），同批其余服务器与节点照发；不要改回整批失败。被跳过的节点不在下发的文档里，节点端会停掉它的入站直到配置修好。ERROR 只在下发路径记（`ServerConfigs`，供配置纪元与建流对齐）；只读路径（节点列表、`ConfigLaggingCount`）调 `serverConfigsWithSkips` 不记日志：列表把这些节点显示为 failed（「面板生成配置失败：…」），落后计数算上它们。
 
 ## 节点补齐 Xboard（迁移 00045）
@@ -49,18 +48,18 @@ paths:
 ## Shadowsocks 2022 服务端身份密钥（共用约定 2026-10-14）
 - 每个 2022 节点一把 iPSK，不存库：`HKDF-SHA256(主密钥, info = crypto.InfoSS2022ServerPSK || 0x00 || 方法名 || 0x00 || 节点 id 的 16 字节)`（带方法名：同一节点 128 与 256 两把彼此独立，不是前缀关系），长度按方法（`protocol.SS2022KeyLen`）；派生只有 `service/ss2022.go` 的 `applySS2022ServerPSK`（端口 `PSKDeriver` = `*crypto.Keys`，`UsePSKDeriver` 装配，进 `MissingPorts`）。向量钉在 `service/ss2022_test.go`。
 - 配置文档（`buildNodeConfigDoc`）与订阅线路（`deliverableFromRows`）都在 `protocol.KernelConfig` 之后调它：2022 方法写 `password` = base64(iPSK)，其它 shadowsocks 删掉 `password`；没装配派生器时文档只跳过该节点、线路装载回错误。中转经 `relayRenderNode` 浅拷贝父节点 Config，自然用父节点那把。
-- 换主密钥会让全部 2022 节点的 iPSK 一起变（节点与订阅同时变，客户端重新拉订阅），是接受的代价；iPSK 只取决于节点 id，线路缓存键不用改。复制节点得新 id、新密钥。
+- 换主密钥会让全部 2022 节点的 iPSK 一起变（节点与订阅同时变，客户端重新拉订阅），是接受的代价；iPSK 只取决于节点 id，线路缓存键不用改。
 
 ## 同机端口（先到先得）
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。
 - L4 三种取值 `tcp` / `udp` / `tcp+udp`；shadowsocks 无条件 `tcp+udp`（同端口 TCP、UDP 都听，用户 2026-10-14 定）。冲突口径 `protocol.L4Conflicts`：相等，或一方是 `tcp+udp`；`tcp` 与 `udp` 同端口可共存。门禁按 `protocol.ConflictingL4s` 查占用者（`repo.NodePortHolder`），提示标签 `443/TCP+UDP`。
 - 库里兜底是两条部分唯一索引 `nodes_listen_tcp_claim_key`（`listen_l4 IN ('tcp','tcp+udp')`）与 `nodes_listen_udp_claim_key`（`IN ('udp','tcp+udp')`），都译成 `repo.ErrListenClaimTaken`（00038）。改 L4 规则时两条索引、`repo.inventoryErrs` 映射、pdnd 用例表一起改。
-- 建（绑了服务器时）、改、复制到服务器、绑定 / 改绑都在服务器行锁内 `claimNodePort`；冲突 409。锁序：节点行 → 服务器行（`PatchNode`、`BindNode`）。没绑服务器的节点不占端口：端口唯一索引带 `server_id IS NOT NULL`，端口值只是配置。
+- 建（绑了服务器时）、改、绑定 / 改绑都在服务器行锁内 `claimNodePort`；冲突 409。锁序：节点行 → 服务器行（`PatchNode`、`BindNode`）。没绑服务器的节点不占端口：端口唯一索引带 `server_id IS NOT NULL`，端口值只是配置。
 
 ## 节点与服务器的绑定（用户 2026-10-20 定）
 - 节点是配置，可以不绑服务器（`nodes.server_id` 可空，不用迁移）：新建时 `NodeInput.ServerID` 为 nil 即「暂不绑定」，不锁服务器、不查端口，端口与地址都可以先空着；绑了服务器时端口必填。地址只在在役时必填（`nodeValidateProtocol` 的 `nodeEndpointNeed`：在役要地址，绑了服务器要端口；端口留空时丢掉 protocol 包的端口范围错误）。PATCH 不能把端口清成 0。
 - 绑定 / 改绑 `BindNode`、解绑 `UnbindNode`（`service/nodes_binding.go`，接口 `POST /nodes/:id/bind`、`/unbind`，取代旧的 `/move`）：只许草稿或已停用（`nodeMovableState`，列表的 `movable` 也用它），在役 409「节点在役，先停用再改绑 / 解绑」，退役 409。绑定要有端口（请求可带 `server_port`），换服务器走 `lockServerForNodes`（容量、退役），同一台只锁行；都过 `claimNodePort`。解绑只把 `server_id` 置空（端口释放，端口值留着）。两者都经 `repo.SetNodeServer` 一并清掉运行状态与配置回执（上一台报的不算数），推进配置与名单纪元，审计 `node.server_bind` / `node.server_unbind`。
-- 上线与批量启用：没绑服务器回 409 `fields.server_id`（`nodeUnboundActivateMsg`），先于协议就绪的检查；库里 `nodes_active_shape` 兜底。复制：源节点没绑、也没给目标服务器时副本也不绑。
+- 上线与批量启用：没绑服务器回 409 `fields.server_id`（`nodeUnboundActivateMsg`），先于协议就绪的检查；库里 `nodes_active_shape` 兜底。
 - 后台「是否下发」第一项就是绑没绑（`nodeDeliveryFacts.Bound` → `nodeNoteUnbound`）。下发、名单、配置文档天然排除未绑节点（只取在役节点、INNER JOIN servers），不改那些 SQL。
 - 删服务器（`DeleteServer` → `repo.DetachServerNodes`）：名下在役节点退役；草稿与已停用的只解绑、留作配置（同 `SetNodeServer` 清运行状态与配置回执，端口值留着），能再绑到别的服务器（用户 2026-10-20 定）；已退役的只清 `server_id`。审计 `server.delete` 带 `silenced_nodes`（退役数）与 `unbound_nodes`（解绑数）。退役且没服务器的节点「是否下发」照「未在役」说，不引导去绑定。
 

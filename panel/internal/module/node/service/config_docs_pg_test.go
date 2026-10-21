@@ -148,10 +148,7 @@ func TestServerConfigsRoutingMergePG(t *testing.T) {
 		t.Fatal(err)
 	}
 	grp := rtGroup(t, ctx, e, "cd-rg", 1)
-	gr := routeGroupRow(t, ctx, e, grp.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, grp.ID, gr.RowVersion, []uuid.UUID{n1}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, grp.ID, n1)
 	grt, _ := e.svc.GetGroupRouting(ctx, grp.ID)
 	if _, err := e.svc.SetGroupRouting(ctx, grp.ID, grt.RowVersion, RoutingInput{
 		Routes: []RoutingRule{rule(`{"port":[25]}`, "block")},

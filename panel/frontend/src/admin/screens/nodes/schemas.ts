@@ -237,22 +237,6 @@ export const serverUpgradeResponse = z.object({
 })
 export type ServerUpgradeResponse = z.output<typeof serverUpgradeResponse>
 
-/** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
-const serverNodeSchema = z.object({
-  id: uuid,
-  name: z.string(),
-  serving_status: z.string(),
-  node_type: z.string().nullable(),
-  display_name: z.string().nullable(),
-  server_host: z.string().nullable(),
-  server_port: z.number().nullable(),
-  traffic_rate: z.number(),
-  config_validated_at: iso.nullable(),
-  last_heartbeat_at: iso.nullable(),
-  created_at: iso,
-})
-export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), total: z.number() })
-
 // ---------------------------------------------------------------------------
 // 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；
 // allowed_user_groups 是 R104「仅限用户组」名单（空 = 不限定），Go 的 nil 切片可能编成 null，归一成 []

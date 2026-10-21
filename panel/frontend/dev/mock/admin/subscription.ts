@@ -2,7 +2,7 @@ import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 
 // ---------------------------------------------------------------------------
 // 订阅附加设置（settings），形状与 Go 一致。
-// 订阅模板接口（/v1/subscription-templates）后端仍在，但 10-16 起后台只读列出「客户端 → 格式」、不再调用，假后端不再模拟。
+// 订阅模板页只读列出「客户端 → 格式」（前端写死），后端没有模板接口。
 // ---------------------------------------------------------------------------
 const err = (status: number, code: string, message: string, fields?: Record<string, string>): MockResult => ({ status, body: { error: { code, message, ...(fields ? { fields } : {}) } } })
 const reply = (ctx: MockContext, r: MockResult) => ctx.send(r.status, r.body)

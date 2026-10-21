@@ -95,13 +95,8 @@ describe('mock api · admin nodes', () => {
     }
   })
 
-  it('copies into a new node and refuses illegal transitions and server rebinds', async () => {
+  it('refuses illegal transitions and server rebinds', async () => {
     const [src] = await list()
-    const copy = await call('POST', `/v1/nodes/${src!.id}/copy`, { row_version: src!.row_version, name: `${src!.name} 副本` }, 'copy-1')
-    expect(copy.status).toBe(201)
-    const created = (await copy.json()) as { id: string; serving_status: string }
-    expect(created.id).not.toBe(src!.id)
-    expect(created.serving_status).toBe('draft')
     const draft = await call('POST', '/v1/nodes/status:batch', { items: [{ id: src!.id, row_version: src!.row_version }], serving_status: 'draft' }, 'batch-1')
     expect(draft.status).toBe(409)
     expect(await draft.json()).toMatchObject({ error: { fields: { serving_status: 'active -> draft' } } })
@@ -126,14 +121,13 @@ describe('mock api · admin nodes', () => {
     const rebound = await call('POST', `/v1/nodes/${disabled.id}/bind`, { row_version: afterUnbind.row_version, server_id: target.id, server_port: 24443 }, 'bind-2')
     expect(rebound.status).toBe(200)
     expect(((await rebound.json()) as { server_id: string | null }).server_id).toBe(target.id)
-    // 副本停在草稿、movable=true；绑到同端口已被别的节点占着的服务器（停用节点原来那台）→ 409 带 server_port
-    const fresh = (await list()).find((n) => n.id === created.id)!
-    expect(fresh).toMatchObject({ serving_status: 'draft', server_id: src!.server_id, movable: true })
-    const busy = await call('POST', `/v1/nodes/${fresh.id}/bind`, { row_version: fresh.row_version, server_id: disabledServer }, 'bind-3')
+    // 绑到同端口已被别的节点占着的服务器（在役节点 src 那台、那个端口）→ 409 带 server_port
+    const moved = (await list()).find((n) => n.id === disabled.id)!
+    const busy = await call('POST', `/v1/nodes/${moved.id}/bind`, { row_version: moved.row_version, server_id: src!.server_id, server_port: src!.server_port }, 'bind-3')
     expect(busy.status).toBe(409)
     expect(await busy.json()).toMatchObject({ error: { code: 'conflict', fields: { server_port: expect.any(String) } } })
     // 老迁移接口已删：路由不存在，假后端按未匹配路由回 404
-    expect((await call('POST', `/v1/nodes/${fresh.id}/move`, { row_version: fresh.row_version, server_id: target.id })).status).toBe(404)
+    expect((await call('POST', `/v1/nodes/${moved.id}/move`, { row_version: moved.row_version, server_id: target.id })).status).toBe(404)
   })
 
   it('creates an unbound node and refuses to activate it', async () => {

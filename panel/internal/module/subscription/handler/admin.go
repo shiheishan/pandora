@@ -2,12 +2,9 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
-	"github.com/aegispanel/aegis/internal/module/subscription/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
-	"github.com/aegispanel/aegis/internal/pkg/pagination"
 )
 
 // 后台入参的范围（与 service 一致，handler 先挡一道给出字段错误）。
@@ -115,69 +112,4 @@ func (h *Handler) adminSetDeviceLimit(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, okResponse{OK: true})
-}
-
-// listTrafficResets 是全站的流量重置日志。
-func (h *Handler) listTrafficResets(c *gin.Context) {
-	var q resetLogsQuery
-	if err := httpx.BindQuery(c, &q); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	var userID *uuid.UUID
-	if q.UserID != "" {
-		id, err := uuid.Parse(q.UserID)
-		if err != nil {
-			httpx.Fail(c, errs.Invalid(map[string]string{"user_id": "格式不正确"}))
-			return
-		}
-		userID = &id
-	}
-	h.resetLogs(c, userID, q.Reason)
-}
-
-// userTrafficResets 是某个用户的流量重置日志。
-func (h *Handler) userTrafficResets(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpx.Fail(c, errs.New(errs.NotFound))
-		return
-	}
-	h.resetLogs(c, &id, "")
-}
-
-// resetLogs 分页取重置日志并写响应。
-func (h *Handler) resetLogs(c *gin.Context, userID *uuid.UUID, reason string) {
-	limit, offset, err := pagination.Parse(c, 50, 200)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	rows, total, err := h.svc.ListTrafficResets(c.Request.Context(), service.ResetLogFilter{
-		UserID: userID, Reason: reason, Limit: limit, Offset: offset,
-	})
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.OK(c, resetLogsFrom(rows, total))
-}
-
-// trafficResetStats 是近 30 天的重置统计。
-func (h *Handler) trafficResetStats(c *gin.Context) {
-	st, err := h.svc.TrafficResetStats(c.Request.Context())
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	byReason := st.ByReason
-	if byReason == nil {
-		byReason = map[string]int{}
-	}
-	httpx.OK(c, resetStatsResponse{
-		Last30Days:  st.Last30Days,
-		ByReason:    byReason,
-		FreedBytes:  st.FreedBytes,
-		ManualCount: st.ManualCount,
-	})
 }

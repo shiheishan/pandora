@@ -16,7 +16,7 @@ paths:
 - 只有人民币：概览的 `revenue` 是单个对象，`GET v1/revenue/timeseries` 只收 `days`，待审提现是单个 `amount`；没有币种切换。
 - 仪表盘登录即可进，没有自己的数据：每张卡各自发请求、各自画，各自加载、各自失败、各自重试，一张卡坏了不能牵连别的卡。新增卡片照此办。
 - 每张图 / 列表有自己的空状态（「还没有收入 / 用户 / 流量」）并带一个去配置的链接（套餐、注册与邀请、节点）。
-- 「要处理」和侧栏徽标共用 `src/admin/tasks.ts` 的同一条 `GET v1/dashboard/tasks` 查询与 schema，不在本目录另起。仪表盘不再请求 `v1/dashboard/backlog/notifications`（`api.ts` 的 `backlogSchema` 只剩 tests/smoke 核对，接口下线时一起删）。
+- 「要处理」和侧栏徽标共用 `src/admin/tasks.ts` 的同一条 `GET v1/dashboard/tasks` 查询与 schema，不在本目录另起。仪表盘不再请求 `v1/dashboard/backlog/notifications`（`api.ts` 的 `backlogSchema` 只剩 tests/smoke 核对；后端接口保留，容量测试 `panel/tests/perf/k6/bulk_mail.js` 靠它看群发后的积压清空曲线，10-21 核实）。
 - 流量接口的字节一律是十进制字符串（numeric 聚合，可能超过 2^53），不是 JSON number；占比用 BigInt 算（`rank.ts`）。
 - 分层：数据到卡片、行、文案的映射全部放纯函数（`model.ts` 问候 / 要处理 / 今天，`chart.ts` 趋势图，`rank.ts` 流量排行，`system.ts` 系统状态与备份摘要，都有单测），组件只负责摆放；共用小件（分节、箭头链接、卡内空 / 错 / 骨架）在 `parts.tsx`。
 - 图表手写 SVG（`preserveAspectRatio="none"` + `non-scaling-stroke`），柱、圆点、刻度、气泡用 HTML 绝对定位；不引图表库；悬停与方向键逐点查看数值；动态 style 只用于条宽、坐标百分比。
