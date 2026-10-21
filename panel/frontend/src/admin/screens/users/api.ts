@@ -13,7 +13,6 @@ export { bulkBanSchema }
 export { type OrderRow, type OrderStatus } from '../billing/schemas'
 
 export {
-  balanceEntriesSchema,
   profileSchema,
   resetDoneSchema,
   userDetailSchema,
