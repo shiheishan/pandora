@@ -25,7 +25,7 @@ describe('充值金额', () => {
 describe('余额流水', () => {
   it('账本类型映射，挂账两类都叫「挂账转入」，未知类型返回 null', () => {
     expect(ledgerLabel('balance_hold')).toBe('下单用余额')
-    expect(ledgerLabel('late_payment_suspense')).toBe('挂账转入')
+    expect(ledgerLabel('late_payment_suspense')).toBe('待处理到账转入')
     expect(ledgerLabel('plan_change_refund')).toBe('换套餐退回')
     expect(ledgerLabel('something_new')).toBeNull()
   })

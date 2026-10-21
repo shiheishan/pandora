@@ -239,7 +239,7 @@ export function RotateDialog({
     setBusy(true)
     try {
       const r = await api.post(`v1/subscriptions/${encodeURIComponent(subId)}/rotate`, rotatedSchema, { body: { reason: reason.trim() } })
-      toast(`已换发，请让 ${r.user_email} 到用户端重新复制订阅地址`)
+      toast(`已换发，已通知 ${r.user_email} 到用户端重新复制订阅地址`)
       close()
       onDone()
     } catch (e) {
@@ -251,7 +251,7 @@ export function RotateDialog({
 
   return (
     <ActionModal open={open} title="更换订阅地址？" busy={busy} confirm="更换" tone="danger" disabled={!subId} onCancel={close} onConfirm={() => void submit()}>
-      <p className={css.dialogText}>换发后旧链接和用户已导入的节点立即失效（节点密码一起换），用户所有设备都要到用户端重新复制地址、在客户端重新更新一次订阅。后台看不到新地址。</p>
+      <p className={css.dialogText}>换发后旧链接和用户已导入的节点立即失效（节点密码一起换），用户所有设备都要到用户端重新复制地址、在客户端重新更新一次订阅。系统会通知用户。后台看不到新地址。</p>
       {choices.length > 1 && (
         <Select label="订阅" options={choices.map((s) => ({ value: s.id, label: subLabel(s) }))} value={subId} onChange={(e) => setPicked(e.target.value)} />
       )}

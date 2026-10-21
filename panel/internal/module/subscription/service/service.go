@@ -86,18 +86,19 @@ type OnlineDeviceCounter interface {
 
 // Service 是 subscription 模块对外的唯一入口。
 type Service struct {
-	repo     *repo.Repo
-	tx       txRunner
-	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
-	audit    auditWriter
-	settings SiteSettings
-	catalog  Catalog
-	users    Users
-	sealer   Sealer
-	roster   RosterNotifier
-	online   OnlineDeviceCounter
-	now      func() time.Time
-	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
+	repo         *repo.Repo
+	tx           txRunner
+	events       pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
+	audit        auditWriter
+	settings     SiteSettings
+	catalog      Catalog
+	users        Users
+	sealer       Sealer
+	roster       RosterNotifier
+	linkNotifier LinkNotifier // 后台换链接后通知属主，UseLinkNotifier 注入（link_notify.go）
+	online       OnlineDeviceCounter
+	now          func() time.Time
+	rt           *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 
 	// 订阅分发：nodes 与 delivery 由装配注入（nodes.go）。
 	nodes    NodeSource
@@ -285,6 +286,7 @@ func (s *Service) MissingPorts() []string {
 		{"NodeSource", s.nodes != nil},
 		{"OnlineDeviceCounter", s.online != nil},
 		{"RosterNotifier", s.roster != nil},
+		{"LinkNotifier", s.linkNotifier != nil},
 		{"PluginEvents", s.events != nil},
 		{"Realtime", s.rt != nil},
 		{"DomainScores", s.scores != nil},

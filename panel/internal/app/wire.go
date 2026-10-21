@@ -290,6 +290,9 @@ func buildServices(r *runtime) (*services, error) {
 	supportSvc.UsePlanNames(supportPlans{s: subSvc})
 	// 客服公开回复后，在回复的同一事务里经 notify 给提单人写「工单有新回复」
 	supportSvc.UseReplyNotifier(supportReplyNotifier{n: notifySvc})
+	// 后台换链接、后台开待付单：在同一事务里经 notify 通知用户（用户 10-21 定；门户自己换、赠送与线下开单不通知）
+	subSvc.UseLinkNotifier(subLinkNotifier{n: notifySvc})
+	orderSvc.UsePendingNotifier(orderPendingNotifier{n: notifySvc})
 	auditSvc.UseResourceLabeler(supportsvc.ResourceTicket, supportSvc.TicketLabels)
 
 	// 通知：扫描与公告定向要读用户、套餐、订阅，支付成功通知读最近履约的订单；Telegram webhook 地址由主域名拼出

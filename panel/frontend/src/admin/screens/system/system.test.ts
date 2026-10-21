@@ -95,6 +95,8 @@ describe('telegram', () => {
 describe('templates', () => {
   it('names, marks and validates templates', () => {
     expect(templateName('auth.email_verify')).toBe('注册验证码')
+    expect(templateName('subscription.link_rotated')).toBe('后台换链接')
+    expect(templateName('order.pending_created')).toBe('后台开待付单')
     expect(templateName('x.y')).toBe('x.y')
     expect(templateMeta(template(), undefined).label).toBe('默认')
     expect(templateMeta(template({ is_default: false }), undefined).label).toBe('已自定义')

@@ -9,6 +9,8 @@ const TARGETS: Readonly<Record<string, string>> = {
   'ticket.replied': '/tickets',
   'subscription.expiring': '/subs',
   'quota.warning': '/subs',
+  'subscription.link_rotated': '/subs',
+  'order.pending_created': '/orders',
 }
 
 /** 通知点开后跳到哪一页；不认识的 code 返回 null，只标已读不跳转 */
@@ -24,6 +26,8 @@ const ICONS: Readonly<Record<string, IconName>> = {
   'subscription.expired': 'subs',
   'subscription.recall': 'subs',
   'quota.warning': 'chart',
+  'subscription.link_rotated': 'subs',
+  'order.pending_created': 'orders',
 }
 
 export function notificationIcon(code: string): IconName {

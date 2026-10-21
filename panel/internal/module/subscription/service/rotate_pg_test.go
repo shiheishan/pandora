@@ -14,6 +14,17 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
+// spyLinkNotifier 记录 LinkRotatedByAdmin 调用，供换链接通知测试用。
+type spyLinkNotifier struct {
+	calls []LinkRotatedNotice
+	err   error
+}
+
+func (s *spyLinkNotifier) LinkRotatedByAdmin(_ context.Context, n LinkRotatedNotice) error {
+	s.calls = append(s.calls, n)
+	return s.err
+}
+
 // rotateSetup 开一份生效中的订阅（装配分发与线路来源）。
 func rotateSetup(t *testing.T) (*deliveryEnv, context.Context, uuid.UUID, Subscription) {
 	t.Helper()
@@ -176,5 +187,46 @@ func TestAdminRotateValidation(t *testing.T) {
 	}
 	if _, err := de.svc.AdminRotate(adminCtx(ctx, admin), uuid.New(), "用户说链接泄露了"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("不存在的订阅: %v", err)
+	}
+}
+
+func TestAdminRotateNotifiesOwner(t *testing.T) {
+	de, ctx, user, sub := rotateSetup(t)
+	spy := &spyLinkNotifier{}
+	de.svc.UseLinkNotifier(spy)
+	admin := newUser(t, de.env, ctx)
+	if _, err := de.svc.AdminRotate(adminCtx(ctx, admin), sub.ID, "用户说链接泄露了"); err != nil {
+		t.Fatalf("后台换链接: %v", err)
+	}
+	if len(spy.calls) != 1 {
+		t.Fatalf("通知 %d 次", len(spy.calls))
+	}
+	c := spy.calls[0]
+	if c.UserID != user || c.SubscriptionID != sub.ID || c.PlanID != sub.PlanID || c.RotatedAt.IsZero() {
+		t.Fatalf("通知 %+v", c)
+	}
+}
+
+func TestMyRotateDoesNotNotify(t *testing.T) {
+	de, ctx, user, sub := rotateSetup(t)
+	spy := &spyLinkNotifier{}
+	de.svc.UseLinkNotifier(spy)
+	if _, err := de.svc.MyRotate(userCtx(ctx, user), sub.ID); err != nil {
+		t.Fatalf("门户换链接: %v", err)
+	}
+	if len(spy.calls) != 0 {
+		t.Fatalf("门户换链接不该通知，有 %d 次", len(spy.calls))
+	}
+}
+
+func TestAdminRotateNotifierError(t *testing.T) {
+	de, ctx, _, sub := rotateSetup(t)
+	boom := errors.New("boom")
+	spy := &spyLinkNotifier{err: boom}
+	de.svc.UseLinkNotifier(spy)
+	admin := newUser(t, de.env, ctx)
+	_, err := de.svc.AdminRotate(adminCtx(ctx, admin), sub.ID, "用户说链接泄露了")
+	if !errors.Is(err, boom) {
+		t.Fatalf("通知失败应回滚: %v", err)
 	}
 }

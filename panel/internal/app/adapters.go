@@ -240,6 +240,31 @@ var (
 	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
 )
 
+// subLinkNotifier 让 subscription 在后台换链接的事务里经 notify 给属主写「链接已更换」（模板 subscription.link_rotated）。
+type subLinkNotifier struct{ n *notifysvc.Service }
+
+// LinkRotatedByAdmin 在调用方事务里写通知。
+func (a subLinkNotifier) LinkRotatedByAdmin(ctx context.Context, n subsvc.LinkRotatedNotice) error {
+	return a.n.NotifyLinkRotated(ctx, notifysvc.LinkRotatedNotice{
+		UserID: n.UserID, SubscriptionID: n.SubscriptionID, PlanID: n.PlanID, Label: n.Label, RotatedAt: n.RotatedAt,
+	})
+}
+
+// orderPendingNotifier 让 order 在后台开待付单的事务里经 notify 给用户写「有一张待付款订单」（模板 order.pending_created）。
+type orderPendingNotifier struct{ n *notifysvc.Service }
+
+// ManualPendingCreated 在调用方事务里写通知。
+func (a orderPendingNotifier) ManualPendingCreated(ctx context.Context, n ordersvc.PendingNotice) error {
+	return a.n.NotifyOrderPending(ctx, notifysvc.PendingOrderNotice{
+		UserID: n.UserID, OrderID: n.OrderID, PlanID: n.PlanID, OrderNo: n.OrderNo, Amount: n.Amount, ExpiresAt: n.ExpiresAt,
+	})
+}
+
+var (
+	_ subsvc.LinkNotifier      = subLinkNotifier{}
+	_ ordersvc.PendingNotifier = orderPendingNotifier{}
+)
+
 // reportRedis 让 report 的系统状态页探测 Redis 是否可达。
 type reportRedis struct{ c *redis.Client }
 

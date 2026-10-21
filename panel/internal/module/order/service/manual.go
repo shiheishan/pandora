@@ -6,6 +6,7 @@ package service
 //	       change 在那一份上开换套餐单（剩余价值与门户同口径，赠送单新价算 0 元、剩余价值全额退进余额），new 另开一份
 //	结算   grant 赠送（缺省，全额减免当场履约）、pending 待用户支付（低于最低额回 422）、
 //	       offline 线下已收款（建单后在同一事务里经 payment.RecordOffline 结清）
+//	通知   pending 开单后在同一事务里经 PendingNotifier 通知用户去付（manual_notify.go）；grant、offline 不通知
 //	审计   order.manual_created，与订单同一事务：没有审计的人工单等于没人负责
 //
 // 人工单不用券、不用余额；不受门户「同套餐只续不新开」与「同套餐只能有一张待付新购单」限制。
@@ -160,6 +161,15 @@ func (s *Service) CreateManualOrder(ctx context.Context, in ManualOrderInput) (C
 			Data:         manualDigest(in, op, settlement, reason, reference, o, created, rec),
 		}); err != nil {
 			return err
+		}
+		// 开给用户去付的单要告诉他：不然他不知道有一张待付单，到期自动取消
+		if settlement == SettlementPending && s.pending != nil {
+			if err := s.pending.ManualPendingCreated(ctx, PendingNotice{
+				UserID: o.UserID, OrderID: o.ID, PlanID: in.PlanID, OrderNo: o.OrderNo,
+				Amount: o.PayableAmount, ExpiresAt: o.ExpiresAt,
+			}); err != nil {
+				return err
+			}
 		}
 		return s.completeCreate(ctx, created.OrderID, func() (idemsvc.Response, error) {
 			if in.Reply == nil {

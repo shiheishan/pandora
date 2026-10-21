@@ -140,7 +140,7 @@ function WithdrawalItemRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal
   const state = withdrawalState(w.status)
 
   const metaText = `${formatDateTime(w.requested_at)} · ${withdrawMethodLabel(w.method)} · ${w.payout_detail || '未填收款信息'}${
-    w.status === 'rejected' && w.reject_reason ? ` · 拒绝理由：${w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}` : ''
+    w.status === 'rejected' && w.reject_reason ? ` · 驳回理由：${w.reject_reason === 'account_deleted' ? '账号已注销' : w.reject_reason}` : ''
   }${w.status === 'paid' && w.payout_reference ? ` · 流水号 ${w.payout_reference}` : ''}${
     w.status === 'paid' && w.paid_usdt_amount ? ` · 实付 ${w.paid_usdt_amount} USDT` : ''
   }`
@@ -159,7 +159,7 @@ function WithdrawalItemRow({ withdrawal: w, onDialog }: { withdrawal: Withdrawal
                 通过
               </Button>
               <Button size="sm" variant="danger" onClick={() => onDialog({ kind: 'reject', withdrawal: w })}>
-                拒绝
+                驳回
               </Button>
             </>
           )}
@@ -226,7 +226,7 @@ function RejectDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; 
   const reject = useMutation({
     mutationFn: () => api.post(`v1/withdrawals/${withdrawal!.id}/review`, reviewResponse, { body: { action: 'reject', reason: reason.trim() } }),
     onSuccess: () => {
-      toast('已拒绝')
+      toast('已驳回')
       void invalidate()
       close()
     },
@@ -237,7 +237,7 @@ function RejectDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; 
   })
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (!reason.trim()) return setErrors({ reason: '拒绝时必须填写理由，用户会看到它' })
+    if (!reason.trim()) return setErrors({ reason: '驳回时必须填写理由，用户会看到它' })
     reject.mutate()
   }
   return (
@@ -245,14 +245,14 @@ function RejectDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; 
       open={withdrawal !== null}
       onClose={close}
       dismissible={!reject.isPending}
-      title="拒绝这笔提现？"
+      title="驳回这笔提现？"
       actions={
         <>
           <Button size="dialog" onClick={close} disabled={reject.isPending}>
             取消
           </Button>
           <Button size="dialog" variant="danger" type="submit" form="withdrawal-reject" busy={reject.isPending}>
-            拒绝
+            驳回
           </Button>
         </>
       }
@@ -261,7 +261,7 @@ function RejectDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; 
         <form id="withdrawal-reject" className={css.stack} onSubmit={submit} noValidate>
           <div className={css.muted}>佣金退回用户的可提现余额。</div>
           <TextArea
-            label="拒绝理由"
+            label="驳回理由"
             rows={3}
             value={reason}
             onChange={(e) => setReason(e.target.value)}

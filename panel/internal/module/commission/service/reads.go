@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	identitysvc "github.com/aegispanel/aegis/internal/module/identity/service"
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -14,6 +15,7 @@ import (
 
 // MyCommission 返回门户「我的佣金」：汇总、最近 100 条佣金、50 条提现、50 笔转余额。
 // 横幅比例与计佣范围按该用户的单独设置（无则用全局）。第 2、3 级的条目不给上级看下线邮箱（From 为空）。
+// 待复核条目标 UnderReview；只有 USDT 已打款的提现带交易哈希。
 func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommission, error) {
 	refs, err := s.needRefs()
 	if err != nil {
@@ -96,13 +98,14 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 	for _, e := range entries {
 		from := ""
 		if e.Level == 1 {
-			from = MaskEmail(emails[e.RefereeUserID])
+			from = identitysvc.MaskEmail(emails[e.RefereeUserID])
 		}
 		out.Entries = append(out.Entries, EntryView{
 			Amount:       e.CommissionAmount,
 			Base:         e.BaseAmount,
 			RateBP:       e.RateBP,
 			Status:       e.Status,
+			UnderReview:  e.Status == EntryPending && e.ReviewRequired,
 			FrozenUntil:  e.FrozenUntil,
 			CreatedAt:    e.CreatedAt,
 			OrderNo:      e.OrderNo,
@@ -121,6 +124,10 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		if w.RejectReason != nil {
 			reason = *w.RejectReason
 		}
+		txHash := ""
+		if w.Status == WithdrawalPaid && IsUSDTMethod(w.Method) && w.PayoutReference != nil {
+			txHash = *w.PayoutReference
+		}
 		out.Withdrawals = append(out.Withdrawals, WithdrawalView{
 			ID:           w.ID,
 			Amount:       w.Amount,
@@ -129,6 +136,7 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 			RequestedAt:  w.RequestedAt,
 			CompletedAt:  w.CompletedAt,
 			Method:       w.Method,
+			TxHash:       txHash,
 		})
 	}
 
@@ -144,19 +152,6 @@ func (s *Service) MyCommission(ctx context.Context, userID uuid.UUID) (MyCommiss
 		})
 	}
 	return out, nil
-}
-
-// MaskEmail 给邮箱打码：保留 @ 前两个字符（不足三个字符全打码）与域名；不是邮箱时返回 "***"。
-func MaskEmail(e string) string {
-	for i := 0; i < len(e); i++ {
-		if e[i] == '@' {
-			if i <= 2 {
-				return "***" + e[i:]
-			}
-			return e[:2] + "***" + e[i:]
-		}
-	}
-	return "***"
 }
 
 // AdminOverview 返回后台分销概览：全站金额与笔数合计、当前参数；「本月」按站点时区的月初算。

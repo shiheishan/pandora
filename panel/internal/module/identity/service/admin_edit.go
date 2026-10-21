@@ -74,8 +74,8 @@ func (s *Service) AdminSetEmail(ctx context.Context, userID uuid.UUID, email, re
 			ResourceType: ResourceUser,
 			ResourceID:   &userID,
 			Data: map[string]any{
-				"before":           maskEmail(u.Email),
-				"after":            maskEmail(email),
+				"before":           MaskEmail(u.Email),
+				"after":            MaskEmail(email),
 				"before_hmac":      s.auditEmailHMAC(u.Email),
 				"after_hmac":       s.auditEmailHMAC(email),
 				"sessions_revoked": true,

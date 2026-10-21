@@ -80,13 +80,13 @@ describe('mock api · portal referral', () => {
     expect(res.status).toBe(200)
     const json = (await res.json()) as {
       summary: { withdraw_enabled: boolean; withdraw_methods: string[]; direct_rate_bp: number; paid_invitees: number }
-      entries: Array<{ level: number; from: string; status: string }>
+      entries: Array<{ level: number; from: string; status: string; under_review: boolean }>
     }
     expect(json.summary.withdraw_enabled).toBe(true)
     expect(json.summary).not.toHaveProperty('site_currency')
     // 付费好友只算第 1 级、不算已作废的；第 2、3 级条目不带邮箱
     expect(json.summary.paid_invitees).toBe(
-      new Set(json.entries.filter((e) => e.level === 1 && e.status !== 'reversed').map((e) => e.from)).size,
+      new Set(json.entries.filter((e) => e.level === 1 && e.status !== 'voided').map((e) => e.from)).size,
     )
     for (const e of json.entries.filter((x) => x.level > 1)) expect(e.from).toBe('')
     expect(json.summary.withdraw_methods).toContain('usdt_trc20')
@@ -133,6 +133,44 @@ describe('mock api · portal referral', () => {
     expect(resPost.status).toBe(409)
 
     // 用例结束切回 default 场景
+    await scopeIn('default')
+  })
+
+  it('commission statuses match Go', async () => {
+    const entryStatuses = ['pending', 'available', 'voided'] as const
+    const withdrawalStatuses = ['requested', 'approved', 'rejected', 'paid'] as const
+
+    const assertCommission = async (scenarioName: string) => {
+      await scopeIn(scenarioName)
+      const res = await mockFetch(base, auth, 'GET', '/v1/me/commission')
+      expect(res.status).toBe(200)
+      const json = (await res.json()) as {
+        entries: Array<{ status: string; under_review: boolean; frozen_until: string }>
+        withdrawals: Array<{ status: string; method: string; tx_hash: string }>
+      }
+      for (const e of json.entries) {
+        expect(entryStatuses).toContain(e.status)
+        expect(typeof e.under_review).toBe('boolean')
+        expect(typeof e.frozen_until).toBe('string')
+        if (e.under_review) expect(e.status).toBe('pending')
+      }
+      for (const w of json.withdrawals) {
+        expect(withdrawalStatuses).toContain(w.status)
+        expect(typeof w.tx_hash).toBe('string')
+        if (w.tx_hash) {
+          expect(w.status).toBe('paid')
+          expect(w.method.startsWith('usdt_')).toBe(true)
+        }
+      }
+      return json
+    }
+
+    const defaultBody = await assertCommission('default')
+    expect(defaultBody.entries.some((e) => e.under_review)).toBe(true)
+    expect(defaultBody.withdrawals.some((w) => w.tx_hash.length > 0)).toBe(true)
+
+    await assertCommission('multi')
+
     await scopeIn('default')
   })
 })

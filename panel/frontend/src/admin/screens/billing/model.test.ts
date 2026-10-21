@@ -343,6 +343,8 @@ describe('late payments, providers and adjustments', () => {
   it('labels the archived-plan case and its cancel reason (10-16)', () => {
     expect(LATE_KIND_LABELS.archived_plan).toBe('套餐归档后到账')
     expect(cancelReasonLabel('plan_archived')).toBe('套餐已归档，实付已转入用户余额')
+    expect(cancelReasonLabel('user_cancelled')).toBe('用户自己取消')
+    expect(cancelReasonLabel('管理员填的原话')).toBe('管理员填的原话')
   })
 
   it('words late cases and filter query helpers', () => {

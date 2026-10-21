@@ -105,6 +105,7 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
 const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
   account_deleted: '账号已注销',
   plan_archived: '套餐已归档，实付已转入用户余额',
+  user_cancelled: '用户自己取消',
 }
 
 export function cancelReasonLabel(reason: string): string {
@@ -267,7 +268,7 @@ export function referenceProblem(text: string): string | null {
 // ===========================================================================
 export type Settlement = 'grant' | 'pending' | 'offline'
 export const SETTLEMENTS: ReadonlyArray<{ value: Settlement; label: string; hint: string }> = [
-  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，用户在用户端「订单」里付款；30 分钟内不付自动过期' },
+  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，系统会通知用户到用户端「订单」里付款；30 分钟内不付自动过期' },
   { value: 'offline', label: '线下已收款', hint: '已通过转账等方式收到钱：填凭证号，当场入账并开通，同时计收入与佣金' },
   { value: 'grant', label: '赠送（0 元）', hint: '全额减免、当场开通，不计收入' },
 ]
