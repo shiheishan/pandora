@@ -80,13 +80,11 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 	proxiesVal := w.b.String()
 
 	var proxyGroupsVal string
-	var proxyNamesVal string
 
 	if len(realProxies) == 0 {
 		proxyGroupsVal = "  - {name: 节点选择, type: select, proxies: [DIRECT]}"
-		proxyNamesVal = "DIRECT"
 	} else {
-		proxyNamesVal = joinQuoted(realNames)
+		proxyNamesVal := joinQuoted(realNames)
 		selectNames := proxyNamesVal
 		if len(infoNames) > 0 {
 			selectNames = joinQuoted(infoNames) + ", " + proxyNamesVal
@@ -99,7 +97,6 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 	body := fillTemplate(defaultClashTemplate, map[string]string{
 		phProxies:     proxiesVal,
 		phProxyGroups: proxyGroupsVal,
-		phProxyNames:  proxyNamesVal,
 	})
 
 	return body, "text/yaml; charset=utf-8", len(realProxies)

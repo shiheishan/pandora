@@ -30,7 +30,7 @@ DROP INDEX traffic_reset_logs_created_idx;
 -- +goose Down
 -- 按 00039、00011 原样建回（列、类型、主键、CHECK、缺省与索引定义逐项对照；两者在之后的迁移里都没再改过）。
 -- 模板内容不可还原：表建回来是空的，拉取回到内置模板（删表前的二进制也是没有行就用内置）。
--- 建索引在事务里普通 CREATE INDEX：拿 SHARE 锁、挡写重置日志，耗时与 traffic_reset_logs 行数成正比（每次重置每个流量行一条，行数有界）。
+-- 建索引在事务里普通 CREATE INDEX：拿 SHARE 锁、挡写重置日志，耗时与 traffic_reset_logs 行数成正比（每次重置每个流量行一条，只追加、没有保留期，随时间增长）。
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '5min';
 

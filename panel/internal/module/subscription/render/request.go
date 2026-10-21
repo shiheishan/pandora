@@ -77,7 +77,6 @@ const (
 const (
 	phProxies      = "{{proxies}}"
 	phProxyGroups  = "{{proxy_groups}}"
-	phProxyNames   = "{{proxy_names}}"
 	phSubscribeURL = "{{subscribe_url}}"
 )
 

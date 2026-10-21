@@ -27,7 +27,7 @@ paths:
 ## 内置模板与占位替换
 - 后台自定义模板 10-21 起整条删掉（编辑接口先删，拉取侧的 `Request.Template` 与表 `subscription_templates` 随迁移 00068 删）；订阅一律用内置模板，URI、Shadowrocket、SIP008 本来就没有模板
 - 内置模板：`defaultClashTemplate`（Clash 系三种共用）、`defaultSurfboardTemplate`、`defaultLoonTemplate`；sing-box 不走文本模板，直接 `singboxFrame` 出 JSON（见下一节）
-- 占位是纯文本替换（`fillTemplate`，`render/request.go`）：Clash 系与 Surfboard 的 `{{proxies}}`、`{{proxy_groups}}`、`{{proxy_names}}`，Surfboard 的 `{{subscribe_url}}`（订阅链接为空时 `dropLinesWith` 去掉那行），Loon 只有 `{{proxies}}`
+- 占位是纯文本替换（`fillTemplate`，`render/request.go`）：Clash 系与 Surfboard 的 `{{proxies}}`、`{{proxy_groups}}`，Surfboard 的 `{{subscribe_url}}`（订阅链接为空时 `dropLinesWith` 去掉那行），Loon 只有 `{{proxies}}`
 - 内置 Clash 模板必须与 golden 逐字节一致（`defaultClashTemplate`）
 
 ## sing-box 附带模板（用户 2026-10-07）

@@ -66,14 +66,9 @@ func renderSurfboard(rc renderCtx) ([]byte, string, int) {
 		manual := "节点选择 = select, " + strings.Join(selectNames, ", ")
 		proxyGroups = auto + "\n" + manual
 	}
-	proxyNames := strings.Join(realNames, ", ")
-	if proxyNames == "" {
-		proxyNames = "DIRECT"
-	}
 	body := fillTemplate(tmpl, map[string]string{
 		phProxies:      strings.Join(lines, "\n"),
 		phProxyGroups:  proxyGroups,
-		phProxyNames:   proxyNames,
 		phSubscribeURL: rc.subscribeURL,
 	})
 	return body, "text/plain; charset=utf-8", len(realLines)

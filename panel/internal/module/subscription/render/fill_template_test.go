@@ -9,9 +9,9 @@ import (
 // fillTemplate 自己扫描替换，结果要与 strings.NewReplacer（键按长到短、等长按字典序排）逐字节一致。
 func TestFillTemplateMatchesReplacer(t *testing.T) {
 	vals := []map[string]string{
-		{phProxies: "proxies:\n  - {name: \"a\"}", phProxyGroups: "  - {name: g}", phProxyNames: "\"a\", \"b\""},
+		{phProxies: "proxies:\n  - {name: \"a\"}", phProxyGroups: "  - {name: g}", "{{proxy_names}}": "\"a\", \"b\""},
 		{`"{{outbounds}}"`: `{"tag":"{{proxy_tags}}"}`, `"{{proxy_tags}}"`: `"x", "y"`},
-		{phProxies: "P{{proxy_names}}", phProxyNames: "", phSubscribeURL: "https://example.com/s/{{proxies}}"},
+		{phProxies: "P{{proxy_names}}", "{{proxy_names}}": "", phSubscribeURL: "https://example.com/s/{{proxies}}"},
 	}
 	tmpls := []string{
 		"",
