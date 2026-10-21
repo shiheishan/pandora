@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,4 +116,54 @@ func loadTestConfig(t *testing.T, body string) *config {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+// acme 段可选：不写用 LE 生产与 80 端口；写错形状要在启动时报错。
+func TestConfigACMESection(t *testing.T) {
+	cfg := loadTestConfig(t, `{"panel":{"address":"p.example.test"}}`)
+	if cfg.ACME != (acmeConfig{}) {
+		t.Fatalf("缺省 acme 段应为空：%+v", cfg.ACME)
+	}
+	cfg = loadTestConfig(t, `{"panel":{"address":"p.example.test"},"cache_dir":"/tmp/x",`+
+		`"acme":{"directory_url":"https://ca.example.test/dir","http_port":5002,"ca_file":"/tmp/ca.pem"}}`)
+	if cfg.ACME.DirectoryURL != "https://ca.example.test/dir" || cfg.ACME.HTTPPort != 5002 || cfg.ACME.CAFile != "/tmp/ca.pem" {
+		t.Fatalf("acme 段 = %+v", cfg.ACME)
+	}
+	if got := cfg.acmeDir(); got != filepath.Join("/tmp/x", "acme") {
+		t.Fatalf("acmeDir = %q", got)
+	}
+	for _, body := range []string{
+		`{"panel":{"address":"p.example.test"},"acme":{"directory_url":"http://ca.example.test/dir"}}`,
+		`{"panel":{"address":"p.example.test"},"acme":{"directory_url":"ca.example.test"}}`,
+		`{"panel":{"address":"p.example.test"},"acme":{"http_port":70000}}`,
+		`{"panel":{"address":"p.example.test"},"acme":{"email":"a@example.test"}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadConfig(path); err == nil {
+			t.Fatalf("应拒绝：%s", body)
+		}
+	}
+}
+
+// ca_file 不是 PEM 时建证书管理失败；正常时落盘目录建在 <cache_dir>/acme。
+func TestNewCertManagerCAFile(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.pem")
+	if err := os.WriteFile(bad, []byte("not pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config{CacheDir: dir, ACME: acmeConfig{CAFile: bad}}
+	if _, err := newCertManager(cfg, slog.New(slog.DiscardHandler)); err == nil {
+		t.Fatal("ca_file 不是 PEM 应报错")
+	}
+	cfg.ACME.CAFile = ""
+	if _, err := newCertManager(cfg, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(filepath.Join(dir, "acme")); err != nil || !st.IsDir() {
+		t.Fatalf("acme 目录没建：%v", err)
+	}
 }

@@ -29,6 +29,9 @@ const FeatureUsersDelta = "users_delta"
 // FeatureUpgrade 是 Hello / Welcome 里「能在线升级」的能力名。
 const FeatureUpgrade = "upgrade_v1"
 
+// FeatureCertACME 是 Hello 里「能自动申请入站证书（cert_mode=acme）」的能力名，面板可据此分辨节点端支不支持。
+const FeatureCertACME = "cert_acme_v1"
+
 // 身份目录里的文件。
 const (
 	caFile       = "ca.pem"
