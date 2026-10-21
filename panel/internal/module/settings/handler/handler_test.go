@@ -31,6 +31,7 @@ type fakeSettings struct {
 
 	supportRules service.SupportRules
 	fallback     string
+	signup       service.Signup
 }
 
 func (f *fakeSettings) SiteURLFallback() string { return f.fallback }
@@ -110,7 +111,11 @@ func (f *fakeSettings) SetSupportRules(ctx context.Context, v service.SupportRul
 }
 
 func (f *fakeSettings) SignupWithoutSecret(ctx context.Context) (service.Signup, error) {
-	return service.Signup{EmailSuffixes: []string{}}, nil
+	s := f.signup
+	if s.EmailSuffixes == nil {
+		s.EmailSuffixes = []string{}
+	}
+	return s, nil
 }
 
 func (f *fakeSettings) SetSignup(ctx context.Context, u service.SignupUpdate) error {
@@ -200,6 +205,75 @@ func TestSiteConfig(t *testing.T) {
 	}
 	if m["password_reset"] != true {
 		t.Fatalf("password_reset %v", m["password_reset"])
+	}
+}
+
+func TestSiteConfigMailPaused(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeSettings{
+		policy: service.Registration{
+			Mode:              service.RegistrationOpen,
+			EmailVerification: true,
+		},
+		mailOK:  true,
+		enabled: map[string]bool{service.SwitchNotifyEmail: false},
+	}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors())
+	h.RegisterPublic(e.Group("/v1"), testKit(h))
+
+	rec := do(e, http.MethodGet, "/v1/site-config", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["password_reset"] != false {
+		t.Fatalf("password_reset %v", m["password_reset"])
+	}
+	if m["email_verification"] != true {
+		t.Fatalf("email_verification %v", m["email_verification"])
+	}
+}
+
+func TestSignupConfigMailPaused(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeSettings{
+		mailOK:  true,
+		signup:  service.Signup{MailLinkLogin: true},
+		enabled: map[string]bool{service.SwitchNotifyEmail: true},
+	}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors())
+	h.RegisterPublic(e.Group("/v1"), testKit(h))
+
+	rec := do(e, http.MethodGet, "/v1/signup-config", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var on map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &on); err != nil {
+		t.Fatal(err)
+	}
+	if on["mail_link_login"] != true {
+		t.Fatalf("mail on: %v", on["mail_link_login"])
+	}
+
+	fake.enabled = map[string]bool{service.SwitchNotifyEmail: false}
+	rec = do(e, http.MethodGet, "/v1/signup-config", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var off map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &off); err != nil {
+		t.Fatal(err)
+	}
+	if off["mail_link_login"] != false {
+		t.Fatalf("mail paused: %v", off["mail_link_login"])
 	}
 }
 

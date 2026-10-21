@@ -43,6 +43,13 @@ func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken st
 	if !ok {
 		return PasswordResetStart{}, ErrPasswordResetUnavailable
 	}
+	paused, err := s.mailPaused(ctx)
+	if err != nil {
+		return PasswordResetStart{}, err
+	}
+	if paused {
+		return PasswordResetStart{}, ErrPasswordResetMailPaused
+	}
 	code, err := newNumericCode(verificationCodeDigits)
 	if err != nil {
 		return PasswordResetStart{}, errs.Wrap(errs.Internal, err)

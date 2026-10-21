@@ -20,7 +20,7 @@ type MailLinkSettings interface {
 	// SignupWithoutSecret 只用 MailLinkLogin 字段，不必解封人机验证 secret（真校验令牌由 MailLinkCaptcha 自己读）
 	SignupWithoutSecret(ctx context.Context) (settingssvc.Signup, error)
 	MailConfigured(ctx context.Context) (bool, error)
-	// SwitchEnabled 读降级开关：notify.email（暂停邮件投递）关着时邮件发不出去，第 1 步直接拒
+	// SwitchEnabled 读降级开关：notify.email 停用（后台「暂停邮件投递」打开）时邮件发不出去，第 1 步直接拒
 	SwitchEnabled(ctx context.Context, code string) (bool, error)
 	// SiteURL 是当前生效的主域名（以 / 结尾，后台可改）：登录链接拼在它上面
 	SiteURL(ctx context.Context) string
@@ -45,7 +45,7 @@ const TemplateLoginLink = "auth.login_link"
 var (
 	// ErrMailLinkUnavailable 是没开邮件链接登录或没配发信（门户本该隐藏入口）。
 	ErrMailLinkUnavailable = errs.Newf(errs.Forbidden, "邮件链接登录未开启")
-	// errMailLinkMailPaused 是「暂停邮件投递」开关关着时的第 1 步：只看设置，不看邮箱存不存在。
+	// errMailLinkMailPaused 是 notify.email 停用（后台「暂停邮件投递」打开）时的第 1 步：只看设置，不看邮箱存不存在。
 	errMailLinkMailPaused = errs.Newf(errs.Unavailable, "邮件发送暂停，暂时无法用邮件登录，请稍后再试")
 	errMailLinkInvalid    = errs.Newf(errs.Unauthorized, "登录链接无效或已过期，请重新获取")
 )

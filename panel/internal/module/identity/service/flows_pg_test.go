@@ -223,6 +223,72 @@ func TestPGPasswordResetFlow(t *testing.T) {
 	}
 }
 
+func TestPGStartRegistrationMailPaused(t *testing.T) {
+	e, ctx := newEnv(t)
+	admin := e.mkUser(t, ctx, uniqEmail(t, "mailpauseadm"), "Passw0rdLong1")
+	actx := asAdmin(ctx, admin.ID)
+	setRegistration(t, actx, e.settings, settingssvc.RegistrationOpen, true)
+	if err := e.settings.SetSwitch(actx, settingssvc.SwitchNotifyEmail, false, "测试暂停"); err != nil {
+		t.Fatal(err)
+	}
+	e.settings.InvalidateSwitches()
+
+	email := uniqEmail(t, "regpause")
+	e.mailer.sent = nil
+	_, err := e.svc.StartRegistration(ctx, email, "", "")
+	if !errors.Is(err, ErrRegistrationMailPaused) || codeOf(err) != errs.Unavailable {
+		t.Fatalf("want paused: %v", err)
+	}
+	if len(e.mailer.sent) != 0 {
+		t.Fatalf("mail sent %d", len(e.mailer.sent))
+	}
+	var n int
+	if err := e.row(ctx, `SELECT count(*) FROM verification_codes WHERE purpose = ? AND target_hash = ?`,
+		PurposeEmailVerify, e.svc.targetHash(email)).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("codes count=%d err=%v", n, err)
+	}
+
+	setRegistration(t, actx, e.settings, settingssvc.RegistrationOpen, false)
+	start, err := e.svc.StartRegistration(ctx, email, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.VerificationRequired {
+		t.Fatalf("no verify start %+v", start)
+	}
+}
+
+func TestPGPasswordResetMailPaused(t *testing.T) {
+	e, ctx := newEnv(t)
+	email := uniqEmail(t, "resetpause")
+	e.mkUser(t, ctx, email, "Passw0rdLong1")
+	mailAdmin := e.mkUser(t, ctx, uniqEmail(t, "resetmailadm"), "Passw0rdLong1")
+	enableMail(t, asAdmin(ctx, mailAdmin.ID), e.settings)
+
+	start, err := e.svc.StartPasswordReset(ctx, email, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := start.DevCode
+
+	actx := asAdmin(ctx, mailAdmin.ID)
+	if err := e.settings.SetSwitch(actx, settingssvc.SwitchNotifyEmail, false, "测试暂停"); err != nil {
+		t.Fatal(err)
+	}
+	e.settings.InvalidateSwitches()
+	e.mailer.sent = nil
+	_, err = e.svc.StartPasswordReset(ctx, email, "")
+	if !errors.Is(err, ErrPasswordResetMailPaused) || codeOf(err) != errs.Unavailable {
+		t.Fatalf("want paused: %v", err)
+	}
+	if len(e.mailer.sent) != 0 {
+		t.Fatalf("mail sent %d", len(e.mailer.sent))
+	}
+	if err = e.svc.CompletePasswordReset(ctx, email, code, "NewPassw0rd9"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPGChangePassword(t *testing.T) {
 	e, ctx := newEnv(t)
 	email := uniqEmail(t, "chgpw")

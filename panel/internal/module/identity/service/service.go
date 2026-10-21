@@ -34,6 +34,7 @@ type settingsReader interface {
 	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
 	Signup(ctx context.Context) (settingssvc.Signup, error)
+	SwitchEnabled(ctx context.Context, code string) (bool, error)
 	// SiteURLAliases 是本站认的全部根地址：人机验证核对令牌来源的主机名用它
 	SiteURLAliases(ctx context.Context) []string
 }
@@ -209,6 +210,10 @@ var (
 	ErrPasswordResetUnavailable = errs.Newf(errs.Forbidden, "找回密码当前不可用，请联系客服")
 	// ErrPasswordHashBusy 是排队等口令哈希名额超时。
 	ErrPasswordHashBusy = errs.Newf(errs.Unavailable, "口令校验繁忙，请稍后重试")
+	// ErrRegistrationMailPaused 是开了邮箱验证、但降级开关 notify.email 停用（后台「暂停邮件投递」打开）时的注册第 1 步：验证码发不出去，直接拒，不写码。
+	ErrRegistrationMailPaused = errs.Newf(errs.Unavailable, "邮件发送暂停，暂时无法注册，请稍后再试")
+	// ErrPasswordResetMailPaused 是 notify.email 停用时的找回密码第 1 步；停用前已发出的验证码第 2 步照常可用。
+	ErrPasswordResetMailPaused = errs.Newf(errs.Unavailable, "邮件发送暂停，暂时无法找回密码，请稍后再试")
 )
 
 // errCodeInvalid 是找回密码第 2 步一切「对不上」的统一回应：没有验证码、过期、次数用完、账号不可用。
@@ -248,4 +253,13 @@ func (s *Service) MissingPorts() []string {
 		}
 	}
 	return out
+}
+
+// mailPaused 报告降级开关 notify.email 是否停用（后台「暂停邮件投递」打开）：停用时派发不认领邮件，验证码发不出去。
+func (s *Service) mailPaused(ctx context.Context) (bool, error) {
+	on, err := s.settings.SwitchEnabled(ctx, settingssvc.SwitchNotifyEmail)
+	if err != nil {
+		return false, err
+	}
+	return !on, nil
 }

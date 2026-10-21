@@ -60,6 +60,16 @@ func (s *Service) StartRegistration(ctx context.Context, email, inviteCode, capt
 	if policy.Mode == settingssvc.RegistrationClosed {
 		return RegistrationStart{}, ErrRegistrationUnavailable
 	}
+	// 要验证邮箱而邮件暂停时直接拒：只看设置，不看邮箱存不存在，不泄露账号
+	if policy.EmailVerification {
+		paused, err := s.mailPaused(ctx)
+		if err != nil {
+			return RegistrationStart{}, err
+		}
+		if paused {
+			return RegistrationStart{}, ErrRegistrationMailPaused
+		}
+	}
 	token, err := newToken(registrationTokenBytes)
 	if err != nil {
 		return RegistrationStart{}, errs.Wrap(errs.Internal, err)
@@ -247,7 +257,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, token, code, passwor
 					return err
 				}
 			}
-			singleUse := !cfg.InviteNeverExpire && inv.OwnerUserID != nil
+			singleUse := personalCodeSingleUse(cfg) && inv.OwnerUserID != nil
 			ok, err := s.repo.ConsumeInvite(ctx, inv.ID, singleUse)
 			if err != nil {
 				return err

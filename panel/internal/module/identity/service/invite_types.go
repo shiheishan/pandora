@@ -28,6 +28,7 @@ type InviteCodeView struct {
 
 // MyInviteCodes 是门户邀请页的码列表与上限。
 type MyInviteCodes struct {
-	Codes    []InviteCodeView // 永不为 nil
-	MaxCodes int              // 一人最多同时持有的 active 码
+	Codes     []InviteCodeView // 永不为 nil
+	MaxCodes  int              // 一人最多同时持有的 active 码
+	SingleUse bool             // 个人邀请码用一次就失效（设置「邀请码永不失效」关闭），与注册时的 personalCodeSingleUse 同口径
 }
