@@ -113,9 +113,10 @@ jobs:
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
-      # 测试按包串行（-p 1）：迁移往返与事务测试共用同一个库
+      # 各包并行（-p 4，公开仓库的 runner 是 4 核）：testkit 给每个测试进程从模板库复制一个自己的库；
+      # 迁移往返与 tx 包的测试直接用 DSN 那个库，两者不碰同一批表
       - name: Tests
-        run: go test -mod=readonly -race -p 1 -count=1 ./...
+        run: go test -mod=readonly -race -p 4 -count=1 ./...
       - name: Migration round trip through the binary
         env:
           PANDORA_DATABASE_MIGRATION_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}

@@ -34,11 +34,11 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 ```bash
 .agents/skills/verify/scripts/local-db.sh start
 cd panel && eval "$(../.agents/skills/verify/scripts/local-db.sh test-env)"   # PANDORA_TEST_DATABASE_URL 与 TZ=UTC
-GOTOOLCHAIN=go1.26.9 go test -p 1 -count=1 ./internal/module/order/... ./db/migrations/
+GOTOOLCHAIN=go1.26.9 go test -p 4 -count=1 ./internal/module/order/... ./db/migrations/
 ../.agents/skills/verify/scripts/local-db.sh stop                             # 用完就停
 ```
 
-- 改到哪些包跑哪些；迁移改了带上 `./db/migrations/`（含 `TestRoundTrip` 往返）。全量 `./...` 本机约 2.5 分钟（不带 race），按包串行（`-p 1`），所有包共用 `pandora_test` 一个库（与 CI 同）。
+- 改到哪些包跑哪些；迁移改了带上 `./db/migrations/`（含 `TestRoundTrip` 往返）。全量 `./...` 本机 `-p 4` 约 40 秒（不带 race）：testkit 给每个测试进程从模板库复制一个自己的库（每个约 15MB，进程退出后下次自动删），包之间可以并行。
 - 必须带 `TZ=UTC`（test-env 已给）：有用例按本地时区算「一个月后」，本机时区跨夏令时会差一小时。
 - 占用：PG 约 60MB、Redis 约 3MB；为了少写盘关了 fsync，库里只有测试数据。本机是 16G 内存的笔记本，不要同时开多路全量；`-race` 留给 CI。
 - 起真面板：`local-db.sh dev-init`（按 `panel/dev/.env` 建库与 pandora_owner）后 `make migrate`、`make serve`，见 run-pandora。
@@ -60,7 +60,7 @@ GOTOOLCHAIN=go1.26.9 go test -p 1 -count=1 ./internal/module/order/... ./db/migr
 | workflow / job | 管什么 | 什么时候要特别看它 |
 |---|---|---|
 | panel-newstack.yml / lint | golangci-lint（含 depguard 分层）；`depguardgen -check` 防 `.golangci.yml` 漂移；deadcode（`.github/scripts/deadcode.sh`，从 `cmd/pandora` 与 `tools/` 出发，只剩测试在调的也算死代码，误报在 `panel/.deadcode-ignore`） | 改了 panel Go 代码、加删模块 |
-| panel-newstack.yml / test | PG18 + Redis 上的 `go test -race -p 1 ./...`（PG 用例在这里真跑）；二进制 `migrate up → status → down → up`；`serve` 的 healthz / readyz | 改了 repo、service、迁移 |
+| panel-newstack.yml / test | PG18 + Redis 上的 `go test -race -p 4 ./...`（PG 用例真跑，每个测试进程一个库）；二进制 `migrate up → status → down → up`；`serve` 的 healthz / readyz | 改了 repo、service、迁移 |
 | panel-newstack.yml / e2e | 新二进制上 `panel/tests` 的 e2e 脚本（清单是该步骤里的 `for s in …`）与 `invariants.sql` | 改了接口、钱、订单、订阅、风控，或 `panel/tests` |
 | panel-newstack.yml / node-e2e | nodesim 冒烟、到期、真 pdnd 的删人断线 | 改了 node 模块、节点通道、`nodeapi`、pdnd 的 node / panel / kernel |
 | panel-smoke.yml / smoke | `run-smoke-stack.sh` 起 pandora，页面 schema 解析真响应，Playwright 购买路径（`panel/frontend/tests/browser/`） | 改了前端 `src/`、接口形状、购买与支付流程 |
@@ -76,6 +76,6 @@ GOTOOLCHAIN=go1.26.9 go test -p 1 -count=1 ./internal/module/order/... ./db/migr
 ## 坑
 
 - `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
-- CI 的 test job 与本机 PG 按包串行（`-p 1`），所有包共用一个库：夹具里的唯一值（邮箱、名字、代码）要带随机后缀，否则单包能过、合起来撞。
+- 同一个包的 PG 用例共用一个库（包与包之间各用各的，CI `-p 4`）：夹具里的唯一值（邮箱、名字、代码）要带随机后缀，否则单个用例能过、一起跑撞。
 - 一次推多个提交只有最新那个有 run，等的时候传最新的 sha。
 - `wait-github.sh` / `wait-status.sh` 不要接管道（`| tail` 之类）：管道的退出码是最后一个命令的，CI 红了也拿到 0。要截输出就加 `set -o pipefail`，或者先跑完再读输出里的「未通过」。
