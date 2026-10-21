@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/audit/repo"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
+	"github.com/aegispanel/aegis/internal/pkg/reqid"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 )
@@ -240,6 +243,81 @@ func TestActorDirectory(t *testing.T) {
 	byMail, _, err := svc.List(ctx, Filter{ActionPrefix: prefix, Query: "alice@"}, Page{Limit: 10})
 	if err != nil || len(byMail) != 1 {
 		t.Fatalf("query alice@ len=%d", len(byMail))
+	}
+}
+
+func TestListQueryMatchesUserAsResource(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+
+	kim := uuid.New()
+	admin := uuid.New()
+	fake := &fakeActorDir{emails: map[uuid.UUID]string{
+		kim:   "kim@example.test",
+		admin: "ops@example.test",
+	}}
+	svc.UseActorDirectory(fake)
+
+	p := uniqueAction(t)
+
+	if err := svc.Write(reqCtx(ctx, kim, authn.AudiencePublic), Event{Action: p + ".self"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(reqCtx(ctx, admin, authn.AudienceAdmin), Event{
+		Action: p + ".adjust", ResourceType: "user", ResourceID: &kim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	anonCtx := reqmeta.With(reqid.With(ctx, reqid.New()), reqmeta.Meta{IP: "203.0.113.9", UserAgent: "ua-test/1"})
+	if err := svc.Write(anonCtx, Event{
+		Action: p + ".login_failed", Outcome: OutcomeFailure, ResourceType: "user", ResourceID: &kim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(reqCtx(ctx, admin, authn.AudienceAdmin), Event{
+		Action: p + ".order", ResourceType: "order", ResourceID: &kim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(reqCtx(ctx, admin, authn.AudienceAdmin), Event{Action: p + ".other"}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantKim := map[string]bool{
+		p + ".self":         true,
+		p + ".adjust":       true,
+		p + ".login_failed": true,
+	}
+	rowsKim, _, err := svc.List(ctx, Filter{ActionPrefix: p, Query: "kim@example.test"}, Page{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsKim) != len(wantKim) {
+		t.Fatalf("kim query len %d want %d", len(rowsKim), len(wantKim))
+	}
+	for _, r := range rowsKim {
+		if !wantKim[r.Action] {
+			t.Fatalf("kim query unexpected action %q", r.Action)
+		}
+	}
+
+	wantOps := map[string]bool{
+		p + ".adjust": true,
+		p + ".order":  true,
+		p + ".other":  true,
+	}
+	rowsOps, _, err := svc.List(ctx, Filter{ActionPrefix: p, Query: "ops@example.test"}, Page{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsOps) != len(wantOps) {
+		t.Fatalf("ops query len %d want %d", len(rowsOps), len(wantOps))
+	}
+	for _, r := range rowsOps {
+		if !wantOps[r.Action] {
+			t.Fatalf("ops query unexpected action %q", r.Action)
+		}
 	}
 }
 

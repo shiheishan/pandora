@@ -28,8 +28,8 @@ type Query struct {
 	ActionPrefix   string      // action LIKE 前缀（转义 % _ \ ）
 	ActorKind      string      // actor_kind = ?
 	Outcome        string      // outcome = ?
-	Text           string      // 搜索框：非空时加 (action ILIKE '%'||转义后||'%' OR actor_id IN TextActorIDs OR resource_id = TextResourceID)，
-	TextActorIDs   []uuid.UUID //   后两项分别只在切片非空 / 指针非空时出现在 OR 里
+	Text           string      // 搜索框：非空时加 (action ILIKE '%'||转义后||'%' OR actor_id IN TextUserIDs OR (resource_type = 'user' AND resource_id IN TextUserIDs) OR resource_id = TextResourceID)，
+	TextUserIDs    []uuid.UUID // 邮箱包含搜索词的用户；命中 actor_id IN 或 (resource_type = 'user' AND resource_id IN)
 	TextResourceID *uuid.UUID
 	From, To       *time.Time // occurred_at >= From、occurred_at < To
 	AsOf           *time.Time // occurred_at <= AsOf（导出用，冻结范围）
@@ -142,9 +142,9 @@ func apply(tx *gorm.DB, q Query) *gorm.DB {
 		pat := db.ContainsPattern(q.Text)
 		parts := []string{"action ILIKE ? ESCAPE '\\'"}
 		args := []any{pat}
-		if len(q.TextActorIDs) > 0 {
-			parts = append(parts, "actor_id IN ?")
-			args = append(args, q.TextActorIDs)
+		if len(q.TextUserIDs) > 0 {
+			parts = append(parts, "actor_id IN ?", "(resource_type = 'user' AND resource_id IN ?)")
+			args = append(args, q.TextUserIDs, q.TextUserIDs)
 		}
 		if q.TextResourceID != nil {
 			parts = append(parts, "resource_id = ?")

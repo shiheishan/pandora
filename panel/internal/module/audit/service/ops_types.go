@@ -74,6 +74,8 @@ type AccessQuery struct {
 	// FilterActors 为 true 时只看 ActorIDs 这些操作者（ActorIDs 为空即一条都不要）
 	FilterActors bool
 	ActorIDs     []uuid.UUID
+	// TargetActions：FilterActors 为 true 时，这些动作再按对象匹配（resource_type = 'user' 且 resource_id 属于 ActorIDs）；登录失败是匿名事件，被试的账号只在对象里。
+	TargetActions []string
 	// Outcome 是 ""（全部）、success / failure / denied / partial，或 error（= 非 success）
 	Outcome string
 	// Limit 是最多取几条（按发生时间倒序）
@@ -82,12 +84,14 @@ type AccessQuery struct {
 
 // AccessEvent 是访问明细里的一条审计；IP 是明文（解不开为空串）。
 type AccessEvent struct {
-	Action    string
-	Outcome   string
-	IP        string
-	UserAgent string
-	ActorID   *uuid.UUID
-	At        time.Time
+	Action       string
+	Outcome      string
+	IP           string
+	UserAgent    string
+	ActorID      *uuid.UUID
+	ResourceType string // 没有对象为空串
+	ResourceID   *uuid.UUID
+	At           time.Time
 }
 
 // Cluster 是近 90 天关联到多个用户账号（actor_kind = user）的一个来源 IP。

@@ -283,6 +283,105 @@ func TestAccessEventsPG(t *testing.T) {
 	}
 }
 
+func TestAccessEventsTargetActionsPG(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+
+	victim := uuid.New()
+	other := uuid.New()
+	p := uniqueAction(t)
+
+	if err := svc.Write(userCtx(ctx, victim, "203.0.113.30"), Event{Action: p + ".login"}); err != nil {
+		t.Fatal(err)
+	}
+	anon := func(ip string) context.Context {
+		return reqmeta.With(reqid.With(ctx, reqid.New()), reqmeta.Meta{IP: ip, UserAgent: "ua-test/1"})
+	}
+	if err := svc.Write(anon("203.0.113.31"), Event{
+		Action: p + ".login_failed", Outcome: OutcomeFailure, ResourceType: "user", ResourceID: &victim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(anon("203.0.113.32"), Event{
+		Action: p + ".refresh", Outcome: OutcomeDenied, ResourceType: "user", ResourceID: &victim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(anon("203.0.113.33"), Event{
+		Action: p + ".login_failed", Outcome: OutcomeFailure, ResourceType: "user", ResourceID: &other,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	actorOnly, err := svc.AccessEvents(ctx, AccessQuery{
+		Include: []string{p}, FilterActors: true, ActorIDs: []uuid.UUID{victim}, Limit: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actorOnly) != 1 || actorOnly[0].Action != p+".login" {
+		t.Fatalf("FilterActors only len=%d %+v", len(actorOnly), actorOnly)
+	}
+
+	withTarget, err := svc.AccessEvents(ctx, AccessQuery{
+		Include: []string{p}, FilterActors: true, ActorIDs: []uuid.UUID{victim},
+		TargetActions: []string{p + ".login_failed"}, Limit: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTwo := map[string]bool{p + ".login": true, p + ".login_failed": true}
+	if len(withTarget) != 2 {
+		t.Fatalf("with TargetActions len %d want 2", len(withTarget))
+	}
+	for _, e := range withTarget {
+		if !wantTwo[e.Action] {
+			t.Fatalf("unexpected action %q", e.Action)
+		}
+	}
+	var failed *AccessEvent
+	for i := range withTarget {
+		if withTarget[i].Action == p+".login_failed" {
+			failed = &withTarget[i]
+			break
+		}
+	}
+	if failed == nil {
+		t.Fatal("missing login_failed")
+	}
+	if failed.ActorID != nil {
+		t.Fatalf("login_failed ActorID %v want nil", failed.ActorID)
+	}
+	if failed.ResourceType != "user" || failed.ResourceID == nil || *failed.ResourceID != victim {
+		t.Fatalf("login_failed resource %+v", failed)
+	}
+	if failed.IP != "203.0.113.31" {
+		t.Fatalf("login_failed IP %q", failed.IP)
+	}
+
+	all, err := svc.AccessEvents(ctx, AccessQuery{Include: []string{p}, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("no FilterActors len %d want 4", len(all))
+	}
+	var loginEv *AccessEvent
+	for i := range all {
+		if all[i].Action == p+".login" {
+			loginEv = &all[i]
+			break
+		}
+	}
+	if loginEv == nil {
+		t.Fatal("missing login in all")
+	}
+	if loginEv.ResourceType != "" || loginEv.ResourceID != nil {
+		t.Fatalf("login resource type=%q id=%v want empty/nil", loginEv.ResourceType, loginEv.ResourceID)
+	}
+}
+
 func TestIPClustersPG(t *testing.T) {
 	d := testkit.DB(t)
 	ctx := testkit.TxCtx(t, d)

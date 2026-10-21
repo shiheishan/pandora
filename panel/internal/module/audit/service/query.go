@@ -174,7 +174,7 @@ func (s *Service) query(ctx context.Context, f Filter) (repo.Query, error) {
 			if err != nil {
 				return repo.Query{}, err
 			}
-			q.TextActorIDs = ids
+			q.TextUserIDs = ids
 		}
 	}
 	return q, nil
