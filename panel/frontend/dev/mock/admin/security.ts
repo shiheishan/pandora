@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 import { plans } from './plans-store.ts'
-import { userStore, type User } from './users.ts'
+import { setProfileSource, userStore, type ProfileViewer, type User } from './users.ts'
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -766,6 +766,7 @@ interface Review {
 }
 interface MockCluster {
   key: string
+  hash: string
   ip: string
   members: string[]
   events: number
@@ -774,27 +775,60 @@ interface MockCluster {
   review: Review | null
 }
 const NORMAL_TTL = 30 * DAY
+const CLUSTER_WINDOW = 90 * DAY
 const hashKey = (seed: string) => createHash('sha256').update(seed).digest('hex')
-const cluster = (ip: string, idx: number[], lastMin: number, review: Review | null = null): MockCluster => ({
-  key: hashKey(ip || `legacy-${idx.join(',')}`),
-  ip,
-  members: idx.map((i) => userAt(i).id),
-  events: idx.length * 7 + 3,
-  first: iso(80 * DAY - idx[0]! * DAY),
-  last: iso(lastMin * MIN),
-  review,
-})
-// 成员挑的是真实种子：0 号是管理员（停用时跳过），9 号已停用，24 / 39 已停用、40 已封禁
-const clusters: MockCluster[] = [
-  cluster('198.51.100.18', [3, 9, 13, 18, 23], 6),
-  cluster('203.0.113.45', [5, 25, 45], 20),
-  cluster('198.51.100.24', [0, 7, 27], 45),
-  cluster('198.51.100.42', [1, 21], 60),
-  cluster('198.51.100.51', [15, 35], 180, { decision: 'normal', decided_at: iso(32 * DAY), expires_at: iso(2 * DAY) }),
-  cluster('198.51.100.61', [11, 31], 300, { decision: 'normal', decided_at: iso(10 * DAY), expires_at: iso(-20 * DAY) }),
-  cluster('198.51.100.31', [24, 39, 40], 900, { decision: 'disabled', decided_at: iso(3 * DAY), expires_at: null }),
-  cluster('', [19, 29], 2000),
-]
+
+/** ip_cluster_reviews：按 ip_hash 存复核结论；种子与原来的三条一致 */
+const reviews = new Map<string, Review>([
+  ['198.51.100.51', { decision: 'normal', decided_at: iso(32 * DAY), expires_at: iso(2 * DAY) }],
+  ['198.51.100.61', { decision: 'normal', decided_at: iso(10 * DAY), expires_at: iso(-20 * DAY) }],
+  ['198.51.100.31', { decision: 'disabled', decided_at: iso(3 * DAY), expires_at: null }],
+])
+
+/** 照 Go audit/repo Clusters：近 90 天多账号同源 IP */
+function computeClusters(): MockCluster[] {
+  const since = Date.now() - CLUSTER_WINDOW
+  const byHash = new Map<string, { members: Set<string>; events: number; first: string; last: string }>()
+  for (const r of audit) {
+    if (!r.ip_hash || r.actor_kind !== 'user' || !r.actor_id) continue
+    if (Date.parse(r.occurred_at) <= since) continue
+    let g = byHash.get(r.ip_hash)
+    if (!g) {
+      g = { members: new Set(), events: 0, first: r.occurred_at, last: r.occurred_at }
+      byHash.set(r.ip_hash, g)
+    }
+    g.members.add(r.actor_id)
+    g.events++
+    if (r.occurred_at < g.first) g.first = r.occurred_at
+    if (r.occurred_at > g.last) g.last = r.occurred_at
+  }
+  const out: MockCluster[] = []
+  for (const [hash, g] of byHash) {
+    if (g.members.size <= 1) continue
+    const members = [...g.members].sort()
+    let ip = ''
+    let ipAt = ''
+    for (const r of audit) {
+      if (r.ip_hash !== hash || !r.source_ip) continue
+      if (!ipAt || r.occurred_at > ipAt) {
+        ipAt = r.occurred_at
+        ip = r.source_ip
+      }
+    }
+    out.push({
+      key: hashKey(hash),
+      hash,
+      ip,
+      members,
+      events: g.events,
+      first: g.first,
+      last: g.last,
+      review: reviews.get(hash) ?? null,
+    })
+  }
+  out.sort((a, b) => b.members.length - a.members.length || b.last.localeCompare(a.last) || a.hash.localeCompare(b.hash))
+  return out
+}
 
 /** clusterRisk：机房出口或账号 ≥ 5 为高，≥ 3 为中 */
 const riskOf = (accounts: number, kind: string) => (accounts >= 5 || kind === 'datacenter' ? 'high' : accounts >= 3 ? 'mid' : 'low')
@@ -810,7 +844,11 @@ function clusterJson(c: MockCluster) {
 }
 
 /** ParseClusterKey：不是非空 hex 即 404；视图里没有也是 404 */
-const clusterBy = (key: string) => (/^([0-9a-f]{2})+$/i.test(key.trim()) ? clusters.find((c) => c.key === key.trim().toLowerCase()) : undefined)
+const clusterBy = (key: string) => {
+  const k = key.trim().toLowerCase()
+  if (!/^([0-9a-f]{2})+$/i.test(k)) return undefined
+  return computeClusters().find((c) => c.key === k)
+}
 
 async function disableAccounts(ctx: MockContext): Promise<MockResult> {
   const d = await decode(ctx, { user_ids: 'strings', reason: 'string' })
@@ -842,10 +880,147 @@ async function disableAccounts(ctx: MockContext): Promise<MockResult> {
     u.status = 'suspended'
     record({ ...actor, action: 'user.status_change', resource_type: 'user', resource_id: u.id, resource_label: null, outcome: 'success', reason })
   }
-  if (done.length > 0) c.review = { decision: 'disabled', decided_at: new Date().toISOString(), expires_at: null }
+  if (done.length > 0) reviews.set(c.hash, { decision: 'disabled', decided_at: new Date().toISOString(), expires_at: null })
   record({ ...actor, action: 'risk.ip_cluster.disable', resource_type: done.length ? 'ip_cluster_review' : null, resource_id: null, resource_label: null, outcome: done.length === 0 ? 'failure' : skipped.length ? 'partial' : 'success', reason })
   return { status: 200, body: { disabled: done.length, skipped } }
 }
+
+// ---------------------------------------------------------------------------
+// 用户画像（GET /v1/users/:id/profile，照 identity/service UserProfile）
+// ---------------------------------------------------------------------------
+const riskRank = (r: string) => (r === 'high' ? 3 : r === 'mid' ? 2 : r === 'low' ? 1 : 0)
+const higherRisk = (a: string, b: string) => (riskRank(a) >= riskRank(b) ? a : b)
+
+/** 近窗内同一 ip_hash 上出现过的不重复用户 id */
+function coAccountIds(ipHash: string, sinceMs: number): Set<string> {
+  const ids = new Set<string>()
+  for (const r of audit) {
+    if (r.ip_hash !== ipHash || r.actor_kind !== 'user' || !r.actor_id) continue
+    if (Date.parse(r.occurred_at) <= sinceMs) continue
+    ids.add(r.actor_id)
+  }
+  return ids
+}
+
+function profileOf(u: User, viewer: ProfileViewer) {
+  const sinceMs = Date.now() - CLUSTER_WINDOW
+  const mine = audit.filter((r) => r.actor_id === u.id)
+
+  const events = mine.slice(0, 80).map((r) => ({
+    action: r.action,
+    outcome: r.outcome,
+    ip: r.source_ip ?? '',
+    ua: r.user_agent ?? '',
+    domain: r.api_domain ?? '',
+    at: r.occurred_at,
+  }))
+
+  let registered_ip = ''
+  let regAt = ''
+  for (const r of mine) {
+    if (r.action !== 'user.registered' || !r.source_ip) continue
+    if (!regAt || r.occurred_at < regAt) {
+      regAt = r.occurred_at
+      registered_ip = r.source_ip
+    }
+  }
+
+  type IpAgg = { ip_hash: string; count: number; first: string; last: string; ip: string; latestIpAt: string; accountIds: Set<string> }
+  const ipMap = new Map<string, IpAgg>()
+  for (const r of mine) {
+    if (!r.ip_hash) continue
+    let g = ipMap.get(r.ip_hash)
+    if (!g) {
+      g = { ip_hash: r.ip_hash, count: 0, first: r.occurred_at, last: r.occurred_at, ip: '', latestIpAt: '', accountIds: new Set() }
+      ipMap.set(r.ip_hash, g)
+    }
+    g.count++
+    if (r.occurred_at < g.first) g.first = r.occurred_at
+    if (r.occurred_at > g.last) g.last = r.occurred_at
+    if (r.source_ip && (!g.latestIpAt || r.occurred_at > g.latestIpAt)) {
+      g.latestIpAt = r.occurred_at
+      g.ip = r.source_ip
+    }
+  }
+  for (const g of ipMap.values()) {
+    const ids = coAccountIds(g.ip_hash, sinceMs)
+    g.accountIds = ids
+  }
+
+  const ipRows = [...ipMap.values()].sort(
+    (a, b) => b.count - a.count || b.last.localeCompare(a.last) || a.ip_hash.localeCompare(b.ip_hash),
+  )
+  let risk = ''
+  const relatedSet = new Set<string>()
+  const ips = ipRows.slice(0, 20).map((g) => {
+    const accounts = g.accountIds.size > 1 ? g.accountIds.size : 1
+    const { geo, kind } = geoOf(g.ip)
+    const ipRisk = accounts > 1 ? riskOf(accounts, kind) : ''
+    risk = higherRisk(risk, ipRisk)
+    if (accounts > 1) {
+      for (const id of g.accountIds) if (id !== u.id) relatedSet.add(id)
+    }
+    return {
+      ip: g.ip,
+      count: g.count,
+      first: g.first,
+      last: g.last,
+      accounts,
+      geo,
+      network_kind: kind,
+      risk: ipRisk,
+    }
+  })
+
+  const related = [...relatedSet]
+    .sort()
+    .slice(0, 50)
+    .map((id) => findUser(id))
+    .filter((x): x is User => !!x)
+    .map((x) => ({ id: x.id, email: x.email }))
+    .sort((a, b) => a.email.localeCompare(b.email))
+
+  const myFetches = fetches.filter((f) => f.user?.id === u.id)
+  const fetchesOut = myFetches.slice(0, 50).map((f) => ({
+    ip: f.ip,
+    ua: f.ua,
+    family: uaFamily(f.ua),
+    result: f.result,
+    format: f.format,
+    at: f.at,
+  }))
+
+  const weekAgo = Date.now() - 7 * DAY
+  const fetch_sources_7d = new Set(myFetches.filter((f) => Date.parse(f.at) > weekAgo).map((f) => f.ip)).size
+
+  record({
+    actor_kind: 'admin',
+    actor_id: viewer.id,
+    actor_email: viewer.email,
+    action: 'security.source_ip_viewed',
+    resource_type: 'user',
+    resource_id: u.id,
+    resource_label: null,
+    api_domain: 'admin',
+    outcome: 'success',
+    reason: null,
+    auth_context: 'session',
+    source_ip: ADMIN_IP,
+    user_agent: BROWSER,
+  })
+
+  return {
+    events,
+    ips,
+    related,
+    fetches: fetchesOut,
+    fetch_sources_7d,
+    registered_ip,
+    risk,
+  }
+}
+
+setProfileSource(profileOf)
 
 // ---------------------------------------------------------------------------
 // 降级开关（feature_switches：00010 七行 + 00085 四行，R102 的新迁移删去 ops.bulk_export / ops.reports / node.autoscale）
@@ -1120,9 +1295,8 @@ export const security: MockModule = {
     'GET /v1/ip-clusters': (ctx) => {
       const all = ctx.query.get('include_reviewed') === '1'
       const now = Date.now()
-      const rows = clusters
+      const rows = computeClusters()
         .filter((c) => all || c.review?.decision !== 'normal' || (c.review.expires_at !== null && Date.parse(c.review.expires_at) <= now))
-        .sort((a, b) => b.members.length - a.members.length || b.last.localeCompare(a.last))
         .slice(0, 50)
         .map(clusterJson)
       recordSourceIpViewed(ctx)
@@ -1183,7 +1357,7 @@ export const security: MockModule = {
       const c = clusterBy(ctx.params.key!)
       if (!c) return reply(ctx, NOT_FOUND)
       const expires = new Date(Date.now() + NORMAL_TTL).toISOString()
-      c.review = { decision: 'normal', decided_at: new Date().toISOString(), expires_at: expires }
+      reviews.set(c.hash, { decision: 'normal', decided_at: new Date().toISOString(), expires_at: expires })
       record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'risk.ip_cluster.mark_normal', resource_type: 'ip_cluster_review', resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: null, auth_context: ctx.reauthed ? 'reauth' : 'session', source_ip: ADMIN_IP, user_agent: BROWSER })
       ctx.send(200, { key: ctx.params.key, decision: 'normal', expires_at: expires.replace(/\.\d+Z$/, 'Z') })
     },

@@ -76,10 +76,13 @@ describe('mock api · admin security and operations', () => {
   it('merges audit and fetch rows into the access log with Go categories and validation', async () => {
     const all = accessResponse.parse(await json(await call('GET', '/v1/access-log?limit=200'))).items
     expect(all.some((i) => i.category === 'subscribe') && all.some((i) => i.category === 'login')).toBe(true)
-    expect(all.find((i) => i.action?.startsWith('payment_provider.'))?.category).toBe('admin')
-    expect(all.find((i) => i.action === 'payment.succeeded')?.category).toBe('payment')
+    const byCategory = async (c: string) => accessResponse.parse(await json(await call('GET', `/v1/access-log?category=${c}&limit=200`))).items
+    expect((await byCategory('admin')).some((i) => i.action?.startsWith('payment_provider.'))).toBe(true)
+    expect((await byCategory('payment')).some((i) => i.action === 'payment.succeeded')).toBe(true)
     // omitempty：系统动作没有账号与 IP，键不出现
-    expect(all.find((i) => i.action === 'order.expired')).not.toHaveProperty('ip')
+    const expired = (await byCategory('order')).find((i) => i.action === 'order.expired')!
+    expect(expired).not.toHaveProperty('ip')
+    expect(expired).not.toHaveProperty('user_id')
 
     expect(await json(await call('GET', '/v1/access-log?category=http'))).toMatchObject({ error: { fields: { category: '不认识的分类' } } })
     expect(await json(await call('GET', '/v1/access-log?outcome=ok'))).toMatchObject({ error: { fields: { outcome: expect.any(String) } } })
