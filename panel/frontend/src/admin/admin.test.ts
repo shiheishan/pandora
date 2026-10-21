@@ -198,7 +198,15 @@ describe('dashboard/tasks', () => {
 
   it('数据巡检条目：每项 code / count / checked_at，旧的 ledger_drift 不再认', () => {
     const integrity = { kind: 'integrity', checks: [{ code: 'ledger_drift', count: 2, checked_at: '2026-10-20T08:00:00Z' }] }
+    const nodeCerts = {
+      kind: 'node_certs',
+      count: 3,
+      failing: 1,
+      expiring: 2,
+      sample: [{ id: 'n1', name: 'JP-TYO-03' }],
+    }
     expect(tasksSchema.safeParse({ ...payload, items: [integrity] }).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [nodeCerts] }).success).toBe(true)
     expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [] }] }).success).toBe(true)
     expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [{ code: 'ledger_drift', count: -1, checked_at: 'x' }] }] }).success).toBe(false)
     expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [{ code: 'ledger_drift', count: 1 }] }] }).success).toBe(false)
@@ -211,6 +219,13 @@ describe('dashboard/tasks', () => {
     expect(taskCount(items, 'withdrawals_pending')).toBe(3)
     expect(taskCount(items, 'nodes_offline')).toBe(0)
     expect(taskCount(undefined, 'tickets_open')).toBe(0)
+    const withCerts = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [
+        { kind: 'node_certs', count: 3, failing: 1, expiring: 2, sample: [{ id: 'n1', name: 'JP-TYO-03' }] },
+      ],
+    }).items
+    expect(taskCount(withCerts, 'node_certs')).toBe(3)
   })
 
   it('navBadges：侧栏徽标映射与为 0 省略', () => {

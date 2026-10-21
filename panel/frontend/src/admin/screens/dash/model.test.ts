@@ -223,6 +223,47 @@ describe('todoBoard', () => {
     ]
     expect(todoBoard(items).cards.map((c) => c.key)).toEqual(['tickets_open', 'withdrawals_pending', 'orders_pending_stale'])
   })
+
+  it('node_certs：count 为 0 不出卡；有违例时出卡、meta 与紧急摘要', () => {
+    const zero: TaskItem[] = [
+      { kind: 'tickets_open', count: 0, high_priority: 0, oldest_wait_seconds: null },
+      { kind: 'withdrawals_pending', count: 0, amount: 0 },
+      { kind: 'orders_pending_stale', count: 0, threshold_seconds: 1800 },
+      { kind: 'node_certs', count: 0, failing: 0, expiring: 0, sample: [] },
+    ]
+    expect(todoBoard(zero).cards.map((c) => c.key)).toEqual(['tickets_open', 'withdrawals_pending', 'orders_pending_stale'])
+
+    const certs: TaskItem = {
+      kind: 'node_certs',
+      count: 3,
+      failing: 1,
+      expiring: 2,
+      sample: [{ id: 'n1', name: 'JP-TYO-03' }, { id: 'n2', name: 'US-LAX-01' }],
+    }
+    const base: TaskItem[] = [
+      { kind: 'tickets_open', count: 0, high_priority: 0, oldest_wait_seconds: null },
+      { kind: 'withdrawals_pending', count: 0, amount: 0 },
+      { kind: 'orders_pending_stale', count: 0, threshold_seconds: 1800 },
+      certs,
+    ]
+    const board = todoBoard(base)
+    expect(board.cards.map((c) => c.key)).toEqual(['tickets_open', 'withdrawals_pending', 'orders_pending_stale', 'node_certs'])
+    expect(board.cards.find((c) => c.key === 'node_certs')).toMatchObject({
+      title: '证书异常',
+      count: 3,
+      meta: '申请失败 1 个 · 快到期 2 个 · 如 JP-TYO-03、US-LAX-01',
+      hot: true,
+      target: { module: 'nodes', tab: 'nodes' },
+    })
+    expect(board.summary).toBe('1 项 · 1 项紧急')
+
+    const noFail: TaskItem[] = [
+      ...base.slice(0, -1),
+      { kind: 'node_certs', count: 2, failing: 0, expiring: 2, sample: [{ id: 'n1', name: 'JP-TYO-03' }] },
+    ]
+    expect(todoBoard(noFail).cards.find((c) => c.key === 'node_certs')).toMatchObject({ hot: false })
+    expect(todoBoard(noFail).summary).toBe('1 项')
+  })
 })
 
 describe('kpiTiles', () => {

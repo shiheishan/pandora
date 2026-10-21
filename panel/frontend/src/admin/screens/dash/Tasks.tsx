@@ -10,7 +10,8 @@ import { CardError, PanelSkeleton, Section, targetHref } from './parts'
 export function Tasks() {
   const { data, isPending, isError, error, refetch } = useDashboardTasks()
   const board = todoBoard(data?.items, data?.as_of)
-  const gridClass = board.cards.length === 4 ? css.todo4 : css.todo3
+  // 固定三格，证书异常、数据巡检有问题时各多出一格
+  const gridClass = board.cards.length >= 5 ? css.todo5 : board.cards.length === 4 ? css.todo4 : css.todo3
 
   return (
     <Section id="dash-todo" title="要处理" sub={data ? board.summary : undefined}>

@@ -123,6 +123,16 @@ export const dash: MockModule = {
         { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 + 540 },
         { kind: 'withdrawals_pending', count: 3, amount: 128_000 },
         { kind: 'nodes_offline', count: 3, sample: [{ id: NODE_ROWS[1].node_id, name: 'JP-TYO-03' }, { id: NODE_ROWS[3].node_id, name: 'US-LAX-01' }, { id: NODE_ROWS[5].node_id, name: 'DE-FRA-01' }], longest_offline_seconds: 26 * 60 },
+        {
+          kind: 'node_certs',
+          count: 2,
+          failing: 1,
+          expiring: 1,
+          sample: [
+            { id: NODE_ROWS[0].node_id, name: 'HK-HKG-01' },
+            { id: NODE_ROWS[2].node_id, name: 'sg-sin-02' },
+          ],
+        },
         // 与订单假后端同一份数据：待支付筛选里能看到这几张
         { kind: 'orders_pending_stale', count: stalePendingCount(1800 * 1000), threshold_seconds: 1800 },
         { kind: 'notifications_backlog', queued: BACKLOG.counts.ready + BACKLOG.counts.scheduled, failed_total: BACKLOG.counts.failed_total, backlog_state: BACKLOG.backlog_state },

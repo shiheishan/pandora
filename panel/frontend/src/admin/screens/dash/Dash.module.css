@@ -49,6 +49,10 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.todo5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .tc {
   position: relative;
   display: flex;
@@ -196,7 +200,8 @@
 
 @media (max-width: 819px) {
   .todo3,
-  .todo4 {
+  .todo4,
+  .todo5 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

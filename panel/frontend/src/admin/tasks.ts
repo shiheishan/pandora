@@ -19,6 +19,14 @@ const taskItemSchema = z.discriminatedUnion('kind', [
     sample: z.array(z.object({ id: z.string(), name: z.string() })).max(3),
     longest_offline_seconds: count.nullable(),
   }),
+  // 证书要处理的节点：申请或续期失败、快到期或已过期（门槛：IP 证书 2 天、域名与手填证书 14 天）
+  z.object({
+    kind: z.literal('node_certs'),
+    count,
+    failing: count,
+    expiring: count,
+    sample: z.array(z.object({ id: z.string(), name: z.string() })).max(3),
+  }),
   z.object({ kind: z.literal('orders_pending_stale'), count, threshold_seconds: count }),
   z.object({ kind: z.literal('notifications_backlog'), queued: count, failed_total: count, backlog_state: z.enum(['clear', 'backlogged']) }),
   // 数据巡检：每项检查最近一次的违例数（code 是后端的检查代号，中文名见 dash/model 的 INTEGRITY_CHECKS）
@@ -57,7 +65,7 @@ export interface NavBadge {
   hot?: boolean
 }
 
-/** 侧栏徽标：工单 = tickets_open（红）、订单与收款 = orders_pending_stale、营销 = withdrawals_pending、节点与服务器 = nodes_offline；为 0 的不返回 */
+/** 侧栏徽标：工单 = tickets_open（红）、订单与收款 = orders_pending_stale、营销 = withdrawals_pending、节点与服务器 = nodes_offline；为 0 的不返回。证书异常只在仪表盘出卡，不进侧栏徽标 */
 export function navBadges(items: readonly TaskItem[] | undefined): Partial<Record<ModuleKey, NavBadge>> {
   if (!items) return {}
   const out: Partial<Record<ModuleKey, NavBadge>> = {}
