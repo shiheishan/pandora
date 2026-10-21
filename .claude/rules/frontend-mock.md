@@ -32,7 +32,15 @@ paths:
   - 中转、ECH、手动重置都不动节点的 `row_version`（Go 里中转与 ECH 是别的表，重置只改用量列）；批量修改先把所有节点校验完再一起写，模拟整批回滚
   - 种子演示：「香港 02 · IPLC」两条中转与时段倍率，「洛杉矶 01」超限（不下发），末尾「法兰克福 01 · ECH」已开 ECH；「新加坡 02」保持「心跳超时仍下发」的演示，不叠超限
   - 守卫测试：`tests/mock-admin-nodes-xb.test.ts`
-- 节点种子末尾「伦敦 01（未绑定）」是没绑服务器的草稿（`server_id: null`、从没心跳），演示「未绑定 · 去绑定」与上线置灰；新种子加在它之前会改它的 `node_no`。未绑节点照 Go：身份接口回空视图（`identity: null`、令牌 0），吊销身份 409
+- 节点假后端（`nodes.ts` / `nodes-infra.ts`）照 Go 的服务器模型：接入身份与安装令牌挂在服务器上（`MockServer.identity` / `tokens`），节点上没有心跳、身份字段，别再加回去
+  - 心跳、stale、在线 / 离线都取所在服务器（`hbOf`）；列表负载、详情 CPU、服务器卡片同一份探针（`serverMetricsLatest`）
+  - 上线核对 `serverEnrolled`；节点的身份接口回所在服务器的身份（`identityView`，`spiffe://pandora/server/<id>`），吊销作用在整台服务器（`revokeServerIdentity`）。退役服务器吊销身份（原因「服务器已退役」）；删除服务器时名下在役节点退役、草稿与已停用的只解绑（原因「服务器已删除」）
+  - 安装令牌照 Go：幂等 scope `server_bootstrap_token`，只收 `ttl_minutes`（缺省 20，1–60，越界 422「有效期须在 1–60 分钟」），服务器已退役 409，令牌 32 字节 base64url，安装命令与 Go `buildInstallCommand` 同格式（域名用保留域）。签发 15 秒后模拟机器接入（令牌标记已用、生成身份、开始心跳），这条是假后端特有的
+  - 服务器 DTO 带 `enrolled`；`heartbeat_online` 只对 ready 为真（同 Go）。下发说明的顺序与文案逐字照 Go 的 `nodeDeliveryVerdict`，可下发条件照 `repo.DeliverableNodeCond`；REALITY 缺项的 422 键是表单路径 `protocol_config.reality_settings.<键>`
+  - 种子：有心跳的服务器都已接入，含草稿大阪机（「大阪 01（待上线）」能直接上线）；首尔机没接入、带 1 个待用令牌；新加坡机 15 分钟没心跳（演示「心跳超时仍下发」）；香港机已是最新版；东京机 CPU 88%
+  - 节点种子末尾「伦敦 01」是没绑服务器的草稿（`server_id: null`），演示「未绑定 · 去绑定」与上线置灰；新种子加在它之前会改它的 `node_no`。未绑节点照 Go：身份接口回空视图（`identity: null`、令牌 0），吊销身份 409
+  - 仪表盘假数据（`dash.ts`）的节点部分只从 nodes.ts 的 `reportNodeCounts` / `offlineNodes` / `certAttentionSummary` / `nodeTrafficRows` 取，不写死节点 id 与名字（单向 import，nodes.ts 不 import dash.ts）
+  - 种子里不放像真密钥的串（REALITY 私钥用低熵占位），gitleaks 会拦
 - `admin/node-schemas.ts` 是 `GET /v1/node-protocol-schemas` 响应（Go `protocol.Schemas()` 经 handler 的 DTO）的原样导出，守卫是 `panel/internal/module/node/handler/schemas_mock_test.go` 的 `TestMockNodeSchemasMatchGo`（逐字节比对）
   - Go 的协议 schema 或 DTO 一变，在 `panel/` 下跑 `go test ./internal/module/node/handler/ -run TestMockNodeSchemasMatchGo -update` 重导，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
