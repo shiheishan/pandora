@@ -167,6 +167,14 @@ func TestEdgeValidateShadowTLS(t *testing.T) {
 		t.Fatalf("handshake_server shape: ver=%d fields=%#v", ver, f)
 	}
 
+	withWS := `{"password":"p","server":"www.example.com:443","version":3,"wildcard_sni":"authed"}`
+	ver, f = validateKernelShape("shadowtls", 443, json.RawMessage(withWS))
+	if ver != schemaVersion || len(f) != 0 {
+		t.Fatalf("wildcard_sni authed shape: ver=%d fields=%#v", ver, f)
+	}
+	_, f = Validate("shadowtls", 443, json.RawMessage(withWS))
+	edgeMustNoField(t, f, "protocol_config")
+
 	cases := []struct {
 		raw   string
 		field string
@@ -185,6 +193,7 @@ func TestEdgeValidateShadowTLS(t *testing.T) {
 		{`{"password":"p","server":"www.example.com:443","version":3,"server_port":70000}`, "protocol_config.server_port"},
 		{`{"password":"p","server":"www.example.com:443","version":3,"server_port":"x"}`, "protocol_config.server_port"},
 		{`{"password":"p","server":"www.example.com:443","version":3,"method":"rc4"}`, "protocol_config.method"},
+		{`{"password":"p","server":"www.example.com:443","version":3,"wildcard_sni":"bogus"}`, "protocol_config.wildcard_sni"},
 	}
 	for _, c := range cases {
 		_, f := validateKernelShape("shadowtls", 443, json.RawMessage(c.raw))

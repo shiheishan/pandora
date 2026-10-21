@@ -111,6 +111,7 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 			ServerPort      json.RawMessage `json:"server_port"`
 			Method          string          `json:"method"`
 			Strict          bool            `json:"strict"`
+			WildcardSNI     string          `json:"wildcard_sni"`
 		}
 		if err := decodeStrictProtocolObject(raw, &cfg); err != nil {
 			setProtocolObjectError(fields, err, "ShadowTLS 配置包含不支持的字段或类型")
@@ -135,6 +136,9 @@ func validateKernelShape(nodeType string, port int, raw json.RawMessage) (int, m
 		}
 		if method := strings.ToLower(strings.TrimSpace(cfg.Method)); method != "" && !containsString(shadowsocksAEADMethods, method) {
 			fields["protocol_config.method"] = "ShadowTLS 仅支持当前 NativeCore 的 Shadowsocks 方法"
+		}
+		if ws := strings.ToLower(strings.TrimSpace(cfg.WildcardSNI)); ws != "" && ws != "off" && ws != "authed" && ws != "all" {
+			fields["protocol_config.wildcard_sni"] = "通配 SNI 只能是 off、authed 或 all"
 		}
 	case "hysteria2":
 		var cfg struct {

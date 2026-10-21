@@ -889,7 +889,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "Trojan 支持普通 TLS（1）与 REALITY（2），不能不加密；没有流控。",
+      "note": "缺省是普通 TLS（1）+ 自动申请证书（Let's Encrypt）：上线前把对外地址解析到这台服务器；也可选 REALITY（2）。Trojan 不能不加密；没有流控。",
       "fields": [
         {
           "path": "network",
@@ -899,6 +899,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         {
           "path": "tls",
           "label": "加密",
+          "default": 1,
           "option_labels": {
             "1": "1 · TLS",
             "2": "2 · REALITY"
@@ -1456,11 +1457,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "reality_settings.dest": "借用握手的真实公网站点，域名:端口，例如 www.apple.com:443；dest 需支持 TLS 1.3 + X25519。不能填 IP、localhost 或内网域名。",
         "reality_settings.server_name": "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。",
         "reality_settings.short_id": "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。",
-        "tls": "不加密时不能用裸 tcp。",
+        "tls": "缺省 2 · REALITY。选 0 · 不加密时传输不能是 tcp，否则保存会被拒绝。",
         "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "REALITY + tcp 时用 xtls-rprx-vision；普通 TLS（tls=1）暂未开放。",
+      "note": "缺省是 REALITY + tcp + xtls-rprx-vision：填 REALITY 目标站与 SNI，点「生成密钥对」后就能保存；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
       "fields": [
         {
           "path": "network",
@@ -1470,6 +1471,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         {
           "path": "tls",
           "label": "加密",
+          "default": 2,
           "option_labels": {
             "0": "0 · 不加密",
             "2": "2 · REALITY"
@@ -1487,6 +1489,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "xtls-rprx-vision",
           "option_labels": {
             "": "留空"
           }
@@ -2023,11 +2026,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "grpc_path": "旧字段名，与 serviceName 二选一即可。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
         "mask": "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
-        "network": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+        "network": "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
         "tls": "VMess 不支持 REALITY，只有这一个选项。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+      "note": "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
       "fields": [
         {
           "path": "network",
