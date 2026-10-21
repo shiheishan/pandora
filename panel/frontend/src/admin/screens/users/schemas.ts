@@ -118,6 +118,6 @@ export const profileSchema = z.object({
   risk: profileRisk,
 })
 export type ProfileRisk = z.output<typeof profileRisk>
-export type UserProfile = z.output<typeof profileSchema>
+type UserProfile = z.output<typeof profileSchema>
 /** 画像 IP 表里只用到时间与去重时的字段（测试夹具不必带 geo / network_kind / risk） */
 export type ProfileIpActivity = Pick<UserProfile['ips'][number], 'ip' | 'count' | 'first' | 'last' | 'accounts'>

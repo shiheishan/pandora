@@ -24,7 +24,6 @@ export {
   type UserStatus,
   type ProfileIpActivity,
   type ProfileRisk,
-  type UserProfile,
 } from './schemas'
 
 const int = z.number().int()
