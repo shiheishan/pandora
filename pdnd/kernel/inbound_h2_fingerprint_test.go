@@ -16,7 +16,10 @@ import (
 //   - TLS 上协商出 h2 的入站握完就发 SETTINGS，不等客户端前言（真 Go 服务端与 nginx 都这样）；
 //   - 探测回落的 h2 也一样，只收到半截前言就发 SETTINGS：这是回落仍用 x/net ServeConn 的理由
 //     （net/http 对非 *tls.Conn 只能走明文 h2，要等齐 24 字节前言才发 SETTINGS）；
-//   - 明文 gRPC / XHTTP 只认 prior knowledge，不认 Upgrade: h2c（回 HTTP/1）。
+//   - 明文 gRPC / XHTTP 只认 prior knowledge，不认 Upgrade: h2c（回 HTTP/1）；
+//   - 没有在途请求的连接空闲 75 秒被关（10-21 补上，此前入站永不关）：h2 先发 GOAWAY(NO_ERROR)，
+//     HTTP/1 keep-alive 直接关；与回落的中性页面、nginx 缺省 keepalive_timeout 同值（行为守卫在
+//     inbound_http_idle_test.go）。
 
 // readFirstH2Frame 读对端发来的第一帧的类型（帧头第 4 字节）。
 func readFirstH2Frame(t *testing.T, conn net.Conn, within time.Duration) byte {
@@ -109,5 +112,12 @@ func TestInboundH2PlainIgnoresH2CUpgrade(t *testing.T) {
 	}
 	if resp.ProtoMajor != 1 || resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("h2c 升级请求应按 HTTP/1 回 404：%s", resp.Status)
+	}
+}
+
+func TestInboundHTTPIdleTimeoutMatchesFallback(t *testing.T) {
+	// 入站与回落空闲多久被关必须一样，探测方才看不出差别；值取 nginx 缺省的 keepalive_timeout。
+	if got := newInboundHTTPServer(nil, 64<<10).IdleTimeout; got != neutralHTTPIdleTimeout {
+		t.Fatalf("入站 IdleTimeout=%v，要与回落的 %v 相同", got, neutralHTTPIdleTimeout)
 	}
 }
