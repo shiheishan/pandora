@@ -50,7 +50,7 @@ paths:
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
   - 按用户挂的模块状态放在 `WeakMap<PortalState, …>` 里，才能随切换场景一起重建
 - 外框顶栏读的余额、订阅、佣金、未读数按契约归各页面，所以住在对应页面的模块文件里（`wallet` / `subs` / `referral` / `messages`）；页面扩充这些接口时外框直接沿用
-- SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE），后台点事件能打开那一条；守卫 `tests/mock-admin-events.test.ts`
+- SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE）。UPDATE 任挑；INSERT 只挑看起来刚建的行：最新的待支付单、最新生效的订阅、草稿套餐，各按时间取前 3。工单、节点的模块只导出 id、看不出新旧，不发 INSERT，免得「新工单」点开是已解决的旧单。后台点事件能打开那一条；弹层按表 + id 调订单、工单、节点（`GET /v1/nodes?id=`）、服务器、套餐的单条读接口显示可读内容，这几个接口的形状照 Go 写。守卫 `tests/mock-admin-events.test.ts`
 - 状态都在内存里，vite 重启即复原
   - `POST /__mock/expire-reauth` 让所有会话的 rat 立即过期，用来走 reauth 流程
   - refresh 照 Go 记每条会话的当前、上一枚 cookie、更早各代（`retired`）与轮换时间（`RefreshFamily`）：上一枚 30 秒宽限内还能换 access，并把当前那一枚原样再发一遍（不改状态）；超过宽限再用上一枚、或用更早的一代判为重放、删整条；对不上或被拒的 401 清 cookie（没带 cookie 的 401 不清）。`POST /__mock/expire-refresh-grace` 把所有会话的轮换时间拨到宽限之外，用来测重放（守卫 `tests/mock-api.test.ts` 的 refresh cookie 那组）
