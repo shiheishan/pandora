@@ -35,7 +35,7 @@ interface QuickToggle {
   done: string
 }
 
-/** 卡片上的一个快捷按钮：服务中 → 标记维护（draining）；维护中 / 停机维护 → 恢复服务；草稿 → 投入服务；其余走详情里的完整状态 */
+/** 卡片上的一个快捷按钮：服务中 → 标记维护（draining）；维护中 / 停机维护 → 恢复服务；草稿与已退役没有快捷按钮（草稿在节点「上线」时自动投入服务） */
 export function quickToggle(status: ServerStatus): QuickToggle | null {
   switch (status) {
     case 'ready':
@@ -43,8 +43,6 @@ export function quickToggle(status: ServerStatus): QuickToggle | null {
     case 'draining':
     case 'maintenance':
       return { to: 'ready', label: '恢复服务', done: '已恢复服务' }
-    case 'draft':
-      return { to: 'ready', label: '投入服务', done: '服务器已投入服务' }
     default:
       return null
   }
@@ -71,7 +69,7 @@ export function serverSubtitle(s: Pick<Server, 'region' | 'public_ipv4' | 'agent
  * 卡片与详情的提示行（按顺序）：
  * status_reason 非空 → `原因：${status_reason}`；
  * status 为 ready 且 heartbeat_online 为 false → 有 last_heartbeat_at 时 `心跳 ${heartbeatLabel(at, now)}，可能已断开`，没有时「还没有收到心跳」；
- * never_seen_node_count > 0 → `${n} 个在役节点从未心跳（多半没装 agent）`
+ * never_seen_node_count > 0 → 这台服务器从未上报心跳…
  */
 export function serverNotes(
   s: Pick<Server, 'status' | 'status_reason' | 'heartbeat_online' | 'last_heartbeat_at' | 'never_seen_node_count'>,
@@ -82,8 +80,28 @@ export function serverNotes(
   if (s.status === 'ready' && !s.heartbeat_online) {
     out.push(s.last_heartbeat_at ? `心跳 ${heartbeatLabel(s.last_heartbeat_at, now)}，可能已断开` : '还没有收到心跳')
   }
-  if (s.never_seen_node_count > 0) out.push(`${s.never_seen_node_count} 个在役节点从未心跳（多半没装 agent）`)
+  if (s.never_seen_node_count > 0)
+    out.push(`这台服务器从未上报心跳，名下 ${s.never_seen_node_count} 个在役节点不会下发（多半还没装节点端）`)
   return out
+}
+
+/** 心跳新鲜窗口：与后端 NodeStaleAfter（90 秒）一致 */
+const HEARTBEAT_FRESH_MS = 90_000
+
+/**
+ * 草稿服务器的下一步（卡片与详情同一句）；不是草稿回 null。
+ * 后端的 heartbeat_online 只对 ready 为真（servers_validate 的 HeartbeatOnline），草稿要自己按 last_heartbeat_at 判 90 秒：
+ * 没接入 → 「还没接入：签发安装令牌，在机器上用 root 执行」
+ * 已接入且 90 秒内有心跳 → 「已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务」
+ * 已接入但心跳断了 → `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(at, now)}）：先在机器上检查节点端服务，再新建或绑定节点并上线`
+ * 已接入但从没心跳 → 「已接入，但节点端还没连上面板：先在机器上检查节点端服务」
+ */
+export function serverNextStep(s: Pick<Server, 'status' | 'enrolled' | 'last_heartbeat_at'>, now: Date = new Date()): string | null {
+  if (s.status !== 'draft') return null
+  if (!s.enrolled) return '还没接入：签发安装令牌，在机器上用 root 执行'
+  if (!s.last_heartbeat_at) return '已接入，但节点端还没连上面板：先在机器上检查节点端服务'
+  if (now.getTime() - new Date(s.last_heartbeat_at).getTime() < HEARTBEAT_FRESH_MS) return '已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务'
+  return `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(s.last_heartbeat_at, now)}）：先在机器上检查节点端服务，再新建或绑定节点并上线`
 }
 
 /** 服务器详情的节点列表：server_id 等于 serverId 且未退役，保持原顺序 */

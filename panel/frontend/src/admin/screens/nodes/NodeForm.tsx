@@ -228,7 +228,17 @@ function ParamRows({
   )
 }
 
-export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (saved: AdminNode) => void }) {
+export function NodeCreateWizard({
+  open,
+  onClose,
+  onCreated,
+  initialServerId,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: (saved: AdminNode) => void
+  initialServerId?: string
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -242,7 +252,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
   const defaultType = useMemo(() => PROTOCOL_ORDER.find((t) => stable.some((s) => s.node_type === t)) ?? stable[0]?.node_type ?? '', [stable])
 
   const [step, setStep] = useState(0)
-  const [basic, setBasic] = useState<BasicForm>(() => emptyBasic())
+  const [basic, setBasic] = useState<BasicForm>(() => ({ ...emptyBasic(), serverId: initialServerId ?? '' }))
   const [values, setValues] = useState<FormValues>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [countryCustom, setCountryCustom] = useState(false)
@@ -375,6 +385,18 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
 
   const disabled = save.isPending
   const footNotes = ['第 1 步，共 3 步', '第 2 步，共 3 步', '创建后在节点详情右上角上线']
+
+  const selectedServer = basic.serverId ? (servers.data ?? []).find((sv) => sv.id === basic.serverId) : undefined
+  const serverHint = !basic.serverId
+    ? UNBOUND_HINT
+    : selectedServer?.enrolled
+      ? '已接入：创建后在节点详情右上角点「上线」，这台服务器随之投入服务'
+      : '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行后再上线'
+  const selectedPool = basic.poolId ? (pools.data ?? []).find((p) => p.id === basic.poolId) : undefined
+  const poolHint =
+    selectedPool && selectedPool.plan_names.length === 0
+      ? '这个节点池还没绑套餐：节点上线后暂不服务用户，到「套餐」页在套餐版本里选上它'
+      : '节点只服务所在节点池绑定的套餐'
 
   return (
     <Modal
@@ -535,29 +557,37 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
               <div className={css.span2}>
                 <Select
                   label="所在服务器"
-                  hint={basic.serverId ? '服务器还没接入的，创建后到「服务器」页签发安装令牌' : UNBOUND_HINT}
+                  hint={serverHint}
                   emptyOption="暂不绑定"
                   value={basic.serverId}
                   error={errors.server_id ?? errors.capacity_nodes}
                   disabled={disabled}
                   onChange={(e) => setBasicKey('serverId', e.target.value)}
-                  options={(servers.data ?? []).map((s) => ({
-                    value: s.id,
-                    label: `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`,
-                    disabled: !serverAcceptsNodes(s),
-                  }))}
+                  options={(servers.data ?? []).map((s) => {
+                    const base = `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`
+                    const unenrolled = !s.enrolled && s.status !== 'retired'
+                    return {
+                      value: s.id,
+                      label: unenrolled ? `${base}（未接入）` : base,
+                      disabled: !serverAcceptsNodes(s),
+                    }
+                  })}
                 />
               </div>
               <div className={css.span2}>
                 <Select
                   label="节点池"
-                  hint="节点只服务所在节点池绑定的套餐"
+                  hint={poolHint}
                   placeholder={pools.data && pools.data.length === 0 ? '还没有节点池，先到「节点池」新建' : '选择节点池'}
                   value={basic.poolId}
                   error={errors.pool_id}
                   disabled={disabled}
                   onChange={(e) => setBasicKey('poolId', e.target.value)}
-                  options={(pools.data ?? []).map((p) => ({ value: p.id, label: p.name, disabled: p.status === 'disabled' }))}
+                  options={(pools.data ?? []).map((p) => ({
+                    value: p.id,
+                    label: p.plan_names.length === 0 ? `${p.name} · 没绑套餐，暂不服务用户` : p.name,
+                    disabled: p.status === 'disabled',
+                  }))}
                 />
               </div>
             </div>
