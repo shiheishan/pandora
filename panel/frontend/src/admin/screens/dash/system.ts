@@ -39,7 +39,7 @@ export interface SystemRow {
   attention: boolean // state !== 'ok'
   why: string // 说明
   metric: string // 指标
-  action?: { kind: 'go'; target: Target } | { kind: 'backup' } // node_fabric → nodes/nodes；mail、telegram → system/notify；backup → { kind: 'backup' }；其余无
+  action?: { kind: 'go'; target: Target } | { kind: 'backup' } // node_fabric → nodes/nodes，有离线时带 f=offline；mail、telegram → system/notify；backup → { kind: 'backup' }；其余无
 }
 
 export interface SystemView {
@@ -61,9 +61,19 @@ const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
 }
 
 const ROW_ACTIONS: Partial<Record<SystemComponent['key'], Target>> = {
-  node_fabric: { module: 'nodes', tab: 'nodes' },
   mail: { module: 'system', tab: 'notify' },
   telegram: { module: 'system', tab: 'notify' },
+}
+
+function rowTarget(c: SystemComponent): Target | undefined {
+  if (c.key === 'node_fabric') {
+    const { online, total } = c.metrics
+    if (typeof online === 'number' && typeof total === 'number' && online < total) {
+      return { module: 'nodes', tab: 'nodes', query: { f: 'offline' } }
+    }
+    return { module: 'nodes', tab: 'nodes' }
+  }
+  return ROW_ACTIONS[c.key]
 }
 
 const num = (v: number | null | undefined) => (v == null ? '—' : formatCount(v))
@@ -88,8 +98,15 @@ function computeWhy(c: SystemComponent): string {
 
   switch (c.key) {
     case 'node_fabric': {
-      const lagging = c.metrics.config_lagging ?? 0
-      if (lagging > 0) return `${lagging} 个节点配置未同步`
+      const { online, total, config_lagging } = c.metrics
+      const parts: string[] = []
+      if (typeof total === 'number' && typeof online === 'number') {
+        const offline = total - online
+        if (offline > 0) parts.push(`${offline} 个节点离线`)
+      }
+      const lagging = config_lagging ?? 0
+      if (lagging > 0) parts.push(`${lagging} 个节点配置未同步`)
+      if (parts.length > 0) return parts.join(' · ')
       break
     }
     case 'mail': {
@@ -161,7 +178,7 @@ export function systemView(status: SystemStatus): SystemView {
   const otherComponents = status.components.filter((c) => c.key !== 'backup')
 
   const otherRows: SystemRow[] = otherComponents.map((c) => {
-    const target = ROW_ACTIONS[c.key]
+    const target = rowTarget(c)
     const attention = c.state !== 'ok'
     return {
       key: c.key,

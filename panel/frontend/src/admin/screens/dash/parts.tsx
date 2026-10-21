@@ -3,8 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import type { ReactNode } from 'react'
 import { href } from '../../../core/router'
 import { Button, Skeleton } from '../../../ui'
-import { modulePath } from '../../modules'
-import type { Target } from './model'
+import { type Target, targetPath } from './model'
 import css from './parts.module.css'
 
 // ---------------------------------------------------------------------------
@@ -14,7 +13,7 @@ import css from './parts.module.css'
 // ---------------------------------------------------------------------------
 
 export function targetHref(target: Target): string {
-  return href(modulePath(target.module, target.tab), target.query)
+  return href(targetPath(target), target.query)
 }
 
 /** 分节（样稿 .blk + .sh）：16px 标题 + 灰色小字 + 右侧操作，下面是卡片 */
