@@ -510,6 +510,29 @@ export const RISK_TONE: Record<Risk, TagTone> = { high: 'danger', mid: 'warn', l
 /** geoip.NetworkKind；空串是判不出来 */
 const NETWORK_LABEL: Record<string, string> = { residential: '住宅宽带', datacenter: '机房', education: '教育网', mobile: '移动网络', loopback: '本机', private: '内网' }
 
+const ACCESS_USER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** 访问日志 IP 格：IP 后接灰色归属地（没有就只有 IP），悬停再加网络类型；没有 IP 时 ip 为「—」 */
+export function accessIpText(item: Pick<AccessItem, 'ip' | 'geo' | 'network_kind'>): { ip: string; geo: string; title: string } {
+  const ip = item.ip?.trim() ?? ''
+  if (!ip) return { ip: '—', geo: '', title: '—' }
+  const geo = item.geo?.trim() ?? ''
+  const kind = item.network_kind ? NETWORK_LABEL[item.network_kind] : undefined
+  return { ip, geo, title: [ip, geo, kind].filter(Boolean).join(' · ') }
+}
+
+/** 按账号筛选框里是用户 UUID 时，用本页数据解析成邮箱 */
+export function accessUserFilterLabel(user: string, items: readonly AccessItem[]): string | null {
+  const id = user.trim()
+  if (!ACCESS_USER_UUID.test(id)) return null
+  const lower = id.toLowerCase()
+  for (const item of items) {
+    if (item.user_id?.toLowerCase() === lower && item.user_email) return item.user_email
+    if (item.target_user_id?.toLowerCase() === lower && item.target_user_email) return item.target_user_email
+  }
+  return null
+}
+
 export function clusterPlace(c: Pick<Cluster, 'geo' | 'network_kind'>): string {
   const kind = NETWORK_LABEL[c.network_kind]
   return [c.geo || '归属地未知', kind].filter(Boolean).join(' · ')

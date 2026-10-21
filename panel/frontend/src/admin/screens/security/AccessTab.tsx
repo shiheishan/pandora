@@ -8,11 +8,13 @@ import {
   ACCESS_VIEWS,
   accessAccount,
   accessFromQuery,
+  accessIpText,
   accessKey,
   accessOutcomeLabel,
   accessToQuery,
   accessTone,
   accessTooltip,
+  accessUserFilterLabel,
   actionLabel,
   CATEGORY_LABEL,
   clockTime,
@@ -39,6 +41,7 @@ export function AccessTab() {
   const clearBoxes = () => go({ ...filter, ip: '', user: '' }, 0)
   const hasBoxes = Boolean(filter.ip.trim() || filter.user.trim())
   const full = (log.data?.length ?? 0) >= ACCESS_PAGE
+  const userFilterEmail = accessUserFilterLabel(filter.user, log.data ?? [])
 
   return (
     <div className={css.stack}>
@@ -66,6 +69,12 @@ export function AccessTab() {
           </button>
         )}
       </div>
+
+      {userFilterEmail && (
+        <p className={css.faint}>
+          只看 <span className={css.strong}>{userFilterEmail}</span> 的记录（含冲着这个账号的登录失败）
+        </p>
+      )}
 
       <section className={css.box} aria-label="安全事件实时监控">
         <header className={css.boxHead}>
@@ -121,6 +130,7 @@ export function AccessTab() {
 function AccessRow({ item }: { item: AccessItem }) {
   const acc = accessAccount(item)
   const actionText = item.action ? actionLabel(item.action) : null
+  const ipCell = accessIpText(item)
 
   return (
     <div role="row" className={css.logRow} title={accessTooltip(item)}>
@@ -133,8 +143,9 @@ function AccessRow({ item }: { item: AccessItem }) {
       <span role="cell" className={TONE_CLASS[accessTone(item)]}>
         {accessOutcomeLabel(item)}
       </span>
-      <span role="cell" className={css.logIp}>
-        {item.ip ?? '—'}
+      <span role="cell" className={css.logIp} title={ipCell.title}>
+        {ipCell.ip}
+        {ipCell.geo && <span className={css.logGeo}> · {ipCell.geo}</span>}
       </span>
       <span role="cell" className={css.logAccount}>
         {acc.prefix && <span className={css.logAction}>{acc.prefix}</span>}

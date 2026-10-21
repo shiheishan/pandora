@@ -53,7 +53,13 @@ export function RiskTab() {
 
   return (
     <div className={sec.stack}>
-      <FilterTabs label="按处置状态筛选" items={items} value={view} onChange={setView} />
+      <div className={sec.toolbar}>
+        <FilterTabs label="按处置状态筛选" items={items} value={view} onChange={setView} />
+        <span className={sec.spacer} />
+        <a className={sec.traceLink} href={href('/security/trace', { view: 'accounts' })}>
+          按账号看：溯源总览 › 账号综合排行 →
+        </a>
+      </div>
       <QueryView
         query={current}
         rows={4}

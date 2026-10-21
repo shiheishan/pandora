@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Input, Modal, Select, Switch, Tag, TextArea, useToast } from '../../../ui'
@@ -13,6 +13,7 @@ import {
   clearedSecrets,
   createBody,
   emptyBasic,
+  freePort,
   enumOptions,
   isStable,
   mapProtocolErrors,
@@ -39,7 +40,7 @@ import {
 } from './logic'
 import { wizardServerHint } from './infra'
 import css from './form.module.css'
-import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
+import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
 
 const REGION_CODES = new Set(REGIONS.map(([c]) => c))
@@ -250,6 +251,8 @@ export function NodeCreateWizard({
   const schemas = useProtocolSchemas()
   const servers = useServers()
   const pools = usePools()
+  const nodes = useNodes()
+  const allNodes = useMemo(() => nodes.data?.nodes ?? [], [nodes.data])
 
   const stable = useMemo(() => (schemas.data ?? []).filter(isStable), [schemas.data])
   const defaultType = useMemo(() => PROTOCOL_ORDER.find((t) => stable.some((s) => s.node_type === t)) ?? stable[0]?.node_type ?? '', [stable])
@@ -260,6 +263,10 @@ export function NodeCreateWizard({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [countryCustom, setCountryCustom] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const userTouched = useRef(false)
+  const portManual = useRef(false)
+  const realityAutoDone = useRef(false)
 
   const schema = stable.find((s) => s.node_type === basic.nodeType)
   const fields = useMemo(() => (schema ? protocolFields(schema) : []), [schema])
@@ -273,8 +280,12 @@ export function NodeCreateWizard({
     setValues(protocolDefaults(sch ? protocolFields(sch) : []))
   }
 
-  const setBasicKey = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => setBasic((b) => ({ ...b, [key]: v }))
+  const setBasicKey = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => {
+    userTouched.current = true
+    setBasic((b) => ({ ...b, [key]: v }))
+  }
   const setValue = (path: string, v: string) => {
+    userTouched.current = true
     setValues(withProtocolDefaults(basic.nodeType, path, { ...current, [path]: v }))
     setErrors((e) => {
       const next = { ...e }
@@ -283,7 +294,54 @@ export function NodeCreateWizard({
     })
   }
 
+  const applyServerId = (serverId: string) => {
+    userTouched.current = true
+    setBasic((b) => {
+      if (!serverId) return { ...b, serverId: '' }
+      if (portManual.current) return { ...b, serverId }
+      return { ...b, serverId, port: String(freePort(serverId, allNodes)) }
+    })
+  }
+
+  const reality = useMutation({
+    mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
+  })
+
+  const generateReality = () => {
+    userTouched.current = true
+    reality.mutate(undefined, {
+      onSuccess: (k) => {
+        const next = withRealityKeypair(current, k)
+        setValues(next.values)
+        toast(realityKeypairToast(next.keptShortId))
+      },
+      onError: (error) => fail(error),
+    })
+  }
+
+  // 从服务器卡片「新建节点」预选时，列表到了且用户没手改端口则填空闲端口
+  useEffect(() => {
+    if (!open || !basic.serverId || portManual.current) return
+    const sid = basic.serverId
+    const want = String(freePort(sid, allNodes))
+    setBasic((b) => (b.serverId === sid && b.port !== want ? { ...b, port: want } : b))
+  }, [open, basic.serverId, allNodes])
+
+  // 进入协议参数步：REALITY 可见且无私钥时自动生成一次（失败静默）
+  const mutateReality = reality.mutate
+  useEffect(() => {
+    if (!open || step !== 2 || realityAutoDone.current) return
+    if (!realityEnabled(basic.nodeType, values)) return
+    if ((values[REALITY_KEYS.private_key] ?? '').trim()) return
+    realityAutoDone.current = true
+    mutateReality(undefined, {
+      onSuccess: (k) => setValues((v) => withRealityKeypair(v, k).values),
+      onError: () => {},
+    })
+  }, [open, step, basic.nodeType, values, mutateReality])
+
   const pickProto = (nodeType: string) => {
+    userTouched.current = true
     const sch = stable.find((s) => s.node_type === nodeType)
     const flds = sch ? protocolFields(sch) : []
     setBasic((b) => ({ ...b, nodeType }))
@@ -348,15 +406,11 @@ export function NodeCreateWizard({
     },
   })
 
-  const reality = useMutation({
-    mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
-    onSuccess: (k) => {
-      const next = withRealityKeypair(current, k)
-      setValues(next.values)
-      toast(realityKeypairToast(next.keptShortId))
-    },
-    onError: (error) => fail(error),
-  })
+  const requestClose = () => {
+    if (save.isPending) return
+    if (userTouched.current) setConfirmClose(true)
+    else onClose()
+  }
 
   const goNext = () => {
     if (step === 0) return setStep(1)
@@ -396,7 +450,7 @@ export function NodeCreateWizard({
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       size={760}
       divided
       dismissible={!save.isPending}
@@ -407,7 +461,7 @@ export function NodeCreateWizard({
       footerStart={<span className={css.faint}>{footNotes[step]}</span>}
       actions={
         <>
-          <Button size="dialog" onClick={step === 0 ? onClose : () => setStep(step - 1)} disabled={disabled}>
+          <Button size="dialog" onClick={step === 0 ? requestClose : () => setStep(step - 1)} disabled={disabled}>
             {step === 0 ? '取消' : '上一步'}
           </Button>
           {step < 2 ? (
@@ -497,6 +551,7 @@ export function NodeCreateWizard({
                   disabled={disabled}
                   onChange={(e) => {
                     const v = e.target.value
+                    userTouched.current = true
                     if (v === REGION_OTHER) {
                       setCountryCustom(true)
                       setBasicKey('country', '')
@@ -547,7 +602,10 @@ export function NodeCreateWizard({
                 value={basic.port}
                 error={errors.server_port}
                 disabled={disabled}
-                onChange={(e) => setBasicKey('port', e.target.value)}
+                onChange={(e) => {
+                  portManual.current = true
+                  setBasicKey('port', e.target.value)
+                }}
               />
               <div className={css.span2}>
                 <Select
@@ -557,7 +615,7 @@ export function NodeCreateWizard({
                   value={basic.serverId}
                   error={errors.server_id ?? errors.capacity_nodes}
                   disabled={disabled}
-                  onChange={(e) => setBasicKey('serverId', e.target.value)}
+                  onChange={(e) => applyServerId(e.target.value)}
                   options={(servers.data ?? []).map((s) => {
                     const base = `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`
                     const unenrolled = !s.enrolled && s.status !== 'retired'
@@ -600,11 +658,23 @@ export function NodeCreateWizard({
             showAdvanced={showAdvanced}
             onToggleAdvanced={() => setShowAdvanced((v) => !v)}
             onChange={setValue}
-            onGenerateReality={realityEnabled(basic.nodeType, current) ? () => reality.mutate() : undefined}
+            onGenerateReality={realityEnabled(basic.nodeType, current) ? generateReality : undefined}
             realityPending={reality.isPending}
           />
         )}
       </div>
+      <ConfirmModal
+        open={confirmClose}
+        title="放弃这个节点？"
+        body="已填的内容不会保存。"
+        confirmLabel="放弃"
+        tone="danger"
+        onConfirm={() => {
+          setConfirmClose(false)
+          onClose()
+        }}
+        onCancel={() => setConfirmClose(false)}
+      />
     </Modal>
   )
 }

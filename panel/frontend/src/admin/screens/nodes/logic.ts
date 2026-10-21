@@ -191,6 +191,13 @@ export const REGIONS: ReadonlyArray<readonly [string, string]> = [
   ['RU', 'RU · 俄罗斯'],
 ]
 
+/** REGIONS 里按两位代码找中文地区名（REGIONS 的名称形如「HK · 香港」，取「·」后半），认不出显示原代码 */
+export function regionLabel(code: string | null): string {
+  if (!code) return '—'
+  const label = REGIONS.find(([c]) => c === code)?.[1]
+  return label ? (label.split(' · ')[1] ?? label) : code
+}
+
 /** 协议卡片右侧小字：单 UDP 传输标 UDP，否则 TCP */
 export const protocolKind = (s: ProtocolSchema) => (s.enums?.network?.length === 1 && s.enums.network[0] === 'udp' ? 'UDP' : 'TCP')
 

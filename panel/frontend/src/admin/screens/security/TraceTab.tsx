@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { formatDateTime, relativeTime } from '../../../core/format'
-import { href } from '../../../core/router'
+import { href, useHashLocation } from '../../../core/router'
 import { Button, Empty, FilterTabs, QueryView, Segmented, StatStrip, Table, Tag, type TableColumn } from '../../../ui'
 import { TERM_HINT } from './logic'
 import { useFailure, useRefreshTrace, useTraceAccounts, useTraceIPs, useTraceReveal, useTraceSubscribers } from './queries'
@@ -27,10 +27,17 @@ import css from './trace.module.css'
 
 const VIEW_ITEMS = TRACE_VIEWS.map(([value, label]) => ({ value, label }))
 const WIN_OPTIONS = TRACE_WINDOWS.map(([value, label]) => ({ value, label }))
+const TRACE_VIEW_SET = new Set<string>(TRACE_VIEWS.map(([v]) => v))
+
+function traceViewFromQuery(query: URLSearchParams): TraceView {
+  const raw = query.get('view') ?? ''
+  return TRACE_VIEW_SET.has(raw) ? (raw as TraceView) : 'ips'
+}
 
 export function TraceTab() {
+  const { query } = useHashLocation()
   const [win, setWin] = useState<TraceWindow>('24h')
-  const [view, setView] = useState<TraceView>('ips')
+  const [view, setView] = useState<TraceView>(() => traceViewFromQuery(query))
   const ips = useTraceIPs(win)
   const since = ips.data?.since
   const { refresh, busy } = useRefreshTrace()

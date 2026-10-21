@@ -3,7 +3,7 @@ import { formatBytes } from '../../../core/format'
 import { Empty, QueryView, Tag } from '../../../ui'
 import { DetailPage, SideFact, SideFacts, StatusDot, useNow, type StatusTone } from '../../kit'
 import css from './detail.module.css'
-import { addressLabel, nodeState, protocolLabel, REGIONS } from './logic'
+import { addressLabel, nodeState, protocolLabel, regionLabel } from './logic'
 import { NodeIdentity } from './NodeIdentity'
 import { NodeMonitor } from './NodeMonitor'
 import { NodeHeaderAction, NodeOps } from './NodeOps'
@@ -27,13 +27,6 @@ function statusDotTone(tone: string): StatusTone {
   if (tone === 'ok') return 'ok'
   if (tone === 'danger') return 'bad'
   return 'off'
-}
-
-/** REGIONS 里按两位代码找中文地区名（REGIONS 的名称形如「HK · 香港」，取「·」后半），认不出显示原代码 */
-function regionLabel(code: string | null): string {
-  if (!code) return '—'
-  const label = REGIONS.find(([c]) => c === code)?.[1]
-  return label ? (label.split(' · ')[1] ?? label) : code
 }
 
 /**
@@ -98,7 +91,7 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
             ) : row.serving_status === 'retired' ? (
               '未绑定'
             ) : (
-              <a href={href(`/nodes/nodes/${id}/ops`, listQuery)}>未绑定 · 去绑定</a>
+              <a href={href(`/nodes/nodes/${id}/ops`, { ...listQuery, bind: '1' })}>未绑定 · 去绑定</a>
             )}
           </SideFact>
           <SideFact label="地区">{regionLabel(row.country_code)}</SideFact>

@@ -1,7 +1,8 @@
 import { PauseCircleIcon, PlayCircleIcon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
+import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
 import { Callout, DangerRow } from '../../kit'
@@ -13,14 +14,31 @@ import {
   bindBlock,
   bindBody,
   canActivate,
+  freePort,
+  regionLabel,
   serverAcceptsNodes,
   UNBOUND_HINT,
   validateBind,
 } from './logic'
-import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
+import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useNodes, usePools, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, okResponse, type NodeRow } from './schemas'
 
 type Pending = 'toggle' | 'retire' | 'revoke' | 'unbind' | null
+
+/** 上线成功 toast：池绑了套餐时说明影响范围 */
+function activationServeToast(
+  node: Pick<NodeRow, 'pool_id' | 'pool_name'>,
+  pools: readonly { id: string; name: string; plan_names: string[] }[] | undefined,
+): string {
+  const fallback = '已上线：节点进入服务，服务器已就绪'
+  if (!node.pool_id) return fallback
+  const pool = pools?.find((p) => p.id === node.pool_id)
+  if (!pool?.plan_names.length) return fallback
+  const poolName = node.pool_name ?? pool.name
+  const names = pool.plan_names
+  const listed = names.length <= 3 ? names.join('、') : `${names.slice(0, 3).join('、')}等 ${names.length} 个`
+  return `已上线：节点进入服务。节点池「${poolName}」绑定的套餐（${listed}）的用户更新订阅后就能用到这条线路`
+}
 
 /** 详情页头部：上线 / 停用 */
 export function NodeHeaderAction({ node }: { node: NodeRow }) {
@@ -28,6 +46,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
+  const pools = usePools()
   const activateIntent = useIntentKey()
   const toggleIntent = useIntentKey()
   const [confirmToggle, setConfirmToggle] = useState(false)
@@ -41,7 +60,7 @@ export function NodeHeaderAction({ node }: { node: NodeRow }) {
     onSuccess: (r) => {
       activateIntent.reset()
       if (r.warnings) r.warnings.forEach((w) => toast(activationHint(w)))
-      else toast('已上线：节点进入服务，服务器已就绪')
+      else toast(activationServeToast(node, pools.data))
       void invalidate()
     },
     onError: (e) => {
@@ -140,26 +159,49 @@ function NodeServerBinding({
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
+  const location = useHashLocation()
   const servers = useServers()
+  const nodes = useNodes()
   const bindIntent = useIntentKey()
-  const [bindOpen, setBindOpen] = useState(false)
-  const [serverId, setServerId] = useState(() => node.server_id ?? '')
-  const [port, setPort] = useState(() => (node.server_port ? String(node.server_port) : ''))
-  const [errors, setErrors] = useState<Record<string, string>>({})
 
+  const nodeList = nodes.data?.nodes ?? []
   const bound = node.server_id != null
   const block = bindBlock(node)
+  const autoOpenBind = location.query.get('bind') === '1' && !bound && block === null
+
+  const [bindOpen, setBindOpen] = useState(autoOpenBind)
+  const [serverId, setServerId] = useState(() => node.server_id ?? '')
+  const [port, setPort] = useState(() => (node.server_port ? String(node.server_port) : ''))
+  const [portManual, setPortManual] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
   const desc = bound
     ? `当前：${node.server_name ?? '服务器'}${node.server_port ? ` · 端口 ${node.server_port}` : ''}`
     : UNBOUND_HINT
   const descWithBlock = block ? `${desc} · ${block}` : desc
+  const selectedServer = (servers.data ?? []).find((s) => s.id === serverId)
+
+  const applyDefaultPort = (sid: string) => {
+    setPort(String(freePort(sid, nodeList, node.id)))
+  }
 
   const openBind = () => {
-    setServerId(node.server_id ?? '')
+    const sid = node.server_id ?? ''
+    setServerId(sid)
     setPort(node.server_port ? String(node.server_port) : '')
+    setPortManual(false)
     setErrors({})
     setBindOpen(true)
   }
+
+  useEffect(() => {
+    if (location.query.get('bind') !== '1') return
+    const query: Record<string, string> = {}
+    location.query.forEach((value, key) => {
+      if (key !== 'bind') query[key] = value
+    })
+    navigate(location.path, { query, replace: true })
+  }, [location.path, location.query])
 
   const bind = useMutation({
     mutationFn: (body: ReturnType<typeof bindBody>) =>
@@ -224,7 +266,9 @@ function NodeServerBinding({
             error={errors.server_id ?? errors.capacity_nodes}
             disabled={bind.isPending}
             onChange={(e) => {
-              setServerId(e.target.value)
+              const nextId = e.target.value
+              setServerId(nextId)
+              if (nextId && !portManual) applyDefaultPort(nextId)
               setErrors((er) => {
                 const next = { ...er }
                 delete next.server_id
@@ -238,15 +282,22 @@ function NodeServerBinding({
               disabled: !serverAcceptsNodes(s),
             }))}
           />
+          {serverId ? (
+            <p className={css.faint}>
+              这台服务器：{selectedServer?.region?.trim() ? selectedServer.region : '没填地区'} · 这个节点：
+              {regionLabel(node.country_code)}
+            </p>
+          ) : null}
           <Input
             label="端口"
             mono
             inputMode="numeric"
             value={port}
             error={errors.server_port}
-            hint="同一台服务器上端口先到先得"
+            hint="同一台服务器上端口先到先得；已自动避开这台上别的节点用过的端口"
             disabled={bind.isPending}
             onChange={(e) => {
+              setPortManual(true)
               setPort(e.target.value)
               setErrors((er) => {
                 const next = { ...er }

@@ -236,7 +236,10 @@ function ServerCard({
         </div>
       ) : null}
       <div className={x.cf}>
-        <span className={css.mono}>
+        <span
+          className={css.mono}
+          title="在役：已上线在服务的节点数；容量：这台最多能挂几个节点（草稿、已停用的也占）"
+        >
           在役 {s.serving_node_count} / 容量 {s.capacity_nodes}
         </span>
         <span className={css.spacer} />
@@ -311,8 +314,9 @@ function AddServer({ open, onClose, onCreated }: { open: boolean; onClose: () =>
       }
     >
       <div className={css.stack}>
+        <div className={css.faint}>不用填 IP：机器接入后，地区、IP、系统与规格会自动回填。</div>
         <ServerFields form={form} errors={errors} fields={['name', 'capacity', 'notes']} disabled={create.isPending} onChange={setForm} />
-        <div className={css.faint}>地区、IP、系统与规格在机器接入后由 agent 自动回填。签发安装令牌需要重新验证身份。</div>
+        <div className={css.faint}>签发安装令牌需要重新验证身份。</div>
       </div>
     </Modal>
   )

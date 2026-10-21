@@ -45,6 +45,7 @@ const GEO: ReadonlyArray<readonly [string, string, string]> = [
   ['198.51.100.6', '中国 上海 教育网', 'education'],
   ['203.0.113.4', '日本 东京 Vultr', 'datacenter'],
   ['203.0.113.1', '美国 洛杉矶 Vultr', 'datacenter'],
+  ['192.0.2.', '中国 浙江 电信', 'residential'],
 ]
 function geoOf(ip: string): { geo: string; kind: string } {
   const hit = ip ? GEO.find(([p]) => ip.startsWith(p)) : undefined

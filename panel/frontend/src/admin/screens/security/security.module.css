@@ -55,6 +55,17 @@
   font-size: var(--fs-caption);
 }
 
+.traceLink {
+  color: var(--info);
+  font-size: var(--fs-caption);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.traceLink:hover {
+  text-decoration: underline;
+}
+
 .nowrap {
   white-space: nowrap;
 }
@@ -219,7 +230,7 @@
 .logRow {
   display: grid;
   /* 时间列放得下跨天的「MM-DD HH:mm:ss」（等宽 12px 约 101px）；当天只有 HH:mm:ss */
-  grid-template-columns: 104px 64px 72px 128px minmax(0, 1fr);
+  grid-template-columns: 104px 64px 72px minmax(0, 240px) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   height: 38px;
@@ -274,10 +285,19 @@
 }
 
 .logIp {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.logGeo {
+  color: var(--text-3);
+  font-family: var(--font-ui);
 }
 
 .logAccount {

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   accessAccount,
   accessFromQuery,
+  accessIpText,
   accessOutcomeLabel,
   accessQuery,
   accessToQuery,
   accessTone,
   accessUser,
+  accessUserFilterLabel,
   ACTION_NAMES,
   actionLabel,
   actorLabel,
@@ -207,6 +209,33 @@ describe('access log', () => {
     expect(accessUser({ target_user_id: 'abcdef0123456789' })).toBe('匿名 · 试登 用户 abcdef01')
     expect(accessUser({})).toBe('匿名')
     expect(accessAccount({})).toEqual({ prefix: '', label: '匿名', userId: null })
+  })
+
+  it('formats IP cell text and title with geo and network kind', () => {
+    expect(accessIpText({ ip: '203.0.113.48', geo: '日本 东京 Vultr', network_kind: 'datacenter' })).toEqual({
+      ip: '203.0.113.48',
+      geo: '日本 东京 Vultr',
+      title: '203.0.113.48 · 日本 东京 Vultr · 机房',
+    })
+    expect(accessIpText({ ip: '10.0.0.1', geo: '', network_kind: '' })).toEqual({ ip: '10.0.0.1', geo: '', title: '10.0.0.1' })
+    expect(accessIpText({ geo: '中国 浙江 电信', network_kind: 'residential' })).toEqual({ ip: '—', geo: '', title: '—' })
+  })
+
+  it('resolves user filter UUID to email from page items', () => {
+    const uuid = '0192abcd-ef00-7000-8000-000000000000'
+    const items = [
+      { category: 'login' as const, occurred_at: '2026-09-25T00:00:00Z', user_id: uuid, user_email: 'a@example.test' },
+      {
+        category: 'login' as const,
+        occurred_at: '2026-09-26T00:00:00Z',
+        target_user_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        target_user_email: 'target@example.test',
+      },
+    ]
+    expect(accessUserFilterLabel(uuid, items)).toBe('a@example.test')
+    expect(accessUserFilterLabel('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', items)).toBe('target@example.test')
+    expect(accessUserFilterLabel(uuid, [])).toBeNull()
+    expect(accessUserFilterLabel('k.liu', items)).toBeNull()
   })
 
   it('accepts omitempty rows, target user fields and rejects unknown categories', () => {
