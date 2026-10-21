@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// renderPlain 是不带后台模板、过滤参数与信息节点的 RenderRequest，测试里按格式逐个渲染时用。
+// renderPlain 是不带过滤参数与信息节点的 RenderRequest，测试里按格式逐个渲染时用。
 func renderPlain(f Format, nodes []Node, proxyUUID, ua string, opt Options) ([]byte, string, int) {
 	return RenderRequest(Request{Format: f, Nodes: nodes, ProxyUUID: proxyUUID, UA: ua, Options: opt})
 }
@@ -65,22 +65,6 @@ func TestRenderLeavesCachedNodesUntouched(t *testing.T) {
 		filtered.Keywords = []string{"ss", "vless"}
 		variants = append(variants, filtered)
 	}
-	variants = append(variants, Request{
-		Format: FormatLoon, Nodes: nodes, ProxyUUID: fixtureUUID,
-		ProtocolPrefix: true,
-		InfoLines:      preprocessInfo,
-		Status:         preprocessStatus,
-		SubscribeURL:   preprocessSubscribe,
-		Template:       "# 自定义\n{{proxies}}\n",
-	})
-	variants = append(variants, Request{
-		Format: FormatSurfboard, Nodes: nodes, ProxyUUID: fixtureUUID,
-		ProtocolPrefix: true,
-		InfoLines:      preprocessInfo,
-		Status:         preprocessStatus,
-		SubscribeURL:   preprocessSubscribe,
-		Template:       defaultTemplateFor(FormatSurfboard, Options{}) + "\n# 自定义\n",
-	})
 
 	want := make([][]byte, len(variants))
 	for i, req := range variants {

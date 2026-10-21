@@ -149,28 +149,6 @@ func TestLineSafeNameInLoonSurfboard(t *testing.T) {
 	}
 }
 
-func TestCustomTemplateLoonSurfboard(t *testing.T) {
-	n := nodeByName(t, "ss-aes128")
-	body, _, _ := RenderRequest(Request{
-		Format:    FormatLoon,
-		Nodes:     []Node{n},
-		ProxyUUID: fixtureUUID,
-		Template:  "# x\n{{proxies}}\n",
-	})
-	if !strings.HasPrefix(string(body), "# x\n") {
-		t.Fatalf("loon custom tmpl: %s", string(body))
-	}
-	body2, _, _ := RenderRequest(Request{
-		Format:    FormatSurfboard,
-		Nodes:     []Node{n},
-		ProxyUUID: fixtureUUID,
-		Template:  "媒体 = select, {{proxy_names}}\n",
-	})
-	if !strings.Contains(string(body2), "媒体 = select, ss-aes128") {
-		t.Fatalf("surf proxy_names: %s", string(body2))
-	}
-}
-
 func TestSsNodeUDPInOutput(t *testing.T) {
 	n := nodeByName(t, "ss-aes128")
 	loon, _, _ := RenderRequest(Request{Format: FormatLoon, Nodes: []Node{n}, ProxyUUID: fixtureUUID})

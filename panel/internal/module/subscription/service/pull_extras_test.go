@@ -28,22 +28,17 @@ func (f *fakeExtrasSettings) SubscriptionExtras(context.Context) (settingssvc.Su
 	return f.val, nil
 }
 
-type fakeTemplateReader struct {
+type fakeExtrasRepo struct {
 	calls int
-	m     map[string]string
 	rows  repo.DomainConfigRows
 	err   error
 }
 
-func (f *fakeTemplateReader) TemplateContents(context.Context) (map[string]string, error) {
+func (f *fakeExtrasRepo) DomainConfig(context.Context) (repo.DomainConfigRows, error) {
 	f.calls++
 	if f.err != nil {
-		return nil, f.err
+		return repo.DomainConfigRows{}, f.err
 	}
-	return f.m, nil
-}
-
-func (f *fakeTemplateReader) DomainConfig(context.Context) (repo.DomainConfigRows, error) {
 	return f.rows, nil
 }
 
@@ -55,8 +50,7 @@ func TestPullExtrasGet(t *testing.T) {
 		InfoNodes: true, ProtocolPrefix: true,
 	}}
 	defGroupID := uuid.MustParse("00000000-0000-4000-8000-000000000010")
-	tr := &fakeTemplateReader{
-		m: map[string]string{"clash": "mixed-port: 7891\n{{proxies}}\n{{proxy_groups}}\n"},
+	tr := &fakeExtrasRepo{
 		rows: repo.DomainConfigRows{
 			Groups: []repo.DomainGroupRow{
 				{ID: defGroupID, Name: "默认", IsDefault: true, Position: 0},
@@ -73,13 +67,7 @@ func TestPullExtrasGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if settings.calls != 1 || tr.calls != 1 {
-		t.Fatalf("首次读取 settings=%d templates=%d", settings.calls, tr.calls)
-	}
-	if snap.template(render.FormatClash) == "" {
-		t.Fatal("应有 clash 模板")
-	}
-	if snap.template(render.FormatLoon) != "" {
-		t.Fatal("没有 loon 模板应为空")
+		t.Fatalf("首次读取 settings=%d domains=%d", settings.calls, tr.calls)
 	}
 	if snap.domains.empty() {
 		t.Fatal("snap.domains 不应为空")
@@ -93,7 +81,7 @@ func TestPullExtrasGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if settings.calls != 1 || tr.calls != 1 {
-		t.Fatalf("+10s 不应重读 settings=%d templates=%d", settings.calls, tr.calls)
+		t.Fatalf("+10s 不应重读 settings=%d domains=%d", settings.calls, tr.calls)
 	}
 
 	_, err = pe.get(ctx, settings, tr, t0.Add(31*time.Second))
@@ -101,7 +89,7 @@ func TestPullExtrasGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if settings.calls != 2 || tr.calls != 2 {
-		t.Fatalf("+31s 应重读 settings=%d templates=%d", settings.calls, tr.calls)
+		t.Fatalf("+31s 应重读 settings=%d domains=%d", settings.calls, tr.calls)
 	}
 
 	_, err = pe.get(ctx, settings, tr, t0.Add(-1*time.Second))
@@ -159,7 +147,7 @@ func TestPullExtrasGetConcurrent(t *testing.T) {
 	var pe pullExtras
 	t0 := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	settings := &fakeExtrasSettings{val: settingssvc.SubscriptionExtras{}}
-	tr := &fakeTemplateReader{m: map[string]string{}}
+	tr := &fakeExtrasRepo{}
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -190,8 +178,7 @@ func TestLiveRequest(t *testing.T) {
 		TrafficPeriodEnd: &nextReset,
 	}
 	snapOn := &extrasSnapshot{
-		settings:  settingssvc.SubscriptionExtras{InfoNodes: true, ProtocolPrefix: true},
-		templates: map[render.Format]string{render.FormatClash: "custom"},
+		settings: settingssvc.SubscriptionExtras{InfoNodes: true, ProtocolPrefix: true},
 	}
 	req := liveRequest(liveInput{
 		Format: render.FormatClash,
@@ -208,9 +195,6 @@ func TestLiveRequest(t *testing.T) {
 	}
 	if len(req.InfoLines) != 3 || req.InfoLines[1] != "距离下次重置剩余：7 天" {
 		t.Fatalf("距下次重置应取 Row.TrafficPeriodEnd: %v", req.InfoLines)
-	}
-	if req.Template != "custom" {
-		t.Fatalf("Clash 应取快照模板 %q", req.Template)
 	}
 	if !req.ProtocolPrefix {
 		t.Fatal("应开协议前缀")
@@ -230,11 +214,6 @@ func TestLiveRequest(t *testing.T) {
 	reqOff := liveRequest(liveInput{Format: render.FormatClash, Row: row, Extras: snapOff, Now: now})
 	if len(reqOff.InfoLines) != 0 {
 		t.Fatalf("关了信息节点应为空 %v", reqOff.InfoLines)
-	}
-
-	reqURI := liveRequest(liveInput{Format: render.FormatURI, Row: row, Extras: snapOn, Now: now})
-	if reqURI.Template != "" {
-		t.Fatal("URI 不取模板")
 	}
 }
 

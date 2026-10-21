@@ -1,7 +1,7 @@
 package service
 
-// 拉取时用到的后台模板、订阅附加设置（信息节点、协议前缀，在 settings）与订阅域名分组（本模块的表），
-// 进程内快照 30 秒过期（serve 是单实例）；附加设置（经 settings 的监听）与订阅域名在本进程保存后立即作废（自定义模板后台已不能写，只读库里已有的），30 秒只是兜底。
+// 拉取时用到的订阅附加设置（信息节点、协议前缀，在 settings）与订阅域名分组（本模块的表），
+// 进程内快照 30 秒过期（serve 是单实例）；附加设置（经 settings 的监听）与订阅域名在本进程保存后立即作废，30 秒只是兜底。
 
 import (
 	"context"
@@ -23,9 +23,8 @@ type ExtrasSettings interface {
 	SubscriptionExtras(ctx context.Context) (settingssvc.SubscriptionExtras, error)
 }
 
-// extrasRepo 读全部自定义模板与订阅域名分组；*repo.Repo 直接满足。
+// extrasRepo 读订阅域名分组；*repo.Repo 直接满足。
 type extrasRepo interface {
-	TemplateContents(ctx context.Context) (map[string]string, error)
 	DomainConfig(ctx context.Context) (repo.DomainConfigRows, error)
 }
 
@@ -35,21 +34,12 @@ const extrasTTL = 30 * time.Second
 // extrasRetry 是重读失败、沿用旧快照后再试的间隔（期间不再重读，也不重复打日志）。
 const extrasRetry = 5 * time.Second
 
-// extrasSnapshot 是某一刻的模板与附加设置。
+// extrasSnapshot 是某一刻的附加设置与订阅域名分组。
 type extrasSnapshot struct {
-	settings  settingssvc.SubscriptionExtras
-	templates map[render.Format]string
-	domains   domainSet // 订阅域名分组（只读）
-	loadedAt  time.Time
-	gen       uint64 // 开始读库前的失效代号；与 pullExtras.gen 不等即已作废（读时比对）
-}
-
-// template 返回 f 的自定义模板；没有返回空串（用内置）。
-func (x *extrasSnapshot) template(f render.Format) string {
-	if x == nil || x.templates == nil {
-		return ""
-	}
-	return x.templates[f]
+	settings settingssvc.SubscriptionExtras
+	domains  domainSet // 订阅域名分组（只读）
+	loadedAt time.Time
+	gen      uint64 // 开始读库前的失效代号；与 pullExtras.gen 不等即已作废（读时比对）
 }
 
 // pullExtras 是快照的进程内缓存；零值可用。
@@ -88,13 +78,13 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 		return snap, nil
 	}
 	g := p.gen.Load()
-	settings, raw, groups, err := readExtras(ctx, src, tr)
+	settings, groups, err := readExtras(ctx, src, tr)
 	if err != nil {
 		old := p.snap.Load()
 		if old == nil {
 			return nil, err
 		}
-		plog.From(ctx).Warn("订阅附加设置或模板重读失败，沿用旧快照", zap.Error(err))
+		plog.From(ctx).Warn("订阅附加设置或订阅域名重读失败，沿用旧快照", zap.Error(err))
 		// 旧快照的内容发布后只读，浅拷贝共用即可；把加载时刻挪到「extrasRetry 后过期」
 		stale := *old
 		stale.loadedAt = now.Add(extrasRetry - extrasTTL)
@@ -104,16 +94,11 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 		}
 		return &stale, nil
 	}
-	templates := make(map[render.Format]string, len(raw))
-	for k, v := range raw {
-		templates[render.Format(k)] = v
-	}
 	snap := &extrasSnapshot{
-		settings:  settings,
-		templates: templates,
-		domains:   newDomainSet(groups),
-		loadedAt:  now,
-		gen:       g,
+		settings: settings,
+		domains:  newDomainSet(groups),
+		loadedAt: now,
+		gen:      g,
 	}
 	if p.gen.Load() == g {
 		p.snap.Store(snap)
@@ -121,28 +106,24 @@ func (p *pullExtras) get(ctx context.Context, src ExtrasSettings, tr extrasRepo,
 	return snap, nil
 }
 
-// readExtras 读附加设置、全部自定义模板与订阅域名分组；src、tr 为 nil 的那一项取零值。
-func readExtras(ctx context.Context, src ExtrasSettings, tr extrasRepo) (settingssvc.SubscriptionExtras, map[string]string, []DomainGroup, error) {
+// readExtras 读附加设置与订阅域名分组；src、tr 为 nil 的那一项取零值。
+func readExtras(ctx context.Context, src ExtrasSettings, tr extrasRepo) (settingssvc.SubscriptionExtras, []DomainGroup, error) {
 	var settings settingssvc.SubscriptionExtras
 	var err error
 	if src != nil {
 		if settings, err = src.SubscriptionExtras(ctx); err != nil {
-			return settingssvc.SubscriptionExtras{}, nil, nil, err
+			return settingssvc.SubscriptionExtras{}, nil, err
 		}
 	}
-	var raw map[string]string
 	var groups []DomainGroup
 	if tr != nil {
-		if raw, err = tr.TemplateContents(ctx); err != nil {
-			return settingssvc.SubscriptionExtras{}, nil, nil, err
-		}
 		rows, err := tr.DomainConfig(ctx)
 		if err != nil {
-			return settingssvc.SubscriptionExtras{}, nil, nil, err
+			return settingssvc.SubscriptionExtras{}, nil, err
 		}
 		groups = domainGroupsFromRows(rows)
 	}
-	return settings, raw, groups, nil
+	return settings, groups, nil
 }
 
 // liveInput 是组一次正常拉取的渲染请求要的材料。
@@ -162,10 +143,6 @@ type liveInput struct {
 
 // liveRequest 组 render.Request。
 func liveRequest(in liveInput) render.Request {
-	var tmpl string
-	if render.Templatable(in.Format) && in.Extras != nil {
-		tmpl = in.Extras.template(in.Format)
-	}
 	ui := userinfoOf(in.Row)
 	st := render.Status{
 		Upload:   ui.Upload,
@@ -189,7 +166,6 @@ func liveRequest(in liveInput) render.Request {
 		ProxyUUID:      in.Row.ProxyUUID.String(),
 		UA:             in.UA,
 		Options:        in.Options,
-		Template:       tmpl,
 		Types:          render.ParseTypes(in.Types),
 		Keywords:       render.ParseKeywords(in.Filter),
 		ProtocolPrefix: prefix,

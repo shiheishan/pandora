@@ -29,11 +29,7 @@ func renderLoon(rc renderCtx) ([]byte, string, int) {
 		}
 		lines = append(infoLines, realLines...)
 	}
-	tmpl := rc.tmpl
-	if tmpl == "" {
-		tmpl = defaultLoonTemplate
-	}
-	body := fillTemplate(tmpl, map[string]string{
+	body := fillTemplate(defaultLoonTemplate, map[string]string{
 		phProxies: strings.Join(lines, "\n"),
 	})
 	return body, "text/plain; charset=utf-8", len(realLines)

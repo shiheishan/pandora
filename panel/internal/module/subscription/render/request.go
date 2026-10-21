@@ -40,8 +40,6 @@ type Request struct {
 	UA        string
 	// Options 是进程配置里的渲染可配项
 	Options Options
-	// Template 是后台为这种格式存的模板原文；空串用内置模板。只对 Templatable 的格式生效
-	Template string
 	// Types 是 ParseTypes 的结果（规范化后的协议名）；空不按协议过滤
 	Types []string
 	// Keywords 是 ParseKeywords 的结果（已转小写）；空不按名字过滤
@@ -62,7 +60,6 @@ type renderCtx struct {
 	uuid         string
 	ua           string
 	opt          Options
-	tmpl         string
 	status       Status
 	subscribeURL string
 }
@@ -76,14 +73,11 @@ const (
 	clashStash
 )
 
-// 模板占位符（后台可编辑模板，见 template.go）。sing-box 的两个是 JSON 数组里的一个字符串元素，连引号一起替换。
+// 内置模板里的占位符，由 fillTemplate 替换。
 const (
 	phProxies      = "{{proxies}}"
 	phProxyGroups  = "{{proxy_groups}}"
-	phProxyNames   = "{{proxy_names}}"
 	phSubscribeURL = "{{subscribe_url}}"
-	phOutbounds    = `"{{outbounds}}"`
-	phProxyTags    = `"{{proxy_tags}}"`
 )
 
 // 信息节点的占位地址与加密方式（与过期提示同一个本机 1 号端口，expired.go）。
@@ -236,7 +230,6 @@ func prepare(r Request) renderCtx {
 		uuid:         r.ProxyUUID,
 		ua:           r.UA,
 		opt:          r.Options,
-		tmpl:         r.Template,
 		status:       r.Status,
 		subscribeURL: r.SubscribeURL,
 	}
