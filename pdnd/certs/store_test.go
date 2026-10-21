@@ -123,7 +123,7 @@ func TestStoreSaveCertMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPEM, keyPEM, _ := testSelfSigned(t, "192.0.2.10")
+	certPEM, _, _ := testSelfSigned(t, "192.0.2.10")
 	otherKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	otherDER, _ := x509.MarshalECPrivateKey(otherKey)
 	wrongKey := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: otherDER})

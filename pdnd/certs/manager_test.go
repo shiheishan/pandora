@@ -190,7 +190,9 @@ func TestManagerRenewsWithReplaces(t *testing.T) {
 
 	renewAt := m.Status("127.0.0.1").NextAttempt
 	clock.Add(renewAt.Sub(clock.Now()) + time.Minute)
-	runUntilIdle(t, m, ctx, clock)
+	// 只走一步：pebble 按真实时间给新证书的有效期与 ARI 窗口，假时钟已拨到真实时间之后约百小时，
+	// 新证书的续期时刻也落在假「现在」之前，用 runUntilIdle 会一直续下去（生产里时钟是真的，不会这样）
+	m.step(ctx)
 
 	orders, replaces, _ := ca.stats()
 	if orders != 2 || len(replaces) < 2 || replaces[1] == "" {

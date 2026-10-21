@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 	"weak"

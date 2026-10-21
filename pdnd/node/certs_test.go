@@ -100,7 +100,7 @@ func newCertTestServer(t *testing.T) (*testServer, *fakeCerts) {
 	t.Helper()
 	ts := newTestServer(t, newFakeKernel(), "")
 	fake := newFakeCerts()
-	ts.Server.certs = fake
+	ts.certs = fake
 	ts.welcome()
 	return ts, fake
 }
@@ -164,7 +164,7 @@ func TestCertPendingDoesNotTouchKernel(t *testing.T) {
 	k := newFakeKernel()
 	ts := newTestServer(t, k, "")
 	fake := newFakeCerts()
-	ts.Server.certs = fake
+	ts.certs = fake
 	ts.welcome()
 	nc := acmeNodeConfig(t, "n1", "node1.example.com")
 	ts.config(nc)
@@ -190,7 +190,7 @@ func TestCertReadyInstallsImmediately(t *testing.T) {
 	k := newFakeKernel()
 	ts := newTestServer(t, k, "")
 	fake := newFakeCerts()
-	ts.Server.certs = fake
+	ts.certs = fake
 	ts.welcome()
 	nc := acmeNodeConfig(t, "n1", "node1.example.com")
 	ts.config(nc)
@@ -207,7 +207,7 @@ func TestCertPendingKeepsOldConfigServing(t *testing.T) {
 	k := newFakeKernel()
 	ts := newTestServer(t, k, "")
 	fake := newFakeCerts()
-	ts.Server.certs = fake
+	ts.certs = fake
 	ts.welcome()
 	fileNC := portConfig(t, "n1", "trojan", 443)
 	ts.config(fileNC)
@@ -230,7 +230,7 @@ func TestCertExpiredReportsDegraded(t *testing.T) {
 	k := newFakeKernel()
 	ts := newTestServer(t, k, "")
 	fake := newFakeCerts()
-	ts.Server.certs = fake
+	ts.certs = fake
 	ts.welcome()
 	nc := acmeNodeConfig(t, "n1", "node1.example.com")
 	expired := ts.clock.now().Add(-time.Hour)
