@@ -80,11 +80,12 @@ func (a *anyTLSAdapter) Validate(spec InboundSpec) error {
 	if network := strings.TrimSpace(rawString(spec.Config.Raw, "network")); network != "" && !strings.EqualFold(network, "tcp") {
 		return fmt.Errorf("anytls requires TCP transport, got %q", network)
 	}
-	certPath, keyPath := strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")), strings.TrimSpace(rawString(spec.Config.Raw, "key_path"))
-	if (certPath == "") != (keyPath == "") {
-		return fmt.Errorf("anytls cert_path and key_path must be provided together")
-	}
-	if certPath != "" {
+	// TLS 可选：配了证书（acme，或 file 给了路径）才起 TLS；file 的两个路径必须成对
+	hasCert := inboundHasCertificate(spec.Config.Raw)
+	if hasCert {
+		if err := checkInboundCertificate(spec.Config.Raw); err != nil {
+			return fmt.Errorf("anytls %w", err)
+		}
 		if _, err := inboundECHKeys(spec.Config.Raw); err != nil {
 			return fmt.Errorf("anytls %w", err)
 		}
@@ -94,7 +95,7 @@ func (a *anyTLSAdapter) Validate(spec InboundSpec) error {
 		if !ok {
 			return fmt.Errorf("anytls tls must be boolean")
 		}
-		if enabled && (certPath == "" || keyPath == "") {
+		if enabled && !hasCert {
 			return fmt.Errorf("anytls enabled TLS requires cert_path and key_path")
 		}
 	}
@@ -118,14 +119,13 @@ func (a *anyTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	}
 	ctx, cancel := context.WithCancel(parent)
 	var tlsConfig *hysteria2TLSConfig
-	certPath, keyPath := strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")), strings.TrimSpace(rawString(spec.Config.Raw, "key_path"))
-	if certPath != "" {
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if inboundHasCertificate(spec.Config.Raw) {
+		getCert, err := inboundCertificate(spec.Config.Raw, hooks.Certs)
 		if err != nil {
 			cancel()
-			return fmt.Errorf("anytls TLS certificate: %w", err)
+			return fmt.Errorf("anytls %w", err)
 		}
-		std := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+		std := &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS13}
 		if err := applyInboundECH(std, spec.Config.Raw); err != nil {
 			cancel()
 			return fmt.Errorf("anytls TLS ECH: %w", err)

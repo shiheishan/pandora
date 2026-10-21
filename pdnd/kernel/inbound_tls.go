@@ -10,31 +10,52 @@ import (
 	"sync"
 	"time"
 	"weak"
+
+	"github.com/aegispanel/nodeagent/core"
 )
 
 // loadInboundTLSConfig is the shared native TCP TLS boundary. It deliberately
 // keeps TLS outside protocol framing: the protocol adapter receives a normal
 // net.Conn after the handshake, so no wrapper bytes or non-standard markers
 // are introduced into VLESS/Trojan traffic.
-func loadInboundTLSConfig(raw map[string]any) (*tls.Config, bool, error) {
+//
+// 证书经 GetCertificate 取（inboundCertificate）：file 读 cert_path / key_path，acme 向 src 取；
+// acme 的证书还没申请到时返回 *core.CertPendingError。各协议 Start 用，Validate 用 validateInboundTLSConfig。
+func loadInboundTLSConfig(raw map[string]any, src core.CertSource) (*tls.Config, bool, error) {
 	enabled, ok := raw["tls"].(bool)
 	if !ok || !enabled {
 		return nil, false, nil
 	}
-	certPath := strings.TrimSpace(rawString(raw, "cert_path"))
-	keyPath := strings.TrimSpace(rawString(raw, "key_path"))
-	if certPath == "" || keyPath == "" {
-		return nil, false, fmt.Errorf("native TLS requires cert_path and key_path")
-	}
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	getCert, err := inboundCertificate(raw, src)
 	if err != nil {
-		return nil, false, fmt.Errorf("native TLS certificate: %w", err)
+		return nil, false, fmt.Errorf("native TLS %w", err)
 	}
-	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	cfg := &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS12}
 	if err := applyInboundECH(cfg, raw); err != nil {
 		return nil, false, fmt.Errorf("native TLS ECH: %w", err)
 	}
 	return cfg, true, nil
+}
+
+// validateInboundTLSConfig 是 loadInboundTLSConfig 的校验版（各协议 Validate 用，跑在拆旧入站之前）：
+// file 照旧整份加载一遍（证书读不出来就不拆旧的）；acme 只核形状与 ECH 密钥，不要求证书已经申请到
+// （没有证书由 Start 报 cert_pending）。
+func validateInboundTLSConfig(raw map[string]any) error {
+	enabled, ok := raw["tls"].(bool)
+	if !ok || !enabled {
+		return nil
+	}
+	if core.InboundCertMode(raw) != core.CertModeACME {
+		_, _, err := loadInboundTLSConfig(raw, nil)
+		return err
+	}
+	if err := checkInboundCertificate(raw); err != nil {
+		return fmt.Errorf("native TLS %w", err)
+	}
+	if _, err := inboundECHKeys(raw); err != nil {
+		return fmt.Errorf("native TLS ECH: %w", err)
+	}
+	return nil
 }
 
 // ============================================================
