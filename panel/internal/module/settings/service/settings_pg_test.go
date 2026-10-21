@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,23 +36,15 @@ func TestSeedSwitchesMatchMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != len(SeedSwitches) {
-		t.Fatalf("count %d want %d", len(rows), len(SeedSwitches))
-	}
-	got := make(map[string]bool, len(rows))
-	for _, sw := range rows {
+	got := make([]string, len(rows))
+	for i, sw := range rows {
 		if !sw.Enabled {
 			t.Fatalf("%s not enabled", sw.Code)
 		}
-		got[sw.Code] = sw.Essential
+		got[i] = sw.Code
 	}
-	for code, essential := range SeedSwitches {
-		if got[code] != essential {
-			t.Fatalf("%s essential=%v want %v", code, got[code], essential)
-		}
-	}
-	if len(got) != len(SeedSwitches) {
-		t.Fatalf("distinct codes %d", len(got))
+	if !slices.Equal(got, SeedSwitches) {
+		t.Fatalf("codes %v want %v", got, SeedSwitches)
 	}
 }
 
@@ -284,18 +277,18 @@ func TestRegistrationPolicy(t *testing.T) {
 func TestSetSwitchConstraints(t *testing.T) {
 	svc, r, ctx, _ := newPG(t)
 
-	err := svc.SetSwitch(ctx, SwitchAuthLogin, false, "x")
+	err := svc.SetSwitch(ctx, SwitchBillingCheckout, false, "")
 	if errs.As(err).Code != errs.Conflict {
-		t.Fatalf("essential close: %v", err)
+		t.Fatalf("disable without reason: %v", err)
 	}
 	err = svc.SetSwitch(ctx, "nope", true, "")
 	if errs.As(err).Code != errs.NotFound {
 		t.Fatalf("unknown switch: %v", err)
 	}
 
-	err = r.UpdateSwitch(ctx, SwitchAuthLogin, false, strPtr("x"), nil)
+	err = r.UpdateSwitch(ctx, SwitchBillingCheckout, false, nil, nil)
 	if err == nil {
-		t.Fatal("expected DB CHECK to reject disabling essential switch")
+		t.Fatal("expected DB CHECK to reject disabling without reason")
 	}
 }
 
@@ -308,10 +301,9 @@ func TestSwitchesListShape(t *testing.T) {
 	if len(rows) != len(SeedSwitches) {
 		t.Fatalf("count %d want %d", len(rows), len(SeedSwitches))
 	}
-	wantFirst := []string{SwitchAuthLogin, SwitchClientConfigSync, SwitchSubscriptionRenewal}
-	for i, code := range wantFirst {
-		if rows[i].Code != code || !rows[i].Essential {
-			t.Fatalf("row[%d] %+v want essential %s", i, rows[i], code)
+	for i := range rows {
+		if rows[i].Code != SeedSwitches[i] {
+			t.Fatalf("row[%d] code=%s want %s", i, rows[i].Code, SeedSwitches[i])
 		}
 	}
 }

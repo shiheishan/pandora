@@ -321,31 +321,30 @@ describe('risk clusters', () => {
 })
 
 describe('degradation switches', () => {
-  const row = (code: string, enabled = true, essential = false, reason: string | null = null): SwitchRow => ({ code, enabled, essential, reason })
+  const row = (code: string, enabled = true, reason: string | null = null): SwitchRow => ({ code, enabled, reason })
 
   it('flips the polarity: enabled=false means the pause is on', () => {
-    const [reg] = switchViews([row('auth.registration', false, false, '机器注册潮')])
-    expect(reg).toMatchObject({ kind: 'toggle', title: '暂停新用户注册', degraded: true, status: '已开启', tone: 'danger', reason: '机器注册潮' })
+    const [reg] = switchViews([row('auth.registration', false, '机器注册潮')])
+    expect(reg).toMatchObject({ kind: 'toggle', title: '暂停新用户注册', degraded: true, status: '已开启', reason: '机器注册潮' })
     const [checkout] = switchViews([row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
-    expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭', tone: 'muted' })
+    expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭' })
   })
 
-  it('locks essentials and orders them last', () => {
-    const views = switchViews([row('auth.login', true, true), row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
-    expect(views.map((v) => v.code)).toEqual(['auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'admin.writes', 'notify.email', 'auth.login'])
-    expect(views.at(-1)).toMatchObject({ kind: 'essential', status: '始终开启', degraded: false })
+  it('orders switches by the dictionary order', () => {
+    const views = switchViews([row('notify.email'), row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes')])
+    expect(views.map((v) => v.code)).toEqual(['auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'admin.writes', 'notify.email'])
     expect(views.find((v) => v.code === 'notify.email')!.note).toContain('注册')
   })
 
   it('lists missing rows by their R58 default: new switches open, registration paused', () => {
-    const views = switchViews([row('auth.login', true, true)])
+    const views = switchViews([])
     const missing = Object.fromEntries(views.filter((v) => v.kind === 'missing').map((v) => [v.code, v.degraded]))
     expect(missing).toEqual({ 'auth.registration': true, 'billing.checkout': false, 'marketing.giftcard.redeem': false, 'admin.writes': false, 'notify.email': false })
   })
 
   it('drops the three unwired switches from the dictionary (R102)', () => {
     for (const code of ['ops.bulk_export', 'ops.reports', 'node.autoscale']) expect(SWITCH_META[code]).toBeUndefined()
-    expect(Object.keys(SWITCH_META)).toHaveLength(8)
+    expect(Object.keys(SWITCH_META)).toHaveLength(5)
   })
 
   it('keeps unknown codes toggleable with the backend polarity', () => {

@@ -992,23 +992,19 @@ function profileOf(u: User) {
 setProfileSource(profileOf)
 
 // ---------------------------------------------------------------------------
-// 降级开关（feature_switches：00010 七行 + 00085 四行，R102 的新迁移删去 ops.bulk_export / ops.reports / node.autoscale）
+// 降级开关（feature_switches：00002 种下、00064 删去三个核心项后的五行；与 settings/service SeedSwitches 一致）
 // ---------------------------------------------------------------------------
 interface Switch {
   code: string
   enabled: boolean
-  essential: boolean
   reason: string | null
 }
 const switches: Switch[] = [
-  { code: 'auth.login', enabled: true, essential: true, reason: null },
-  { code: 'subscription.renewal', enabled: true, essential: true, reason: null },
-  { code: 'client.config_sync', enabled: true, essential: true, reason: null },
-  { code: 'auth.registration', enabled: true, essential: false, reason: null },
-  { code: 'billing.checkout', enabled: true, essential: false, reason: null },
-  { code: 'marketing.giftcard.redeem', enabled: true, essential: false, reason: null },
-  { code: 'notify.email', enabled: true, essential: false, reason: null },
-  { code: 'admin.writes', enabled: true, essential: false, reason: null },
+  { code: 'auth.registration', enabled: true, reason: null },
+  { code: 'billing.checkout', enabled: true, reason: null },
+  { code: 'marketing.giftcard.redeem', enabled: true, reason: null },
+  { code: 'notify.email', enabled: true, reason: null },
+  { code: 'admin.writes', enabled: true, reason: null },
 ]
 /** admin.writes 缺行视为开启（R58）；外壳 mock-api.ts 的只读门按它把非豁免写请求回 503 */
 export const adminWritesEnabled = () => switches.find((s) => s.code === 'admin.writes')?.enabled ?? true
@@ -1020,9 +1016,6 @@ export function onSwitchChanged(listener: (payload: { code: string; enabled: boo
   return () => switchListeners.delete(listener)
 }
 
-// R116：与 settings/service SetSwitch 校验提示同文——数据库 CHECK 原句只进日志，页面拿到的是中文原因
-const CHECK = (name: string) => (name === 'feature_switches_essential_stays_on' ? '核心开关不能关闭' : '关闭开关必须填写原因')
-
 async function setSwitch(ctx: MockContext): Promise<MockResult> {
   const d = await decode(ctx, { enabled: 'boolean', reason: 'string' })
   if (!d.ok) return d.result
@@ -1031,9 +1024,8 @@ async function setSwitch(ctx: MockContext): Promise<MockResult> {
   const enabled = d.body.enabled === true
   const reason = typeof d.body.reason === 'string' ? d.body.reason : ''
   const stored = reason.trim() ? reason : null
-  // 两条都是数据库 CHECK，Go 翻成 409 并换成中文原因
-  if (s.essential && !enabled) return err(409, 'conflict', `开关 ${s.code} 不允许该操作：${CHECK('feature_switches_essential_stays_on')}`)
-  if (!enabled && stored === null) return err(409, 'conflict', `开关 ${s.code} 不允许该操作：${CHECK('feature_switches_disable_needs_reason')}`)
+  // 数据库 CHECK feature_switches_disable_needs_reason，Go 翻成 409 并换成中文原因（与 settings/service SetSwitch 同文）
+  if (!enabled && stored === null) return err(409, 'conflict', `开关 ${s.code} 不允许该操作：关闭开关必须填写原因`)
   s.enabled = enabled
   s.reason = stored
   record({ actor_kind: 'admin', actor_id: ctx.user.userId, actor_email: ctx.user.email, action: 'feature_switch.toggle', resource_type: 'feature_switch', resource_id: null, resource_label: null, api_domain: 'admin', outcome: 'success', reason: reason || null, auth_context: 'reauth', source_ip: ADMIN_IP, user_agent: BROWSER })
@@ -1334,7 +1326,7 @@ export const security: MockModule = {
     },
 
     'GET /v1/switches': (ctx) => {
-      const rows = [...switches].sort((a, b) => Number(b.essential) - Number(a.essential) || a.code.localeCompare(b.code))
+      const rows = [...switches].sort((a, b) => a.code.localeCompare(b.code))
       ctx.send(200, { switches: rows })
     },
     'POST /v1/switches/:code': async (ctx) => {

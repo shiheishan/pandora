@@ -31,14 +31,14 @@ func TestSetSwitchPublishesToAdmin(t *testing.T) {
 // 被规则拒绝的切换不推。
 func TestSetSwitchRejectedDoesNotPublish(t *testing.T) {
 	st := &fakeStore{rows: map[string]model.FeatureSwitch{
-		SwitchAuthLogin: {Code: SwitchAuthLogin, Enabled: true, Essential: true},
+		"billing.checkout": {Code: "billing.checkout", Enabled: true},
 	}}
 	s := newService(st, fakeTx{}, nil, nil, &auditLog{})
 	pub, spy := newRTSpy(t, realtime.ChannelAdmin(), realtime.ChannelPublic())
 	s.UseRealtime(pub)
 
-	if err := s.SetSwitch(context.Background(), SwitchAuthLogin, false, "维护"); err == nil {
-		t.Fatal("核心开关不该能关")
+	if err := s.SetSwitch(context.Background(), "billing.checkout", false, "  "); err == nil {
+		t.Fatal("不填原因的关闭不该成功")
 	}
 	spy.expectNone(t, 200*time.Millisecond)
 }

@@ -95,7 +95,7 @@ export function useUnbindTelegram() {
 }
 
 // ---------------------------------------------------------------------------
-// 通知偏好：固定 6 项，transactional 两项 locked 且恒开
+// 通知偏好：固定 5 项（营销类只有邮件），transactional 两项 locked 且恒开
 // ---------------------------------------------------------------------------
 export const preferenceSchema = z.object({
   category: z.enum(PREF_CATEGORIES),

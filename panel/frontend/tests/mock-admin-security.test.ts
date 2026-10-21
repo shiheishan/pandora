@@ -162,18 +162,21 @@ describe('mock api · admin security and operations', () => {
     expect((await clusters()).find((c) => c.key === withStaff.key)!.review).toBeNull()
   })
 
-  it('orders switches essential first and refuses what the database constraints refuse', async () => {
-    const list = switchesResponse.parse(await json(await call('GET', '/v1/switches'))).switches
-    expect(list).toHaveLength(8)
-    expect(list.slice(0, 3).every((s) => s.essential)).toBe(true)
-    expect(list.slice(3).map((s) => s.code)).toEqual([...list.slice(3).map((s) => s.code)].sort())
+  it('orders switches by code and refuses what the database constraints refuse', async () => {
+    const raw = await json(await call('GET', '/v1/switches'))
+    const list = switchesResponse.parse(raw).switches
+    expect(list).toHaveLength(5)
+    expect(list.map((s) => s.code)).toEqual(['admin.writes', 'auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'notify.email'])
+    // 00064 取消 essential：原始响应里也不该有这个键（zod 解析会丢掉多余的键，所以看 raw）
+    expect(JSON.stringify(raw)).not.toContain('essential')
     // R102：三个没有代码读取的开关已从种子删除
     expect(list.some((s) => ['ops.bulk_export', 'ops.reports', 'node.autoscale'].includes(s.code))).toBe(false)
+    // 00064：三个核心项没有代码读取，已删除
+    expect(list.some((s) => ['auth.login', 'subscription.renewal', 'client.config_sync'].includes(s.code))).toBe(false)
 
     const reauth = await expireAndReauth()
     expect(await json(await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '渠道故障' }))).toMatchObject({ error: { code: 'reauth_required' } })
     await reauth()
-    expect(await json(await call('POST', '/v1/switches/auth.login', { enabled: false, reason: '演练' }))).toMatchObject({ error: { code: 'conflict', message: '开关 auth.login 不允许该操作：核心开关不能关闭' } })
     expect(await json(await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '  ' }))).toMatchObject({ error: { code: 'conflict', message: '开关 billing.checkout 不允许该操作：关闭开关必须填写原因' } })
     expect((await call('POST', '/v1/switches/nope', { enabled: true, reason: '' })).status).toBe(404)
     expect((await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '渠道故障', note: 1 })).status).toBe(400)

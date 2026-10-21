@@ -34,4 +34,13 @@ describe('mock api · portal account', () => {
     expect(ttl).toBeGreaterThan(9 * 60_000)
     expect(ttl).toBeLessThanOrEqual(10 * 60_000 + 1000)
   })
+
+  it('通知偏好固定 5 项：营销类只有邮件，写营销 × Telegram 回 422（与 notify/service preferenceCatalog 一致）', async () => {
+    const { preferences } = (await (await mockFetch(base, auth, 'GET', '/v1/me/notification-preferences')).json()) as { preferences: Array<{ category: string; channel: string }> }
+    expect(preferences).toHaveLength(5)
+    expect(preferences.some((p) => p.category === 'marketing' && p.channel === 'telegram')).toBe(false)
+    const bad = await mockFetch(base, auth, 'PUT', '/v1/me/notification-preferences', { category: 'marketing', channel: 'telegram', enabled: false })
+    expect(bad.status).toBe(422)
+    expect(await bad.json()).toMatchObject({ error: { fields: { preference: '不支持的通知类别或渠道' } } })
+  })
 })

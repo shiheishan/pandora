@@ -272,7 +272,7 @@ func TestPreferencesCatalog(t *testing.T) {
 	dir, _, _ := e.usePorts()
 	uid := e.insertTestUser(t, dir)
 	prefs, err := e.svc.Preferences(e.ctx, uid)
-	if err != nil || len(prefs) != 6 {
+	if err != nil || len(prefs) != 5 {
 		t.Fatalf("prefs %d %v", len(prefs), err)
 	}
 	if !prefs[0].Locked || !prefs[0].Enabled || prefs[0].Category != "transactional" {
@@ -307,5 +307,22 @@ func TestPreferencesCatalog(t *testing.T) {
 	}
 	if f := fieldsOf(t, err); f["preference"] != "不支持的通知类别或渠道" {
 		t.Fatalf("fields %v", f)
+	}
+
+	err = e.svc.SetPreference(e.ctx, uid, categoryMarketing, ChannelTelegram, false)
+	if !isCode(err, errs.ValidationFailed) {
+		t.Fatalf("marketing/telegram: %v", err)
+	}
+	if f := fieldsOf(t, err); f["preference"] != "不支持的通知类别或渠道" {
+		t.Fatalf("marketing/telegram fields %v", f)
+	}
+	prefs3, err := e.svc.Preferences(e.ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range prefs3 {
+		if p.Category == categoryMarketing && p.Channel == ChannelTelegram {
+			t.Fatal("不应有 marketing/telegram 项")
+		}
 	}
 }

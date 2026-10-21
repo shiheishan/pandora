@@ -110,10 +110,9 @@ func (h *Handler) setSite(c *gin.Context) {
 }
 
 type switchItem struct {
-	Code      string  `json:"code"`
-	Enabled   bool    `json:"enabled"`
-	Essential bool    `json:"essential"`
-	Reason    *string `json:"reason"`
+	Code    string  `json:"code"`
+	Enabled bool    `json:"enabled"`
+	Reason  *string `json:"reason"`
 }
 
 type switchesResponse struct {
@@ -130,10 +129,9 @@ func (h *Handler) listSwitches(c *gin.Context) {
 	items := make([]switchItem, len(rows))
 	for i, r := range rows {
 		items[i] = switchItem{
-			Code:      r.Code,
-			Enabled:   r.Enabled,
-			Essential: r.Essential,
-			Reason:    r.Reason,
+			Code:    r.Code,
+			Enabled: r.Enabled,
+			Reason:  r.Reason,
 		}
 	}
 	httpx.OK(c, switchesResponse{Switches: items})

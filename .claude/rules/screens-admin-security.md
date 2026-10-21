@@ -17,12 +17,12 @@ paths:
 - 审计搜索框占位 `AUDIT_SEARCH_PLACEHOLDER`（邮箱、动作代号或对象 ID）与 Go 搜索口径一致：邮箱命中操作人或「对象是这个用户」，名称搜不到，空结果的说明里写明。操作者类型只有库里的四种（`ACTOR_KINDS`：user / admin / system / anonymous），订阅拉取结果只有迁移 00017 的五种（`FETCH_RESULT`）。
 - 访问日志行本身不可点，不加悬停底色（只有账号链接可点）。术语就地解释：表头与风险标签用 `TERM_HINT` 作 `title`，表头文字套 `.term`（点线下划线）；页面说明里同名 `{ term, text }` 条目口径一致。
 - 风控是三段筛选（待处理 / 已标记正常 / 全部，带计数）：待处理取默认列表，另两段取 `include_reviewed=1` 的列表再按有效的「标记正常」过滤（`clusterViews`），两个查询同时发；「标记正常」先确认再提交；成员不显示「最近出现」（后端没有）；成员行末尾「登录记录」链到访问日志的登录分段。风控列表下方挂用户块的 `DevicePolicy`，「注册防护」页签挂 `SignupSecurity`（组件归 users/，这里只接线）。
-- 降级开关页没有顶部说明与只读横幅（说明在 `PAGE_HELP`）；核心项画成禁用的打开开关。
+- 降级开关页没有顶部说明与只读横幅（说明在 `PAGE_HELP`）。没有关不掉的开关：00002 种的三个核心项（auth.login / subscription.renewal / client.config_sync）没有代码读取，迁移 00064 删去并取消 essential（10-21），`GET v1/switches` 每项只有 code、enabled、reason，按 code 升序。
 - av4（样稿 admin-v4）：
   - 访问日志是亮底白框（不再是深色终端）：头部两行——第一行 `StatusDot`（监控中 / 已暂停 / 查看更早的记录）+ 说明 + 第一页的「暂停 / 继续」，第二行 `FilterTabs` 分段；事件行是 5 列 grid（时间、分类标签、结果、IP、账号 · 动作）；页脚常显，「回到最新」第一页置灰。结果色档在 `logic.ts` 的 `accessTone`：成功绿、订阅拉取 `rate_limited` 黄、其余非成功红、无结果灰。
   - 风控每个聚类一张卡：一行头部（IP、归属地、风险标签、账号数、「标记正常」「禁用账号…」）+ 成员行（邮箱链接、状态、套餐），复核结论（如「已标记为正常，MM-DD 前不再提示」）在卡片最下一行；有效标记正常的卡整张淡显。
   - 审计日志：「导出」在页头 `PageActions`；表格 `Table boxed`，表尾一页时「共 N 条」、多页 `<Pager inline>`；手机上只留操作人与结果（其余列 `hideOnMobile`），动作与时间挪到操作人下一行（全局类 `m-only`）。结果色档 `OUTCOME_TONE`：成功绿、失败红、拒绝黄、部分成功蓝。
-  - 降级开关：`Card flush` 里一项一行，暂停中整行 `--danger-soft` 底、开关 `Switch tone="danger"`（红），核心项是禁用的打开开关。
+  - 降级开关：`Card flush` 里一项一行，暂停中整行 `--danger-soft` 底、开关 `Switch tone="danger"`（红）；缺行的开关不能切换。
   - 注册防护（`users/SignupForm.tsx` 的 security 段）：「人机验证」「注册限制」两节 `SectionTitle variant="group"`，每项一个 kit `SettingRow`（打开才展开配置）；「开启人机验证」= `captcha_provider !== ''`，关掉时前端记住上次选的服务，第一次打开默认 Turnstile；验证服务用 `RadioCards`；邮箱后缀是 `TagInput`（上限 100，表单字段是数组）；整页一个 `SaveBar`（提示「保存时要再验证一次身份」），只提交改过的字段。
 - 溯源总览（`TraceTab.tsx`，数据层 `trace.ts`，10-20）：
   - 时间窗 24h / 7d / 30d（`Segmented`，24h 不带 `window` 参数）；选 30d 时提示拉取日志只保留 31 天。概览与 IP 排行是同一个请求（`/v1/trace/ips`），订阅、账号两张排行只在切到时才发请求；都不在 SSE 里、不轮询，换窗口保留上一份数据（`placeholderData`）；整窗聚合较重，`staleTime` 5 分钟、关掉 `refetchOnWindowFocus`，工具条上手动「刷新」（`useRefreshTrace` 作废 `TRACE_KEY` 整组）。「失败」= 拉取结果不是 ok，含到期提示与被限流（页面说明里写明）。

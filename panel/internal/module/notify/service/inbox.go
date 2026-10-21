@@ -15,14 +15,13 @@ const (
 	EventRetentionDays = 400
 )
 
-// preferenceCatalog 是固定 6 项通知偏好目录（顺序固定）。
+// preferenceCatalog 是固定 5 项通知偏好目录（顺序固定）。营销类只有后台群发邮件（registry 的 admin.broadcast），没有 Telegram 一格；库里有 CHECK notification_preferences_marketing_email_only 兜底（迁移 00065）。
 var preferenceCatalog = []Preference{
 	{Category: "transactional", Channel: "email", Enabled: true, Locked: true},
 	{Category: "transactional", Channel: "telegram", Enabled: true, Locked: true},
 	{Category: "service", Channel: "email", Enabled: true},
 	{Category: "service", Channel: "telegram", Enabled: true},
 	{Category: "marketing", Channel: "email", Enabled: true},
-	{Category: "marketing", Channel: "telegram", Enabled: true},
 }
 
 func validPreference(category, channel string) bool {
@@ -69,7 +68,7 @@ func (s *Service) MarkAllInboxRead(ctx context.Context, userID uuid.UUID) error 
 	return err
 }
 
-// Preferences 返回本人的有效通知偏好：固定 6 项，没改过的取缺省，交易类恒开且 Locked。
+// Preferences 返回本人的有效通知偏好：固定 5 项，没改过的取缺省，交易类恒开且 Locked。
 func (s *Service) Preferences(ctx context.Context, userID uuid.UUID) ([]Preference, error) {
 	stored, err := s.store.Preferences(ctx, userID)
 	if err != nil {

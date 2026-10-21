@@ -160,11 +160,11 @@ func TestPortalPreferences(t *testing.T) {
 	}
 
 	rec = ptlDo(e, http.MethodPut, "/v1/me/notification-preferences",
-		`{"category":"marketing","channel":"telegram","enabled":false}`)
+		`{"category":"service","channel":"telegram","enabled":false}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put status %d %s", rec.Code, rec.Body.String())
 	}
-	if fake.setPref == nil || fake.setPref.UserID != uid || fake.setPref.Category != "marketing" ||
+	if fake.setPref == nil || fake.setPref.UserID != uid || fake.setPref.Category != "service" ||
 		fake.setPref.Channel != "telegram" || fake.setPref.Enabled {
 		t.Fatalf("setPref %+v", fake.setPref)
 	}

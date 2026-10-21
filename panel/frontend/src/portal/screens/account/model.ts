@@ -95,17 +95,22 @@ export function passwordErrors(error: unknown): PasswordErrors {
 }
 
 // ---------------------------------------------------------------------------
-// 通知偏好：后端固定 3 类 × 2 渠道；同一类里的到期、流量、工单回复只能一起开关
+// 通知偏好：后端固定 5 项（3 类 × 2 渠道，营销类只发邮件）；同一类里的到期、流量、工单回复只能一起开关
 // ---------------------------------------------------------------------------
 export const PREF_CATEGORIES = ['transactional', 'service', 'marketing'] as const
 export const PREF_CHANNELS = ['email', 'telegram'] as const
 export type PrefCategory = (typeof PREF_CATEGORIES)[number]
 export type PrefChannel = (typeof PREF_CHANNELS)[number]
 
-export const PREF_ROWS: ReadonlyArray<{ category: PrefCategory; label: string; hint: string }> = [
-  { category: 'transactional', label: '交易通知', hint: '支付成功等，不能关' },
-  { category: 'service', label: '服务提醒', hint: '到期、流量、工单回复' },
-  { category: 'marketing', label: '活动与群发', hint: '优惠活动、站点群发' },
+export const PREF_ROWS: ReadonlyArray<{
+  category: PrefCategory
+  label: string
+  hint: string
+  channels: ReadonlyArray<PrefChannel>
+}> = [
+  { category: 'transactional', label: '交易通知', hint: '支付成功等，不能关', channels: ['email', 'telegram'] },
+  { category: 'service', label: '服务提醒', hint: '到期、流量、工单回复', channels: ['email', 'telegram'] },
+  { category: 'marketing', label: '活动与群发', hint: '优惠活动、站点群发，只发邮件', channels: ['email'] },
 ]
 
 // ---------------------------------------------------------------------------

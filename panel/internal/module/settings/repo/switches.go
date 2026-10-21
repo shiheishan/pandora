@@ -9,10 +9,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ListSwitches 按 essential 降序、code 升序返回全部开关。
+// ListSwitches 按 code 升序返回全部开关。
 func (r *Repo) ListSwitches(ctx context.Context) ([]model.FeatureSwitch, error) {
 	var out []model.FeatureSwitch
-	if err := r.d.Conn(ctx).Order("essential DESC, code").Find(&out).Error; err != nil {
+	if err := r.d.Conn(ctx).Order("code").Find(&out).Error; err != nil {
 		return nil, err
 	}
 	if out == nil {
