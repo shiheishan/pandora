@@ -33,7 +33,8 @@ func runningBalance(t AccountType, credits, debits decimal.Decimal) decimal.Deci
 	return credits.Sub(debits)
 }
 
-// UserBalanceEntries 返回某用户可用余额科目（user_balance）的一页流水，新的在前；与门户钱包 MyWallet 是同一批分录。
+// UserBalanceEntries 返回某用户可用余额科目（user_balance）的一页流水，新的在前（按分录 id，即真实记账顺序，见 repo.BalanceEntries）；
+// 与门户钱包 MyWallet 是同一批分录、同一顺序。
 // 后台只读；从没有过余额往来的用户回空页。
 func (s *Service) UserBalanceEntries(ctx context.Context, userID uuid.UUID, limit, offset int) (BalanceEntryPage, error) {
 	rows, total, err := s.repo.BalanceEntries(ctx, userID, string(UserBalance), limit, offset)

@@ -87,6 +87,12 @@ func TestBalanceEntries(t *testing.T) {
 	if rows[1].Kind != "balance_hold" || !rows[1].CreditsThrough.Equal(amt10) || !rows[1].DebitsThrough.Equal(amt3) {
 		t.Fatalf("冻结行: %+v", rows[1])
 	}
+	// 排序依据：分录 id 是库里插入时生成的 uuidv7（按 id 排 = 真实记账顺序的前提）
+	for _, row := range rows {
+		if row.ID.Version() != 7 {
+			t.Fatalf("分录 id 应是 uuidv7，得 v%d %s", row.ID.Version(), row.ID)
+		}
+	}
 	if rows[1].SourceType == nil || *rows[1].SourceType != "order" {
 		t.Fatalf("冻结来源: %+v", rows[1].SourceType)
 	}

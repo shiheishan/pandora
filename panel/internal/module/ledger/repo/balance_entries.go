@@ -23,26 +23,36 @@ type BalanceEntryRow struct {
 	Total          int64           `gorm:"column:total"`
 }
 
-// BalanceEntries 读用户某类科目的一页分录（新的在前，与 History 同序：分录 created_at DESC, id DESC），并返回该科目分录总数。
+// BalanceEntries 读用户某类科目的一页分录（新的在前，与 History 同序：分录 id DESC），并返回该科目分录总数。
+//
 // 变动后余额 = 开户以来本科目贷方合计 − 借方合计（user_balance 是贷方科目），一条语句用窗口函数拿到，与这一页同一快照。
-// 每次扫这个用户该科目的全部分录（按 ledger_entries_account_idx），后台只读、单人量级，可以接受。
+// 窗口与分页都按分录 id：id 是插入时生成的 uuidv7，插入在拿到科目行锁之后（service.post），id 顺序就是真实的记账顺序，
+// 每行的变动后余额都是科目真实出现过的值、不会为负（科目余额有非负约束）；按 created_at（事务开始时刻）排，
+// 早开事务、晚拿锁的那笔会排到前面，算出没出现过、甚至为负的中间值。
+// 窗口、计数与分页只在 ledger_entries 上算，只给当前页（≤ 上限条）连交易表。
+// 每次要把这个用户该科目的全部分录排一遍（过滤走 ledger_entries_account_idx），后台只读、单人量级，可以接受。
 func (r *Repo) BalanceEntries(ctx context.Context, userID uuid.UUID, accountType string, limit, offset int) ([]BalanceEntryRow, int64, error) {
 	const sql = `
-WITH running AS (
-  SELECT e.id, e.created_at, t.kind, e.direction, e.amount, t.memo, t.source_type, t.source_id, t.occurred_at,
-         coalesce(sum(e.amount) FILTER (WHERE e.direction = 'credit') OVER w, 0) AS credits_through,
-         coalesce(sum(e.amount) FILTER (WHERE e.direction = 'debit') OVER w, 0) AS debits_through,
-         count(*) OVER () AS total
-    FROM ledger_entries e
-    JOIN ledger_transactions t ON t.id = e.transaction_id
-   WHERE e.account_id = (SELECT id FROM ledger_accounts
-                          WHERE account_type = ? AND owner_user_id = ? AND owner_ref = '')
-  WINDOW w AS (ORDER BY e.created_at, e.id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+WITH page AS (
+  SELECT id, transaction_id, direction, amount, credits_through, debits_through, total
+    FROM (
+      SELECT e.id, e.transaction_id, e.direction, e.amount,
+             coalesce(sum(e.amount) FILTER (WHERE e.direction = 'credit') OVER w, 0) AS credits_through,
+             coalesce(sum(e.amount) FILTER (WHERE e.direction = 'debit') OVER w, 0) AS debits_through,
+             count(*) OVER () AS total
+        FROM ledger_entries e
+       WHERE e.account_id = (SELECT id FROM ledger_accounts
+                              WHERE account_type = ? AND owner_user_id = ? AND owner_ref = '')
+      WINDOW w AS (ORDER BY e.id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+    ) running
+   ORDER BY id DESC
+   LIMIT ? OFFSET ?
 )
-SELECT id, kind, direction, amount, credits_through, debits_through, memo, source_type, source_id, occurred_at, total
-  FROM running
- ORDER BY created_at DESC, id DESC
- LIMIT ? OFFSET ?`
+SELECT p.id, t.kind, p.direction, p.amount, p.credits_through, p.debits_through,
+       t.memo, t.source_type, t.source_id, t.occurred_at, p.total
+  FROM page p
+  JOIN ledger_transactions t ON t.id = p.transaction_id
+ ORDER BY p.id DESC`
 
 	var rows []BalanceEntryRow
 	if err := r.d.Conn(ctx).Raw(sql, accountType, userID, limit, offset).Scan(&rows).Error; err != nil {
@@ -53,6 +63,7 @@ SELECT id, kind, direction, amount, credits_through, debits_through, memo, sourc
 		return rows, rows[0].Total, nil
 	}
 
+	// 翻过头了（窗口里拿不到总数）才另查一次总数
 	if offset > 0 {
 		const countSQL = `
 SELECT count(*)
