@@ -45,11 +45,11 @@ function sumNet(from: number, to: number, pick: 'net' | 'actual' | 'adjustment' 
 // ---------------------------------------------------------------------------
 const GiB = 1024n ** 3n
 const USER_ROWS = [
-  { user_id: '1a2b3c41-0000-4000-8000-000000000001', email_masked: 'z***@qq.com', gb: 312n, subs: 1 },
-  { user_id: '1a2b3c42-0000-4000-8000-000000000002', email_masked: 'k***@proton.me', gb: 268n, subs: 2 },
-  { user_id: '1a2b3c43-0000-4000-8000-000000000003', email_masked: 'w***@163.com', gb: 221n, subs: 1 },
-  { user_id: '1a2b3c44-0000-4000-8000-000000000004', email_masked: 'm***@gmail.com', gb: 189n, subs: 1 },
-  { user_id: '1a2b3c45-0000-4000-8000-000000000005', email_masked: 'y***@outlook.com', gb: 152n, subs: 3 },
+  { user_id: '1a2b3c41-0000-4000-8000-000000000001', email_masked: 'z***@example.net', gb: 312n, subs: 1 },
+  { user_id: '1a2b3c42-0000-4000-8000-000000000002', email_masked: 'k***@mail.example.net', gb: 268n, subs: 2 },
+  { user_id: '1a2b3c43-0000-4000-8000-000000000003', email_masked: 'w***@example.org', gb: 221n, subs: 1 },
+  { user_id: '1a2b3c44-0000-4000-8000-000000000004', email_masked: 'm***@example.com', gb: 189n, subs: 1 },
+  { user_id: '1a2b3c45-0000-4000-8000-000000000005', email_masked: 'y***@mail.example.com', gb: 152n, subs: 3 },
   { user_id: '1a2b3c46-0000-4000-8000-000000000006', email_masked: '***', gb: 97n, subs: 1 },
 ] as const
 

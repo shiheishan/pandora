@@ -210,6 +210,8 @@ func buildServices(r *runtime) (*services, error) {
 	identitySvc.UseVerificationMailer(notifySvc)
 	auditSvc.UseActorDirectory(identitySvc)
 	auditSvc.UseResourceLabeler(identitysvc.ResourceUser, identitySvc.UserLabels)
+	auditSvc.UseResourceLabeler(catalogsvc.ResourcePlan, catalogSvc.PlanLabels)
+	auditSvc.UseResourceLabeler(catalogsvc.ResourcePlanVersion, catalogSvc.PlanVersionLabels)
 	// promo 经 identity 取用户组与邮箱、经适配器取 catalog 的在售价格
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})

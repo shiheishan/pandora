@@ -2,6 +2,7 @@
 paths:
   - "panel/frontend/dev/**"
   - "panel/frontend/tests/mock-*.ts"
+  - "panel/frontend/tests/seed-emails.test.ts"
 ---
 
 # 面板前端：开发期假后端（dev/）
@@ -32,11 +33,14 @@ paths:
   - 风控聚类 `computeClusters` 和用户画像 `profileOf` 都由审计行算：近 90 天、操作者是用户、按 ip_hash 分组；画像经 `setProfileSource` 交给 users.ts 的 profile 路由；复核结论按 ip_hash 存在 `reviews`
   - 每个用户只从自己的 `homeIp(i)` / `mobileIp(i)` 出现，共用 IP 只来自 `CLUSTER_SCENES`；pending 账号没有登录行，`tick` 只让 active 账号登录成功
   - 场景：k.liu（`userStore[1]`）最后成功登录在两天前，之后是机房 IP 发起、对象是他的匿名 `user.login_failed`（种子和 tick 都按 10 分钟去重）；tomato2（`userStore[25]`）和 tomato、tomato3 共用机房 IP 203.0.113.45，聚类和画像都是高风险
-  - 套餐审计（`plan_version.publish` / `plan.usage_update`）由 plans-store 的版本生成；拉取结果只有迁移 00017 的五种，UA 族照 `render.UAFamily`
+  - 套餐审计：种子（`plan_version.publish` / `plan.usage_update`）由 plans-store 的版本生成；运行中 `plans.ts` 的每个写接口成功时照 catalog 的 `ActionPlan*` / `ActionVersionPublish` 记一条（新建带 `publish: true` 先 `plan.create` 再 `plan_version.publish`，对象 `plan_version`；空操作不记）。别的模块要记后台审计都经 `security.ts` 导出的 `recordAdminAudit(ctx, ev)`（单向 import，security.ts 不 import 调用方）；拉取结果只有迁移 00017 的五种，UA 族照 `render.UAFamily`
+  - 溯源总览（`admin/security-trace.ts` 的 `traceRoutes(deps)`，security.ts 把 `audit`、`fetches`、`geoOf`、`uaFamily`、`userStore` 与写 `security.source_ip_viewed` 的回调传进去）每次读时由审计行与拉取日志现算，口径照 identity `trace.go` / `trace_merge.go` 与两路 `trace_reads.go` 的 SQL：审计一路只算带 ip_hash、操作者 user / anonymous 的行，按明文 IP 合并两路（存量行无明文、不进合并）；账号排行的候选照 `traceAccountSortPair`。与 Go 不同处：数据量小，两路不截头部（Go 每路 5000 个 IP / 100 个用户，超了 `distinct_ips_approx`），所以 `distinct_ips_approx` 恒为 false；地区取归属地前两段模拟 Country + Region；「显示」令牌是 `mock-` + base64url(`秒|管理员 id|IP`)，不加密，只校验签发人与 2 小时有效期。守卫 `tests/mock-admin-security-trace.test.ts`
   - 读访问日志、聚类列表、用户画像都不记 `security.source_ip_viewed`（照 Go，用户 10-21 定），只有溯源「显示」记
+  - 用户画像照 Go 的 `userProfileResponse` 仍带 `events`（本人作为操作者的审计），后台页面不读它；要删得先删 Go 的字段，假后端跟着删
   - 守卫：`tests/mock-admin-security.test.ts`、`tests/mock-admin-security-profile.test.ts`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - 种子只造库里真有的状态与字段（迁移里的 CHECK）：订阅 active / expired，订单 5 态（不做退款，没有退款态与 refunded_amount），意图 requires_action / succeeded / cancelled / expired，收款只有 succeeded，节点服务状态没有 draining；Go 已删的键不吐。种子里的域名一律用保留域（`example.test`、`example.com`），IP 用文档段
+  - 邮箱（含打码的 `k***@…`）只用 RFC 2606 / 6761 保留域：`example.com` / `.net` / `.org` 及其子域、`.example`、`.test`、`.invalid`、`.localhost`；dev/ 与 tests/ 下（含 `dev/prototype` 样稿）以及 src/ 下的单测（`*.test.ts(x)`）一律适用，守卫 `tests/seed-emails.test.ts`（白名单 `RESERVED`；例外表 `EXCEPTIONS` 只有样稿里「禁止 Gmail 别名」的说明示例）。注册邮箱后缀白名单（`signup-settings.ts` 的 `email_suffixes`）是照 Go `defaultSignupEmailSuffixes` 的产品缺省，不是邮箱，不在此列
 - 节点补齐 Xboard 的部分（标签、流量上限与重置、时段倍率、中转、ECH、批量修改）在 `admin/nodes-xb.ts`：状态挂在 `Node.xb` 上，路由由 `xbRoutes(deps)` 生成、经 nodes.ts 展开；它只被 nodes.ts import（不反向 import，避免成环），要用 nodes.ts 的校验与写入（池、倍率、状态边）就经 `deps` 传进来
   - 中转、ECH、手动重置都不动节点的 `row_version`（Go 里中转与 ECH 是别的表，重置只改用量列）；批量修改先把所有节点校验完再一起写，模拟整批回滚
   - 种子演示：「香港 02 · IPLC」两条中转与时段倍率，「洛杉矶 01」超限（不下发），末尾「法兰克福 01 · ECH」已开 ECH；「新加坡 02」保持「心跳超时仍下发」的演示，不叠超限

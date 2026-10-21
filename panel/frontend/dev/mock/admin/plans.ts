@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult, MockRoute } from '../types.ts'
 import { deliverableNodesInPool } from './nodes.ts'
 import { activeNodesInPool, pools } from './nodes-infra.ts'
+import { recordAdminAudit } from './security.ts'
 import {
   autoCode,
   detail,
@@ -338,6 +339,10 @@ const routes: Record<string, MockRoute> = {
       }
 
       plans.push(newPlan)
+      recordAdminAudit(ctx, { action: 'plan.create', resource_type: 'plan', resource_id: planId })
+      if (willPublish) {
+        recordAdminAudit(ctx, { action: 'plan_version.publish', resource_type: 'plan_version', resource_id: versionId })
+      }
       return { status: 201, body: { plan: detail(newPlan) } }
     })
   },
@@ -359,6 +364,7 @@ const routes: Record<string, MockRoute> = {
       p.name = basic.name
       p.description = basic.description
       p.row_version += 1
+      recordAdminAudit(ctx, { action: 'plan.update', resource_type: 'plan', resource_id: p.id })
       return { status: 200, body: { plan: detail(p) } }
     })
   },
@@ -403,6 +409,7 @@ const routes: Record<string, MockRoute> = {
       p.allow_upgrade = salesInput.allow_upgrade
       p.recommended = salesInput.recommended
       p.row_version += 1
+      recordAdminAudit(ctx, { action: 'plan.sales_update', resource_type: 'plan', resource_id: p.id })
       return { status: 200, body: { plan: detail(p) } }
     })
   },
@@ -429,6 +436,7 @@ const routes: Record<string, MockRoute> = {
         p.reset_limit = null
       }
       p.row_version += 1
+      recordAdminAudit(ctx, { action: 'plan.reset_update', resource_type: 'plan', resource_id: p.id })
       return { status: 200, body: { plan: detail(p) } }
     })
   },
@@ -544,6 +552,7 @@ const routes: Record<string, MockRoute> = {
       if (changes > 0) {
         p.prices = newPricesList
         p.row_version += 1
+        recordAdminAudit(ctx, { action: 'plan.prices_update', resource_type: 'plan', resource_id: p.id })
       }
       return { status: 200, body: { plan: detail(p) } }
     })
@@ -569,6 +578,7 @@ const routes: Record<string, MockRoute> = {
       if (beforeSorted !== nextSorted) {
         p.pool_ids = parsedPools.ids
         p.row_version += 1
+        recordAdminAudit(ctx, { action: 'plan.pools_update', resource_type: 'plan', resource_id: p.id })
       }
       return { status: 200, body: { plan: detail(p) } }
     })
@@ -614,6 +624,7 @@ const routes: Record<string, MockRoute> = {
         p.versions.unshift(newDraft)
       }
       p.row_version += 1
+      recordAdminAudit(ctx, { action: 'plan.usage_update', resource_type: 'plan', resource_id: p.id })
       return { status: 200, body: { plan: detail(p) } }
     })
   },
@@ -656,6 +667,7 @@ const routes: Record<string, MockRoute> = {
         p.status = 'active'
       }
       p.row_version += 1
+      recordAdminAudit(ctx, { action: 'plan_version.publish', resource_type: 'plan_version', resource_id: versionId })
       return { status: 200, body: { plan: detail(p) } }
     })
   },
@@ -672,6 +684,7 @@ const routes: Record<string, MockRoute> = {
 
       p.status = 'archived'
       p.row_version += 1
+      recordAdminAudit(ctx, { action: 'plan.archive', resource_type: 'plan', resource_id: p.id })
       return { status: 200, body: { plan: detail(p) } }
     })
   },

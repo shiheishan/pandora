@@ -460,7 +460,7 @@
           <div class="ev"><i class="d"></i><div><span class="k">订单</span>新订单 <span class="mono">#20261016-0412</span> 已支付 ¥45.00</div><small>刚刚</small></div>
           <div class="ev"><i class="d"></i><div><span class="k">工单</span>「香港节点晚上很慢」有新回复</div><small>2 分钟</small></div>
           <div class="ev"><i class="d"></i><div><span class="k">节点</span>JP-TYO-03 心跳超时</div><small>6 分钟</small></div>
-          <div class="ev read"><i class="d"></i><div><span class="k">订阅</span>k.liu@gmail.com 续费了专业版</div><small>21 分钟</small></div>
+          <div class="ev read"><i class="d"></i><div><span class="k">订阅</span>k.liu@example.com 续费了专业版</div><small>21 分钟</small></div>
         </div>
       </div>
       <button class="ib" aria-label="这一页怎么看"><svg class="i"><use href="#i-help"/></svg></button>
@@ -559,7 +559,7 @@
   <div class="dh">用户详情<span class="sp"></span><button class="ib" aria-label="更多"><svg class="i"><use href="#a-more"/></svg></button><button class="ib" id="dclose" aria-label="关闭"><svg class="i"><use href="#a-x"/></svg></button></div>
   <div class="dbody">
     <div class="dtop">
-      <div class="who"><span class="av" id="d-av">K</span><div><h2 id="d-mail">k.liu@gmail.com</h2><div class="idl"><span class="mono" id="d-id">1a2b3c42</span><svg class="i" style="width:13px;height:13px"><use href="#a-copy"/></svg><span class="st ok"><span>正常</span></span></div></div></div>
+      <div class="who"><span class="av" id="d-av">K</span><div><h2 id="d-mail">k.liu@example.com</h2><div class="idl"><span class="mono" id="d-id">1a2b3c42</span><svg class="i" style="width:13px;height:13px"><use href="#a-copy"/></svg><span class="st ok"><span>正常</span></span></div></div></div>
       <div class="dact"><button class="btn sec sm">续费这一份</button><button class="btn sec sm">加流量</button><button class="btn sec sm">调整余额</button></div>
     </div>
     <div class="dtabs"><button class="on">资料</button><button>订阅与设备</button><button>订单与余额</button><button>风控</button></div>
@@ -577,7 +577,7 @@
     </div>
     <div class="dsec">
       <h4>登录与联系</h4>
-      <div class="kv"><span>邮箱</span><span>k.liu@gmail.com <span class="pill green" style="height:18px;font-size:11px">已验证</span></span><a href="#users">修改</a></div>
+      <div class="kv"><span>邮箱</span><span>k.liu@example.com <span class="pill green" style="height:18px;font-size:11px">已验证</span></span><a href="#users">修改</a></div>
       <div class="kv"><span>Telegram</span><span class="muted">未绑定</span><span></span></div>
       <div class="kv"><span>最近登录</span><span>50 分钟前 · 7 天内 2 个 IP</span><span></span></div>
       <div class="kv"><span>用户组</span><span>VIP</span><a href="#users">调整</a></div>
@@ -591,10 +591,10 @@
   <div class="palette" role="dialog" aria-label="搜索">
     <div class="pin"><svg class="i"><use href="#i-search"/></svg><input id="k-in" value="zhang" aria-label="搜索" /><kbd>Esc</kbd></div>
     <div class="pg">用户</div>
-    <div class="po on"><svg class="i"><use href="#a-users"/></svg><b>zhang.wei@qq.com</b><small>标准版 · 30 天后到期</small></div>
-    <div class="po"><svg class="i"><use href="#a-users"/></svg><b>zhangmin@foxmail.com</b><small>已过期</small></div>
+    <div class="po on"><svg class="i"><use href="#a-users"/></svg><b>zhang.wei@example.net</b><small>标准版 · 30 天后到期</small></div>
+    <div class="po"><svg class="i"><use href="#a-users"/></svg><b>zhangmin@mail.example.test</b><small>已过期</small></div>
     <div class="pg">订单</div>
-    <div class="po"><svg class="i"><use href="#i-card"/></svg><b class="mono">#20261015-0388</b>zhang.wei@qq.com<small>已支付 ¥45.00</small></div>
+    <div class="po"><svg class="i"><use href="#i-card"/></svg><b class="mono">#20261015-0388</b>zhang.wei@example.net<small>已支付 ¥45.00</small></div>
     <div class="pg">跳到</div>
     <div class="po"><svg class="i"><use href="#a-users"/></svg><b>用户</b>› 批量运营</div>
     <div class="pf"><span><kbd>↑</kbd><kbd>↓</kbd>选择</span><span><kbd>↵</kbd>打开</span><span><kbd>Esc</kbd>关闭</span></div>
@@ -728,15 +728,15 @@
   document.getElementById('rank').innerHTML = RANK.map(([cc, n, v, p, d]) => `<div class="rk"><i class="fill" style="width:${(p / 28.8) * 100}%"></i><span class="cc">${cc}</span><span>${n}</span><span class="vv">${v}</span><span class="dd ${d[0] === '+' ? 'up' : 'down'}">${d}</span></div>`).join('')
 
   const U = [
-    ['zhang.wei@qq.com', '1a2b3c41', '默认', '标准版', '30 天后到期', '0 B', '200 GB', 0, '¥0.00', '0/3', 'ok', '正常', '3 分钟'],
-    ['k.liu@gmail.com', '1a2b3c42', 'VIP', '专业版', '27 天后到期', '185 GB', '500 GB', 37, '¥13.75', '5/5', 'ok', '正常', '50 分钟', 'full'],
-    ['wu.qing@163.com', '1a2b3c43', '默认', '流量畅用 500G', '永久有效', '120 GB', '500 GB', 24, '¥27.50', '1/3', 'ok', '正常', '1 小时'],
-    ['m.chen@outlook.com', '1a2b3c44', '默认', '短期 100G', '25 天后到期', '30.0 GB', '100 GB', 30, '¥41.25', '0/3', 'ok', '正常', '2 小时'],
-    ['yao_ops@proton.me', '1a2b3c45', '企业客户', '标准版', '18 天后到期', '96.0 GB', '200 GB', 48, '¥55.00', '0/3', 'ok', '正常', '3 小时'],
-    ['tomato@icloud.com', '1a2b3c46', '默认', '专业版', '27 天后到期', '410 GB', '500 GB', 82, '¥68.75', '0/10', 'ok', '正常', '从未'],
-    ['grace.h@foxmail.com', '0ceb4c14', 'VIP', '', '', '', '', -1, '¥82.50', '–', 'ok', '正常', '4 小时'],
-    ['lin.xiao@qq.com', 'c173b6bd', '默认', '体验版', '9 天后到期', '11.8 GB', '20.0 GB', 59, '¥96.25', '2/1', 'ok', '正常', '5 小时', 'over'],
-    ['sec.check@gmail.com', '5d0e9a20', '默认', '标准版', '已过期 3 天', '182 GB', '200 GB', 91, '¥0.00', '0/3', 'warn', '已过期', '6 天'],
+    ['zhang.wei@example.net', '1a2b3c41', '默认', '标准版', '30 天后到期', '0 B', '200 GB', 0, '¥0.00', '0/3', 'ok', '正常', '3 分钟'],
+    ['k.liu@example.com', '1a2b3c42', 'VIP', '专业版', '27 天后到期', '185 GB', '500 GB', 37, '¥13.75', '5/5', 'ok', '正常', '50 分钟', 'full'],
+    ['wu.qing@example.org', '1a2b3c43', '默认', '流量畅用 500G', '永久有效', '120 GB', '500 GB', 24, '¥27.50', '1/3', 'ok', '正常', '1 小时'],
+    ['m.chen@mail.example.com', '1a2b3c44', '默认', '短期 100G', '25 天后到期', '30.0 GB', '100 GB', 30, '¥41.25', '0/3', 'ok', '正常', '2 小时'],
+    ['yao_ops@mail.example.net', '1a2b3c45', '企业客户', '标准版', '18 天后到期', '96.0 GB', '200 GB', 48, '¥55.00', '0/3', 'ok', '正常', '3 小时'],
+    ['tomato@mail.example.org', '1a2b3c46', '默认', '专业版', '27 天后到期', '410 GB', '500 GB', 82, '¥68.75', '0/10', 'ok', '正常', '从未'],
+    ['grace.h@mail.example.test', '0ceb4c14', 'VIP', '', '', '', '', -1, '¥82.50', '–', 'ok', '正常', '4 小时'],
+    ['lin.xiao@example.net', 'c173b6bd', '默认', '体验版', '9 天后到期', '11.8 GB', '20.0 GB', 59, '¥96.25', '2/1', 'ok', '正常', '5 小时', 'over'],
+    ['sec.check@example.com', '5d0e9a20', '默认', '标准版', '已过期 3 天', '182 GB', '200 GB', 91, '¥0.00', '0/3', 'warn', '已过期', '6 天'],
     ['spam.bot@example.test', '77f1aa02', '默认', '体验版', '已过期 12 天', '0 B', '20.0 GB', 0, '¥0.00', '0/1', 'bad', '已禁用', '12 天'],
   ]
   document.getElementById('ulist').innerHTML = U.map(([m, id, g, p, e, used, cap, pct, bal, dev, st, stl, last, devFlag]) => `<tr tabindex="0">

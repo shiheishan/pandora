@@ -149,12 +149,12 @@ function build(): CommissionState {
   // multi：邀请码有使用上限且已用满
   const maxUses = s === 'multi' ? 6 : null
   const invitees = [
-    { email: 'me***@gmail.com', bound_at: ago(3), risk_flag: 'none' as const },
-    { email: 'ha***@icloud.com', bound_at: ago(4), risk_flag: 'none' as const },
-    { email: 'to***@qq.com', bound_at: ago(8), risk_flag: 'none' as const },
-    { email: 'k.***@outlook.com', bound_at: ago(31), risk_flag: 'suspicious' as const },
-    { email: 'ya***@163.com', bound_at: ago(42), risk_flag: 'confirmed_fraud' as const },
-    { email: 'li***@proton.me', bound_at: ago(72), risk_flag: 'none' as const },
+    { email: 'me***@example.com', bound_at: ago(3), risk_flag: 'none' as const },
+    { email: 'ha***@mail.example.org', bound_at: ago(4), risk_flag: 'none' as const },
+    { email: 'to***@example.net', bound_at: ago(8), risk_flag: 'none' as const },
+    { email: 'k.***@mail.example.com', bound_at: ago(31), risk_flag: 'suspicious' as const },
+    { email: 'ya***@example.org', bound_at: ago(42), risk_flag: 'confirmed_fraud' as const },
+    { email: 'li***@mail.example.net', bound_at: ago(72), risk_flag: 'none' as const },
   ]
   const codeStatus: InviteCodeFixture['status'] = maxUses !== null && invitees.length >= maxUses ? 'exhausted' : 'active'
   const codes: InviteCodeFixture[] = [
@@ -176,14 +176,14 @@ function build(): CommissionState {
     withdrawMethods: ['alipay', 'usdt_trc20', 'usdt_erc20'],
     invitees,
     entries: [
-      entry(2, 1_180, 'pending', 'me***@gmail.com', 4101, 5),
-      entry(6, 2_780, 'available', 'to***@qq.com', 4087),
-      entry(12, 1_580, 'pending', 'ha***@icloud.com', 4050, -2, 1, 100, true),
+      entry(2, 1_180, 'pending', 'me***@example.com', 4101, 5),
+      entry(6, 2_780, 'available', 'to***@example.net', 4087),
+      entry(12, 1_580, 'pending', 'ha***@mail.example.org', 4050, -2, 1, 100, true),
       // 第 2 级：后端不给上级看下线邮箱，from 为空
       entry(29, 980, 'available', '', 3962, -1, 2, 30),
-      entry(40, 1_980, 'voided', 'ya***@163.com', 3890),
-      entry(50, 19_800, 'available', 'to***@qq.com', 3811),
-      entry(70, 5_000, 'available', 'li***@proton.me', 3702),
+      entry(40, 1_980, 'voided', 'ya***@example.org', 3890),
+      entry(50, 19_800, 'available', 'to***@example.net', 3811),
+      entry(70, 5_000, 'available', 'li***@mail.example.net', 3702),
     ],
     withdrawals,
     transfers: [{ ledger_txn_id: randomUUID(), amount: 5_000, created_at: ago(24) }],

@@ -99,16 +99,16 @@ function seed(
 }
 
 const rows: Row[] = [
-  seed(4821, '香港节点晚高峰丢包严重', 'wu.qing@163.com', '标准版', 'technical', 'high', 'open', 18, [
+  seed(4821, '香港节点晚高峰丢包严重', 'wu.qing@example.org', '标准版', 'technical', 'high', 'open', 18, [
     msg('user', null, '每天 9 点到 11 点，HK-HKG-01 丢包大概 15%，看视频卡顿。换了 JP 节点正常。', 18),
   ]),
-  seed(4820, '订阅链接在 Clash 中导入失败', 'tomato@sina.com', '家庭版', 'technical', 'normal', 'open', 62, [msg('user', null, 'Clash Verge 提示「解析失败」，截图附上。', 62)], {
+  seed(4820, '订阅链接在 Clash 中导入失败', 'tomato@example.test', '家庭版', 'technical', 'normal', 'open', 62, [msg('user', null, 'Clash Verge 提示「解析失败」，截图附上。', 62)], {
     assigned_to: STAFF[0].id,
   }),
   seed(
     4818,
     '支付宝付款后订单仍显示待支付',
-    'lin.xiao@foxmail.com',
+    'lin.xiao@mail.example.test',
     '标准版',
     'billing',
     'urgent',
@@ -126,7 +126,7 @@ const rows: Row[] = [
   seed(
     4815,
     '想把套餐从标准版升级到专业版',
-    'grace.h@icloud.com',
+    'grace.h@mail.example.org',
     '专业版',
     'subscription',
     'low',
@@ -135,11 +135,11 @@ const rows: Row[] = [
     [msg('user', null, '剩余天数可以折算吗？', 300), msg('agent', '周敏', '可以，按剩余价值折算后补差价。需要我帮您操作吗？', 270)],
     { assigned_to: STAFF[0].id },
   ),
-  seed(4812, '账号被盗，登录记录里有陌生 IP', 'sec.check@outlook.com', null, 'account', 'high', 'open', 7 * 60, [msg('user', null, '昨晚收到异地登录提醒，我已经改了密码。', 7 * 60)]),
+  seed(4812, '账号被盗，登录记录里有陌生 IP', 'sec.check@mail.example.com', null, 'account', 'high', 'open', 7 * 60, [msg('user', null, '昨晚收到异地登录提醒，我已经改了密码。', 7 * 60)]),
   seed(
     4809,
     '设备数超限无法登录',
-    'k.liu@proton.me',
+    'k.liu@mail.example.net',
     '家庭版',
     'account',
     'normal',
@@ -152,7 +152,7 @@ const rows: Row[] = [
     ],
     { resolved_at: at(25 * 60) },
   ),
-  seed(4801, '误提交，已自己解决', 'mira@gmail.com', '标准版', 'general', 'low', 'closed', 50 * 60, [msg('user', null, '不好意思，已经可以用了。', 50 * 60), msg('system', null, '用户撤回了工单', 49 * 60)], {
+  seed(4801, '误提交，已自己解决', 'mira@example.com', '标准版', 'general', 'low', 'closed', 50 * 60, [msg('user', null, '不好意思，已经可以用了。', 50 * 60), msg('system', null, '用户撤回了工单', 49 * 60)], {
     closed_reason: 'withdrawn',
   }),
   // support:auto_close：客服回复后用户 24 小时没动静，系统自动关闭
