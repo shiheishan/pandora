@@ -60,6 +60,9 @@ describe('mock api · admin notifications and hooks', () => {
     expect((await call('POST', '/v1/mail/templates/reset', { code: 'admin.broadcast', channel: 'email' })).status).toBe(404)
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
     expect(await json(await call('POST', '/v1/mail/templates/test', { code: t.code, channel: 'email', to: 'me@example.test' }))).toMatchObject({ error: { code: 'reauth_required' } })
+    // 保存、恢复默认与 Go 一样要近期重认证（用户 10-21 定）
+    expect(await json(await call('POST', '/v1/mail/templates', { code: t.code, channel: t.channel, subject: 'x', body: 'y' }))).toMatchObject({ error: { code: 'reauth_required' } })
+    expect(await json(await call('POST', '/v1/mail/templates/reset', { code: t.code, channel: t.channel }))).toMatchObject({ error: { code: 'reauth_required' } })
   })
 
   it('upserts hooks, hands out a generated secret once and rejects private endpoints', async () => {

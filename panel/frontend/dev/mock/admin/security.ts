@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 import { plans } from './plans-store.ts'
-import { setProfileSource, userStore, type ProfileViewer, type User } from './users.ts'
+import { setProfileSource, userStore, type User } from './users.ts'
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -321,7 +321,8 @@ const CLUSTER_SCENES: ReadonlyArray<{ ip: string; members: number[]; lastMin: nu
     } else if (mod === 10) {
       seed({ ...base, ...staffRow, action: 'subscription.extended', resource_type: 'subscription', resource_id: randomUUID(), reason: '线路故障补偿', auth_context: 'reauth', at })
     } else {
-      seed({ ...base, ...staffRow, action: 'security.source_ip_viewed', resource_type: 'user', resource_id: t.id, auth_context: 'session', at })
+      // 溯源「显示」明文 IP（Go 只这一处记 source_ip_viewed，对象为空）
+      seed({ ...base, ...staffRow, action: 'security.source_ip_viewed', resource_type: null, resource_id: null, auth_context: 'session', at })
     }
   }
 
@@ -699,24 +700,6 @@ function accessAuditItem(r: AuditRow): AccessItem & { occurred_at: string } {
   }
 }
 
-function recordSourceIpViewed(ctx: MockContext) {
-  record({
-    actor_kind: 'admin',
-    actor_id: ctx.user.userId,
-    actor_email: ctx.user.email,
-    action: 'security.source_ip_viewed',
-    resource_type: null,
-    resource_id: null,
-    resource_label: null,
-    api_domain: 'admin',
-    outcome: 'success',
-    reason: null,
-    auth_context: ctx.reauthed ? 'reauth' : 'session',
-    source_ip: ADMIN_IP,
-    user_agent: BROWSER,
-  })
-}
-
 function accessList(ctx: MockContext): MockResult {
   const q = ctx.query
   const lim = Number((q.get('limit') ?? '').trim())
@@ -904,7 +887,7 @@ function coAccountIds(ipHash: string, sinceMs: number): Set<string> {
   return ids
 }
 
-function profileOf(u: User, viewer: ProfileViewer) {
+function profileOf(u: User) {
   const sinceMs = Date.now() - CLUSTER_WINDOW
   const mine = audit.filter((r) => r.actor_id === u.id)
 
@@ -994,22 +977,6 @@ function profileOf(u: User, viewer: ProfileViewer) {
 
   const weekAgo = Date.now() - 7 * DAY
   const fetch_sources_7d = new Set(myFetches.filter((f) => Date.parse(f.at) > weekAgo).map((f) => f.ip)).size
-
-  record({
-    actor_kind: 'admin',
-    actor_id: viewer.id,
-    actor_email: viewer.email,
-    action: 'security.source_ip_viewed',
-    resource_type: 'user',
-    resource_id: u.id,
-    resource_label: null,
-    api_domain: 'admin',
-    outcome: 'success',
-    reason: null,
-    auth_context: 'session',
-    source_ip: ADMIN_IP,
-    user_agent: BROWSER,
-  })
 
   return {
     events,
@@ -1290,7 +1257,6 @@ export const security: MockModule = {
     'GET /v1/access-log': (ctx) => {
       tick()
       const r = accessList(ctx)
-      if (r.status === 200) recordSourceIpViewed(ctx)
       reply(ctx, r)
     },
 
@@ -1301,7 +1267,6 @@ export const security: MockModule = {
         .filter((c) => all || c.review?.decision !== 'normal' || (c.review.expires_at !== null && Date.parse(c.review.expires_at) <= now))
         .slice(0, 50)
         .map(clusterJson)
-      recordSourceIpViewed(ctx)
       ctx.send(200, { clusters: rows })
     },
 

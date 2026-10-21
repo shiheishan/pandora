@@ -25,13 +25,6 @@ const (
 	ClusterDisabled = "disabled"
 )
 
-// 后台查看明文来源 IP 的页面（审计 security.source_ip_viewed 的 data.view）。
-const (
-	ViewUserProfile = "user_profile"
-	ViewAccessLog   = "access_log"
-	ViewIPClusters  = "ip_clusters"
-)
-
 // Activity 是一个用户作为操作者的审计画像；IP 都是解封后的明文（解不开为空串），切片永不为 nil。
 type Activity struct {
 	// RegisteredIP 是注册（action = user.registered、操作者是本人）那条审计的来源 IP

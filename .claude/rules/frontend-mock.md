@@ -23,9 +23,18 @@ paths:
 - 路由按 `ADMIN_MODULES` / `PORTAL_MODULES` 的登记顺序、模块内按键的顺序匹配，先匹配先得（`types.ts` 的 `findRoute`）。字面段路由要排在同形的 `:param` 路由之前，例如 `admin/tickets.ts` 的 `GET /v1/tickets/assignees` 在 `:id` 之前
 - 跨模块的数据只有一份，各有属主：
   - 属主：用户与订阅归 `admin/users.ts`（`userStore`），订单归 `admin/billing-store.ts`，节点池与出站归 `admin/nodes-infra.ts`
-  - 被依赖的一方要反过来取数时，经 `setOrderSource` / `setPoolSource` / `setDanglingSource` 登记，不要反向 import（会成环），也不要复制种子
+  - 被依赖的一方要反过来取数时，经 `setOrderSource` / `setPoolSource` / `setDanglingSource` / `setProfileSource`（用户画像由 `admin/security.ts` 登记）登记，不要反向 import（会成环），也不要复制种子
   - 页面上「同口径」的数字靠这份共享数据成立：仪表盘的超时未支付 = 订单页待支付筛选（`stalePendingCount`），按池在线数 = 节点池列表（`activeNodesInPool`）
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
+- 安全与运维（`admin/security.ts`）照 Go 由审计行现算，不写死结果：
+  - 审计行带内部 `ip_hash`（直接用 IP 串；存量行 source_ip 为 null 但 ip_hash 仍在；早于 30 天的种子按存量写）；对象可读名读时由 `labelOf` 解析，只有用户（邮箱）和工单（工单号）
+  - 搜索照 Go：动作包含；邮箱反查出的 id 命中操作人或「对象是这个用户」；整串等于对象 id 或操作人 id。操作者类型只有 user / admin / system / anonymous；动作代号只用 Go 写的（对照 `security/logic.ts` 的 `ACTION_NAMES`）
+  - 风控聚类 `computeClusters` 和用户画像 `profileOf` 都由审计行算：近 90 天、操作者是用户、按 ip_hash 分组；画像经 `setProfileSource` 交给 users.ts 的 profile 路由；复核结论按 ip_hash 存在 `reviews`
+  - 每个用户只从自己的 `homeIp(i)` / `mobileIp(i)` 出现，共用 IP 只来自 `CLUSTER_SCENES`；pending 账号没有登录行，`tick` 只让 active 账号登录成功
+  - 场景：k.liu（`userStore[1]`）最后成功登录在两天前，之后是机房 IP 发起、对象是他的匿名 `user.login_failed`（种子和 tick 都按 10 分钟去重）；tomato2（`userStore[25]`）和 tomato、tomato3 共用机房 IP 203.0.113.45，聚类和画像都是高风险
+  - 套餐审计（`plan_version.publish` / `plan.usage_update`）由 plans-store 的版本生成；拉取结果只有迁移 00017 的五种，UA 族照 `render.UAFamily`
+  - 读访问日志、聚类列表、用户画像都不记 `security.source_ip_viewed`（照 Go，用户 10-21 定），只有溯源「显示」记
+  - 守卫：`tests/mock-admin-security.test.ts`、`tests/mock-admin-security-profile.test.ts`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - 种子只造库里真有的状态与字段（迁移里的 CHECK）：订阅 active / expired，订单 5 态（不做退款，没有退款态与 refunded_amount），意图 requires_action / succeeded / cancelled / expired，收款只有 succeeded，节点服务状态没有 draining；Go 已删的键不吐。种子里的域名一律用保留域（`example.test`、`example.com`），IP 用文档段
 - 节点补齐 Xboard 的部分（标签、流量上限与重置、时段倍率、中转、ECH、批量修改）在 `admin/nodes-xb.ts`：状态挂在 `Node.xb` 上，路由由 `xbRoutes(deps)` 生成、经 nodes.ts 展开；它只被 nodes.ts import（不反向 import，避免成环），要用 nodes.ts 的校验与写入（池、倍率、状态边）就经 `deps` 传进来

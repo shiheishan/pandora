@@ -58,7 +58,7 @@ paths:
 - 搜索框（`Filter.Query` → `repo.Query.Text`）：动作 ILIKE 包含；邮箱包含反查出的用户 id（`ActorDirectory.IDsByEmail`，存 `TextUserIDs`）命中 `actor_id IN` 或 `resource_type = 'user' AND resource_id IN`（别人对他的操作、冲着他的匿名登录失败都能搜到）；整串是 uuid 时 `resource_id =` 或 `actor_id =`（用户详情「看审计记录」传用户 id 跳过来，只搜这一个人，不走邮箱包含匹配混进别人）。对象名（套餐名、节点名）不能搜：可读名只有登记了 labeler 的类型（目前 user → 邮箱、ticket → 工单号），其余前端显示「类型 · id 前 8 位」。守卫 `service/query_pg_test.go` 的 `TestListQueryMatchesUserAsResource`。
 - 访问明细 `AccessEvents`（`service/ops.go`、`repo/ops.go`）：`FilterActors` 时只看 `ActorIDs` 这些操作者；再带 `TargetActions` 时这些动作另按对象匹配（`resource_type = 'user' AND resource_id = ANY(ActorIDs)`，identity 用它把匿名的 `user.login_failed` 挂到被试账号上）；行里带 `ResourceType`（没有为空串）与 `ResourceID`。守卫 `service/ops_pg_test.go` 的 `TestAccessEventsTargetActionsPG`。
 - 自由文本列（邮箱、标签、reason 等）过 `csvSafe`；对外复用 `CSVSafe`（identity 用户导出）。单测 `service/csv_test.go` 的 `TestCsvSafe`。
-- 后台查看明文来源 IP 前记审计：`RecordSourceIPView` → `security.source_ip_viewed`，`data.view` 用 `ViewUserProfile` / `ViewAccessLog` / `ViewIPClusters`（`service/ops_types.go`）；例如 `panel/internal/module/identity/service/ops_access.go` 的 `AccessLog` 在返回列表前先记一条，`data` 里带查询条件。
+- `RecordSourceIPView` → `security.source_ip_viewed` 只给溯源总览「显示」明文 IP 用（`data.view` = `ViewTrace`，见下一节）。访问日志、聚类列表、用户画像的读取不记（用户 10-21 定）。
 - 路由：`audit/handler/handler.go` 导出要 `k.RecentReauth`。
 
 ## audit 给 report 的读模型

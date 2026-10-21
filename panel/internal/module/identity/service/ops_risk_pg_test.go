@@ -83,8 +83,9 @@ func TestPGUserProfile(t *testing.T) {
 	if len(prof.Fetches) != 1 || prof.FetchSources7d != fs.sources {
 		t.Fatalf("fetches %+v sources=%d", prof.Fetches, prof.FetchSources7d)
 	}
-	if e.auditCount(ctx, "security.source_ip_viewed", u1) != 1 {
-		t.Fatal("source ip viewed audit")
+	// 用户 10-21 定：读画像不记「看了 IP」审计（只有溯源「显示」明文那一处记）
+	if e.auditCount(ctx, "security.source_ip_viewed", u1) != 0 {
+		t.Fatal("读画像不该记 source_ip_viewed")
 	}
 	if prof.Risk != "mid" {
 		t.Fatalf("prof.Risk %q", prof.Risk)

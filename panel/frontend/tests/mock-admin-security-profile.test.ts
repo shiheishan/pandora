@@ -117,16 +117,17 @@ describe('mock api · admin security scenarios', () => {
     expect(p.registered_ip).not.toBe('')
   })
 
-  it('returns 404 for unknown users and logs source_ip_viewed on profile read', async () => {
+  it('returns 404 for unknown users and does not log source_ip_viewed on profile read', async () => {
     const missing = await mockFetch(base, auth, 'GET', '/v1/users/00000000-0000-4000-8000-000000000000/profile')
     expect(missing.status).toBe(404)
+    // 用户 10-21 定：读画像、访问日志、聚类不记「看了 IP」，只有溯源「显示」明文记
+    const before = (await audit('?action=security.source_ip_viewed&limit=200')).length
     await profile(at(2).id)
-    expect((await audit('?action=security.source_ip_viewed&limit=5'))[0]).toMatchObject({
-      actor_email: MOCK_ACCOUNTS.admin.email,
-      resource_type: 'user',
-      resource_id: at(2).id,
-      resource_label: at(2).email,
-    })
+    await mockFetch(base, auth, 'GET', '/v1/access-log?limit=5')
+    await mockFetch(base, auth, 'GET', '/v1/ip-clusters')
+    const after = await audit('?action=security.source_ip_viewed&limit=200')
+    expect(after.length).toBe(before)
+    expect(after.some((r) => r.resource_id === at(2).id)).toBe(false)
   })
 
   it('matches plan publish audit rows to plans-store published versions', async () => {

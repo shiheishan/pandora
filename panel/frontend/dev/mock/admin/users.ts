@@ -89,11 +89,7 @@ export const exclusivePoolsOf = (groupId: string) => poolSource(groupId)
 
 // 用户画像（GET v1/users/:id/profile）由审计与订阅拉取算出，数据归 security.ts：它经 setProfileSource 登记回来，
 // 与审计日志、访问日志、风控聚类是同一份数据；没登记时回空画像（形状照 identity/handler 的 userProfileResponse）
-export interface ProfileViewer {
-  id: string
-  email: string
-}
-type ProfileSource = (u: User, viewer: ProfileViewer) => Record<string, unknown>
+type ProfileSource = (u: User) => Record<string, unknown>
 let profileSource: ProfileSource = () => ({ events: [], ips: [], related: [], fetches: [], fetch_sources_7d: 0, registered_ip: '', risk: '' })
 export function setProfileSource(fn: ProfileSource): void {
   profileSource = fn
@@ -498,7 +494,7 @@ const users_: MockModule = {
     'GET /v1/users/:id/profile': (ctx) => {
       const u = findUser(ctx)
       if (!u) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
-      ctx.send(200, profileSource(u, { id: ctx.user.userId, email: ctx.user.email }))
+      ctx.send(200, profileSource(u))
     },
 
     // ---- 写 -----------------------------------------------------------------

@@ -214,23 +214,6 @@ func (s *Service) AccessLog(ctx context.Context, q AccessLogQuery) ([]AccessItem
 		}
 	}
 
-	filter := map[string]any{"limit": limit, "offset": offset}
-	if category != "" {
-		filter["category"] = category
-	}
-	if outcome != "" {
-		filter["outcome"] = outcome
-	}
-	if ip != "" {
-		filter["ip"] = ip
-	}
-	if user != "" {
-		filter["user"] = user
-	}
-	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewAccessLog, nil, filter); err != nil {
-		return nil, err
-	}
-
 	items := make([]AccessItem, 0, len(audits)+len(fetches))
 	for _, a := range audits {
 		items = append(items, AccessItem{

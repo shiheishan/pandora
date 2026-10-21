@@ -529,10 +529,10 @@ func TestRecordSourceIPViewPG(t *testing.T) {
 	actx := adminCtx(ctx, admin)
 	u := uuid.New()
 
-	if err := svc.RecordSourceIPView(actx, ViewUserProfile, &u, nil); err != nil {
+	if err := svc.RecordSourceIPView(actx, ViewTrace, &u, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.RecordSourceIPView(actx, ViewAccessLog, nil, map[string]any{"limit": 50}); err != nil {
+	if err := svc.RecordSourceIPView(actx, ViewTrace, nil, map[string]any{"masked": "203.0.*.*"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -555,13 +555,13 @@ func TestRecordSourceIPViewPG(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("行数 %d want 2", len(got))
 	}
-	if got[0].View != ViewUserProfile {
+	if got[0].View != ViewTrace {
 		t.Fatalf("第一行 view %q", got[0].View)
 	}
 	if got[0].ResourceID == nil || *got[0].ResourceID != u {
 		t.Fatalf("第一行 resource_id %v", got[0].ResourceID)
 	}
-	if got[1].View != ViewAccessLog {
+	if got[1].View != ViewTrace {
 		t.Fatalf("第二行 view %q", got[1].View)
 	}
 	if got[1].ResourceID != nil {

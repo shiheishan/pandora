@@ -214,7 +214,7 @@ func (s *Service) MarkClusterDisabled(ctx context.Context, key, note string) (uu
 	return id, nil
 }
 
-// RecordSourceIPView 记录后台查看明文来源 IP 的审计。
+// RecordSourceIPView 记录后台查看明文来源 IP 的审计：只有溯源总览「显示」用（view = ViewTrace）；访问日志、聚类、画像的读取用户 10-21 定不记。
 func (s *Service) RecordSourceIPView(ctx context.Context, view string, userID *uuid.UUID, filter map[string]any) error {
 	data := filter
 	if data == nil {

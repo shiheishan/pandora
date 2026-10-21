@@ -29,9 +29,6 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 	if err != nil {
 		return UserProfile{}, err
 	}
-	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewUserProfile, &userID, nil); err != nil {
-		return UserProfile{}, err
-	}
 
 	out := UserProfile{
 		Events:         []ProfileEvent{},
@@ -125,13 +122,6 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 func (s *Service) IPClusters(ctx context.Context, includeReviewed bool) ([]IPCluster, error) {
 	clusters, err := s.ops.IPClusters(ctx, includeReviewed)
 	if err != nil {
-		return nil, err
-	}
-	filter := map[string]any{
-		"include_reviewed": includeReviewed,
-		"clusters":         len(clusters),
-	}
-	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewIPClusters, nil, filter); err != nil {
 		return nil, err
 	}
 
