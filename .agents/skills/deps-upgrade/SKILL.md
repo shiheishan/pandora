@@ -85,7 +85,7 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 
 | 地方 | 依赖的标准库或 x/net 行为 | 守卫 |
 |---|---|---|
-| naive 入站：`kernel/naive.go`（`http.Server.Protocols` 开 HTTP/1 与 h2） | net/http 的 CONNECT 与 HTTP/2。1.26.9 后，错误口令的 CONNECT 回 502，不再回落 | `kernel/probe_resistance_test.go` 的 `TestNaiveProbesServeFallback` |
+| naive 入站：`kernel/naive.go`（`http.Server.Protocols` 开 HTTP/1 与 h2） | net/http 的 CONNECT 与 HTTP/2。1.26.9 起 `httputil.ReverseProxy` 对 CONNECT 一律走 ErrorHandler，回落改由 `probeFallbackConnect` 转发（见 pdnd-kernel 规则文件） | `kernel/probe_resistance_test.go` 的 `TestNaiveProbesServeFallback` |
 | 防探测回落：`kernel/probe_fallback.go`（x/net 的 `http2.Server.ServeConn`，理由见代码注释；升 Go 1.27 时 ServeConn 改由 net/http 实现，到时重采 HTTP/2 指纹再看能不能换掉）、`probe_fallback_http.go`（`httputil.ReverseProxy`） | 回落站点的 HTTP/1.1、HTTP/2 响应形状 | 同一文件里的其余测试：Reality / TLS / Trojan 回落、`TestParseProbeFallback` |
 | ShadowTLS 诱饵中继 | TLS 记录层与超时 | `internal/nativewire/shadowtls/service_test.go` |
 | REALITY over QUIC / H3 | `internal/reality` 与 `internal/realityquic` 对标准库 crypto 的引用 | `kernel` 的 `TestNativeRealityH3RoundTrip`、`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` |

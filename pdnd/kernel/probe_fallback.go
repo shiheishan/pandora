@@ -171,9 +171,9 @@ func serveFallbackHTTP(conn net.Conn, prefix []byte, h2 bool, handler http.Handl
 	}
 	if h2 {
 		// 仍用 x/net 的 ServeConn（已标弃用）：wrapped 不是 *tls.Conn，net/http 只能按明文 HTTP/2
-		// 接，那条路先等齐客户端前言才发 SETTINGS，前言不对就直接关；真 Go 服务端（与 nginx）握完
-		// 就发 SETTINGS，前言不对也是先有 SETTINGS 再断，探测方能据此分辨。Go 1.27 起 ServeConn
-		// 由 net/http 实现，届时再看能不能换。
+		// 接，那条路要等齐客户端的 24 字节前言才发 SETTINGS；真 Go 服务端（与 nginx）握完 TLS 就发，
+		// 探测方发半截前言就能分辨（守卫 TestProbeFallbackH2SettingsBeforeFullPreface）。Go 1.27 起
+		// ServeConn 由 net/http 实现，届时再看能不能换。
 		(&http2.Server{IdleTimeout: neutralHTTPIdleTimeout}).ServeConn(wrapped, &http2.ServeConnOpts{BaseConfig: base, Handler: handler}) //nolint:staticcheck // 理由见上
 		_ = wrapped.Close()
 		return
