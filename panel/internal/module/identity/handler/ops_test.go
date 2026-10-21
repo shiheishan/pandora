@@ -120,13 +120,14 @@ func (f *opsFake) UserProfile(_ context.Context, id uuid.UUID) (service.UserProf
 		}},
 		IPs: []service.ProfileIP{{
 			IP: "203.0.113.10", Count: 2, First: at, Last: at, Accounts: 1,
+			Geo: "测试", NetworkKind: "datacenter", Risk: "high",
 		}},
 		Related: []service.UserRef{},
 		Fetches: []service.FetchRecord{{
 			IP: "203.0.113.11", UserAgent: "fetch-ua", Family: "clash",
 			Result: "ok", Format: "yaml", At: at,
 		}},
-		FetchSources7d: 1, RegisteredIP: "203.0.113.1",
+		FetchSources7d: 1, RegisteredIP: "203.0.113.1", Risk: "high",
 	}, nil
 }
 
@@ -142,6 +143,10 @@ func (f *opsFake) AccessLog(_ context.Context, q service.AccessLogQuery) ([]serv
 			UserAgent: "ua", Outcome: "success", At: fullAt,
 		},
 		{Category: "other", At: minAt},
+		{
+			Category: "login", Action: "user.login_failed", TargetUserID: &uid, TargetUserEmail: "u@example.test",
+			IP: "203.0.113.21", Outcome: "failure", At: minAt,
+		},
 	}, nil
 }
 
@@ -442,7 +447,7 @@ func TestOpsUserProfileShape(t *testing.T) {
 		t.Fatalf("profile id %v", f.lastProfile)
 	}
 	got := decodeMap(t, w.Body.Bytes())
-	assertKeys(t, got, "events", "fetch_sources_7d", "fetches", "ips", "registered_ip", "related")
+	assertKeys(t, got, "events", "fetch_sources_7d", "fetches", "ips", "registered_ip", "related", "risk")
 	related, _ := got["related"].([]any)
 	if related == nil || len(related) != 0 {
 		t.Fatalf("related %v", related)
@@ -450,7 +455,10 @@ func TestOpsUserProfileShape(t *testing.T) {
 	ev0, _ := got["events"].([]any)[0].(map[string]any)
 	assertKeys(t, ev0, "action", "at", "domain", "ip", "outcome", "ua")
 	ip0, _ := got["ips"].([]any)[0].(map[string]any)
-	assertKeys(t, ip0, "accounts", "count", "first", "ip", "last")
+	assertKeys(t, ip0, "accounts", "count", "first", "geo", "ip", "last", "network_kind", "risk")
+	if got["risk"] != "high" {
+		t.Fatalf("risk %v", got["risk"])
+	}
 	fx0, _ := got["fetches"].([]any)[0].(map[string]any)
 	assertKeys(t, fx0, "at", "family", "format", "ip", "result", "ua")
 
@@ -485,6 +493,9 @@ func TestOpsAccessLogShape(t *testing.T) {
 		"action", "category", "geo", "ip", "network_kind", "occurred_at", "outcome", "user_agent", "user_email", "user_id",
 	)
 	assertKeys(t, items[1].(map[string]any), "category", "occurred_at")
+	assertKeys(t, items[2].(map[string]any),
+		"action", "category", "ip", "occurred_at", "outcome", "target_user_email", "target_user_id",
+	)
 
 	_ = do(e, http.MethodGet, "/v1/access-log?limit=20&offset=40", "")
 	if f.lastAccess.Limit != 20 || f.lastAccess.Offset != 40 {

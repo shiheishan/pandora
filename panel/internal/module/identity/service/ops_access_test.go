@@ -3,6 +3,9 @@ package service
 import (
 	"slices"
 	"testing"
+
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
+	"github.com/google/uuid"
 )
 
 // 审计动作到展示分类的映射：按规则顺序取第一个命中的前缀，都不中归 other。
@@ -52,5 +55,96 @@ func TestAuditCategoryFilter(t *testing.T) {
 	}
 	if _, _, ok := auditCategoryFilter("nope"); ok {
 		t.Fatal("未知分类应 ok=false")
+	}
+}
+
+func TestAccessTarget(t *testing.T) {
+	uid := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	other := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	cases := []struct {
+		name string
+		a    auditsvc.AccessEvent
+		want *uuid.UUID
+	}{
+		{
+			name: "匿名登录失败对象 user",
+			a: auditsvc.AccessEvent{
+				Action:       actionLoginFailed,
+				ResourceType: "user",
+				ResourceID:   &uid,
+			},
+			want: &uid,
+		},
+		{
+			name: "有 ActorID 的同动作",
+			a: auditsvc.AccessEvent{
+				ActorID:      &uid,
+				Action:       actionLoginFailed,
+				ResourceType: "user",
+				ResourceID:   &uid,
+			},
+		},
+		{
+			name: "匿名 refresh_reuse 对象 user",
+			a: auditsvc.AccessEvent{
+				Action:       "session.refresh_reuse",
+				ResourceType: "user",
+				ResourceID:   &uid,
+			},
+		},
+		{
+			name: "匿名登录失败对象 session",
+			a: auditsvc.AccessEvent{
+				Action:       actionLoginFailed,
+				ResourceType: "session",
+				ResourceID:   &uid,
+			},
+		},
+		{
+			name: "匿名登录失败无 ResourceID",
+			a: auditsvc.AccessEvent{
+				Action:       actionLoginFailed,
+				ResourceType: "user",
+			},
+		},
+	}
+	for _, tc := range cases {
+		got := accessTarget(tc.a)
+		if tc.want == nil {
+			if got != nil {
+				t.Fatalf("%s: got %v", tc.name, got)
+			}
+			continue
+		}
+		if got == nil || *got != *tc.want {
+			t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+		if got == tc.a.ResourceID {
+			t.Fatalf("%s: 返回指针不应与入参 ResourceID 相同", tc.name)
+		}
+		*got = other
+		if *tc.a.ResourceID != uid {
+			t.Fatalf("%s: 改返回值不应影响入参", tc.name)
+		}
+	}
+}
+
+func TestHigherRisk(t *testing.T) {
+	cases := []struct {
+		name string
+		a    string
+		b    string
+		want string
+	}{
+		{name: "empty_low", a: "", b: "low", want: "low"},
+		{name: "mid_low", a: "mid", b: "low", want: "mid"},
+		{name: "low_high", a: "low", b: "high", want: "high"},
+		{name: "empty_empty", a: "", b: "", want: ""},
+		{name: "high_mid", a: "high", b: "mid", want: "high"},
+	}
+	for _, tc := range cases {
+		if got := higherRisk(tc.a, tc.b); got != tc.want {
+			t.Fatalf("%s: higherRisk(%q,%q)=%q want %q", tc.name, tc.a, tc.b, got, tc.want)
+		}
 	}
 }
