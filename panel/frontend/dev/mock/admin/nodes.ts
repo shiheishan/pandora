@@ -423,15 +423,16 @@ function detailRow(n: Node) {
 
 const ipIdentifier = (id: string | null): boolean => Boolean(id && (/^[0-9.]+$/.test(id) || id.includes(':')))
 
+/** 照 Go CertExpiringCond：证书快到期（IP 2 天、域名 14 天内） */
+function certExpiring(n: Node): boolean {
+  if (!n.cert || n.cert.not_after === null) return false
+  const horizon = (ipIdentifier(n.cert.identifier) ? 2 : 14) * 86400_000
+  return new Date(n.cert.not_after).getTime() < Date.now() + horizon
+}
+
 /** 照 Go CertAttentionNodes（指向 node/repo 的 CertAttentionBaseCond / CertFailingCond / CertExpiringCond） */
 export function certAttention(n: Node): boolean {
-  return Boolean(
-    n.serving_status === 'active' &&
-      n.cert !== null &&
-      (n.cert.error_code !== null ||
-        (n.cert.not_after !== null &&
-          new Date(n.cert.not_after).getTime() < Date.now() + (ipIdentifier(n.cert.identifier) ? 2 : 14) * 86400_000)),
-  )
+  return Boolean(n.serving_status === 'active' && n.cert !== null && (n.cert.error_code !== null || certExpiring(n)))
 }
 
 /** node/repo 的 nodeListFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
@@ -1052,4 +1053,87 @@ export const nodes: MockModule = {
       ctx.send(200, identityView(serverById(n.server_id)))
     },
   },
+}
+
+// ---------------------------------------------------------------------------
+// 仪表盘 / 总览：节点统计（对照 node/repo/report_reads.go）
+// ---------------------------------------------------------------------------
+
+const nodeDisplayName = (n: Node) => n.display_name || n.name
+
+/** 照 Go ReportNodeCounts：未删除且在役节点数；online 为心跳未超时的在役节点 */
+export function reportNodeCounts(): { total: number; online: number } {
+  const active = store.filter((n) => !n.deleted && n.serving_status === 'active')
+  const online = active.filter((n) => !heartbeatStale(hbOf(n))).length
+  return { total: active.length, online }
+}
+
+/** 照 Go OfflineNodes：在役且心跳超时，按心跳升序（无心跳排最后）、同序按 id */
+export function offlineNodes(limit: number): {
+  count: number
+  sample: Array<{ id: string; name: string }>
+  longest_offline_seconds: number | null
+} {
+  const rows = store
+    .filter((n) => !n.deleted && n.serving_status === 'active' && heartbeatStale(hbOf(n)))
+    .sort((a, b) => {
+      const ha = hbOf(a)
+      const hb = hbOf(b)
+      if (!ha && !hb) return a.id.localeCompare(b.id)
+      if (!ha) return 1
+      if (!hb) return -1
+      const cmp = ha.localeCompare(hb)
+      return cmp !== 0 ? cmp : a.id.localeCompare(b.id)
+    })
+  let longest: number | null = null
+  const withHb = rows.map((n) => hbOf(n)).filter((t): t is string => t !== null)
+  if (withHb.length > 0) {
+    const earliest = withHb.reduce((min, t) => (t < min ? t : min))
+    longest = Math.floor((Date.now() - new Date(earliest).getTime()) / 1000)
+  }
+  return {
+    count: rows.length,
+    sample: rows.slice(0, limit).map((n) => ({ id: n.id, name: nodeDisplayName(n) })),
+    longest_offline_seconds: rows.length === 0 ? null : longest,
+  }
+}
+
+/** 照 Go CertAttentionNodes：需关注的证书汇总（未删除） */
+export function certAttentionSummary(limit: number): {
+  count: number
+  failing: number
+  expiring: number
+  sample: Array<{ id: string; name: string }>
+} {
+  const rows = store.filter((n) => !n.deleted && certAttention(n))
+  const failing = rows.filter((n) => n.cert!.error_code !== null).length
+  const expiring = rows.filter((n) => certExpiring(n)).length
+  const sorted = [...rows].sort((a, b) => {
+    const na = a.cert!.not_after
+    const nb = b.cert!.not_after
+    if (na === null && nb === null) return a.id.localeCompare(b.id)
+    if (na === null) return -1
+    if (nb === null) return 1
+    const cmp = na.localeCompare(nb)
+    return cmp !== 0 ? cmp : a.id.localeCompare(b.id)
+  })
+  return {
+    count: rows.length,
+    failing,
+    expiring,
+    sample: sorted.slice(0, limit).map((n) => ({ id: n.id, name: nodeDisplayName(n) })),
+  }
+}
+
+/** 未删除且 24h 流量 > 0，按 traffic_bytes_24h 降序 */
+export function nodeTrafficRows(): Array<{ node_id: string; name: string; display_name: string | null; bytes_24h: number }> {
+  return store
+    .filter((n) => !n.deleted && n.traffic_bytes_24h > 0)
+    .sort((a, b) => b.traffic_bytes_24h - a.traffic_bytes_24h)
+    .map((n) => ({
+      node_id: n.id,
+      name: n.name,
+      display_name: n.display_name,
+      bytes_24h: n.traffic_bytes_24h,
+    }))
 }

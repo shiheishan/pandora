@@ -36,6 +36,32 @@ describe('mock api · admin nodes', () => {
     expect(nodeDetailResponse.parse(await (await call('GET', '/v1/nodes?id=00000000-0000-4000-8000-000000000000')).json())).toEqual({ nodes: [], total: 0 })
   })
 
+  it('dashboard node numbers come from the same node store (ids open real nodes)', async () => {
+    const all = await list()
+    const active = all.filter((n) => n.serving_status === 'active')
+    const online = active.filter((n) => !n.stale)
+    // dash/api.ts 带 React 运行时，node 侧的 tsconfig 编不了，这里按形状直接读
+    const ov = (await (await call('GET', '/v1/overview')).json()) as { nodes: { total: number; online: number } }
+    expect(ov.nodes).toEqual({ total: active.length, online: online.length })
+    const sys = (await (await call('GET', '/v1/system/status')).json()) as { components: Array<{ key: string; state: string; metrics: Record<string, number>; message?: string }> }
+    const fabric = sys.components.find((c) => c.key === 'node_fabric')!
+    expect(fabric).toMatchObject({ state: online.length < active.length ? 'warn' : 'ok', metrics: { total: active.length, online: online.length, config_lagging: 0 } })
+    // 照 Go：node_fabric 不写 message
+    expect(fabric.message ?? null).toBeNull()
+    const tasks = (await (await call('GET', '/v1/dashboard/tasks')).json()) as { items: Array<{ kind: string; count: number; sample?: Array<{ id: string; name: string }>; failing?: number; expiring?: number }> }
+    const offline = tasks.items.find((t) => t.kind === 'nodes_offline')!
+    expect(offline.count).toBe(active.length - online.length)
+    expect(offline.sample!.map((x) => x.name)).toEqual(['新加坡 02'])
+    const certs = tasks.items.find((t) => t.kind === 'node_certs')!
+    expect(certs).toMatchObject({ count: 2, failing: 1, expiring: 2 })
+    expect(certs.sample!.map((x) => x.name)).toEqual(['法兰克福 01 · ECH', '香港 02 · IPLC'])
+    const ids = new Set(all.map((n) => n.id))
+    expect([...offline.sample!, ...certs.sample!].every((x) => ids.has(x.id))).toBe(true)
+    const traffic = (await (await call('GET', '/v1/dashboard/traffic/nodes?range=24h&limit=10')).json()) as { items: Array<{ node_id: string }> }
+    expect(traffic.items.length).toBeGreaterThan(0)
+    expect(traffic.items.every((x) => ids.has(x.node_id))).toBe(true)
+  })
+
   it('searches, filters and pages on the server like GET /v1/nodes', async () => {
     const page = async (query: string) => nodesResponse.parse(await (await call('GET', `/v1/nodes?${query}`)).json())
     const all = await page('state=all')
