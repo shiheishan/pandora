@@ -18,6 +18,7 @@ func sampleHome() Home {
 	return Home{
 		SiteName: "夜海加速",
 		Tagline:  "虚构的测试站",
+		Signup:   SignupOpen,
 		Intro:    "第一段\n\n第二段",
 		Plans: []HomePlan{
 			{
@@ -79,6 +80,9 @@ func TestRenderHomeStructure(t *testing.T) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "ph-cta-note") {
+		t.Fatalf("open signup must not contain ph-cta-note:\n%s", out)
+	}
 
 	noPlans := sampleHome()
 	noPlans.Plans = nil
@@ -95,17 +99,87 @@ func TestRenderHomeStructure(t *testing.T) {
 	}
 }
 
-func TestRenderHomeLogo(t *testing.T) {
-	good := renderHome(sanitizeHome(Home{SiteName: "夜海加速", Logo: "data:image/png;base64,AAAA"}))
-	if !strings.Contains(good, `<img class="ph-logo" src="data:image/png;base64,AAAA"`) {
-		t.Fatalf("data logo missing: %s", good)
+func TestRenderHomeSignup(t *testing.T) {
+	cases := []struct {
+		name     string
+		home     Home
+		contains []string
+		omits    []string
+	}{
+		{
+			name: "open",
+			home: func() Home {
+				h := sampleHome()
+				h.Signup = SignupOpen
+				return h
+			}(),
+			contains: []string{`href="#/register"`, `aria-label="购买入门版"`},
+			omits:    []string{"ph-cta-note", "登录后购买"},
+		},
+		{
+			name: "invite",
+			home: func() Home {
+				h := sampleHome()
+				h.Signup = SignupInvite
+				return h
+			}(),
+			contains: []string{`href="#/register"`, "注册需要邀请码，可向好友要", `aria-label="购买入门版"`},
+			omits:    []string{"登录后购买"},
+		},
+		{
+			name: "closed",
+			home: Home{
+				SiteName: "夜海加速",
+				Tagline:  "虚构的测试站",
+				Plans:    sampleHome().Plans,
+				FAQ:      sampleHome().FAQ,
+			},
+			contains: []string{"注册已关闭，已有账号请直接登录", `aria-label="登录后购买入门版"`, `href="#/login"`},
+			omits:    []string{"#/register", ">注册<"},
+		},
 	}
-	for _, logo := range []string{"javascript:alert(1)", "https://evil.test/x.png"} {
-		out := renderHome(sanitizeHome(Home{SiteName: "夜海加速", Logo: logo}))
-		if strings.Contains(out, "<img") {
-			t.Fatalf("logo %q must not produce img: %s", logo, out)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := renderHome(sanitizeHome(tc.home))
+			assertNoActiveContent(t, out)
+			if strings.Contains(out, "<img") {
+				t.Fatalf("must not contain <img: %s", out)
+			}
+			for _, s := range tc.contains {
+				if !strings.Contains(out, s) {
+					t.Fatalf("missing %q in:\n%s", s, out)
+				}
+			}
+			for _, s := range tc.omits {
+				if strings.Contains(out, s) {
+					t.Fatalf("unexpected %q in:\n%s", s, out)
+				}
+			}
+		})
+	}
+
+	t.Run("invalid_signup_defaults_to_closed", func(t *testing.T) {
+		h := sampleHome()
+		h.Signup = Signup(99)
+		san := sanitizeHome(h)
+		if san.Signup != SignupClosed {
+			t.Fatalf("expected SignupClosed, got %v", san.Signup)
 		}
-	}
+		out := renderHome(san)
+		assertNoActiveContent(t, out)
+		if strings.Contains(out, "<img") {
+			t.Fatalf("must not contain <img: %s", out)
+		}
+		if strings.Contains(out, "#/register") || strings.Contains(out, ">注册<") {
+			t.Fatalf("invalid signup must not contain register: %s", out)
+		}
+		if !strings.Contains(out, "注册已关闭，已有账号请直接登录") {
+			t.Fatalf("invalid signup must contain closed notice: %s", out)
+		}
+		if !strings.Contains(out, `aria-label="登录后购买入门版"`) {
+			t.Fatalf("invalid signup must contain login-to-buy aria-label: %s", out)
+		}
+	})
 }
 
 func TestHandlerWithHome(t *testing.T) {
