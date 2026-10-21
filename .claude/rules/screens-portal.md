@@ -21,6 +21,7 @@ paths:
 - 页面数据只经 `common/` 与外框 `portal/queries.ts` 的查询取，同一接口同一查询键；外框 schema 不够用时在 `queries.ts` 里写全，外框经 `select` 取自己的部分（订阅列表、佣金概况即如此），不另起查询键。
 - `common/` 只放多个门户页面共用的东西；只有一个页面用的放回该页面目录，后台也要用的提升到 `core/` 或 `ui/`，不让后台引用 `portal/screens/common`。
 - schema 按 Go 实际编码写严：无 omitempty 的字段必填（指针 / 可空列 nullable），只有 omitempty 的字段可选；页面对缺席做降级，而不是放宽 schema。实时失效只靠查询的 `meta.topics`。
+- 邀请返利页：`GET v1/me/invite` 的 `single_use` 为真（后台「邀请码永不失效」关闭，个人码用一次就失效、后端随即补一个新码）时，邀请链接下面写「每个邀请码只能邀请 1 人…」（`referral/model.ts` 的 `inviteUsage`），邀请码区多一行说明；站点关闭注册时那句优先。
 - 各页面的 schema 被 `panel/frontend/tests/mock-portal*.test.ts` 与 `tests/smoke/` 引用核对，改 schema 要一起跑、一起改。
 - 购买路径（我的套餐、选购、确认与付款、完成页、订单、钱包与兑换卡）的页面文字或结构改了，同改 `panel/frontend/tests/browser`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。
 - 日期显示统一按按日用量接口回的切日时区（`common/subscriptions.ts` 的 `timeZone` → `common/traffic.ts` 的 `formatDate`），与用量柱同一口径；拿不到时才退回浏览器本地时区。
