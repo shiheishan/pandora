@@ -7,7 +7,7 @@ import (
 
 func TestSlotMemo_读出再净化(t *testing.T) {
 	var m slotMemo
-	got := m.clean("portal.footer", `<p onclick="x()">hi</p><script>alert(1)</script>`)
+	got := m.clean("portal.plans.notice", `<p onclick="x()">hi</p><script>alert(1)</script>`)
 	if strings.Contains(got, "onclick") || strings.Contains(got, "script") {
 		t.Fatalf("仍含危险内容: %q", got)
 	}
@@ -18,7 +18,7 @@ func TestSlotMemo_读出再净化(t *testing.T) {
 
 func TestSlotMemo_原文不变用备忘_原文变了重算(t *testing.T) {
 	var m slotMemo
-	key := "portal.footer"
+	key := "portal.plans.notice"
 	rawA := `<p>alpha</p>`
 	cleanA := m.clean(key, rawA)
 
@@ -48,7 +48,7 @@ func TestSlotMemo_原文不变用备忘_原文变了重算(t *testing.T) {
 
 func TestSlotMemo_reset后重算(t *testing.T) {
 	var m slotMemo
-	key := "portal.footer"
+	key := "portal.plans.notice"
 	rawA := `<p>alpha</p>`
 	m.clean(key, rawA)
 
@@ -68,7 +68,7 @@ func TestSlotMemo_reset后重算(t *testing.T) {
 
 func TestSlotMemo_净化后为空(t *testing.T) {
 	var m slotMemo
-	if m.clean("portal.footer", `<script>alert(1)</script>`) != "" {
+	if m.clean("portal.plans.notice", `<script>alert(1)</script>`) != "" {
 		t.Fatal("纯 script 净化后应为空串")
 	}
 }

@@ -5,12 +5,6 @@
   color: var(--text);
 }
 
-.img {
-  display: block;
-  flex: none;
-  width: auto;
-}
-
 .word {
   font-family: var(--font-display);
   font-weight: 700;

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -16,19 +15,10 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
-var (
-	slugPattern    = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-	localePattern  = regexp.MustCompile(`^[a-z]{2,3}(?:-[A-Z]{2})?$`)
-	versionPattern = regexp.MustCompile(`^v?[0-9]+(?:\.[0-9]+){0,2}$`)
-)
+var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 var allowedKinds = map[string]bool{
 	"page": true, "kb_article": true, "tutorial": true, "legal": true,
-}
-
-var allowedPlatforms = map[string]bool{
-	"web": true, "windows": true, "macos": true, "linux": true,
-	"android": true, "ios": true,
 }
 
 func normalizePublishInput(in PublishInput) (PublishInput, error) {
@@ -38,16 +28,10 @@ func normalizePublishInput(in PublishInput) (PublishInput, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	in.Summary = strings.TrimSpace(in.Summary)
 	in.Body = strings.TrimSpace(in.Body)
-	in.Locale = strings.TrimSpace(in.Locale)
-	in.MinClientVersion = strings.TrimSpace(in.MinClientVersion)
-	in.MaxClientVersion = strings.TrimSpace(in.MaxClientVersion)
 	in.Visibility = strings.TrimSpace(in.Visibility)
 	in.Status = strings.TrimSpace(in.Status)
 	if in.Kind == "" {
 		in.Kind = DefaultKind
-	}
-	if in.Locale == "" {
-		in.Locale = DefaultLocale
 	}
 	if in.Visibility == "" {
 		in.Visibility = VisibilityAuthenticated
@@ -75,38 +59,13 @@ func normalizePublishInput(in PublishInput) (PublishInput, error) {
 	if n := utf8.RuneCountInString(in.Body); n < 10 || n > 100000 {
 		fields["body"] = "正文需在 10–100000 字之间"
 	}
-	if !localePattern.MatchString(in.Locale) {
-		fields["locale"] = "语言格式不正确"
-	}
 	if in.Visibility != VisibilityAuthenticated && in.Visibility != VisibilityInternal {
 		fields["visibility"] = "可见性必须是 authenticated / internal"
 	}
 	if in.Status != StatusDraft && in.Status != StatusPublished {
 		fields["status"] = "状态必须是 draft / published"
 	}
-	if in.MinClientVersion != "" && !versionPattern.MatchString(in.MinClientVersion) {
-		fields["min_client_version"] = "最低客户端版本格式不正确"
-	}
-	if in.MaxClientVersion != "" && !versionPattern.MatchString(in.MaxClientVersion) {
-		fields["max_client_version"] = "最高客户端版本格式不正确"
-	}
-	if in.MinClientVersion != "" && in.MaxClientVersion != "" && compareVersion(in.MinClientVersion, in.MaxClientVersion) > 0 {
-		fields["max_client_version"] = "最高客户端版本不能低于最低版本"
-	}
 
-	platformSeen := map[string]bool{}
-	in.TargetPlatforms = slicesSortedUnique(in.TargetPlatforms, func(raw string) (string, bool) {
-		value := strings.ToLower(strings.TrimSpace(raw))
-		if !allowedPlatforms[value] {
-			fields["target_platforms"] = "包含不支持的平台"
-			return value, false
-		}
-		if platformSeen[value] {
-			return value, false
-		}
-		platformSeen[value] = true
-		return value, true
-	})
 	planSeen := map[string]bool{}
 	validPlans := make([]string, 0, len(in.TargetPlanIDs))
 	for _, raw := range in.TargetPlanIDs {
@@ -141,50 +100,6 @@ func normalizePublishInput(in PublishInput) (PublishInput, error) {
 		return PublishInput{}, errs.Invalid(fields)
 	}
 	return in, nil
-}
-
-func slicesSortedUnique(values []string, normalize func(string) (string, bool)) []string {
-	out := make([]string, 0, len(values))
-	for _, raw := range values {
-		if value, ok := normalize(raw); ok {
-			out = append(out, value)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func versionVisible(minimum, maximum, actual string) bool {
-	if minimum == "" && maximum == "" {
-		return true
-	}
-	if actual == "" {
-		return false
-	}
-	return (minimum == "" || compareVersion(actual, minimum) >= 0) &&
-		(maximum == "" || compareVersion(actual, maximum) <= 0)
-}
-
-func compareVersion(a, b string) int {
-	parse := func(raw string) [3]int {
-		raw = strings.TrimPrefix(raw, "v")
-		parts := strings.Split(raw, ".")
-		var out [3]int
-		for i := 0; i < len(parts) && i < 3; i++ {
-			out[i], _ = strconv.Atoi(parts[i])
-		}
-		return out
-	}
-	left, right := parse(a), parse(b)
-	for i := range left {
-		if left[i] < right[i] {
-			return -1
-		}
-		if left[i] > right[i] {
-			return 1
-		}
-	}
-	return 0
 }
 
 // encodeList 把字符串列表编成 JSON 数组原文；nil 当空数组。
@@ -224,11 +139,7 @@ func toPage(m model.Page) Page {
 		Title:            m.Title,
 		Summary:          m.Summary,
 		Body:             m.Body,
-		Locale:           m.Locale,
 		SanitizerVersion: m.SanitizerVersion,
-		TargetPlatforms:  decodeList(m.TargetPlatforms),
-		MinClientVersion: m.MinClientVersion,
-		MaxClientVersion: m.MaxClientVersion,
 		TargetPlanIDs:    decodeList(m.TargetPlanIDs),
 		Visibility:       m.Visibility,
 		Status:           m.Status,

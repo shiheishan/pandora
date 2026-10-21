@@ -127,6 +127,10 @@ func (s *Service) SetSwitch(ctx context.Context, code string, enabled bool, reas
 			s.publishSwitchChange(ctx)
 		})
 		s.switchChanged(ctx, code, enabled)
+		// 注册总闸算进门户首页的注册方式
+		if code == SwitchAuthRegistration && sw.Enabled != enabled {
+			s.homeChanged(ctx)
+		}
 		return nil
 	})
 }

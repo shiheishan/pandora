@@ -18,14 +18,22 @@ import (
 const gib = 1024 * 1024 * 1024
 
 type fakeHomeSettings struct {
-	h   settingssvc.Home
-	err error
-	n   int
+	h      settingssvc.Home
+	err    error
+	n      int
+	reg    settingssvc.Registration
+	regErr error
+	regN   int
 }
 
 func (f *fakeHomeSettings) Home(context.Context) (settingssvc.Home, error) {
 	f.n++
 	return f.h, f.err
+}
+
+func (f *fakeHomeSettings) RegistrationPolicy(context.Context) (settingssvc.Registration, error) {
+	f.regN++
+	return f.reg, f.regErr
 }
 
 type fakeHomeCatalog struct {
@@ -175,6 +183,9 @@ func TestPortalHomeDisabled(t *testing.T) {
 	if catalog.n != 0 {
 		t.Fatalf("PortalCatalog calls = %d, want 0", catalog.n)
 	}
+	if settings.regN != 0 {
+		t.Fatalf("RegistrationPolicy calls = %d, want 0", settings.regN)
+	}
 }
 
 func TestPortalHomeCachesAndInvalidates(t *testing.T) {
@@ -186,24 +197,24 @@ func TestPortalHomeCachesAndInvalidates(t *testing.T) {
 	ctx := context.Background()
 
 	_, ok := p.Home(ctx)
-	if !ok || settings.n != 1 || catalog.n != 1 {
-		t.Fatalf("first read: ok=%v settings=%d catalog=%d", ok, settings.n, catalog.n)
+	if !ok || settings.n != 1 || catalog.n != 1 || settings.regN != 1 {
+		t.Fatalf("first read: ok=%v settings=%d catalog=%d reg=%d", ok, settings.n, catalog.n, settings.regN)
 	}
 	_, ok = p.Home(ctx)
-	if !ok || settings.n != 1 || catalog.n != 1 {
-		t.Fatalf("cached: settings=%d catalog=%d", settings.n, catalog.n)
+	if !ok || settings.n != 1 || catalog.n != 1 || settings.regN != 1 {
+		t.Fatalf("cached: settings=%d catalog=%d reg=%d", settings.n, catalog.n, settings.regN)
 	}
 
 	p.HomeSettingsChanged()
 	_, ok = p.Home(ctx)
-	if !ok || settings.n != 2 || catalog.n != 2 {
-		t.Fatalf("after invalidate: settings=%d catalog=%d", settings.n, catalog.n)
+	if !ok || settings.n != 2 || catalog.n != 2 || settings.regN != 2 {
+		t.Fatalf("after invalidate: settings=%d catalog=%d reg=%d", settings.n, catalog.n, settings.regN)
 	}
 
 	now = now.Add(31 * time.Second)
 	_, ok = p.Home(ctx)
-	if !ok || settings.n != 3 || catalog.n != 3 {
-		t.Fatalf("after ttl: settings=%d catalog=%d", settings.n, catalog.n)
+	if !ok || settings.n != 3 || catalog.n != 3 || settings.regN != 3 {
+		t.Fatalf("after ttl: settings=%d catalog=%d reg=%d", settings.n, catalog.n, settings.regN)
 	}
 }
 
@@ -236,14 +247,13 @@ func TestPortalHomeUsesPageMeta(t *testing.T) {
 	meta := fakePageMeta{m: appearancesvc.PageMeta{
 		SiteName: "虚构站点",
 		Tagline:  "虚构标语",
-		Logo:     "data:image/png;base64,xx",
 	}}
 	p := newPortalHome(settings, catalog, meta)
 	h, ok := p.Home(context.Background())
 	if !ok {
 		t.Fatal("expected home")
 	}
-	if h.SiteName != "虚构站点" || h.Tagline != "虚构标语" || h.Logo != meta.m.Logo {
+	if h.SiteName != "虚构站点" || h.Tagline != "虚构标语" {
 		t.Fatalf("meta: %+v", h)
 	}
 }
@@ -285,6 +295,50 @@ func (b *blockingHomeSettings) Home(context.Context) (settingssvc.Home, error) {
 		return settingssvc.Home{Enabled: true, Intro: "旧介绍"}, nil
 	}
 	return settingssvc.Home{Enabled: true, Intro: "新介绍"}, nil
+}
+
+func (b *blockingHomeSettings) RegistrationPolicy(context.Context) (settingssvc.Registration, error) {
+	return settingssvc.Registration{Mode: settingssvc.RegistrationOpen}, nil
+}
+
+func TestPortalHomeSignupMode(t *testing.T) {
+	cases := []struct {
+		mode string
+		want webapp.Signup
+	}{
+		{settingssvc.RegistrationOpen, webapp.SignupOpen},
+		{settingssvc.RegistrationInviteOnly, webapp.SignupInvite},
+		{settingssvc.RegistrationClosed, webapp.SignupClosed},
+		{"unknown", webapp.SignupClosed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			settings := &fakeHomeSettings{
+				h:   settingssvc.Home{Enabled: true},
+				reg: settingssvc.Registration{Mode: tc.mode},
+			}
+			p := newPortalHome(settings, &fakeHomeCatalog{}, fakePageMeta{m: appearancesvc.PageMeta{SiteName: "夜海加速"}})
+			h, ok := p.Home(context.Background())
+			if !ok {
+				t.Fatal("expected home")
+			}
+			if h.Signup != tc.want {
+				t.Fatalf("mode %q: got %v, want %v", tc.mode, h.Signup, tc.want)
+			}
+		})
+	}
+}
+
+func TestPortalHomeRegistrationErrorDegrades(t *testing.T) {
+	settings := &fakeHomeSettings{
+		h:      settingssvc.Home{Enabled: true},
+		regErr: errors.New("registration policy error"),
+	}
+	p := newPortalHome(settings, &fakeHomeCatalog{}, fakePageMeta{m: appearancesvc.PageMeta{SiteName: "夜海加速"}})
+	_, ok := p.Home(context.Background())
+	if ok {
+		t.Fatal("expected false when RegistrationPolicy errors")
+	}
 }
 
 func TestPortalHomeChangeDuringLoadServesNewValue(t *testing.T) {

@@ -1,7 +1,7 @@
-// 门户首页片段的内容：站点名、标语、Logo 取 appearance 的入口页快照（PageMeta，自己有缓存与失效），
-// 首页开关、介绍、常见问题取 settings，套餐与价格取 catalog 的匿名目录；
-// 后两样缓存进程内快照：入口页是门户最热的地址，不能每次打开都查库。
-// 成功缓存 30 秒，本进程保存首页设置后经 HomeSettingsChanged 立刻失效（套餐变动只靠 30 秒 TTL）；
+// 门户首页片段的内容：站点名、标语取 appearance 的入口页快照（PageMeta，自己有缓存与失效），
+// 首页开关、介绍、常见问题与注册方式（RegistrationPolicy，已算上 auth.registration 总闸）取 settings，
+// 套餐与价格取 catalog 的匿名目录；后几样缓存进程内快照：入口页是门户最热的地址，不能每次打开都查库。
+// 成功缓存 30 秒，本进程保存首页设置、注册方式或拨注册总闸后经 HomeSettingsChanged 立刻失效（套餐变动只靠 30 秒 TTL）；
 // 读失败缓存 5 秒、这段时间不出片段（照常回 SPA，不让 / 报错）；
 // 同一时刻只有一趟读库（singleflight），读库不跟随第一个调用者的取消，上限 2 秒。
 package app
@@ -30,6 +30,7 @@ import (
 // homeSettingsReader 是首页要的设置读取面；*settingssvc.Service 满足。
 type homeSettingsReader interface {
 	Home(ctx context.Context) (settingssvc.Home, error)
+	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
 }
 
 // homeCatalogReader 是首页要的套餐目录读取面；*catalogsvc.Service 满足。
@@ -37,7 +38,7 @@ type homeCatalogReader interface {
 	PortalCatalog(ctx context.Context, userID *uuid.UUID) ([]catalogsvc.OfferPlan, error)
 }
 
-// homePageMeta 是首页要的站点名、标语与 Logo；*appearancesvc.Service 满足。
+// homePageMeta 是首页要的站点名与标语；*appearancesvc.Service 满足。
 type homePageMeta interface {
 	PageMeta(ctx context.Context) appearancesvc.PageMeta
 }
@@ -51,6 +52,7 @@ const (
 // homeParts 是缓存的那部分：设置与套餐（站点名等每次从 PageMeta 取）。
 type homeParts struct {
 	enabled bool
+	signup  webapp.Signup
 	intro   string
 	faq     []webapp.HomeFAQ
 	plans   []webapp.HomePlan
@@ -105,7 +107,7 @@ func (p *portalHome) Home(ctx context.Context) (webapp.Home, bool) {
 	return webapp.Home{
 		SiteName: m.SiteName,
 		Tagline:  m.Tagline,
-		Logo:     m.Logo,
+		Signup:   parts.signup,
 		Intro:    parts.intro,
 		Plans:    parts.plans,
 		FAQ:      parts.faq,
@@ -150,6 +152,10 @@ func (p *portalHome) load(ctx context.Context) (homeParts, error) {
 	if !h.Enabled {
 		return homeParts{enabled: false}, nil
 	}
+	reg, err := p.settings.RegistrationPolicy(ctx)
+	if err != nil {
+		return homeParts{}, err
+	}
 	catalog, err := p.catalog.PortalCatalog(ctx, nil)
 	if err != nil {
 		return homeParts{}, err
@@ -160,10 +166,23 @@ func (p *portalHome) load(ctx context.Context) (homeParts, error) {
 	}
 	return homeParts{
 		enabled: true,
+		signup:  homeSignup(reg.Mode),
 		intro:   h.Intro,
 		faq:     faq,
 		plans:   homePlans(catalog),
 	}, nil
+}
+
+// homeSignup 把设置里的注册方式换成首页的注册入口；认不出的值按关闭，宁可不出注册入口。
+func homeSignup(mode string) webapp.Signup {
+	switch mode {
+	case settingssvc.RegistrationOpen:
+		return webapp.SignupOpen
+	case settingssvc.RegistrationInviteOnly:
+		return webapp.SignupInvite
+	default:
+		return webapp.SignupClosed
+	}
 }
 
 // homePlans 把匿名目录转成首页套餐卡：只列能新购、有价格的；文字照门户选购页的说法（portal/screens/common/catalog.ts）。

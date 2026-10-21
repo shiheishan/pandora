@@ -111,6 +111,7 @@ function EditorBody({ formId, target, onBusy, onClose }: { formId: string; targe
         {THEME_COLORS.map(([key, token, label]) => (
           <ColorRow key={key} colorKey={key} token={token} label={label} value={form.colors[key]} error={errors[`tokens.light.${token}`]} onChange={(v) => set('colors', { ...form.colors, [key]: v })} />
         ))}
+        <p className={css.hint}>深色模式的品牌色按这里的品牌色自动推出，保存时一并更新；其余深色颜色沿用来源主题。</p>
       </div>
     </form>
   )

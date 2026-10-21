@@ -54,6 +54,7 @@ paths:
   - Go 的协议 schema 或 DTO 一变，在 `panel/` 下跑 `go test ./internal/module/node/handler/ -run TestMockNodeSchemasMatchGo -update` 重导，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
+- 内容与外观（`admin/content.ts`、`portal/help.ts`）照 Go：插槽目录 `SLOT_CATALOG` 与 `SlotCatalog` 逐字一致（5 个）；branding 只收标语；知识库没有语言、平台、客户端版本与反馈（10-21 删）。种子主题的深色品牌色系用 `src/styles/brand-palette.ts` 的 `darkBrandTokens` 推，不手写
 - 门户场景（`portal/scenario.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
   - 基础六个：`default` / `empty` / `multi` / `legacy` / `error` / `slow`（说明在 `fixtures.ts` 文件头）
   - `proto-*`（`portal/proto.ts`、名单在 `portal/scenario.ts` 的 `PROTO_SCENARIOS`）：购买流程原型的场景，给首次点击测试用，数据照原型 SCENARIOS、套餐换成原型的三档目录，「今天」换成相对天数

@@ -125,7 +125,6 @@ worker:
   metrics_addr: "10.0.0.10:9465"
 ratelimit:
   ip_per_min: 1000000
-  account_per_min: 1000000
   auth_per_min: 100000
 auth:
   access_ttl: 1h

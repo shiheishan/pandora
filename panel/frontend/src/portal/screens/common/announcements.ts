@@ -14,7 +14,7 @@ const announcementSchema = z.object({
 export type Announcement = z.output<typeof announcementSchema>
 type AnnouncementSeverity = Announcement['severity']
 
-/** 级别色点的无障碍名称（契约门户-08：info 不显示，notice / warning / critical 分别用 --info / --warn / --danger） */
+/** 级别色点的无障碍名称（契约门户-08：info 不显示，notice / warning / critical 分别用 --info / --warn / --danger）；后台公告的级别叫法同此（普通 / 提示 / 注意 / 重要） */
 export const SEVERITY_LABEL: Readonly<Record<AnnouncementSeverity, string>> = { info: '', notice: '提示', warning: '注意', critical: '重要' }
 
 export const listSchema = z.object({ announcements: z.array(announcementSchema) })

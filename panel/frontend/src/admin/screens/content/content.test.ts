@@ -18,7 +18,8 @@ import {
   kbBody,
   kbFormFrom,
   knownCategories,
-  platformsLabel,
+  SEVERITY,
+  SEVERITY_OPTIONS,
   slotDirty,
   timezoneOptions,
   toLocalInput,
@@ -55,9 +56,7 @@ const page = (patch: Partial<Page> = {}): Page => ({
   kind: 'kb_article',
   version: 1,
   title: 'Clash',
-  locale: 'zh-CN',
   sanitizer_version: 'plain-v1',
-  target_platforms: [],
   target_plan_ids: [],
   visibility: 'authenticated',
   status: 'published',
@@ -156,6 +155,17 @@ describe('announcements', () => {
     expect(annActions('withdrawn', '', now)).toMatchObject({ primary: null, draft: false, withdraw: false, readOnly: true })
   })
 
+  it('labels severity aligned with portal', () => {
+    expect([SEVERITY.info.label, SEVERITY.notice.label, SEVERITY.warning.label, SEVERITY.critical.label]).toEqual([
+      '普通',
+      '提示',
+      '注意',
+      '重要',
+    ])
+    expect(SEVERITY_OPTIONS[0]?.label).toBe('普通（用户端不显示标签）')
+    expect(SEVERITY_OPTIONS.slice(1).map((o) => o.label)).toEqual(['提示', '注意', '重要'])
+  })
+
   it('accepts the Go list shape and rejects unknown statuses', () => {
     const raw = { announcements: [{ ...announcement(), publish_at: null }], plans: [], user_groups: [] }
     expect(announcementsResponse.parse(raw).announcements).toHaveLength(1)
@@ -193,33 +203,29 @@ describe('knowledge base', () => {
     expect(knownCategories(articles)).toEqual(['客户端教程', '账单'])
   })
 
-  it('labels platforms for the list column', () => {
-    expect(platformsLabel([])).toBe('全部平台')
-    expect(platformsLabel(['ios', 'android', 'web'])).toBe('网页 / Android / iOS')
-    expect(platformsLabel(['custom'])).toBe('custom')
-  })
-
   it('validates like normalizePublishInput', () => {
     const form = { ...emptyKbForm('kb_article'), slug: 'Bad Slug', title: '标', body: '太短' }
     expect(Object.keys(validateKb(form)).sort()).toEqual(['body', 'slug', 'title'])
     const ok = { ...form, slug: 'clash-verge', title: '标题', body: '正文至少十个字才可以保存' }
     expect(validateKb(ok)).toEqual({})
     expect(validateKb(ok, ['clash-verge']).slug).toBe('这个标识已被其他文章使用')
-    expect(validateKb({ ...ok, locale: 'zh_cn' }).locale).toBe('语言格式不正确')
   })
 
   it('builds the publish body, carries hidden fields from original and omits review when absent', () => {
-    const source = page({ target_platforms: ['ios', 'android'], min_client_version: '1.2', max_client_version: '2.0', summary: '旧摘要', target_plan_ids: [U(3)], review_due_at: '2026-12-01T00:00:00Z', body: '正文正文正文正文正文' })
+    const source = page({ summary: '旧摘要', target_plan_ids: [U(3)], review_due_at: '2026-12-01T00:00:00Z', body: '正文正文正文正文正文' })
     const form = kbFormFrom(source)
     const body = kbBody(form, 'published', 3, source)
-    expect(body).toMatchObject({ slug: 'clash', summary: '旧摘要', target_platforms: ['android', 'ios'], min_client_version: '1.2', max_client_version: '2.0', target_plan_ids: [U(3)], status: 'published', review_due_at: '2026-12-01T00:00:00Z', expected_latest_version: 3 })
+    expect(body).toMatchObject({ slug: 'clash', summary: '旧摘要', target_plan_ids: [U(3)], status: 'published', review_due_at: '2026-12-01T00:00:00Z', expected_latest_version: 3 })
+    expect('locale' in body).toBe(false)
+    expect('target_platforms' in body).toBe(false)
+    expect('min_client_version' in body).toBe(false)
+    expect('max_client_version' in body).toBe(false)
     const noReview = page({ body: '正文正文正文正文正文' })
     const fromScratch = kbBody(kbFormFrom(noReview), 'draft', 0, null)
     expect(fromScratch.summary).toBe('')
-    expect(fromScratch.min_client_version).toBe('')
     expect('review_due_at' in fromScratch).toBe(false)
     expect(audienceChanged(form, source)).toBe(false)
-    expect(audienceChanged({ ...form, platforms: ['ios'] }, source)).toBe(true)
+    expect(audienceChanged({ ...form, planIds: [] }, source)).toBe(true)
     expect(audienceChanged({ ...form, visibility: 'internal' }, source)).toBe(true)
     expect(audienceChanged({ ...form, title: '改标题不算' }, source)).toBe(false)
   })

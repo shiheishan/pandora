@@ -266,10 +266,11 @@
   letter-spacing: 0;
 }
 
-/* 文末「有帮助吗」：说明文字独占一格，按钮在右；手机上说明独占一行、按钮平分 */
+/* 文末「仍未解决，提交工单」：宽屏靠右，手机上占满一行 */
 .fb {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
   margin: 30px -40px 0;
@@ -280,19 +281,10 @@
   color: var(--text-2);
 }
 
-.fb > span {
-  margin-right: auto;
-}
-
 .fb > a:focus-visible,
 .fb > button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-}
-
-.thx {
-  color: var(--ok);
-  font-weight: var(--fw-semibold);
 }
 
 /* 指南：设备切换（radiogroup，方向键可换） */
@@ -461,10 +453,6 @@
   .fb {
     margin: 26px -20px 0;
     padding: 18px 20px 22px;
-  }
-
-  .fb > span {
-    flex-basis: 100%;
   }
 
   .fb > a,

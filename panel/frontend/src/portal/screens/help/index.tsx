@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { href, useHashLocation } from '../../../core/router'
-import { Empty, QueryView, useToast } from '../../../ui'
+import { Empty, QueryView } from '../../../ui'
 import { Btn, Icon } from '../../kit'
 import { parseGuideDevice, thisDevice, UPDATE_GUIDE_PARAM } from '../common/app-update'
 import { formatDate } from '../common/traffic'
 import type { PortalScreenProps } from '../index'
-import { useHelpFeedback, useHelpPage, useHelpPages, type ContentPage } from './api'
+import { useHelpPage, useHelpPages, type ContentPage } from './api'
 import css from './Help.module.css'
 import { articleBlocks, helpGroups, SEARCH_MAX } from './model'
 import { UpdateGuide, UpdateGuideToc } from './UpdateGuide'
@@ -27,8 +27,6 @@ export default function Help({ rest }: PortalScreenProps) {
   const slug = guide ? null : (routeSlug ?? groups[0]?.items[0]?.slug ?? null)
   // 目录一篇都没有（搜不到，或后台还没有文章）：目录卡里已经给了「提交工单」，底部那条藏起
   const noResults = pages.data !== undefined && groups.length === 0
-  // 每篇每个版本只反馈一次，切文章再回来仍记得
-  const [voted, setVoted] = useState<ReadonlySet<string>>(() => new Set())
 
   return (
     <div className={css.hp} data-view={routeSlug || guide ? 'article' : 'list'}>
@@ -99,7 +97,7 @@ export default function Help({ rest }: PortalScreenProps) {
         )}
       </div>
       <div className={css.main}>
-        {guide ? <UpdateGuide device={guide} /> : slug && <Article slug={slug} voted={voted} onVoted={(k) => setVoted((s) => new Set(s).add(k))} />}
+        {guide ? <UpdateGuide device={guide} /> : slug && <Article slug={slug} />}
       </div>
     </div>
   )
@@ -108,7 +106,7 @@ export default function Help({ rest }: PortalScreenProps) {
 // ---------------------------------------------------------------------------
 // 文章卡：页面上唯一的 <article>（浏览器测试靠它数卡片）；「‹ 全部文章」只在手机显示
 // ---------------------------------------------------------------------------
-function Article({ slug, voted, onVoted }: { slug: string; voted: ReadonlySet<string>; onVoted: (key: string) => void }) {
+function Article({ slug }: { slug: string }) {
   const page = useHelpPage(slug)
   const back = (
     <a className={css.back} href={href('/help')}>
@@ -127,7 +125,7 @@ function Article({ slug, voted, onVoted }: { slug: string; voted: ReadonlySet<st
     <article className={css.ha}>
       {back}
       <QueryView query={page} rows={5} isEmpty={() => false} empty={null}>
-        {(p) => <ArticleBody page={p} voted={voted.has(`${p.slug}@${p.version}`)} onVoted={() => onVoted(`${p.slug}@${p.version}`)} />}
+        {(p) => <ArticleBody page={p} />}
       </QueryView>
     </article>
   )
@@ -141,24 +139,9 @@ function NewTicketButton() {
   )
 }
 
-function ArticleBody({ page, voted, onVoted }: { page: ContentPage & { body: string }; voted: boolean; onVoted: () => void }) {
-  const toast = useToast()
-  const feedback = useHelpFeedback()
+function ArticleBody({ page }: { page: ContentPage & { body: string } }) {
   const blocks = articleBlocks(page.body)
   const meta = [page.category?.trim() || '其他', page.published_at ? `更新于 ${formatDate(page.published_at)}` : ''].filter(Boolean).join(' · ')
-
-  function helpful() {
-    feedback.mutate(
-      { slug: page.slug, version: page.version, helpful: true },
-      {
-        onSuccess: () => {
-          onVoted()
-          toast('感谢反馈')
-        },
-        onError: (e) => toast(isApiError(e, 'not_found') ? '这篇文章已下线' : e.message || '反馈失败，请稍后重试', 'danger'),
-      },
-    )
-  }
 
   // 外层已经是 <article>，这里只画正文；正文为空时退回 summary
   return (
@@ -183,16 +166,6 @@ function ArticleBody({ page, voted, onVoted }: { page: ContentPage & { body: str
         )
       )}
       <div className={css.fb}>
-        {voted ? (
-          <span className={css.thx}>✓ 感谢你的反馈</span>
-        ) : (
-          <>
-            <span>这篇文章有帮助吗？</span>
-            <Btn tone="soft" size="sm" busy={feedback.isPending} onClick={helpful}>
-              有帮助
-            </Btn>
-          </>
-        )}
         <Btn tone="soft" size="sm" href={href('/tickets/new')}>
           仍未解决，提交工单
         </Btn>

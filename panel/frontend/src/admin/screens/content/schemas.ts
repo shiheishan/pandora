@@ -44,12 +44,10 @@ export const annSaved = z.object({ id: uuid, status: z.enum(ANN_STATUSES), versi
 export const annWithdrawn = z.object({ ok: z.literal(true), version: z.number().int() })
 
 // ---------------------------------------------------------------------------
-// 知识库（content/model Page：category / summary / 客户端版本 / 日期 / 作者都是 omitempty）
+// 知识库（content/model Page：category / summary / 日期 / 作者都是 omitempty）
 // ---------------------------------------------------------------------------
 export const KINDS = ['kb_article', 'tutorial', 'page', 'legal'] as const
 export type Kind = (typeof KINDS)[number]
-export const PLATFORMS = ['web', 'windows', 'macos', 'linux', 'android', 'ios'] as const
-export type Platform = (typeof PLATFORMS)[number]
 const PAGE_STATUSES = ['draft', 'published', 'archived'] as const
 export const VISIBILITIES = ['authenticated', 'internal'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
@@ -64,11 +62,7 @@ export const pageSchema = z.object({
   summary: z.string().optional(),
   /** 只有单版本接口带正文 */
   body: z.string().optional(),
-  locale: z.string(),
   sanitizer_version: z.string(),
-  target_platforms: z.array(z.string()),
-  min_client_version: z.string().optional(),
-  max_client_version: z.string().optional(),
   target_plan_ids: z.array(uuid),
   visibility: z.enum(VISIBILITIES),
   status: z.enum(PAGE_STATUSES),

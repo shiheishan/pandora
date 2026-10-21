@@ -6,7 +6,7 @@ import { paymentMethodSchema, plansSchema } from '../../src/portal/screens/commo
 import { landingsSchema } from '../../src/portal/screens/common/landings'
 import { orderDetailSchema, ordersPageSchema } from '../../src/portal/screens/common/orders'
 import { linksSchema, nodesSchema, usageReportSchema } from '../../src/portal/screens/common/subscriptions'
-import { contentDetailSchema, contentPageSchema, HELP_QUERY } from '../../src/portal/screens/help/api'
+import { contentDetailSchema, contentPageSchema } from '../../src/portal/screens/help/api'
 import { NOTIFICATION_LIMIT, notificationSchema } from '../../src/portal/screens/messages/api'
 import { inviteSchema } from '../../src/portal/screens/referral/api'
 import { ticketDetailSchema, ticketRowSchema } from '../../src/portal/screens/tickets/api'
@@ -79,8 +79,8 @@ const rows: Row[] = [
   { at: 'account/api.ts', seed: '门户登录', path: 'v1/me/sessions', schema: z.object({ sessions: z.array(sessionSchema) }) },
   { at: 'account/api.ts', path: 'v1/me/telegram', schema: telegramSchema },
   { at: 'account/api.ts', path: 'v1/me/notification-preferences', schema: preferencesSchema },
-  { at: 'help/api.ts', path: 'v1/content/pages', query: { ...HELP_QUERY }, schema: z.object({ pages: z.array(contentPageSchema) }) },
-  { at: 'help/api.ts', path: `v1/content/pages/${s.page_slug}`, query: { ...HELP_QUERY }, schema: contentDetailSchema },
+  { at: 'help/api.ts', path: 'v1/content/pages', schema: z.object({ pages: z.array(contentPageSchema) }) },
+  { at: 'help/api.ts', path: `v1/content/pages/${s.page_slug}`, schema: contentDetailSchema },
 
   // ---- 事件流 ----
   { at: 'shell/runtime.tsx', path: 'v1/events', kind: 'sse' },

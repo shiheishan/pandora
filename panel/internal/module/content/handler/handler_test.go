@@ -21,14 +21,13 @@ import (
 
 type fakeSvc struct {
 	Service
-	listAdmin      func(service.ListFilter) ([]service.Page, error)
-	getAdmin       func(uuid.UUID) (service.Page, error)
-	publish        func(service.PublishInput) (service.PublishResult, error)
-	archive        func(uuid.UUID, int) (service.ArchiveResult, error)
-	listVisible    func(uuid.UUID, service.VisibleFilter) ([]service.Page, error)
-	getVisible     func(uuid.UUID, string, service.VisibleFilter) (service.Page, error)
-	submitFeedback func(uuid.UUID, string, int, bool, service.VisibleFilter) error
-	called         bool
+	listAdmin   func(service.ListFilter) ([]service.Page, error)
+	getAdmin    func(uuid.UUID) (service.Page, error)
+	publish     func(service.PublishInput) (service.PublishResult, error)
+	archive     func(uuid.UUID, int) (service.ArchiveResult, error)
+	listVisible func(uuid.UUID, service.VisibleFilter) ([]service.Page, error)
+	getVisible  func(uuid.UUID, string, service.VisibleFilter) (service.Page, error)
+	called      bool
 }
 
 func (f *fakeSvc) ListAdmin(_ context.Context, fl service.ListFilter) ([]service.Page, error) {
@@ -79,14 +78,6 @@ func (f *fakeSvc) GetVisible(_ context.Context, userID uuid.UUID, slug string, f
 	return service.Page{}, nil
 }
 
-func (f *fakeSvc) SubmitFeedback(_ context.Context, userID uuid.UUID, slug string, version int, helpful bool, fl service.VisibleFilter) error {
-	f.called = true
-	if f.submitFeedback != nil {
-		return f.submitFeedback(userID, slug, version, helpful, fl)
-	}
-	return nil
-}
-
 func newEngine(svc Service, admin bool, p *authn.Principal, kit route.Kit) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
@@ -102,7 +93,7 @@ func newEngine(svc Service, admin bool, p *authn.Principal, kit route.Kit) *gin.
 			Idempotency:  func(string) gin.HandlerFunc { return pass },
 		}
 	}
-	h := New(svc, nil, 30)
+	h := New(svc)
 	if admin {
 		h.RegisterAdmin(e.Group("/v1"), kit)
 	} else {
@@ -147,17 +138,16 @@ func TestAdminListPagesShape(t *testing.T) {
 			return []service.Page{
 				{
 					ID: fullID, Slug: "full", Kind: "kb_article", Category: "账单", Version: 2,
-					Title: "全字段", Summary: "摘要", Body: "正文", Locale: "zh-CN", SanitizerVersion: "plain-v1",
-					TargetPlatforms: []string{"web"}, MinClientVersion: "1.0", MaxClientVersion: "2.0",
+					Title: "全字段", Summary: "摘要", Body: "正文", SanitizerVersion: "plain-v1",
 					TargetPlanIDs: []string{uuid.New().String()}, Visibility: "authenticated", Status: "published",
 					ReviewDueAt: &review, PublishedAt: &pub, CreatedAt: now, UpdatedAt: now,
 					LatestVersion: 3, IsLatestInAudience: true, CreatedBy: &createdBy, CreatedByName: &author,
 				},
 				{
 					ID: sparseID, Slug: "sparse", Kind: "tutorial", Version: 1, Title: "空字段",
-					Locale: "zh-CN", SanitizerVersion: "plain-v1",
-					TargetPlatforms: []string{}, TargetPlanIDs: []string{},
-					Visibility: "internal", Status: "draft", CreatedAt: now, UpdatedAt: now,
+					SanitizerVersion: "plain-v1",
+					TargetPlanIDs:    []string{},
+					Visibility:       "internal", Status: "draft", CreatedAt: now, UpdatedAt: now,
 				},
 			}, nil
 		},
@@ -177,16 +167,20 @@ func TestAdminListPagesShape(t *testing.T) {
 	}
 	p0, _ := pages[0].(map[string]any)
 	p1, _ := pages[1].(map[string]any)
-	if !hasKey(p0, "category") || !hasKey(p0, "created_by") || p0["target_platforms"] == nil {
+	if !hasKey(p0, "category") || !hasKey(p0, "created_by") {
 		t.Fatalf("full row %v", p0)
 	}
-	for _, absent := range []string{"category", "summary", "body", "min_client_version", "max_client_version", "review_due_at", "published_at", "latest_version", "is_latest_in_audience", "created_by", "created_by_name"} {
+	for _, row := range []map[string]any{p0, p1} {
+		for _, absent := range []string{"locale", "target_platforms", "min_client_version", "max_client_version"} {
+			if hasKey(row, absent) {
+				t.Fatalf("row should omit %s: %v", absent, row)
+			}
+		}
+	}
+	for _, absent := range []string{"category", "summary", "body", "review_due_at", "published_at", "latest_version", "is_latest_in_audience", "created_by", "created_by_name"} {
 		if hasKey(p1, absent) {
 			t.Fatalf("sparse should omit %s: %v", absent, p1)
 		}
-	}
-	if tp, _ := p1["target_platforms"].([]any); tp == nil {
-		t.Fatalf("target_platforms should be []")
 	}
 	if tpid, _ := p1["target_plan_ids"].([]any); tpid == nil {
 		t.Fatalf("target_plan_ids should be []")
@@ -217,8 +211,8 @@ func TestAdminGetPublishArchive(t *testing.T) {
 			if id != pageID {
 				t.Fatalf("get id %s", id)
 			}
-			return service.Page{ID: pageID, Slug: "x", Kind: "page", Version: 1, Title: "T", Locale: "zh-CN",
-				SanitizerVersion: "plain-v1", TargetPlatforms: []string{}, TargetPlanIDs: []string{},
+			return service.Page{ID: pageID, Slug: "x", Kind: "page", Version: 1, Title: "T",
+				SanitizerVersion: "plain-v1", TargetPlanIDs: []string{},
 				Visibility: "authenticated", Status: "draft", CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
 		},
 		publish: func(in service.PublishInput) (service.PublishResult, error) {
@@ -243,7 +237,7 @@ func TestAdminGetPublishArchive(t *testing.T) {
 		t.Fatalf("page %v", page)
 	}
 
-	body := `{"slug":"new-slug","kind":"kb_article","category":"c","title":"标题","summary":"s","body":"正文够长","locale":"zh-CN","target_platforms":["web"],"min_client_version":"1.0","max_client_version":"2.0","target_plan_ids":[],"visibility":"authenticated","status":"published","review_due_at":"2026-11-01T00:00:00Z","expected_latest_version":1}`
+	body := `{"slug":"new-slug","kind":"kb_article","category":"c","title":"标题","summary":"s","body":"正文够长","target_plan_ids":[],"visibility":"authenticated","status":"published","review_due_at":"2026-11-01T00:00:00Z","expected_latest_version":1}`
 	w = do(e, http.MethodPost, "/v1/content-pages", body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("publish %d %s", w.Code, w.Body)
@@ -257,7 +251,12 @@ func TestAdminGetPublishArchive(t *testing.T) {
 		t.Fatalf("saved %v", inner)
 	}
 
-	w = do(e, http.MethodPost, "/v1/content-pages", `{"slug":"a","kind":"page","title":"标题","body":"1234567890","locale":"zh-CN","target_platforms":[],"target_plan_ids":[],"visibility":"authenticated","status":"draft","expected_latest_version":0,"bogus":1}`)
+	w = do(e, http.MethodPost, "/v1/content-pages", `{"slug":"a","kind":"page","title":"标题","body":"1234567890","target_plan_ids":[],"visibility":"authenticated","status":"draft","expected_latest_version":0,"bogus":1}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field %d", w.Code)
+	}
+
+	w = do(e, http.MethodPost, "/v1/content-pages", `{"slug":"a","kind":"page","title":"标题","body":"1234567890","target_plan_ids":[],"visibility":"authenticated","status":"draft","expected_latest_version":0,"locale":"zh-CN"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field %d", w.Code)
 	}
@@ -286,17 +285,12 @@ func TestAdminGetPublishArchive(t *testing.T) {
 	}
 }
 
-func TestPortalListGetAndFeedback(t *testing.T) {
+func TestPortalListAndGet(t *testing.T) {
 	userID := uuid.New()
 	pub := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	var listFl service.VisibleFilter
 	var getSlug string
 	var getFl service.VisibleFilter
-	var fbUser uuid.UUID
-	var fbSlug string
-	var fbVer int
-	var fbHelpful bool
-	var fbFl service.VisibleFilter
 
 	f := &fakeSvc{
 		listVisible: func(uid uuid.UUID, fl service.VisibleFilter) ([]service.Page, error) {
@@ -306,29 +300,25 @@ func TestPortalListGetAndFeedback(t *testing.T) {
 			}
 			return []service.Page{{
 				Slug: "help", Kind: "kb_article", Category: "入门", Version: 1, Title: "帮助",
-				Summary: "s", Locale: "zh-CN", TargetPlatforms: []string{"any"}, PublishedAt: &pub,
+				Summary: "s", PublishedAt: &pub,
 			}}, nil
 		},
 		getVisible: func(uid uuid.UUID, slug string, fl service.VisibleFilter) (service.Page, error) {
 			getSlug = slug
 			getFl = fl
-			return service.Page{Slug: slug, Kind: "kb_article", Version: 1, Title: "帮助", Body: "正文", Locale: "zh-CN", TargetPlatforms: []string{"any"}}, nil
-		},
-		submitFeedback: func(uid uuid.UUID, slug string, version int, helpful bool, fl service.VisibleFilter) error {
-			fbUser, fbSlug, fbVer, fbHelpful, fbFl = uid, slug, version, helpful, fl
-			return nil
+			return service.Page{Slug: slug, Kind: "kb_article", Version: 1, Title: "帮助", Body: "正文"}, nil
 		},
 	}
 	e := newEngine(f, false, &authn.Principal{UserID: userID, SessionID: "s", Audience: authn.AudiencePublic}, route.Kit{})
 
-	w := do(e, http.MethodGet, "/v1/content/pages?kind=kb_article&platform=any&client_version=1.0&locale=zh-CN&q=搜索", "")
+	w := do(e, http.MethodGet, "/v1/content/pages?kind=kb_article&q=搜索", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("list %d", w.Code)
 	}
 	if w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("cache %q", w.Header().Get("Cache-Control"))
 	}
-	if listFl.Query != "搜索" || listFl.Platform != "any" {
+	if listFl.Kind != "kb_article" || listFl.Query != "搜索" {
 		t.Fatalf("list filter %+v", listFl)
 	}
 	got := decMap(t, w)
@@ -343,7 +333,7 @@ func TestPortalListGetAndFeedback(t *testing.T) {
 		}
 	}
 
-	w = do(e, http.MethodGet, "/v1/content/pages/my-slug?kind=tutorial&platform=web&client_version=2.0&locale=en-US", "")
+	w = do(e, http.MethodGet, "/v1/content/pages/my-slug?kind=tutorial", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("get %d", w.Code)
 	}
@@ -356,31 +346,9 @@ func TestPortalListGetAndFeedback(t *testing.T) {
 		t.Fatalf("detail %v", pg)
 	}
 
-	f.called = false
-	w = do(e, http.MethodPost, "/v1/content/pages/my-slug/feedback?platform=any", `{"version":2}`)
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("missing helpful %d", w.Code)
-	}
-	if f.called {
-		t.Fatal("feedback service called without helpful")
-	}
-	fields := decMap(t, w)
-	errObj, _ := fields["error"].(map[string]any)
-	fld, _ := errObj["fields"].(map[string]any)
-	if fld["helpful"] == nil {
-		t.Fatalf("fields %v", fld)
-	}
-
-	w = do(e, http.MethodPost, "/v1/content/pages/my-slug/feedback?platform=any", `{"helpful":false,"version":2}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("feedback %d %s", w.Code, w.Body)
-	}
-	if fbHelpful != false || fbVer != 2 || fbSlug != "my-slug" || fbUser != userID || fbFl.Platform != "any" {
-		t.Fatalf("feedback args %v %d %s", fbHelpful, fbVer, fbSlug)
-	}
-	ok := decMap(t, w)
-	if ok["ok"] != true {
-		t.Fatalf("ok %v", ok)
+	w = do(e, http.MethodPost, "/v1/content/pages/my-slug/feedback", `{"helpful":true,"version":1}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("feedback route should be 404, got %d", w.Code)
 	}
 }
 
@@ -403,7 +371,7 @@ func TestAnonymousRoutesRequireAuth(t *testing.T) {
 	}{
 		{http.MethodGet, "/v1/content-pages", ""},
 		{http.MethodGet, "/v1/content-pages/" + uuid.New().String(), ""},
-		{http.MethodPost, "/v1/content-pages", `{"slug":"a","kind":"page","title":"tt","body":"1234567890","locale":"zh-CN","target_platforms":[],"target_plan_ids":[],"visibility":"authenticated","status":"draft","expected_latest_version":0}`},
+		{http.MethodPost, "/v1/content-pages", `{"slug":"a","kind":"page","title":"tt","body":"1234567890","target_plan_ids":[],"visibility":"authenticated","status":"draft","expected_latest_version":0}`},
 		{http.MethodPost, "/v1/content-pages/" + uuid.New().String() + "/archive", `{"expected_version":1}`},
 	}
 	for _, r := range adminPaths {
@@ -418,7 +386,6 @@ func TestAnonymousRoutesRequireAuth(t *testing.T) {
 	}{
 		{http.MethodGet, "/v1/content/pages", ""},
 		{http.MethodGet, "/v1/content/pages/foo", ""},
-		{http.MethodPost, "/v1/content/pages/foo/feedback", `{"helpful":true,"version":1}`},
 	}
 	for _, r := range publicPaths {
 		w := do(publicE, r.method, r.path, r.body)

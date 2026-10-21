@@ -230,7 +230,7 @@ func TestActivateDeleteTheme(t *testing.T) {
 
 func TestListSlotsUpdatedAt(t *testing.T) {
 	f := &fakeSvc{slots: []service.Slot{
-		{Key: "portal.footer", Label: "页脚", Where: "底", Content: "", Enabled: false},
+		{Key: "portal.plans.notice", Label: "选购页说明", Where: "底", Content: "", Enabled: false},
 		{Key: "portal.home.banner", Label: "横幅", Where: "顶", Content: "hi", Enabled: true, UpdatedAt: "2026-10-01 12:00"},
 	}}
 	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}, route.Kit{})
@@ -253,11 +253,11 @@ func TestListSlotsUpdatedAt(t *testing.T) {
 func TestSaveSlotDroppedNull(t *testing.T) {
 	f := &fakeSvc{slotNotes: nil}
 	e := newEngine(f, true, &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}, route.Kit{})
-	w := do(e, http.MethodPost, "/v1/slots/portal.footer", `{"content":"<p>x</p>","enabled":true}`)
+	w := do(e, http.MethodPost, "/v1/slots/portal.plans.notice", `{"content":"<p>x</p>","enabled":true}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d %s", w.Code, w.Body)
 	}
-	if f.lastSlot.Key != "portal.footer" || f.lastSlot.Content != "<p>x</p>" || !f.lastSlot.Enabled {
+	if f.lastSlot.Key != "portal.plans.notice" || f.lastSlot.Content != "<p>x</p>" || !f.lastSlot.Enabled {
 		t.Fatalf("slot %+v", f.lastSlot)
 	}
 	var raw map[string]json.RawMessage
@@ -296,7 +296,7 @@ func TestPublicAppearance(t *testing.T) {
 			Tokens:   json.RawMessage(`{"light":{"--x":"1"},"dark":{}}`),
 			Branding: json.RawMessage(`{"tagline":"稳"}`),
 		},
-		Slots: map[string]string{"portal.footer": "<p>f</p>"},
+		Slots: map[string]string{"portal.plans.notice": "<p>f</p>"},
 	}
 	w = do(e, http.MethodGet, "/v1/appearance", "")
 	got = decMap(t, w)

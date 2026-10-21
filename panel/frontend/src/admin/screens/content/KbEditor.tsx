@@ -5,9 +5,9 @@ import { formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, IconClose, Input, Menu, Modal, Select, Tag, TextArea, useToast, type MenuEntry } from '../../../ui'
 import css from './kb.module.css'
-import { audienceChanged, emptyKbForm, kbBody, kbFormFrom, PAGE_STATUS_LABEL, PLATFORM_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
+import { audienceChanged, emptyKbForm, kbBody, kbFormFrom, PAGE_STATUS_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent, usePlanCatalog } from './queries'
-import { pageArchived, pageSaved, PLATFORMS, VISIBILITIES, type Kind, type Page, type Visibility } from './schemas'
+import { pageArchived, pageSaved, VISIBILITIES, type Kind, type Page, type Visibility } from './schemas'
 
 interface Props {
   /** null = 新文章 */
@@ -174,34 +174,11 @@ export function KbEditor({ article, page, kind, categories, takenSlugs, onClose 
           <span className={css.fieldLabel}>限定套餐</span>
           <PlanPicker planIds={form.planIds} plans={catalog.data ?? []} planName={planName} disabled={busy} onChange={(planIds) => edit({ planIds })} />
         </label>
-        <label className={css.field}>
-          <span className={css.fieldLabel}>语言</span>
-          <Input size="sm" mono value={form.locale} error={errors.locale} disabled={busy} onChange={(e) => edit({ locale: e.target.value })} />
-        </label>
-      </div>
-
-      <div className={css.platformRow}>
-        <span className={css.platformLabel}>平台（不选 = 全部平台）</span>
-        {PLATFORMS.map((p) => {
-          const on = form.platforms.includes(p)
-          return (
-            <button
-              key={p}
-              type="button"
-              className={`${css.platformBtn} ${on ? css.platformBtnOn : ''}`}
-              aria-pressed={on}
-              disabled={busy}
-              onClick={() => edit({ platforms: on ? form.platforms.filter((x) => x !== p) : [...form.platforms, p] })}
-            >
-              {PLATFORM_LABEL[p]}
-            </button>
-          )
-        })}
       </div>
 
       {changedAudience && (
         <div className={`${css.banner} ${css.bannerWarn}`}>
-          受众（语言、平台、限定套餐或可见性）和上一版不同：保存后上一版的发布内容不会被自动归档，两版会同时对各自的用户可见；不需要旧版时先把它归档。
+          受众（限定套餐或可见性）和上一版不同：保存后上一版的发布内容不会被自动归档，两版会同时对各自的用户可见；不需要旧版时先把它归档。
         </div>
       )}
 

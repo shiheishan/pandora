@@ -12,11 +12,23 @@ import (
 	"unicode"
 )
 
+// Signup 是首页的注册入口，由装配处按系统设置的注册方式换算（本包不懂设置）。
+type Signup int
+
+const (
+	// SignupClosed 不开放注册：只给「登录」，套餐卡是「登录后购买」、去登录页。是零值：装配处没给时宁可不出注册入口。
+	SignupClosed Signup = iota
+	// SignupOpen 开放注册：「注册」「登录」，套餐卡「购买」去注册页。
+	SignupOpen
+	// SignupInvite 仅凭邀请码注册：入口同开放，首屏按钮下注明需要邀请码。
+	SignupInvite
+)
+
 // Home 是门户首页片段的内容，由装配处组好（本包不读设置、不懂套餐）；SiteName 为空时不出片段。
 type Home struct {
 	SiteName string     // h1 与页头品牌
 	Tagline  string     // 站点名下的一句话；可空
-	Logo     string     // 页头图标；只收 data:image/ 开头的值（入口页 CSP 是 img-src 'self' data:），否则不出图
+	Signup   Signup     // 注册入口；零值是 SignupClosed
 	Intro    string     // 介绍，纯文本，按换行分段；可空
 	Plans    []HomePlan // 套餐卡；空则不出这一节
 	FAQ      []HomeFAQ  // 常见问题；空则不出这一节
@@ -46,7 +58,7 @@ func WithHome(f func(ctx context.Context) (Home, bool)) Option {
 }
 
 func (h Home) equal(o Home) bool {
-	return h.SiteName == o.SiteName && h.Tagline == o.Tagline && h.Logo == o.Logo && h.Intro == o.Intro &&
+	return h.SiteName == o.SiteName && h.Tagline == o.Tagline && h.Signup == o.Signup && h.Intro == o.Intro &&
 		slices.Equal(h.Plans, o.Plans) && slices.Equal(h.FAQ, o.FAQ)
 }
 
@@ -68,10 +80,14 @@ func sanitizeMultiline(s string) string {
 }
 
 func sanitizeHome(h Home) Home {
+	signup := h.Signup
+	if signup != SignupOpen && signup != SignupInvite {
+		signup = SignupClosed
+	}
 	out := Home{
 		SiteName: sanitizeText(h.SiteName),
 		Tagline:  sanitizeText(h.Tagline),
-		Logo:     sanitizeIcon(h.Logo),
+		Signup:   signup,
 		Intro:    sanitizeMultiline(h.Intro),
 	}
 	for _, p := range h.Plans {
@@ -115,12 +131,13 @@ func paragraphs(s string) []string {
 }
 
 type homeView struct {
-	SiteName string
-	Tagline  string
-	Logo     template.URL
-	Intro    []string
-	Plans    []HomePlan
-	FAQ      []homeFAQView
+	SiteName  string
+	Tagline   string
+	CanSignup bool
+	Invite    bool
+	Intro     []string
+	Plans     []HomePlan
+	FAQ       []homeFAQView
 }
 
 type homeFAQView struct {
@@ -130,10 +147,11 @@ type homeFAQView struct {
 
 const homeHTML = `<div id="ph-home" class="ph">
   <header class="ph-top">
-    <a class="ph-brand" href="./">{{if .Logo}}<img class="ph-logo" src="{{.Logo}}" alt="" width="28" height="28">{{end}}<span class="ph-brand-name">{{.SiteName}}</span></a>
-    <nav class="ph-nav" aria-label="账号">
+    <a class="ph-brand" href="./"><span class="ph-brand-name">{{.SiteName}}</span></a>
+    <nav class="ph-nav" aria-label="账号">{{if .CanSignup}}
       <a class="ph-link" href="#/login">登录</a>
-      <a class="ph-btn ph-btn-sm" href="#/register">注册</a>
+      <a class="ph-btn ph-btn-sm" href="#/register">注册</a>{{else}}
+      <a class="ph-btn ph-btn-sm" href="#/login">登录</a>{{end}}
     </nav>
   </header>
   <main class="ph-main">
@@ -141,7 +159,7 @@ const homeHTML = `<div id="ph-home" class="ph">
       <h1 id="ph-title" class="ph-title">{{.SiteName}}</h1>
       {{if .Tagline}}<p class="ph-tagline">{{.Tagline}}</p>{{end}}
       {{range .Intro}}<p class="ph-intro">{{.}}</p>{{end}}
-      <p class="ph-cta"><a class="ph-btn" href="#/register">注册</a><a class="ph-btn ph-btn-soft" href="#/login">登录</a></p>
+      {{if .CanSignup}}<p class="ph-cta"><a class="ph-btn" href="#/register">注册</a><a class="ph-btn ph-btn-soft" href="#/login">登录</a></p>{{if .Invite}}<p class="ph-cta-note">注册需要邀请码，可向好友要</p>{{end}}{{else}}<p class="ph-cta"><a class="ph-btn" href="#/login">登录</a></p><p class="ph-cta-note">注册已关闭，已有账号请直接登录</p>{{end}}
     </section>
     {{if .Plans}}<section class="ph-section" aria-labelledby="ph-plans-h">
       <h2 id="ph-plans-h" class="ph-h2">套餐与价格</h2>
@@ -154,7 +172,7 @@ const homeHTML = `<div id="ph-home" class="ph">
             {{if .Usage}}<p class="ph-usage">{{.Usage}}</p>{{end}}
             <p class="ph-price">{{.Price}}</p>
             {{if .PriceNote}}<p class="ph-price-note">{{.PriceNote}}</p>{{end}}
-            <a class="ph-btn ph-btn-block" href="#/register" aria-label="购买{{.Name}}">购买</a>
+            {{if $.CanSignup}}<a class="ph-btn ph-btn-block" href="#/register" aria-label="购买{{.Name}}">购买</a>{{else}}<a class="ph-btn ph-btn-block" href="#/login" aria-label="登录后购买{{.Name}}">登录后购买</a>{{end}}
           </article>
         </li>{{end}}
       </ul>
@@ -168,7 +186,7 @@ const homeHTML = `<div id="ph-home" class="ph">
   </main>
   <footer class="ph-foot">
     <p class="ph-copy">© {{.SiteName}}</p>
-    <p class="ph-foot-links"><a class="ph-link" href="#/login">登录</a><a class="ph-link" href="#/register">注册</a></p>
+    <p class="ph-foot-links"><a class="ph-link" href="#/login">登录</a>{{if .CanSignup}}<a class="ph-link" href="#/register">注册</a>{{end}}</p>
   </footer>
 </div>`
 
@@ -176,14 +194,12 @@ var homeTmpl = template.Must(template.New("home").Parse(homeHTML))
 
 func renderHome(h Home) string {
 	v := homeView{
-		SiteName: h.SiteName,
-		Tagline:  h.Tagline,
-		Logo:     template.URL(""),
-		Intro:    paragraphs(h.Intro),
-		Plans:    h.Plans,
-	}
-	if h.Logo != "" {
-		v.Logo = template.URL(h.Logo)
+		SiteName:  h.SiteName,
+		Tagline:   h.Tagline,
+		CanSignup: h.Signup == SignupOpen || h.Signup == SignupInvite,
+		Invite:    h.Signup == SignupInvite,
+		Intro:     paragraphs(h.Intro),
+		Plans:     h.Plans,
 	}
 	for _, f := range h.FAQ {
 		v.FAQ = append(v.FAQ, homeFAQView{Q: f.Q, A: paragraphs(f.A)})

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { darkBrandTokens } from '../../../src/styles/brand-palette.ts'
 import { COLOR_TOKENS } from '../../../src/styles/design-tokens.ts'
 import { shareActiveTheme, shareSiteName } from '../appearance-share.ts'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
@@ -233,10 +234,6 @@ interface ContentRow {
   title: string
   summary: string
   body: string
-  locale: string
-  target_platforms: string[]
-  min_client_version: string
-  max_client_version: string
   target_plan_ids: string[]
   visibility: string
   status: 'draft' | 'published' | 'archived'
@@ -268,10 +265,6 @@ function seedArticle(slug: string, kind: string, category: string, title: string
       title: i === versions.length - 1 ? title : `${title}（旧稿）`,
       summary: '',
       body: i === versions.length - 1 ? body : `${body}\n\n（v${i + 1} 的旧内容）`,
-      locale: 'zh-CN',
-      target_platforms: [],
-      min_client_version: '',
-      max_client_version: '',
       target_plan_ids: [],
       visibility: 'authenticated',
       status,
@@ -285,16 +278,16 @@ function seedArticle(slug: string, kind: string, category: string, title: string
   })
 }
 seedArticle('first-connect', 'kb_article', '快速上手', '三分钟完成首次连接', '# 三分钟完成首次连接\n\n1. 在「我的订阅」复制订阅地址\n2. 打开客户端，选择「从剪贴板导入」\n3. 选择延迟最低的节点', ['archived', 'archived', 'archived', 'archived', 'archived', 'published'])
-seedArticle('clash-verge-rev', 'kb_article', '客户端教程', 'Clash Verge Rev（Windows / macOS）', '# Clash Verge Rev\n\n## 导入订阅\n\n配置 → 新建 → 类型选择 Remote，粘贴订阅地址。\n\n## 常见问题\n\n解析失败：请确认复制的是 Clash 格式链接。', ['archived', 'archived', 'published', 'draft'], { target_platforms: ['macos', 'windows'] })
-seedArticle('shadowrocket', 'kb_article', '客户端教程', 'Shadowrocket（iOS）', '# Shadowrocket\n\n在 App Store 外区账号下载后，点右上角加号粘贴订阅地址。', ['archived', 'archived', 'published'], { target_platforms: ['ios'] })
-seedArticle('hiddify', 'kb_article', '客户端教程', 'Hiddify（Android）', '# Hiddify\n\n首页点「新建配置」→「从剪贴板添加」。', ['published'], { target_platforms: ['android'] })
+seedArticle('clash-verge-rev', 'kb_article', '客户端教程', 'Clash Verge Rev（Windows / macOS）', '# Clash Verge Rev\n\n## 导入订阅\n\n配置 → 新建 → 类型选择 Remote，粘贴订阅地址。\n\n## 常见问题\n\n解析失败：请确认复制的是 Clash 格式链接。', ['archived', 'archived', 'published', 'draft'])
+seedArticle('shadowrocket', 'kb_article', '客户端教程', 'Shadowrocket（iOS）', '# Shadowrocket\n\n在 App Store 外区账号下载后，点右上角加号粘贴订阅地址。', ['archived', 'archived', 'published'])
+seedArticle('hiddify', 'kb_article', '客户端教程', 'Hiddify（Android）', '# Hiddify\n\n首页点「新建配置」→「从剪贴板添加」。', ['published'])
 seedArticle('gift-card', 'kb_article', '账单与支付', '如何使用礼品卡', '# 礼品卡\n\n在「钱包」页输入卡码，先预览再兑换。', ['archived', 'published'])
 seedArticle('refund-policy-old', 'kb_article', '账单与支付', '退款政策（旧）', '# 退款政策\n\n本政策已由新版服务条款取代。', ['published', 'archived', 'archived', 'archived', 'archived'])
-seedArticle('router-setup', 'tutorial', '进阶', '在路由器上使用订阅', '# 路由器\n\nOpenWrt 安装 OpenClash 后导入 Clash 格式订阅。', ['published'], { target_platforms: ['linux'] })
+seedArticle('router-setup', 'tutorial', '进阶', '在路由器上使用订阅', '# 路由器\n\nOpenWrt 安装 OpenClash 后导入 Clash 格式订阅。', ['published'])
 seedArticle('terms-of-service', 'legal', '', '服务条款', '# 服务条款\n\n使用本服务即表示同意以下条款。', ['archived', 'published'])
 
-const audienceKey = (r: Pick<ContentRow, 'locale' | 'target_platforms' | 'min_client_version' | 'max_client_version' | 'target_plan_ids' | 'visibility'>) =>
-  JSON.stringify([r.locale, [...r.target_platforms].sort(), r.min_client_version, r.max_client_version, [...r.target_plan_ids].sort(), r.visibility])
+const audienceKey = (r: Pick<ContentRow, 'target_plan_ids' | 'visibility'>) =>
+  JSON.stringify([[...r.target_plan_ids].sort(), r.visibility])
 
 /** Go 的 Page JSON：omitempty 字段为空时省略，列表不带正文，作者只在列表里 */
 function pageJson(r: ContentRow, opts: { body: boolean; author: boolean }) {
@@ -310,11 +303,7 @@ function pageJson(r: ContentRow, opts: { body: boolean; author: boolean }) {
     title: r.title,
     ...(r.summary ? { summary: r.summary } : {}),
     ...(opts.body && r.body ? { body: r.body } : {}),
-    locale: r.locale,
     sanitizer_version: 'plain-v1',
-    target_platforms: r.target_platforms,
-    ...(r.min_client_version ? { min_client_version: r.min_client_version } : {}),
-    ...(r.max_client_version ? { max_client_version: r.max_client_version } : {}),
     target_plan_ids: r.target_plan_ids,
     visibility: r.visibility,
     status: r.status,
@@ -330,20 +319,11 @@ function pageJson(r: ContentRow, opts: { body: boolean; author: boolean }) {
 }
 
 const PAGE_SHAPE = {
-  slug: 'string', kind: 'string', category: 'string', title: 'string', summary: 'string', body: 'string', locale: 'string',
-  target_platforms: 'strings', min_client_version: 'string', max_client_version: 'string', target_plan_ids: 'strings',
+  slug: 'string', kind: 'string', category: 'string', title: 'string', summary: 'string', body: 'string',
+  target_plan_ids: 'strings',
   visibility: 'string', status: 'string', review_due_at: 'string', expected_latest_version: 'number',
 } as const
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const LOCALE = /^[a-z]{2,3}(?:-[A-Z]{2})?$/
-const CLIENT_VERSION = /^v?[0-9]+(?:\.[0-9]+){0,2}$/
-const PLATFORMS = ['web', 'windows', 'macos', 'linux', 'android', 'ios']
-const cmpVersion = (a: string, b: string) => {
-  const p = (s: string) => s.replace(/^v/, '').split('.').map((x) => Number(x) || 0)
-  const [l, r] = [p(a), p(b)]
-  for (let i = 0; i < 3; i++) if ((l[i] ?? 0) !== (r[i] ?? 0)) return (l[i] ?? 0) < (r[i] ?? 0) ? -1 : 1
-  return 0
-}
 
 async function publishPage(ctx: MockContext): Promise<MockResult> {
   const decoded = await decode(ctx, PAGE_SHAPE)
@@ -353,10 +333,8 @@ async function publishPage(ctx: MockContext): Promise<MockResult> {
   const t = (k: string) => str(body[k]).trim()
   const slug = t('slug').toLowerCase()
   const kind = t('kind') || 'kb_article'
-  const locale = t('locale') || 'zh-CN'
   const visibility = t('visibility') || 'authenticated'
   const status = t('status') || 'draft'
-  const [minV, maxV] = [t('min_client_version'), t('max_client_version')]
   const fields: Record<string, string> = {}
   if (slug.length > 80 || !SLUG.test(slug)) fields.slug = '标识只能由小写字母、数字和单个连字符组成，最长 80 字符'
   if (!['page', 'kb_article', 'tutorial', 'legal'].includes(kind)) fields.kind = '类型必须是 page / kb_article / tutorial / legal'
@@ -364,14 +342,8 @@ async function publishPage(ctx: MockContext): Promise<MockResult> {
   if (runes(t('title')) < 2 || runes(t('title')) > 160) fields.title = '标题需在 2–160 字之间'
   if (runes(t('summary')) > 500) fields.summary = '摘要最长 500 字'
   if (runes(t('body')) < 10 || runes(t('body')) > 100000) fields.body = '正文需在 10–100000 字之间'
-  if (!LOCALE.test(locale)) fields.locale = '语言格式不正确'
   if (visibility !== 'authenticated' && visibility !== 'internal') fields.visibility = '可见性必须是 authenticated / internal'
   if (status !== 'draft' && status !== 'published') fields.status = '状态必须是 draft / published'
-  if (minV && !CLIENT_VERSION.test(minV)) fields.min_client_version = '最低客户端版本格式不正确'
-  if (maxV && !CLIENT_VERSION.test(maxV)) fields.max_client_version = '最高客户端版本格式不正确'
-  if (minV && maxV && cmpVersion(minV, maxV) > 0) fields.max_client_version = '最高客户端版本不能低于最低版本'
-  const platforms = [...new Set(strs(body.target_platforms).map((p) => p.trim().toLowerCase()))].sort()
-  if (platforms.some((p) => !PLATFORMS.includes(p))) fields.target_platforms = '包含不支持的平台'
   const planIds = normalizeIds(strs(body.target_plan_ids))
   if (!planIds) fields.target_plan_ids = '套餐 ID 格式不正确'
   if (Object.keys(fields).length > 0) return invalid(fields)
@@ -389,10 +361,6 @@ async function publishPage(ctx: MockContext): Promise<MockResult> {
     title: t('title'),
     summary: t('summary'),
     body: t('body'),
-    locale,
-    target_platforms: platforms,
-    min_client_version: minV,
-    max_client_version: maxV,
     target_plan_ids: planIds!,
     visibility,
     status: status as ContentRow['status'],
@@ -445,7 +413,7 @@ const themes: MockTheme[] = [
     is_active: false,
     tokens: {
       light: { ...tokenGroup('light'), '--brand': '#2b6cb9', '--brand-hover': '#235a9c', '--brand-ink': '#1d4a80', '--brand-soft': '#dfeaf7', '--brand-tint': '#f1f6fc', '--bg': '#f2f5f8' },
-      dark: { ...tokenGroup('dark'), '--brand': '#5b9be4', '--brand-hover': '#79afea', '--brand-ink': '#a6c8f1', '--brand-soft': '#1b2a3d', '--brand-tint': '#141b24', '--bg': '#0f1216' },
+      dark: { ...tokenGroup('dark'), ...darkBrandTokens('#2b6cb9'), '--bg': '#0f1216' },
     },
     branding: { tagline: '一路畅通' },
   },
@@ -454,7 +422,6 @@ const themes: MockTheme[] = [
 // 与 Go appearance 同一套规则（tokens.go / branding.go）：错误标在 tokens.<组>.<键>、branding.<键> 上
 const TOKEN_NAMES = new Set(COLOR_TOKENS.map((t) => t.name))
 const TOKEN_BAD = /[;{}<>\\]/
-const LOGO = /^data:(image\/png|image\/jpeg|image\/webp|image\/svg\+xml);base64,([A-Za-z0-9+/]+={0,2})$/
 
 function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockTheme['tokens']; branding: Record<string, string> } {
   const tokens = { light: {}, dark: {} } as MockTheme['tokens']
@@ -486,21 +453,13 @@ function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockT
   for (const k of Object.keys(rawBranding)) {
     if (k === 'site_name') {
       fields['branding.site_name'] = '站点名不在主题里设置：到「内容与外观 → 主题与插槽」的站点设置里改'
-    } else if (!['tagline', 'logo'].includes(k)) {
-      fields.branding = `不认识的品牌字段：${k}（只允许标语与 Logo）`
+    } else if (k !== 'tagline') {
+      fields.branding = `不认识的品牌字段：${k}（只允许标语）`
     }
   }
   const tagline = str(rawBranding.tagline).trim()
   if (runes(tagline) > 80) fields['branding.tagline'] = '标语最多 80 个字'
   else if (tagline) branding.tagline = tagline
-  const logo = str(rawBranding.logo).trim()
-  if (logo) {
-    const m = LOGO.exec(logo)
-    if (!logo.startsWith('data:')) fields['branding.logo'] = 'Logo 只能是上传的图片（data:image/… 形式），门户不加载外链图片'
-    else if (!m) fields['branding.logo'] = 'Logo 只支持 PNG、JPEG、WebP 或 SVG'
-    else if (Buffer.from(m[2]!, 'base64').length > 48 * 1024) fields['branding.logo'] = 'Logo 不能超过 48KB'
-    else branding.logo = logo
-  }
   return { tokens, branding }
 }
 
@@ -537,16 +496,13 @@ const SLOT_CATALOG: ReadonlyArray<readonly [string, string, string]> = [
   ['portal.login.notice', '登录页提示', '登录框上方，未登录访客可见'],
   ['portal.home.banner', '我的套餐横幅', '我的套餐页最顶部，通栏'],
   ['portal.home.aside', '我的套餐附加卡片', '我的套餐页内容下方'],
-  ['portal.sidebar.extra', '侧栏附加内容', '侧栏导航下方、账号信息上方'],
-  ['portal.subscribe.notice', '订阅页说明', '「我的订阅」页顶部'],
+  ['portal.subscribe.notice', '我的套餐说明', '「我的套餐」页顶部，横幅下方'],
   ['portal.plans.notice', '选购页说明', '「选购套餐」页顶部，适合放退换与发票说明'],
-  ['portal.footer', '页脚', '所有页面底部'],
 ]
 const stamp = () => new Date().toISOString().slice(0, 16).replace('T', ' ')
 const savedSlots = new Map<string, { content: string; enabled: boolean; updated_at: string }>([
   ['portal.login.notice', { content: '国庆活动：全场 8 折，优惠码 AUTUMN26', enabled: true, updated_at: '2026-09-20 10:12' }],
   ['portal.subscribe.notice', { content: '订阅地址请勿分享，泄露后可在本页一键更换。', enabled: true, updated_at: '2026-09-02 18:40' }],
-  ['portal.footer', { content: '<a href="/tos">服务条款</a> · <a href="/privacy">隐私</a>', enabled: false, updated_at: '2026-08-14 09:03' }],
 ])
 
 /** 净化的粗略模拟：去掉 script / style 元素与 on* 属性，逐条说明；空内容回 null（与 Go 的 nil 切片一致） */

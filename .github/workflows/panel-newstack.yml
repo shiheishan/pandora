@@ -195,7 +195,6 @@ jobs:
       # 几个脚本都从 127.0.0.1 注册、登录、调后台几百次（risk_e2e 还用 X-Real-IP 扮上百个来源）：
       # 放宽按 IP、按账号、认证三种限流（失败 10 次暂停按账号计，不受影响；每条凭据每小时拉取上限不放宽）
       PANDORA_RATELIMIT_IP_PER_MIN: "100000"
-      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
       PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
       # risk_e2e 自己给后台调用限速的预算（每分钟），限流已放宽，调大免得白等
       RISK_ADMIN_BUDGET: "1000"
@@ -314,7 +313,6 @@ jobs:
       # 200 个用户都从 127.0.0.1 注册、登录、拉订阅，管理员一分钟里开 200 张单：放宽按 IP、按账号、认证三种限流
       # （每条凭据每小时 60 次的拉取上限不放宽，冒烟脚本的拉取次数远低于它）
       PANDORA_RATELIMIT_IP_PER_MIN: "100000"
-      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
       PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
       NODE_SMOKE_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES

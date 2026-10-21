@@ -240,7 +240,7 @@ function SiteCard() {
         else if (k === 'timezone') toast(`站点时区已改为 ${r.timezone}`)
         else if (k === 'seo_keywords') toast('关键词已保存')
         else if (k === 'seo_description') toast('站点描述已保存')
-        else if (k === 'allow_indexing') toast(r.allow_indexing ? '已允许搜索引擎收录门户首页' : '已关闭搜索引擎收录')
+        else if (k === 'allow_indexing') toast(r.allow_indexing ? '已允许搜索引擎收录用户端首页' : '已关闭搜索引擎收录')
         else if (k === 'url') toast(r.url ? `主域名已改为 ${r.url}` : '主域名已恢复为安装时的地址')
       }
       setName(null)
@@ -363,7 +363,7 @@ function SiteCard() {
       <div className={css.siteSeo}>
         <Input
           label="搜索关键词"
-          hint="用英文逗号分隔，写进门户首页的 keywords；留空不写。最多 200 字"
+          hint="用英文逗号分隔，写进用户端首页的 keywords；留空不写。最多 200 字"
           value={keywordsValue}
           maxLength={200}
           error={errors.seo_keywords}
@@ -387,7 +387,7 @@ function SiteCard() {
           }}
         />
         <Switch
-          label="允许搜索引擎收录门户首页"
+          label="允许搜索引擎收录用户端首页"
           checked={indexingValue}
           disabled={save.isPending}
           onChange={(e) => {
@@ -395,7 +395,7 @@ function SiteCard() {
           }}
         />
         <p className={css.hint}>
-          关着时门户首页带 noindex、robots.txt 整站不许抓；开了也只放行首页，登录后的页面、后台与订阅链接始终不收录。
+          关着时用户端首页带 noindex、robots.txt 整站不许抓；开了也只放行首页，登录后的页面、后台与订阅链接始终不收录。
         </p>
         <Button className={css.siteSave} size="sm" disabled={!dirty} busy={save.isPending} onClick={submit}>
           保存

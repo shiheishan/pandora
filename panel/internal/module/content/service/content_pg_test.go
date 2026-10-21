@@ -36,9 +36,8 @@ func TestContentPublishVersionsPG(t *testing.T) {
 	e.plans.plans[planA] = true
 
 	base := PublishInput{
-		Slug: slug, Kind: "kb_article", Title: "T1", Body: body, Locale: "zh-CN",
-		Visibility: VisibilityAuthenticated, TargetPlatforms: []string{"web"},
-		MinClientVersion: "1.0.0", MaxClientVersion: "3.0.0", TargetPlanIDs: []string{planA.String()},
+		Slug: slug, Kind: "kb_article", Title: "T1", Body: body,
+		Visibility: VisibilityAuthenticated, TargetPlanIDs: []string{planA.String()},
 		ExpectedLatestVersion: 0, Status: StatusDraft,
 	}
 	audBefore := auditVersionCreatedCount(t, e, ctx)
@@ -97,7 +96,7 @@ func TestContentPublishVersionsPG(t *testing.T) {
 	}
 
 	base.ExpectedLatestVersion = 3
-	base.TargetPlatforms = []string{"web", "android"}
+	base.Visibility = VisibilityInternal
 	base.Title = "T4 other audience"
 	base.Status = StatusPublished
 	v4, err := e.svc.PublishVersion(actx, base)
@@ -106,6 +105,24 @@ func TestContentPublishVersionsPG(t *testing.T) {
 	}
 	if pageStatus(t, e, ctx, slug, 3) != StatusPublished {
 		t.Fatalf("v3 should stay published (different audience)")
+	}
+
+	base.ExpectedLatestVersion = 4
+	base.Visibility = VisibilityAuthenticated
+	base.Title = "T5 same audience as v3"
+	base.Status = StatusPublished
+	v5, err := e.svc.PublishVersion(actx, base)
+	if err != nil || v5.Version != 5 {
+		t.Fatalf("v5: %+v err=%v", v5, err)
+	}
+	if pageStatus(t, e, ctx, slug, 3) != StatusArchived {
+		t.Fatalf("v3 should be archived (same audience)")
+	}
+	if pageStatus(t, e, ctx, slug, 4) != StatusPublished {
+		t.Fatalf("v4 should stay published (different audience)")
+	}
+	if pageStatus(t, e, ctx, slug, 5) != StatusPublished {
+		t.Fatalf("v5 should be published")
 	}
 }
 
@@ -170,8 +187,7 @@ func TestContentPortalVisibilityPG(t *testing.T) {
 	slug := "getting-started-" + randHex(8)
 	pub := PublishInput{
 		Slug: slug, Kind: "kb_article", Title: "GS", Body: longBody("detail body here"),
-		Locale: "zh-CN", Visibility: VisibilityAuthenticated, Status: StatusPublished,
-		TargetPlatforms: []string{"web"}, MinClientVersion: "1.0.0", MaxClientVersion: "3.0.0",
+		Visibility: VisibilityAuthenticated, Status: StatusPublished,
 		TargetPlanIDs: []string{planA.String()}, ExpectedLatestVersion: 0,
 	}
 	if _, err := e.svc.PublishVersion(actx, pub); err != nil {
@@ -179,12 +195,12 @@ func TestContentPortalVisibilityPG(t *testing.T) {
 	}
 
 	mctx := userCtx(ctx, member)
-	vf := VisibleFilter{Kind: "kb_article", Platform: "web", ClientVersion: "2.0.0", Locale: "zh-CN"}
+	vf := VisibleFilter{Kind: "kb_article"}
 	list, err := e.svc.ListVisible(mctx, member, vf)
 	if err != nil || len(list) != 1 || list[0].Body != "" {
 		t.Fatalf("list=%+v err=%v", list, err)
 	}
-	detail, err := e.svc.GetVisible(mctx, member, slug, VisibleFilter{Platform: "web", ClientVersion: "2.0.0", Locale: "zh-CN"})
+	detail, err := e.svc.GetVisible(mctx, member, slug, VisibleFilter{})
 	if err != nil || detail.Body == "" {
 		t.Fatalf("detail body empty err=%v", err)
 	}
@@ -195,20 +211,12 @@ func TestContentPortalVisibilityPG(t *testing.T) {
 		f    VisibleFilter
 	}{
 		{"no-plan", outsider, vf},
-		{"platform", member, VisibleFilter{Platform: "android", ClientVersion: "2.0.0", Locale: "zh-CN"}},
-		{"version", member, VisibleFilter{Platform: "web", ClientVersion: "4.0.0", Locale: "zh-CN"}},
-		{"locale", member, VisibleFilter{Platform: "web", ClientVersion: "2.0.0", Locale: "en-US"}},
 	}
 	for _, tc := range cases {
 		got, err := e.svc.ListVisible(userCtx(ctx, tc.uid), tc.uid, tc.f)
 		if err != nil || len(got) != 0 {
 			t.Fatalf("%s leaked len=%d err=%v", tc.name, len(got), err)
 		}
-	}
-
-	anyList, err := e.svc.ListVisible(mctx, member, VisibleFilter{Platform: PlatformAny, ClientVersion: "2.0.0", Locale: "zh-CN"})
-	if err != nil || len(anyList) != 1 {
-		t.Fatalf("platform any: %+v err=%v", anyList, err)
 	}
 
 	internalSlug := "internal-only-" + randHex(6)
@@ -218,7 +226,7 @@ func TestContentPortalVisibilityPG(t *testing.T) {
 	if _, err := e.svc.PublishVersion(actx, pub); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := e.svc.ListVisible(mctx, member, VisibleFilter{Platform: "web", ClientVersion: "2.0.0", Locale: "zh-CN"}); len(n) > 1 {
+	if n, _ := e.svc.ListVisible(mctx, member, VisibleFilter{Kind: "kb_article"}); len(n) > 1 {
 		t.Fatalf("internal leaked")
 	}
 
@@ -230,7 +238,7 @@ func TestContentPortalVisibilityPG(t *testing.T) {
 	if _, err := e.svc.PublishVersion(actx, pub); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.GetVisible(mctx, member, draftSlug, VisibleFilter{Platform: "web", ClientVersion: "2.0.0", Locale: "zh-CN"}); err == nil {
+	if _, err := e.svc.GetVisible(mctx, member, draftSlug, VisibleFilter{}); err == nil {
 		t.Fatal("draft should not be visible")
 	}
 }
@@ -259,7 +267,7 @@ func TestContentSearchPG(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hit, err := e.svc.ListVisible(uctx, user, VisibleFilter{Query: needle, Platform: "web", ClientVersion: "1.0.0", Locale: "zh-CN"})
+	hit, err := e.svc.ListVisible(uctx, user, VisibleFilter{Query: needle})
 	if err != nil || len(hit) != 0 {
 		t.Fatalf("old version hit should not return: %+v err=%v", hit, err)
 	}
@@ -268,7 +276,7 @@ func TestContentSearchPG(t *testing.T) {
 	if _, err := e.svc.PublishVersion(actx, pub); err != nil {
 		t.Fatal(err)
 	}
-	hit, err = e.svc.ListVisible(uctx, user, VisibleFilter{Query: needle, Platform: "web", ClientVersion: "1.0.0", Locale: "zh-CN"})
+	hit, err = e.svc.ListVisible(uctx, user, VisibleFilter{Query: needle})
 	if err != nil || len(hit) != 1 {
 		t.Fatalf("body hit want 1: %+v err=%v", hit, err)
 	}
@@ -293,7 +301,7 @@ func TestContentSearchHidesAccessBlockPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := func(q string) VisibleFilter {
-		return VisibleFilter{Query: q, Platform: "web", ClientVersion: "1.0.0", Locale: "zh-CN"}
+		return VisibleFilter{Query: q}
 	}
 
 	hit, err := e.svc.ListVisible(userCtx(ctx, plain), plain, f(secret))

@@ -2,7 +2,7 @@
 // 以及门户一次取齐的外观数据。别的模块只调本包。
 //
 // 主题与插槽都会渲染进门户、被所有访客看到，所以写入一律走白名单：令牌只收设计稿的 CSS 变量（tokens.go），
-// 品牌只收标语与 data: 形式的 Logo（站点名只认系统设置 site.name），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
+// 品牌只收标语（站点名只认系统设置 site.name），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
 // 门户读取时再按同一套白名单过滤一次（插槽再过一次 SanitizeHTML，结果按原文备忘在进程内），库里被手工改过的行也出不去。
 package service
 
@@ -116,15 +116,13 @@ type PublicAppearance struct {
 
 // SlotCatalog 是插槽位的说明。
 //
-// 放在代码里而不是库里：这些位置对应前端模板里的挂载点，两者必须同步改（迁移里的 CHECK 也是这七个）。
+// 放在代码里而不是库里：这些位置对应前端模板里的挂载点，两者必须同步改（迁移里的 CHECK 也是这五个，最新一次改在 00062）。
 var SlotCatalog = []struct{ Key, Label, Where string }{
 	{"portal.login.notice", "登录页提示", "登录框上方，未登录访客可见"},
 	{"portal.home.banner", "我的套餐横幅", "我的套餐页最顶部，通栏"},
 	{"portal.home.aside", "我的套餐附加卡片", "我的套餐页内容下方"},
-	{"portal.sidebar.extra", "侧栏附加内容", "侧栏导航下方、账号信息上方"},
-	{"portal.subscribe.notice", "订阅页说明", "「我的订阅」页顶部"},
+	{"portal.subscribe.notice", "我的套餐说明", "「我的套餐」页顶部，横幅下方"},
 	{"portal.plans.notice", "选购页说明", "「选购套餐」页顶部，适合放退换与发票说明"},
-	{"portal.footer", "页脚", "所有页面底部"},
 }
 
 // MaxSlotBytes 是净化后插槽内容的上限（与表上的 CHECK 一致）。

@@ -43,11 +43,6 @@
   white-space: nowrap;
 }
 
-.plats {
-  color: var(--text-2);
-  font-size: 12px;
-}
-
 .ver {
   color: var(--text-2);
   font-family: var(--font-mono);
@@ -155,47 +150,6 @@
 .slugInput:focus {
   border-bottom-color: var(--text);
   outline: none;
-}
-
-.platformRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
-}
-
-.platformLabel {
-  color: var(--text-2);
-  font-size: 12px;
-}
-
-.platformBtn {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.platformBtn:hover {
-  border-color: var(--border-hover);
-}
-
-.platformBtn:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.platformBtnOn {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--on-ink);
-}
-
-.platformBtnOn:hover {
-  border-color: var(--text);
 }
 
 .picker {

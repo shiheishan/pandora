@@ -20,14 +20,14 @@ paths:
 
 帮助中心：
 - 宽屏左列（带放大镜的搜索框、内置指南卡、目录卡、「没找到答案？直接问客服」）右文章卡；手机两屏（`data-view`），文章顶上「‹ 全部文章」只在手机显示。搜不到时目录卡里给提示与「提交工单」，底部那条藏起。文章卡与指南卡各自是页面上唯一的 `<article>`，指南里 h3 只有 App 名（浏览器测试 `portal-links.spec.ts` C8c 靠它）；指南末尾「还是不行？提交工单」。
-- 可见性参数 `platform=any` 在列表、正文、反馈三处必须一致（`help/api.ts` 的 `HELP_QUERY`），不一致反馈会 404。
+- 知识库只做中文：平台、语言、客户端版本与「这篇文章有帮助吗」10-21 前后端连库删了，列表与正文只带 `kind` / `q`，不要加回。文末只有「仍未解决，提交工单」。
 - 正文是纯文本 / Markdown 源码，只认「## 」行作小标题、空行分段，全部渲染成文本节点，不用 innerHTML。
 - 内置一篇「在 App 里点一次更新」（不是后台文章）：`#/help?update=<ios|android|mac|windows>`，走查询参数不占文章 slug；目录最上面照设计稿是一张卡片「在 App 里点一次更新 / 换了链接、节点不对时先做这个 ›」，链到这台设备（`thisDevice()`）那一篇，指南页里用设备标签切换，标题上方写「内置指南」。内容在 `common/app-update.ts` 的 `APP_UPDATE`，`common/clients.ts` 推荐的每个 App 一段：在哪个页面、点哪个按钮、看到什么算成功，末尾给「删掉再添加一次」的退路；中文界面按钮带禁用词的写英文界面的名字。给 `clients.ts` 加 App 要同时加一段（守卫 `common.test.ts`「clients.ts 推荐的每个 App 都有一段」）
-- 搜索交给后端 `q`（要匹配正文，列表拿不到正文）；「有帮助」按用户、文章、版本 upsert，天然幂等不带键；设计稿没有「没帮助」，照设计不加。
+- 搜索交给后端 `q`（要匹配正文，列表拿不到正文）。
 
 消息：
 - 通知按浏览器本地日期分「今天 / 更早」（`groupByDay`，`sent_at` 为 null 归更早），时间写「N 分钟前 / N 小时前 / N 天前」，一周以外月-日（`noticeTime`）；图标按 code（`notificationIcon`，不认识的用铃铛）。未读：底色、粗标题、圆点。已读且没有去处的一条不可点。「全部标为已读」是文字按钮。
-- 公告：置顶 brandSolid 标签在前，等级 critical 重要 / warning 注意 / notice 提示 / info 无标签，左侧色条同色；正文完整显示（pre-line，不截断）。
+- 公告：置顶 brandSolid 标签在前，等级 critical 重要 / warning 注意 / notice 提示 / info 无标签（后台叫「普通」，两边叫法一致），左侧色条同色；正文完整显示（pre-line，不截断）。
 - 新站内信没有 SSE：外框铃铛 60 秒轮询 `['portal','notifications','unread']`（limit=1），消息页用 `['portal','notifications','list']`，写操作失效整个 `['portal','notifications']` 前缀让角标同步。
 
 邀请返利：

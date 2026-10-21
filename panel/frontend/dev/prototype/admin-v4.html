@@ -2448,10 +2448,8 @@
     ['登录页提示', 'portal.login.notice', true, '国庆活动：全场 8 折，优惠码 AUTUMN26'],
     ['概览页横幅', 'portal.home.banner', false, ''],
     ['概览页附加卡片', 'portal.home.aside', false, ''],
-    ['侧栏附加内容', 'portal.sidebar.extra', false, ''],
     ['订阅页说明', 'portal.subscribe.notice', true, '导入失败时先更新客户端到最新版，再重新复制订阅链接。'],
     ['选购页说明', 'portal.plans.notice', false, ''],
-    ['页脚', 'portal.footer', false, '<a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a>'],
   ]
   const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   document.getElementById('sllist').innerHTML = SL.map(([n, k, on, v]) => `<div class="sl"><div><b>${n}</b><small>${k}</small><label class="swl"><span class="sw ${on ? 'on' : ''}"><i></i></span>${on ? '已开启' : '已关闭'}</label></div><textarea class="inp ta" rows="2" placeholder="留空则不显示">${esc(v)}</textarea></div>`).join('')

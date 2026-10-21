@@ -273,7 +273,7 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 
 	raw := `<p onclick="x()">hi</p><script>alert(1)</script>`
 	dropped, err := e.svc.SaveSlot(actx, SaveSlotInput{
-		Key: "portal.footer", Content: raw, Enabled: true,
+		Key: "portal.plans.notice", Content: raw, Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +282,7 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 		t.Fatal("期望 dropped 非空")
 	}
 	var stored string
-	if err := e.row(ctx, `SELECT content FROM site_slots WHERE slot_key = ?`, "portal.footer").Scan(&stored); err != nil {
+	if err := e.row(ctx, `SELECT content FROM site_slots WHERE slot_key = ?`, "portal.plans.notice").Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(stored, "script") || strings.Contains(stored, "onclick") {
@@ -290,12 +290,18 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 	}
 
 	slots, err := e.svc.ListSlots(ctx)
-	if err != nil || len(slots) < 7 {
-		t.Fatalf("ListSlots: len=%d err=%v", len(slots), err)
+	if err != nil || len(slots) != 5 {
+		t.Fatalf("ListSlots: len=%d (want 5) err=%v", len(slots), err)
 	}
-	footer := slots[6]
-	if footer.Key != "portal.footer" || !footer.Enabled || footer.Content != stored || footer.UpdatedAt == "" {
-		t.Fatalf("footer slot: %+v", footer)
+	var notice *Slot
+	for i := range slots {
+		if slots[i].Key == "portal.plans.notice" {
+			notice = &slots[i]
+			break
+		}
+	}
+	if notice == nil || !notice.Enabled || notice.Content != stored || notice.UpdatedAt == "" {
+		t.Fatalf("notice slot: %+v", notice)
 	}
 	if slots[0].UpdatedAt != "" {
 		t.Fatalf("未保存的插槽应有空 UpdatedAt: %+v", slots[0])
@@ -305,8 +311,8 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pub.Slots["portal.footer"] != stored {
-		t.Fatalf("public footer: %q", pub.Slots["portal.footer"])
+	if pub.Slots["portal.plans.notice"] != stored {
+		t.Fatalf("public notice: %q", pub.Slots["portal.plans.notice"])
 	}
 	for k, v := range pub.Slots {
 		if v == "" {
@@ -315,7 +321,7 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 	}
 
 	_, err = e.svc.SaveSlot(actx, SaveSlotInput{
-		Key: "portal.footer", Content: stored, Enabled: false,
+		Key: "portal.plans.notice", Content: stored, Enabled: false,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +330,7 @@ func TestAppearanceSaveSlotAndPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := pub2.Slots["portal.footer"]; ok {
+	if _, ok := pub2.Slots["portal.plans.notice"]; ok {
 		t.Fatal("禁用后不应出现在 Public.Slots")
 	}
 }
@@ -337,17 +343,16 @@ func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
 	meta := e.svc.PageMeta(ctx)
-	if meta.SiteName != "夜海加速" || meta.Tagline != "" || meta.Logo != "" {
+	if meta.SiteName != "夜海加速" || meta.Tagline != "" {
 		t.Fatalf("内置主题初始 PageMeta 期望 夜海加速//空，得到 %+v", meta)
 	}
 	if meta.SEOKeywords != "加速" || !meta.AllowIndexing || meta.SiteURL != "https://panel.example.test/" {
 		t.Fatalf("SEO 与 SiteURL 期望 keywords=加速 allow=true url=https://panel.example.test/，得到 %+v", meta)
 	}
 
-	logo := "data:image/png;base64,iVBORw0KGgo="
 	err := e.svc.SaveTheme(actx, SaveThemeInput{
 		Code: "fast-ocean", Name: "夜海", Create: true,
-		Branding: json.RawMessage(`{"tagline":"一路畅通","logo":"` + logo + `"}`),
+		Branding: json.RawMessage(`{"tagline":"一路畅通"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -359,8 +364,8 @@ func TestAppearancePageMetaReadsSiteSettings(t *testing.T) {
 	// TxCtx 整例回滚，提交后钩子（AfterCommit 里的快照失效）不执行：这里手动失效，模拟提交后的效果
 	e.svc.invalidatePageMeta()
 	metaAfter := e.svc.PageMeta(ctx)
-	if metaAfter.Tagline != "一路畅通" || metaAfter.Logo != logo {
-		t.Fatalf("激活后 PageMeta 期望 一路畅通 与 logo，得到 %+v", metaAfter)
+	if metaAfter.Tagline != "一路畅通" {
+		t.Fatalf("激活后 PageMeta 期望 一路畅通，得到 %+v", metaAfter)
 	}
 
 	pub, err := e.svc.Public(ctx)
@@ -378,7 +383,7 @@ func TestAppearancePublicResanitizesStoredSlot(t *testing.T) {
 	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
 
 	_, err := e.svc.SaveSlot(actx, SaveSlotInput{
-		Key: "portal.footer", Content: `<p>页脚</p>`, Enabled: true,
+		Key: "portal.plans.notice", Content: `<p>选购页说明</p>`, Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -386,7 +391,7 @@ func TestAppearancePublicResanitizesStoredSlot(t *testing.T) {
 
 	var k string
 	if err := e.row(ctx, `UPDATE site_slots SET content = ? WHERE slot_key = ? RETURNING slot_key`,
-		`<p onclick="x()">改过</p><img src="https://cdn.example.com/a.png">`, "portal.footer").Scan(&k); err != nil {
+		`<p onclick="x()">改过</p><img src="https://cdn.example.com/a.png">`, "portal.plans.notice").Scan(&k); err != nil {
 		t.Fatal(err)
 	}
 
@@ -394,19 +399,19 @@ func TestAppearancePublicResanitizesStoredSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	footer := pub.Slots["portal.footer"]
-	if !strings.Contains(footer, "改过") {
-		t.Fatalf("public footer: %q", footer)
+	notice := pub.Slots["portal.plans.notice"]
+	if !strings.Contains(notice, "改过") {
+		t.Fatalf("public notice: %q", notice)
 	}
-	if strings.Contains(footer, "onclick") {
-		t.Fatalf("不应含 onclick: %q", footer)
+	if strings.Contains(notice, "onclick") {
+		t.Fatalf("不应含 onclick: %q", notice)
 	}
-	if strings.Contains(footer, "cdn.example.com") {
-		t.Fatalf("img 外链应被去掉: %q", footer)
+	if strings.Contains(notice, "cdn.example.com") {
+		t.Fatalf("img 外链应被去掉: %q", notice)
 	}
 
 	if err := e.row(ctx, `UPDATE site_slots SET content = ? WHERE slot_key = ? RETURNING slot_key`,
-		`<script>alert(1)</script>`, "portal.footer").Scan(&k); err != nil {
+		`<script>alert(1)</script>`, "portal.plans.notice").Scan(&k); err != nil {
 		t.Fatal(err)
 	}
 
@@ -415,7 +420,36 @@ func TestAppearancePublicResanitizesStoredSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := pub2.Slots["portal.footer"]; ok {
+	if _, ok := pub2.Slots["portal.plans.notice"]; ok {
 		t.Fatalf("纯 script 再净化后不应下发: %v", pub2.Slots)
+	}
+}
+
+func TestAppearanceRejectsLogoPG(t *testing.T) {
+	e := newApEnv(t)
+	ctx := e.txCtx()
+	actx := apAdminCtx(ctx, apNewUser(t, e, ctx))
+
+	err := e.svc.SaveTheme(actx, SaveThemeInput{
+		Code: "theme-with-logo", Name: "带Logo", Create: true,
+		Branding: json.RawMessage(`{"tagline":"x","logo":"data:image/png;base64,AAAA"}`),
+	})
+	if err == nil {
+		t.Fatal("期望 SaveTheme 拒绝 logo，但未报错")
+	}
+	ae := errs.As(err)
+	if ae.Code != errs.ValidationFailed {
+		t.Fatalf("期望 422 validation_failed, 得到 %v", ae.Code)
+	}
+	if ae.Fields["branding"] == "" {
+		t.Fatalf("期望 fields.branding 非空，得到 fields: %v", ae.Fields)
+	}
+
+	var count int64
+	if err := e.row(ctx, `SELECT count(*) FROM site_themes WHERE code = ?`, "theme-with-logo").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("库里不应存在该主题，count=%d", count)
 	}
 }

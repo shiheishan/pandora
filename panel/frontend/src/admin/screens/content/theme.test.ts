@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { brandDerived, darkBrandTokens } from '../../../styles/brand-palette'
 import { COLOR_TOKENS } from '../../../styles/design-tokens'
 import { themesResponse, type Theme } from './schemas'
-import { THEME_COLORS, activateNotice, brandDerived, buildThemeRequest, themeSwatches, themeTagline, themeToForm, validateThemeForm } from './theme'
+import { THEME_COLORS, activateNotice, buildThemeRequest, themeSwatches, themeTagline, themeToForm, validateThemeForm } from './theme'
 
 const U = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`
 const theme = (patch: Partial<Theme> = {}): Theme => ({
@@ -104,7 +105,7 @@ describe('theme form', () => {
   })
 
   it('builds a full request body: both groups 43 keys, light overridden by the form, code by kind', () => {
-    // 复制：code = 表单（trim + 小写），dark 组与来源一致，light 的 5 个键被表单覆盖
+    // 复制：code = 表单（trim + 小写），dark 组除品牌色系外与来源一致，light 的 5 个键被表单覆盖
     const form = themeToForm({ kind: 'create', from: theme() })
     form.code = ' Night-Sea '
     form.name = ' 夜海 '
@@ -118,8 +119,8 @@ describe('theme form', () => {
     expect(Object.keys(built.body.tokens.dark)).toHaveLength(48)
     expect(built.body.tokens.light['--brand']).toBe('#2b6cb9')
     expect(built.body.tokens.light['--bg']).toBe('#f5f4f0')
-    // dark 组整组照来源补满
-    expect(built.body.tokens.dark['--brand']).toBe('#e46e52')
+    // 深色组跟品牌色走的令牌按新品牌色重推，其余照来源补满
+    expect(built.body.tokens.dark['--brand']).toBe(darkBrandTokens('#2b6cb9')!['--brand'])
     expect(built.body.tokens.dark['--bg']).toBe('#0e1210')
     expect(built.body.branding).toEqual({ tagline: '一路畅通' })
 
@@ -164,12 +165,39 @@ describe('theme form', () => {
     }
   })
 
-  it('keeps a data-image logo from the source but drops others and empty taglines', () => {
+  it('derives the dark brand tokens from the light brand on every save', () => {
+    // 改品牌色为 #2b6cb9 保存，darkBrandTokens('#2b6cb9') 的 9 个键逐个等于 built.body.tokens.dark[k]
+    const changed = themeToForm({ kind: 'edit', theme: theme() })
+    changed.colors.accent = '#2b6cb9'
+    const changedReq = buildThemeRequest(changed, { kind: 'edit', theme: theme() })
+    if (!changedReq.ok) throw new Error(JSON.stringify(changedReq.errors))
+    const darkTokensChanged = darkBrandTokens('#2b6cb9')!
+    for (const [k, v] of Object.entries(darkTokensChanged)) {
+      expect(changedReq.body.tokens.dark[k]).toBe(v)
+    }
+
+    // 不改品牌色（编辑来源 theme()，品牌色 #b9442b）保存，dark 组那 9 个键等于 darkBrandTokens('#b9442b') 的值（来源里手存的 #e46e52 被替换）
+    const unchanged = themeToForm({ kind: 'edit', theme: theme() })
+    const unchangedReq = buildThemeRequest(unchanged, { kind: 'edit', theme: theme() })
+    if (!unchangedReq.ok) throw new Error(JSON.stringify(unchangedReq.errors))
+    const darkTokensUnchanged = darkBrandTokens('#b9442b')!
+    for (const [k, v] of Object.entries(darkTokensUnchanged)) {
+      expect(unchangedReq.body.tokens.dark[k]).toBe(v)
+    }
+    expect(unchangedReq.body.tokens.dark['--brand']).toBe(darkTokensUnchanged['--brand'])
+    expect(unchangedReq.body.tokens.dark['--brand']).not.toBe('#e46e52')
+
+    // 深色组里不跟品牌色走的键（如 --bg、--text）保存前后与来源补满后的值一致（--bg 仍是 #0e1210）
+    expect(changedReq.body.tokens.dark['--bg']).toBe('#0e1210')
+    expect(unchangedReq.body.tokens.dark['--bg']).toBe('#0e1210')
+  })
+
+  it('drops the logo from the source and empty taglines', () => {
     const withLogo = theme({ branding: { tagline: '口号', logo: 'data:image/png;base64,AAAA' } })
     const form = themeToForm({ kind: 'edit', theme: withLogo })
     const built = buildThemeRequest(form, { kind: 'edit', theme: withLogo })
     if (!built.ok) throw new Error(JSON.stringify(built.errors))
-    expect(built.body.branding).toEqual({ tagline: '口号', logo: 'data:image/png;base64,AAAA' })
+    expect(built.body.branding).toEqual({ tagline: '口号' })
 
     // 外链 Logo 不带
     const remote = theme({ branding: { logo: 'https://x.test/a.png' } })

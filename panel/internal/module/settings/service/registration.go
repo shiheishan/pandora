@@ -77,11 +77,16 @@ func (s *Service) SetRegistration(ctx context.Context, v Registration) error {
 		if err := s.writeChanges(ctx, changes); err != nil {
 			return err
 		}
-		return s.writeAudit(ctx, auditRegistrationChanged, auditResourceSettings, map[string]any{
+		if err := s.writeAudit(ctx, auditRegistrationChanged, auditResourceSettings, map[string]any{
 			"group":  "registration",
 			"before": b,
 			"after":  a,
-		})
+		}); err != nil {
+			return err
+		}
+		// 门户首页按注册方式出「注册」「购买」入口
+		s.homeChanged(ctx)
+		return nil
 	})
 }
 
