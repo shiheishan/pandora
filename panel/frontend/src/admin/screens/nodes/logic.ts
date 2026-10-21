@@ -1,4 +1,4 @@
-import { relativeTime } from '../../../core/format'
+import { formatCount, relativeTime } from '../../../core/format'
 import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServerStatus, ServingStatus } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
@@ -6,10 +6,10 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 // ---------------------------------------------------------------------------
 // 状态：设计只有「在线 / 离线 / 已停用 / 已退役」，后端是 serving_status + stale（契约映射）
 // ---------------------------------------------------------------------------
-export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired'
+export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired' | 'cert'
 
 interface NodeState {
-  filter: Exclude<NodeFilter, 'all'>
+  filter: Exclude<NodeFilter, 'all' | 'cert'>
   label: string
   tone: Tone
   /** 状态旁的小字：草稿 */
@@ -30,15 +30,53 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
 }
 
 /**
+ * 「在线」一格的显示。online_users 是节点在设备识别窗口内（缺省 5 分钟）见过的用户数，节点离线后会在窗口过后降到 0：
+ * 在线节点照常显示人数（0 显示「—」）；离线节点人数还大于 0 时 value「—」、note「离线前 N 人在线」，降到 0 后不再提示
+ */
+export function onlineUsersView(n: Pick<NodeRow, 'serving_status' | 'stale' | 'online_users'>): { value: string; note: string | null } {
+  const state = nodeState(n)
+  const count = n.online_users ?? 0
+  if (state.filter === 'offline') {
+    if (count > 0) {
+      return { value: '—', note: `离线前 ${formatCount(count)} 人在线` }
+    }
+    return { value: '—', note: null }
+  }
+  return {
+    value: count > 0 ? formatCount(count) : '—',
+    note: null,
+  }
+}
+
+/**
+ * 证书要处理：在役、报过证书状态，且申请失败（error_code 非空）或快到期 / 已过期（IP 证书 2 天内、其余 14 天内）。
+ * 与 Go node/repo 的 CertAttentionBaseCond / CertFailingCond / CertExpiringCond 同口径
+ */
+export function certAttention(n: Pick<NodeRow, 'serving_status' | 'cert'>, now: number): boolean {
+  if (n.serving_status !== 'active' || !n.cert) return false
+  if (n.cert.error_code) return true
+  if (!n.cert.not_after) return false
+  const notAfterMs = new Date(n.cert.not_after).getTime()
+  const id = n.cert.identifier ?? ''
+  const isIP = id !== '' && (/^[0-9.]+$/.test(id) || id.includes(':'))
+  const deadline = now + (isIP ? 2 : 14) * 86400_000
+  return notAfterMs < deadline
+}
+
+/**
  * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
  * （GET v1/nodes 的 state 与 q、tag，node/repo 的 nodeListFilterSQL 与这里同一映射、同一组字段）。
  * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
  */
-export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string, tag = ''): NodeRow[] {
+export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string, tag = '', now = Date.now()): NodeRow[] {
   const q = query.trim().toLowerCase()
   return rows.filter((n) => {
-    const state = nodeState(n).filter
-    if (filter === 'all' ? state === 'retired' : state !== filter) return false
+    if (filter === 'cert') {
+      if (!certAttention(n, now)) return false
+    } else {
+      const state = nodeState(n).filter
+      if (filter === 'all' ? state === 'retired' : state !== filter) return false
+    }
     if (tag && !n.tags.includes(tag)) return false
     if (!q) return true
     const hay = [n.name, n.display_name, n.server_name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
@@ -199,7 +237,7 @@ export function bindBody(n: Pick<NodeRow, 'row_version'>, serverId: string, port
  */
 export function activationHint(warning: string): string {
   if (warning === '所在节点池没有绑定任何套餐，暂时不服务任何用户') return '已上线。所在节点池还没绑定套餐，暂时不服务用户——下一步到「套餐」页，在套餐版本里选上这个节点池并发布。'
-  if (warning === '未划入节点池，不服务任何用户') return '已上线。节点还没划入节点池，不服务任何用户——下一步在「协议参数」里给它选一个资源池。'
+  if (warning === '未划入节点池，不服务任何用户') return '已上线。节点还没划入节点池，不服务任何用户——下一步在「设置」页签的「访问」里点「编辑」选一个节点池。'
   return `已上线。${warning}`
 }
 
@@ -474,8 +512,8 @@ export interface BasicForm {
   country: string
 }
 
-/** 资源池必填的说明：下拉的提示与校验文案同一句 */
-export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点不服务任何用户'
+/** 节点池必填的说明：下拉的提示与校验文案同一句 */
+export const NO_POOL_HINT = '选择节点池：不在任何节点池里的节点不服务任何用户'
 
 export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '443', rate: '1', country: '' })
 
@@ -794,7 +832,9 @@ export const sourceTone = (s: RoutingSource): Tone => (s.scope === 'node' ? 'inf
 // ---------------------------------------------------------------------------
 // 带宽：近 24 小时按整点分桶，每桶取 (rx+tx)×8/1e6 的均值（Mbps）
 // ---------------------------------------------------------------------------
-export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new Date()): Array<{ hour: number; mbps: number | null }> {
+export type BandwidthBucket = { start: number; mbps: number | null }
+
+export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new Date()): BandwidthBucket[] {
   const end = new Date(now)
   end.setMinutes(0, 0, 0)
   const start = end.getTime() - 23 * 3600_000
@@ -806,22 +846,75 @@ export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new
     sums[i]!.total += ((p.rx_speed + p.tx_speed) * 8) / 1e6
     sums[i]!.n += 1
   }
-  return sums.map((s, i) => ({ hour: new Date(start + i * 3600_000).getHours(), mbps: s.n ? Number((s.total / s.n).toFixed(1)) : null }))
+  return sums.map((s, i) => ({ start: start + i * 3600_000, mbps: s.n ? Number((s.total / s.n).toFixed(1)) : null }))
 }
 
-/** 带宽曲线标题里的峰值：最大的非空桶；全空或最大值为 0 时返回 null */
-export function bandwidthPeak(buckets: ReadonlyArray<{ hour: number; mbps: number | null }>): { mbps: number; hour: number } | null {
-  let best: { mbps: number; hour: number } | null = null
+/** 带宽曲线标题里的峰值：最大的非空桶；全空或最大值 ≤ 0 时返回 null；并列取更早的 */
+export function bandwidthPeak(buckets: readonly BandwidthBucket[]): { mbps: number; start: number } | null {
+  let best: { mbps: number; start: number } | null = null
   for (const b of buckets) {
     if (b.mbps === null || b.mbps <= 0) continue
-    if (!best || b.mbps > best.mbps || (b.mbps === best.mbps && b.hour < best.hour)) best = { mbps: b.mbps, hour: b.hour }
+    if (!best || b.mbps > best.mbps || (b.mbps === best.mbps && b.start < best.start)) best = { mbps: b.mbps, start: b.start }
   }
   return best
 }
 
+/** 桶开始时刻的日子说法：与 now 同一本地日「今天」，前一天「昨天」，更早「M月D日」（模块内用，不导出） */
+function dayWord(start: number, now: Date): string {
+  const s = new Date(start)
+  const sY = s.getFullYear()
+  const sM = s.getMonth()
+  const sD = s.getDate()
+
+  const nY = now.getFullYear()
+  const nM = now.getMonth()
+  const nD = now.getDate()
+
+  if (sY === nY && sM === nM && sD === nD) return '今天'
+
+  const y = new Date(now)
+  y.setDate(y.getDate() - 1)
+  if (sY === y.getFullYear() && sM === y.getMonth() && sD === y.getDate()) return '昨天'
+
+  return `${sM + 1}月${sD}日`
+}
+
+/** 悬停读数：「昨天 23:00–24:00」「今天 14:00–15:00」（结束整点为 0 点时写 24:00） */
+export function bucketRangeLabel(start: number, now: Date): string {
+  const s = new Date(start)
+  const hStart = s.getHours()
+  const hStartStr = String(hStart).padStart(2, '0')
+  const hEndStr = hStart === 23 ? '24:00' : `${String(hStart + 1).padStart(2, '0')}:00`
+  const day = dayWord(start, now)
+  return `${day} ${hStartStr}:00–${hEndStr}`
+}
+
+/** 标题峰值：「峰值 393.1 Mbps · 昨天 23:00」；没有峰值回 null */
+export function bandwidthPeakLabel(peak: { mbps: number; start: number } | null, now: Date): string | null {
+  if (!peak) return null
+  const s = new Date(peak.start)
+  const hStr = `${String(s.getHours()).padStart(2, '0')}:00`
+  const day = dayWord(peak.start, now)
+  return `峰值 ${peak.mbps} Mbps · ${day} ${hStr}`
+}
+
+/** x 轴刻度：第 0、6、12、18、23 桶的开始整点「HH:00」，带桶序号（定位用） */
+export function bandwidthAxis(buckets: readonly BandwidthBucket[]): Array<{ index: number; label: string }> {
+  const indices = [0, 6, 12, 18, 23]
+  const axis: Array<{ index: number; label: string }> = []
+  for (const index of indices) {
+    const b = buckets[index]
+    if (b) {
+      const h = new Date(b.start).getHours()
+      axis.push({ index, label: `${String(h).padStart(2, '0')}:00` })
+    }
+  }
+  return axis
+}
+
 /** 地址查询串 f 的取值 → 状态筛选；认不出的一律 'all' */
 export function parseNodeFilter(raw: string | null): NodeFilter {
-  if (raw === 'online' || raw === 'offline' || raw === 'disabled' || raw === 'retired') return raw
+  if (raw === 'online' || raw === 'offline' || raw === 'disabled' || raw === 'retired' || raw === 'cert') return raw
   return 'all'
 }
 

@@ -169,11 +169,25 @@
 }
 
 .xLabels {
-  display: flex;
-  justify-content: space-between;
+  position: relative;
+  height: 16px;
   color: var(--text-3);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.xLabels > span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.xLabels > span:first-child {
+  transform: translateX(0);
+}
+
+.xLabels > span:last-child {
+  transform: translateX(-100%);
 }
 
 .faint {
