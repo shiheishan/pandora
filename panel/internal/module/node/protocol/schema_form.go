@@ -42,6 +42,24 @@ var showNetworkMKCP = map[string][]string{"network": {"mkcp"}}
 var showFlowVLESS = map[string][]string{"tls": {"2"}, "network": {"tcp", ""}}
 var showObfsSalamander = map[string][]string{"obfs.type": {"salamander"}}
 var showMaskAES = map[string][]string{"network": {"mkcp"}, "mask": {"mkcp-aes128gcm"}}
+var showCertModeFile = map[string][]string{"cert_mode": {"file"}}
+
+// mergeShowIf 合并两组显示条件（各键同时满足），拷贝出新 map，不改共享的 show* 变量。
+func mergeShowIf(base map[string][]string, extra map[string][]string) map[string][]string {
+	if base == nil && len(extra) == 0 {
+		return nil
+	}
+	out := make(map[string][]string)
+	if base != nil {
+		for k, v := range base {
+			out[k] = append([]string(nil), v...)
+		}
+	}
+	for k, v := range extra {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
 
 func cloneFields(in []FormField) []FormField {
 	return append([]FormField(nil), in...)
@@ -116,15 +134,29 @@ func certFields(showIf map[string][]string) []FormField {
 	return out
 }
 
-func clientTLSFields(showIf map[string][]string) []FormField {
+func certModeFields(showIf map[string][]string) []FormField {
+	certPh := nodeCertificateDir + "example.com/fullchain.pem"
+	keyPh := nodeCertificateDir + "example.com/privkey.pem"
+	fileIf := mergeShowIf(showIf, showCertModeFile)
 	out := []FormField{
-		{Path: "tls_settings.server_name", Label: "客户端 SNI", Placeholder: "example.com"},
-		{Path: "tls_settings.allow_insecure", Label: "允许不安全证书"},
+		{Path: "cert_mode", Label: "证书来源", Default: "acme", OptionLabels: map[string]string{"acme": "自动申请（Let's Encrypt）", "file": "手填证书路径"}},
+		{Path: "cert_path", Label: "证书路径", Placeholder: certPh, ShowIf: fileIf},
+		{Path: "key_path", Label: "私钥路径", Placeholder: keyPh, ShowIf: fileIf},
 	}
 	if showIf != nil {
-		for i := range out {
-			out[i].ShowIf = showIf
-		}
+		out[0].ShowIf = showIf
+	}
+	return out
+}
+
+func clientTLSFieldsForCertMode(showIf map[string][]string) []FormField {
+	insecureIf := mergeShowIf(showIf, showCertModeFile)
+	out := []FormField{
+		{Path: "tls_settings.server_name", Label: "客户端 SNI", Placeholder: "example.com"},
+		{Path: "tls_settings.allow_insecure", Label: "允许不安全证书", ShowIf: insecureIf},
+	}
+	if showIf != nil {
+		out[0].ShowIf = showIf
 	}
 	return out
 }
@@ -183,7 +215,7 @@ var protocolForms = map[string]formSpec{
 				{Path: "tls", Label: "加密", OptionLabels: map[string]string{"1": "1 · TLS", "2": "2 · REALITY"}},
 				{Path: "utls", Label: "uTLS 指纹", OptionLabels: utlsOptionLabels},
 			},
-			certFields(showTLS1), clientTLSFields(showTLS1), realityFields(), transportFields(),
+			certModeFields(showTLS1), clientTLSFieldsForCertMode(showTLS1), realityFields(), transportFields(),
 			[]FormField{{Path: "fallback", Label: "回落地址", ShowIf: showNetworkTCP, Placeholder: "127.0.0.1:80"}},
 			mkcpFields(),
 		),
@@ -192,7 +224,7 @@ var protocolForms = map[string]formSpec{
 			"grpc_path":                   "旧字段名，与 serviceName 二选一即可。",
 			"mask":                        "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"shadowsocks": {
@@ -200,10 +232,10 @@ var protocolForms = map[string]formSpec{
 		fields: []FormField{{Path: "cipher", Label: "加密方式"}},
 	},
 	"hysteria2": {
-		note: "走 UDP；证书必填。",
+		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{{Path: "network", Label: "传输方式", Default: "udp"}},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{
 				{Path: "obfs.type", Label: "混淆类型", OptionLabels: map[string]string{"": "不混淆"}},
 				{Path: "obfs.password", Label: "混淆密码", ShowIf: showObfsSalamander},
@@ -211,18 +243,18 @@ var protocolForms = map[string]formSpec{
 				{Path: "bandwidth.down", Label: "下行带宽（Mbps）", Placeholder: "留空不限"},
 				{Path: "udp_timeout", Label: "UDP 超时", Advanced: true, Placeholder: "留空按 5m"},
 			},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"tuic": {
-		note: "走 UDP；证书必填。",
+		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{{Path: "network", Label: "传输方式", Default: "udp"}},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{
 				{Path: "congestion_control", Label: "拥塞控制", OptionLabels: map[string]string{"": "留空（cubic）"}},
 				{Path: "zero_rtt", Label: "0-RTT"},
@@ -230,56 +262,56 @@ var protocolForms = map[string]formSpec{
 				{Path: "heartbeat", Label: "心跳间隔", Advanced: true, Placeholder: "留空按 10s"},
 				{Path: "udp_timeout", Label: "UDP 超时", Advanced: true, Placeholder: "留空按 5m"},
 			},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"juicity": {
-		note: "走 UDP；证书必填。",
+		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{{Path: "network", Label: "传输方式", Default: "udp"}},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{{Path: "congestion_control", Label: "拥塞控制", OptionLabels: map[string]string{"": "默认"}}},
 		),
 	},
 	"anytls": {
-		note: "证书必填：没证书时节点会以明文起，而客户端都强制 TLS，存得进去却谁都连不上。",
+		note: "证书必填（默认自动申请）：没证书时节点会以明文起，而客户端都强制 TLS，存得进去却谁都连不上。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
 				{Path: "tls", Label: "开启 TLS"},
 			},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{
 				{Path: "padding_scheme", Label: "填充方案", Advanced: true, Placeholder: `["stop=8","0=30-30"]`},
 				{Path: "utls", Label: "uTLS 指纹", OptionLabels: utlsOptionLabels},
 			},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 			[]FormField{{Path: "fallback", Label: "回落地址", Placeholder: "127.0.0.1:80"}},
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"naive": {
-		note: "必须开 TLS 并填证书。",
+		note: "必须开 TLS；证书默认自动申请，也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
 				{Path: "tls", Label: "开启 TLS", Default: true},
 			},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{{Path: "security", Label: "security", Advanced: true, Default: "none"}},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 			[]FormField{{Path: "fallback", Label: "回落地址", Placeholder: "127.0.0.1:80"}},
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"shadowtls": {
@@ -305,24 +337,24 @@ var protocolForms = map[string]formSpec{
 		fields: []FormField{{Path: "transport", Label: "传输方式", Default: "TCP"}},
 	},
 	"socks": {
-		note: "开 TLS 时需要填证书。",
+		note: "开 TLS 时需要证书：默认自动申请，也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式"},
 				{Path: "tls", Label: "开启 TLS", Default: false},
 			},
-			certFields(showTLSTrue),
+			certModeFields(showTLSTrue),
 			[]FormField{{Path: "security", Label: "security", Advanced: true, Default: "none"}},
 		),
 	},
 	"http": {
-		note: "开 TLS 时需要填证书。",
+		note: "开 TLS 时需要证书：默认自动申请，也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
 				{Path: "tls", Label: "开启 TLS", Default: false},
 			},
-			certFields(showTLSTrue),
+			certModeFields(showTLSTrue),
 			[]FormField{{Path: "security", Label: "security", Advanced: true, Default: "none"}},
 		),
 	},
