@@ -4,7 +4,7 @@ package service
 // 缓存层用计数的 load；服务层用只实现 PlanPools 的假 catalog（套餐一律不绑池，走不到 repo）与假的 PlanVersions。
 // 并发用例要用 -race 跑才有意义：
 //
-//	GOTOOLCHAIN=go1.26.9 go test -race ./internal/module/node/service/ -run 'DeliveryCache|DeliverableNodesCache|DeliverableFromRows|DeliveryKey'
+//	GOTOOLCHAIN=go1.26.10 go test -race ./internal/module/node/service/ -run 'DeliveryCache|DeliverableNodesCache|DeliverableFromRows|DeliveryKey'
 
 import (
 	"context"

@@ -19,7 +19,7 @@ import tempfile
 MAGPIE = "http://127.0.0.1:3425"
 MAX_ROUNDS = 2
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
-GO_ENV = {**os.environ, "GOTOOLCHAIN": "go1.26.9", "GOFLAGS": "-mod=readonly"}
+GO_ENV = {**os.environ, "GOTOOLCHAIN": "go1.26.10", "GOFLAGS": "-mod=readonly"}
 LIMIT = 8000  # 交回的报错最多这么多字，太长模型反而抓不住重点
 
 

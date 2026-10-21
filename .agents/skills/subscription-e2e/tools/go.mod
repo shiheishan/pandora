@@ -1,6 +1,6 @@
 module pandora/subscription-e2e/tools
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/anytls/sing-anytls v0.0.13 // indirect

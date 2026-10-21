@@ -21,7 +21,7 @@ description: Run, start, build and screenshot pandora. On this Mac (no docker; P
 
 - Node ≥ 22.12，`panel/frontend/node_modules` 已装（装依赖时不要同时跑 go）。
 - Playwright 的 chromium 已在 `~/Library/Caches/ms-playwright`（`@playwright/test` 是前端的 devDependency）。
-- Go：本机缺省 1.27.x（Homebrew），比 go.mod 新；所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（取 go.mod 的版本），结论才与 CI 一致。
+- Go：本机缺省 1.27.x（Homebrew），比 go.mod 新；所有 go 命令加 `GOTOOLCHAIN=go1.26.10`（取 go.mod 的版本），结论才与 CI 一致。
 
 ## 驱动假后端（首选）
 
@@ -40,8 +40,8 @@ node .agents/skills/run-pandora/driver.mjs text portal '#/plans'
 ## 构建 Go
 
 ```bash
-GOTOOLCHAIN=go1.26.9 go build -o /tmp/pandora-run/bin/ ./cmd/pandora   # 在 panel/ 下，出一个 pandora 二进制
-GOTOOLCHAIN=go1.26.9 go build -o /tmp/pandora-run/bin/pdnd .           # 在 pdnd/ 下
+GOTOOLCHAIN=go1.26.10 go build -o /tmp/pandora-run/bin/ ./cmd/pandora   # 在 panel/ 下，出一个 pandora 二进制
+GOTOOLCHAIN=go1.26.10 go build -o /tmp/pandora-run/bin/pdnd .           # 在 pdnd/ 下
 /tmp/pandora-run/bin/pandora --help
 /tmp/pandora-run/bin/pdnd -self-check   # 能力矩阵自检，本机能跑
 /tmp/pandora-run/bin/pdnd -version

@@ -71,7 +71,7 @@ description: pandora 新写或修改一个 goose 迁移（panel/db/migrations）
 f=panel/db/migrations/<文件>.sql
 grep -cE '^-- \+goose (Up|Down)$' "$f"                                           # 应为 2
 echo "$(grep -c 'StatementBegin' "$f") $(grep -c 'StatementEnd' "$f")"             # 两数相等
-cd panel && GOTOOLCHAIN=go1.26.9 go build ./... && GOTOOLCHAIN=go1.26.9 go vet ./db/...
+cd panel && GOTOOLCHAIN=go1.26.10 go build ./... && GOTOOLCHAIN=go1.26.10 go vet ./db/...
 ```
 
 再对读写这些表的模块包跑 `go test`（非 PG 用例）。PG 用例与往返在本机跳过，跳过不等于通过。

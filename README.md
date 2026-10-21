@@ -245,7 +245,7 @@ cd panel && go build ./...          # 或 make build，产物在 panel/bin/pando
 cd pdnd  && go build -o pdnd .
 ```
 
-Go 版本按各自 `go.mod` 的 go 指令（现在是 1.26.9）。更新的 Go 1.27 下 pdnd 链接失败（sing-box 用 `go:linkname` 取 x/net 的私有符号），本机工具链更新时加 `GOTOOLCHAIN=go1.26.9`。
+Go 版本按各自 `go.mod` 的 go 指令（现在是 1.26.10）。更新的 Go 1.27 下 pdnd 链接失败（sing-box 用 `go:linkname` 取 x/net 的私有符号），本机工具链更新时加 `GOTOOLCHAIN=go1.26.9`。
 
 pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-256 的 `manifest.json`。Ubuntu runner 的 race/vet 与双架构构建门禁见 `.github/workflows/pandora-native.yml`。Windows / macOS 交叉构建不能替代真实 Linux race。
 

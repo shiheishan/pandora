@@ -13,7 +13,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 ## 本地层：改了什么 → 本地跑什么
 
-本机的 go 命令一律加 `GOTOOLCHAIN=go<go.mod 版本>`（现在是 `go1.26.9`；本机缺省 Go 更新，见根 CLAUDE.md「环境与工具坑」），结论才与 CI 同口径。下表的 panel 命令都在 `panel/` 下跑。
+本机的 go 命令一律加 `GOTOOLCHAIN=go<go.mod 版本>`（现在是 `go1.26.10`；本机缺省 Go 更新，见根 CLAUDE.md「环境与工具坑」），结论才与 CI 同口径。下表的 panel 命令都在 `panel/` 下跑。
 
 | 改了什么 | 本地跑 |
 |---|---|
@@ -34,7 +34,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 ```bash
 .agents/skills/verify/scripts/local-db.sh start
 cd panel && eval "$(../.agents/skills/verify/scripts/local-db.sh test-env)"   # PANDORA_TEST_DATABASE_URL 与 TZ=UTC
-GOTOOLCHAIN=go1.26.9 go test -p 4 -count=1 ./internal/module/order/... ./db/migrations/
+GOTOOLCHAIN=go1.26.10 go test -p 4 -count=1 ./internal/module/order/... ./db/migrations/
 ../.agents/skills/verify/scripts/local-db.sh stop                             # 用完就停
 ```
 

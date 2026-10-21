@@ -91,7 +91,7 @@ description: pandora 后台加一个设置项（站点设置、开关、限制�
 
 本机（命令与 Go 版本口径见 verify skill）：
 
-- `panel/` 下：`gofmt -l` 改到的文件；`GOTOOLCHAIN=go1.26.9 go vet` 与 `go test ./internal/module/settings/... ./internal/module/<消费方>/...`；`go test ./tools/refactorcheck/`；golangci-lint（含 depguard）。
+- `panel/` 下：`gofmt -l` 改到的文件；`GOTOOLCHAIN=go1.26.10 go vet` 与 `go test ./internal/module/settings/... ./internal/module/<消费方>/...`；`go test ./tools/refactorcheck/`；golangci-lint（含 depguard）。
 - `panel/frontend/` 下：`npm run lint`、`npm run typecheck`、`npm run test`。
 - flow-walk 在假后端上点一遍：打开页面看到缺省值 → 改值保存（先 `/__mock/expire-reauth` 验重新认证弹框）→ 错误输入看字段提示 → 刷新后值还在；密钥类再验「已设置」与清除。
 

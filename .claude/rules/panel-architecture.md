@@ -16,7 +16,7 @@ paths:
 - 每个模块一条 `module-<名>-boundary`：不许 import 别的模块的 repo、model、handler、task、grpc、provider，模块之间只调 service（测试可以用别的模块的 repo 装真 service、用支付 provider 造验签回调）；`module-<名>-entry`：本模块的 handler、task、grpc 也不许 import 本模块的 repo 与 model。
 - 技术栈规则：`stack-conventions` 禁 chi、pgxpool；`stack-no-stdlog` 禁生产代码用 `log`、`log/slog`（日志用 zap；测试里 pebble 之类要 `*log.Logger` 的夹具可用）；`stack-no-database-sql` 禁生产代码用 `database/sql`（`internal/app/migrate.go`、`internal/pkg/testkit`、`db/migrations` 例外，测试不管）；`stack-no-pgx` 禁 `github.com/jackc/pgx`（含 pgconn，测试同样适用；只有 `internal/pkg/db`、`testkit`、`migrate.go`、`db/migrations/migrations_test.go` 例外）。
 - 写响应由 forbidigo 钉住（同一份生成器模板，`analyze-types: true` 按类型匹配 `gin.Context` / `gin.ResponseWriter` 的方法，`smtp.Client.Data` 之类同名方法不误报）：handler 只经 `httpx.OK` / `Created` / `Accepted` / `NoContent` / `Fail` 写，不用 `gin.H`。非 JSON 出口的白名单在模板的 `exclusions.rules`（按文件路径）；加新的非 JSON 出口时把写响应的几行抽到同包单独文件，在生成器里加一条路径再重新生成，不用 `//nolint`。清单见 `panel-http.md`。
-- lint 命令：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（本机加 `GOTOOLCHAIN=go1.26.9`）。
+- lint 命令：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（本机加 `GOTOOLCHAIN=go1.26.10`）。
 - 死代码：CI lint job 在仓库根跑 `bash .github/scripts/deadcode.sh panel ./cmd/pandora ./tools/...`（golang.org/x/tools 的 deadcode，不带 `-test`）：从 main 出发到不了的函数都报，只剩测试在调的也算。给测试用的辅助函数写在 `_test.go`；误报（编译期断言、防御性的 `String` / `GoString` 脱敏）写进 `panel/.deadcode-ignore` 并注明理由，模式不写行号，失效的模式脚本也判红。
 
 ## 模块与表属主

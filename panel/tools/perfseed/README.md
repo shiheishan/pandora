@@ -25,13 +25,13 @@ P8 性能测试造数工具：在按 `panel/deploy/install.sh` 装好的**空面
 - 构建 perfseed（在仓库 `panel` 目录下，工具链与发布一致）：
 
 ```bash
-cd panel && GOTOOLCHAIN=go1.26.9 go build -o perfseed ./tools/perfseed
+cd panel && GOTOOLCHAIN=go1.26.10 go build -o perfseed ./tools/perfseed
 ```
 
 nodesim 在 `pdnd/release/nodesim` 目录构建（与 P8 计划一致），例如：
 
 ```bash
-cd pdnd/release/nodesim && GOTOOLCHAIN=go1.26.9 go build -o nodesim .
+cd pdnd/release/nodesim && GOTOOLCHAIN=go1.26.10 go build -o nodesim .
 ```
 
 ---
