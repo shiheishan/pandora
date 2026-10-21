@@ -10,6 +10,8 @@ paths:
 - 一份 = `subs/Copy.tsx` 的一个 `<article>`：主卡（Hero：眉标、贴纸名 h2、剩余流量大数字、进度条、到期与在线设备、底部「添加到 App」+ 续费 / 叠加）+「这一份」操作行（链接尾号与复制、节点和每天用量、重置本期流量、换个套餐、起名、换新链接）。文字全在 `common/card-text.ts`。多份时顶部切换条（`subs/Copies.tsx`，tablist「你的几份」，方向键可切），所有份都渲染、没选中的 `hidden`，选中记在 `?c=<一份>`；浏览器测试用 fixtures 的 `openCard` 先点 tab。卡上的按钮自带对象，后面不再问「给哪一份」；只有一份时看不到任何「哪一份」。叫法 sn / dn / who 在 `common/purchase.ts` 的 `makeNaming`（多份用备注名，没备注用「套餐名 ····链接尾号」）
 - 手上的份 = 生效中 + 过期 30 天内能救回（`isHeld`）；彻底停用的不列。
 - 两类套餐（10-16）：订阅套餐（`kind=subscription`，用户端叫「按时间」）按月 / 季 / 半年 / 年付，流量「每期」清零；一次性套餐（`kind=one_time`，叫「一次性」）一个价、总流量、有效 N 天或永久（`permanent` 为真时不写日期，写「永久有效」）。一次性不能续费（`renewable` 恒假），同款再买是「叠加」（`stackable`：总流量加上、天数顺延，`#/checkout?stack=<一份>`）；套餐归档或关了续费时不能续，卡上给「换个套餐 / 再买一份」的出路。没有流量包、没有自动续费（10-16 删）。
+- 套餐改了用量（P4，用户 10-21 定）：订阅老用户下个周期才切换，服务端每份带 `usage`（锁定版本的用量）与 `next_usage`（与现在不同时才有，一次性恒为 null）。我的套餐主卡（生效中）在到期那行下多一行 `common/card-text.ts` 的 `nextUsageText`（「下期起每期 200G」，几项不同用「，」连上设备、限速），已到期的卡不写；选购页「你在用」的按时间卡（`PlanCard` 与手机 `PickList`）按 `planCardView` 的 `shown`（目录套餐换上 `owner.usage`）显示事实，下面同一行字（`factsNote`）；一次性列表不变。守卫：`common/common.test.ts`、`subs/copy.test.ts`、`plans/plans.test.ts`
+- 试用（P13，用户 10-21 定）：`is_trial` 的那份在主卡名字旁标「试用」（kit `Chip`，生效与已到期两种卡都标）
 - 送的流量（礼品卡、后台加流量）在 `bonus_bytes`：订阅套餐只在本期有效，一次性套餐加在总量上；剩余 = `traffic_limit + bonus_bytes − traffic_used`（`common/purchase.ts` 的 `leftOf`），主卡写「本期剩余 · 共 X，含送的 xG，本期有效」（一次性「剩余 · 共 X，含送的 xG，不清零，用完为止」）。流量快用完 = 已用（含送的）≥ 80%（`isLow`，用户 10-16 定），主卡就地给「重置 · ¥X」与「换更大的 ›」。守卫：`common/common.test.ts`、`subs/copy.test.ts`
 - `pickPrimary` 只留给外框头像菜单的套餐徽标
 - 金额与默认值一律来自报价接口 `POST v1/me/checkout/quote`（`common/quote.ts`），前端不算钱；只做展示用的日期加减（`addPeriod`）

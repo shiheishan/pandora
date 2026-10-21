@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { href } from '../../../core/router'
 import { makeNaming } from '../common/purchase'
-import { ONCE, STD, sub } from '../common/testing'
+import { BASIC, GIB, ONCE, STD, sub } from '../common/testing'
 import { listable } from '../common/catalog'
 import { planCardView, renewOrder } from './labels'
 
@@ -64,6 +64,37 @@ describe('选购页套餐卡', () => {
   it('推荐 tag（没有在用同款时）', () => {
     expect(planCardView(STD, [one], makeNaming([one], undefined), NOW).tag).toEqual({ text: '你在用', tone: 'ok' })
     expect(planCardView(STD, [], makeNaming([], undefined), NOW).tag).toEqual({ text: '推荐', tone: 'brand' })
+  })
+
+  describe('planCardView 你在用的用量', () => {
+    const naming = makeNaming([], undefined)
+
+    it('持有标准版时 shown 用 usage、nextUsage 写下期变化', () => {
+      const s = sub({
+        plan_id: 'std',
+        usage: { traffic_bytes: 50 * GIB, device_limit: 2, throttle_kbps: null },
+        next_usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+      })
+      const v = planCardView(STD, [s], naming)
+      expect(v.shown.traffic_bytes).toBe(50 * GIB)
+      expect(v.shown.max_devices).toBe(2)
+      expect(v.nextUsage).toBe('下期起每期 100G，3 台设备同时用')
+
+      const other = planCardView(BASIC, [s], naming)
+      expect(other.shown).toBe(BASIC)
+      expect(other.nextUsage).toBeNull()
+    })
+
+    it('next_usage 为 null 时不写下期、shown 仍用 usage', () => {
+      const s = sub({
+        plan_id: 'std',
+        usage: { traffic_bytes: 50 * GIB, device_limit: 2, throttle_kbps: null },
+        next_usage: null,
+      })
+      const v = planCardView(STD, [s], naming)
+      expect(v.nextUsage).toBeNull()
+      expect(v.shown.traffic_bytes).toBe(50 * GIB)
+    })
   })
 
   it('同款可续的次序与服务端一致', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { changeHint, copyTabText, eyebrowText, expiryText, goneText, heroTraffic, isExpiredNow, leakSources, lowTip, metaLine, pillText, renewText, resetRow } from './card-text'
+import { changeHint, copyTabText, eyebrowText, expiryText, goneText, heroTraffic, isExpiredNow, leakSources, lowTip, metaLine, nextUsageText, pillText, renewText, resetRow } from './card-text'
 import { APP_UPDATE, guideApps, parseGuideDevice } from './app-update'
 import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
@@ -11,6 +11,7 @@ import { orderQuerySchema, queryFailure, queryOutcome } from './order-query'
 import { archivedRefundText, expiryNote, intervalLabel, isPayable, isPlanArchivedRefund, orderRowSchema, orderTitle } from './orders'
 import { pickPrimary } from '../../queries'
 import { subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
+import { sub as subFixture } from './testing'
 import { buildUsageBars, bytesParts, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary } from './traffic'
 
 const NOW = new Date('2026-09-24T12:00:00Z')
@@ -51,6 +52,9 @@ function sub(over: Partial<Subscription> = {}): Subscription {
     client_name: 'Pandora · 专业版',
     changeable: live,
     renew_until: null,
+    usage: { traffic_bytes: 500 * GIB, device_limit: null, throttle_kbps: null },
+    next_usage: null,
+    is_trial: false,
     ...over,
   })
 }
@@ -291,6 +295,61 @@ describe('subscriptions', () => {
     expect(leakSources(sub({ device_limit: 8 }), l)).toBeNull()
     expect(leakSources(sub({ device_limit: null }), l)).toBeNull()
     expect(leakSources(sub({ device_limit: 2, status: 'expired' }), l)).toBeNull()
+  })
+})
+
+describe('nextUsageText', () => {
+  it('next_usage 为 null → null', () => {
+    expect(nextUsageText(subFixture({ next_usage: null }))).toBeNull()
+  })
+
+  it('只流量不同（100G → 200G）→ 「下期起每期 200G」', () => {
+    const s = subFixture({
+      usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+      next_usage: { traffic_bytes: 200 * GIB, device_limit: 3, throttle_kbps: null },
+    })
+    expect(nextUsageText(s)).toBe('下期起每期 200G')
+  })
+
+  it('新版本不限流量（traffic_bytes null）→ 「下期起每期不限流量」', () => {
+    const s = subFixture({
+      usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+      next_usage: { traffic_bytes: null, device_limit: 3, throttle_kbps: null },
+    })
+    expect(nextUsageText(s)).toBe('下期起每期不限流量')
+  })
+
+  it('流量、设备（3 → 5）、限速（null → 50000）都不同 → 「下期起每期 200G，5 台设备同时用，限速 50 Mbps」', () => {
+    const s = subFixture({
+      usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+      next_usage: { traffic_bytes: 200 * GIB, device_limit: 5, throttle_kbps: 50_000 },
+    })
+    expect(nextUsageText(s)).toBe('下期起每期 200G，5 台设备同时用，限速 50 Mbps')
+  })
+
+  it('限速 50000 → null → 「下期起不限速」（usage.throttle_kbps 50000，next 的 null，其余相同）', () => {
+    const s = subFixture({
+      usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: 50_000 },
+      next_usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+    })
+    expect(nextUsageText(s)).toBe('下期起不限速')
+  })
+
+  it('plan_kind: "one_time" 即使给了 next_usage 也返回 null', () => {
+    const s = subFixture({
+      plan_kind: 'one_time',
+      usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+      next_usage: { traffic_bytes: 200 * GIB, device_limit: 3, throttle_kbps: null },
+    })
+    expect(nextUsageText(s)).toBeNull()
+  })
+
+  it('三项都相同 → null', () => {
+    const s = subFixture({
+      usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+      next_usage: { traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null },
+    })
+    expect(nextUsageText(s)).toBeNull()
   })
 })
 

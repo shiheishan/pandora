@@ -235,6 +235,7 @@ describe('schema', () => {
       device_limit_override: null,
       plan_max_devices: 3,
       online_devices: 0,
+      is_trial: false,
     }
     const detail = {
       id: 'u',

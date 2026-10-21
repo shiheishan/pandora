@@ -29,6 +29,8 @@ const currentSubSchema = z.object({
   // 生效值：COALESCE(订阅覆盖, 套餐 max_devices, 0)，0 表示不限
   device_limit: count,
   online_devices: count,
+  // 注册试用发的那一份（P13，用户 10-21 定）
+  is_trial: z.boolean(),
 })
 
 const userRowShape = {
@@ -70,6 +72,8 @@ const subscriptionSchema = z.object({
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),
   online_devices: count,
+  // 注册试用发的那一份（P13，用户 10-21 定）
+  is_trial: z.boolean(),
 })
 export const userDetailSchema = z.object({
   ...userRowShape,

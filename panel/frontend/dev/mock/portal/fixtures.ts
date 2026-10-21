@@ -21,7 +21,7 @@ export const MOCK_SITE = 'Pandora'
 //   legacy   同 default，但 Go 带 omitempty 的可缺席字段全部缺席（订单周期、支付方式、优惠码、有效期至），Telegram 站点未启用
 //   error    页面读接口一律 500
 //   slow     页面读接口延迟 2.5 秒（看骨架）
-//   proto-*  购买流程原型的 11 个场景（proto.ts），原型三档目录；GET /v1/__mock/proto?s=&to= 切换并跳到页面
+//   proto-*  购买流程原型的场景（proto.ts），原型三档目录；GET /v1/__mock/proto?s=&to= 切换并跳到页面
 // ---------------------------------------------------------------------------
 export const setScenario = switchScenario
 onScenarioChange(() => states.clear())
@@ -80,6 +80,10 @@ export interface SubFixture {
   days: Array<{ date: string; bytes: number }>
   /** 订阅套餐本期流量清零时刻；一次性套餐不参与 next_reset_at */
   resetAt: string
+  /** 这一份锁定的是旧版本时，旧版本的用量；缺席 = 就是套餐当前（目录）的用量 */
+  oldUsage?: { trafficBytes: number | null; maxDevices: number | null; throttleKbps: number | null }
+  /** 注册试用发的那一份 */
+  trial?: boolean
 }
 
 /** 履约效果：支付完成（或 0 元当场）时对订阅 / 余额做的事 */
@@ -432,6 +436,30 @@ export function subscriptionView(sub: SubFixture) {
   const validityDays = plan?.kind === 'one_time' ? (price.validity_days ?? null) : null
   const base = isLiveSub(sub) ? new Date(sub.current_period_end).getTime() : now
   const renewUntil = renewable && price.available ? new Date(addInterval(base, price)).toISOString() : null
+  const cur = sub.oldUsage ?? {
+    trafficBytes: plan?.trafficBytes ?? null,
+    maxDevices: plan?.max_devices ?? null,
+    throttleKbps: plan?.throttle_kbps ?? null,
+  }
+  const usage = {
+    traffic_bytes: cur.trafficBytes,
+    device_limit: sub.deviceLimit,
+    throttle_kbps: cur.throttleKbps,
+  }
+  // 照 Go nextUsageOf；设备上限假后端没有覆盖的概念，sub.deviceLimit 就是生效值
+  let nextUsage: { traffic_bytes: number | null; device_limit: number | null; throttle_kbps: number | null } | null = null
+  if (plan?.kind === 'subscription' && sub.oldUsage && state !== 'ended') {
+    const candidate = {
+      traffic_bytes: plan.trafficBytes,
+      device_limit: plan.max_devices,
+      throttle_kbps: plan.throttle_kbps,
+    }
+    const same =
+      candidate.traffic_bytes === usage.traffic_bytes &&
+      candidate.device_limit === usage.device_limit &&
+      candidate.throttle_kbps === usage.throttle_kbps
+    nextUsage = same ? null : candidate
+  }
   return {
     id: sub.id,
     plan_id: sub.plan_id,
@@ -483,6 +511,9 @@ export function subscriptionView(sub: SubFixture) {
     client_name: clientName(sub),
     changeable,
     renew_until: renewUntil,
+    usage,
+    next_usage: nextUsage,
+    is_trial: sub.trial ?? false,
   }
 }
 

@@ -125,6 +125,12 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 	if err != nil {
 		return nil, nil, err
 	}
+	for _, m := range subs {
+		plan := plans[m.PlanID]
+		if plan.Kind == catalogsvc.KindSubscription && plan.CurrentVersionID != nil {
+			versionSet[*plan.CurrentVersionID] = struct{}{}
+		}
+	}
 	versions, err := s.catalog.VersionsByIDs(ctx, keys(versionSet))
 	if err != nil {
 		return nil, nil, err
@@ -148,7 +154,7 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 	now := s.clock()
 	for _, m := range subs {
 		us := out[m.UserID]
-		us.Subscriptions = append(us.Subscriptions, summaryOf(m, plans[m.PlanID], versions[m.PlanVersionID], quotas[m.ID], resets[m.ID], now))
+		us.Subscriptions = append(us.Subscriptions, summaryOf(m, plans[m.PlanID], versions, quotas[m.ID], resets[m.ID], now))
 		out[m.UserID] = us
 	}
 	for id, us := range out {
@@ -161,9 +167,62 @@ func (s *Service) summarize(ctx context.Context, userIDs []uuid.UUID) (map[uuid.
 	return out, plans, nil
 }
 
+// eqPtr 比较两个可比较类型的指针是否相等（两边都 nil 为真）。
+func eqPtr[T comparable](a, b *T) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// usageOf 从套餐版本拼一份用量（设备覆盖优先）。
+func usageOf(v catalogsvc.Version, kind string, deviceOverride *int) Usage {
+	v = withKind(v, kind)
+	var traffic *int64
+	if q, ok := quotaDef(v, MetricTraffic, trafficPeriod(kind)); ok {
+		traffic = q.Limit
+	}
+	dev := v.MaxDevices
+	if deviceOverride != nil {
+		dev = deviceOverride
+	}
+	return Usage{
+		TrafficBytes: traffic,
+		DeviceLimit:  dev,
+		ThrottleKbps: v.ThrottleKbps,
+	}
+}
+
+// sameUsage 比较两份用量三项是否相同。
+func sameUsage(a, b Usage) bool {
+	return eqPtr(a.TrafficBytes, b.TrafficBytes) && eqPtr(a.DeviceLimit, b.DeviceLimit) && eqPtr(a.ThrottleKbps, b.ThrottleKbps)
+}
+
+// nextUsageOf 算下个周期会用的用量；不满足条件时返回 nil。
+func nextUsageOf(m model.Subscription, plan catalogsvc.Plan, state State, cur Usage, versions map[uuid.UUID]catalogsvc.Version) *Usage {
+	if plan.Kind != catalogsvc.KindSubscription || state == StateEnded {
+		return nil
+	}
+	if plan.CurrentVersionID == nil || *plan.CurrentVersionID == m.PlanVersionID {
+		return nil
+	}
+	nv, ok := versions[*plan.CurrentVersionID]
+	if !ok {
+		return nil
+	}
+	next := usageOf(nv, plan.Kind, m.DeviceLimit)
+	if sameUsage(cur, next) {
+		return nil
+	}
+	return &next
+}
+
 // summaryOf 拼一份订阅的摘要。流量三项取套餐类型对应的流量配额行（订阅套餐 cycle、一次性 total）里
 // 周期起点最晚的那一行；没有这行上限为 nil（不限或没有流量配额）、其余按 0。
-func summaryOf(m model.Subscription, plan catalogsvc.Plan, v catalogsvc.Version, qs []Quota, resetsUsed int, now time.Time) Summary {
+func summaryOf(m model.Subscription, plan catalogsvc.Plan, versions map[uuid.UUID]catalogsvc.Version, qs []Quota, resetsUsed int, now time.Time) Summary {
 	sub := toSubscription(m)
 	if qs == nil {
 		qs = []Quota{}
@@ -179,9 +238,12 @@ func summaryOf(m model.Subscription, plan catalogsvc.Plan, v catalogsvc.Version,
 			break
 		}
 	}
+	v := versions[m.PlanVersionID]
+	st := sub.StateAt(now)
+	cur := usageOf(v, plan.Kind, m.DeviceLimit)
 	return Summary{
 		Subscription:   sub,
-		State:          sub.StateAt(now),
+		State:          st,
 		PlanName:       plan.Name,
 		PlanKind:       plan.Kind,
 		PlanVersion:    v.Version,
@@ -194,6 +256,8 @@ func summaryOf(m model.Subscription, plan catalogsvc.Plan, v catalogsvc.Version,
 		ResetLimit:     plan.ResetLimit,
 		ResetPrice:     plan.ResetPrice,
 		Quotas:         qs,
+		Usage:          cur,
+		NextUsage:      nextUsageOf(m, plan, st, cur, versions),
 	}
 }
 

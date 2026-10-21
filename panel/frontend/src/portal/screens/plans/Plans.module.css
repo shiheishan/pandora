@@ -81,6 +81,12 @@
   margin-top: 0;
 }
 
+.nextUsage {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
 .pkB ul {
   list-style: none;
   padding: 0;

@@ -29,6 +29,10 @@ func (s *Service) MySubscriptions(ctx context.Context) (MySubscriptions, error) 
 	if len(us.Subscriptions) == 0 {
 		return out, nil
 	}
+	trialSubs, err := s.repo.TrialSubscriptionIDs(ctx, []uuid.UUID{p.UserID})
+	if err != nil {
+		return MySubscriptions{}, subErr(err)
+	}
 	site, err := s.settings.Site(ctx)
 	if err != nil {
 		return MySubscriptions{}, err
@@ -45,7 +49,11 @@ func (s *Service) MySubscriptions(ctx context.Context) (MySubscriptions, error) 
 	}
 	now := s.clock()
 	for _, sm := range us.Subscriptions {
-		out.Subscriptions = append(out.Subscriptions, mySubscription(sm, plans[sm.PlanID], prices, site.Name, now))
+		v := mySubscription(sm, plans[sm.PlanID], prices, site.Name, now)
+		if _, ok := trialSubs[sm.ID]; ok {
+			v.IsTrial = true
+		}
+		out.Subscriptions = append(out.Subscriptions, v)
 	}
 	s.fillOnlineDevices(ctx, out.Subscriptions)
 	return out, nil
