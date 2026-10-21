@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -116,7 +117,7 @@ func copyFromState(state *os.Root, name, dst string, max int64) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, dst); err != nil {
+	if err := renameSync(tmp, dst); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
@@ -217,7 +218,7 @@ func writeFileSync(path string, data []byte, mode os.FileMode) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	return renameSync(tmp, path)
 }
 
 // copyFileSync：src 必须是普通文件（os.Lstat）；拷到 dst+".tmp" → Chmod(mode) → Sync → Close → Rename 成 dst。
@@ -261,7 +262,24 @@ func copyFileSync(src, dst string, mode os.FileMode) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, dst)
+	return renameSync(tmp, dst)
+}
+
+// renameSync 改名后 fsync 父目录：工作区与 /usr/local/bin 可能分属两个文件系统，不同步目录的话
+// 掉电后两边改名落盘的先后没有保证（applying 落了 .prev 没落，或换上了新版 applying 却没落、开机没人回退）。
+func renameSync(oldpath, newpath string) error {
+	if err := os.Rename(oldpath, newpath); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(newpath))
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // sha256File：os.Lstat 必须是普通文件；返回小写 hex。

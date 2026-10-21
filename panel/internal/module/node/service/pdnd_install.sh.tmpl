@@ -343,6 +343,8 @@ UNIT
 
 # 写入节点在线升级触发器（path 单元）与 root 侧升级助手服务（service 单元）。
 # path 单元监听请求与残留进行态；service 单元执行 upgrade-apply 进行验签、替换与回退。
+# 助手单元写死 /usr/local/bin/pandora-native，不跟 PANDORA_INSTALL_DIR：助手代码只认这个路径（不在这里就不声明 upgrade_v1），
+# heredoc 加引号、不做展开，与发布包 pdnd/release/pandora-native-upgrade.service 逐字一致。
 pandora_write_upgrade_units() {
   cat >"$1" <<PATHUNIT
 [Unit]
@@ -357,14 +359,14 @@ Unit=pandora-native-upgrade.service
 WantedBy=multi-user.target
 PATHUNIT
 
-  cat >"$2" <<HELPERUNIT
+  cat >"$2" <<'HELPERUNIT'
 [Unit]
 Description=Pandora NativeCore upgrade helper
 
 [Service]
 Type=oneshot
 User=root
-ExecStart=/bin/sh -c 'if [ -e /var/lib/pandora-native-upgrade/applying ] && [ -x ${INSTALL_DIR}/${SERVICE}.prev ]; then exec ${INSTALL_DIR}/${SERVICE}.prev upgrade-apply; fi; exec ${INSTALL_DIR}/${SERVICE} upgrade-apply'
+ExecStart=/bin/sh -c 'if [ -e /var/lib/pandora-native-upgrade/applying ] && [ -x /usr/local/bin/pandora-native.prev ]; then exec /usr/local/bin/pandora-native.prev upgrade-apply; fi; exec /usr/local/bin/pandora-native upgrade-apply'
 TimeoutStartSec=600
 UMask=0077
 StateDirectory=pandora-native-upgrade
@@ -373,7 +375,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=${INSTALL_DIR} -/var/lib/pandora-native
+ReadWritePaths=/usr/local/bin -/var/lib/pandora-native
 CapabilityBoundingSet=CAP_DAC_OVERRIDE
 PrivateNetwork=true
 RestrictAddressFamilies=AF_UNIX

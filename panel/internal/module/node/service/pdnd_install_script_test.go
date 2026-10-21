@@ -389,6 +389,10 @@ func heredocBody(t *testing.T, marker string) string {
 	t.Helper()
 	startTag := "<<" + marker + "\n"
 	idx := strings.Index(pdndInstallTemplate, startTag)
+	if idx < 0 { // 不做展开的 heredoc（<<'MARK'）
+		startTag = "<<'" + marker + "'\n"
+		idx = strings.Index(pdndInstallTemplate, startTag)
+	}
 	if idx < 0 {
 		t.Fatalf("脚本里找不到 heredoc 标记 %q", startTag)
 	}
@@ -475,8 +479,9 @@ func TestPackagedUpgradeUnitsContract(t *testing.T) {
 	for _, want := range []string{
 		"Type=oneshot",
 		"User=root",
-		// 续做交给 .prev（新版一启动就崩时照样能回退），新请求用装着的版本
-		"then exec /usr/local/bin/pandora-native.prev upgrade-apply; fi; exec /usr/local/bin/pandora-native upgrade-apply",
+		// 续做交给 .prev（新版一启动就崩时照样能回退），新请求用装着的版本。整行钉死：条件必须看 root 的工作区
+		// （看 pandora 可写的暂存目录，等于让 pandora 决定 root 跑哪一版、拿更老的 serial 验签），两个分支不能写反
+		"ExecStart=/bin/sh -c 'if [ -e /var/lib/pandora-native-upgrade/applying ] && [ -x /usr/local/bin/pandora-native.prev ]; then exec /usr/local/bin/pandora-native.prev upgrade-apply; fi; exec /usr/local/bin/pandora-native upgrade-apply'",
 		"TimeoutStartSec=600",
 		// 加固（upgrade-node 审查 S6）
 		"ProtectSystem=strict",
@@ -484,6 +489,20 @@ func TestPackagedUpgradeUnitsContract(t *testing.T) {
 		"CapabilityBoundingSet=CAP_DAC_OVERRIDE",
 		"PrivateNetwork=true",
 		"RestrictAddressFamilies=AF_UNIX",
+		"NoNewPrivileges=true",
+		"PrivateDevices=true",
+		"ProtectKernelTunables=true",
+		"ProtectKernelModules=true",
+		"ProtectKernelLogs=true",
+		"ProtectControlGroups=true",
+		"ProtectClock=true",
+		"ProtectHostname=true",
+		"RestrictNamespaces=true",
+		"RestrictRealtime=true",
+		"RestrictSUIDSGID=true",
+		"LockPersonality=true",
+		"MemoryDenyWriteExecute=true",
+		"SystemCallArchitectures=native",
 	} {
 		if !strings.Contains(serviceContent, want) {
 			t.Errorf("升级 service 单元缺少 %q", want)

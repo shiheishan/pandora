@@ -11,6 +11,7 @@ paths:
   - "pdnd/release/signmanifest/**"
   - "pdnd/release/pandora-native*.service"
   - "pdnd/release/pandora-native-upgrade.path"
+  - "panel/internal/module/node/service/pdnd_install.sh.tmpl"
   - "proto/pandora/node/**"
 ---
 
@@ -83,7 +84,7 @@ paths:
   `upgrade_v1` 只在四项都满足时声明（`upgradeEnv.upgradeUnsupported`）：serial > 0、内置公钥非空、二进制就是 `/usr/local/bin/pandora-native`、装了 `/etc/systemd/system/pandora-native-upgrade.path`。
 - 节点进程（`upgrade.Agent`）只写 `/var/lib/pandora-native/upgrade/`：下载只走 https（`upgrade.allow_http` 只给验收），不跟随降到 http 的跳转，5 分钟、128 MiB；
   日志与回报里的地址去掉查询串。`next.tmp` 核过摘要才 rename，`request` 最后写；任一步失败不留半截。`request` 或 `applying` 已在 = `busy`。
-- root 助手（`upgrade-apply`，`upgrade.Helper`）：单元平时跑装着的二进制，工作区有 `applying`（被打断要续做）且 `.prev` 在时改跑 `.prev`——续做时装着的是还没确认的新版，它一启动就崩的话回退跑不起来（10-21 真机测出）。不收参数，路径全用固定值，不信 request 里的任何路径。暂存目录一律经 `os.Root`；每个文件 Lstat 只认普通文件、大小上限、
+- root 助手（`upgrade-apply`，`upgrade.Helper`）：单元平时跑装着的二进制，工作区有 `applying`（被打断要续做）且 `.prev` 可执行时改跑 `.prev`——续做时装着的是还没确认的新版，它一启动就崩的话回退跑不起来（10-21 真机测出）。所以续做与回退的逻辑以旧版为准：新版里对续做、回退的修复要到再下一次升级才生效。不收参数，路径全用固定值，不信 request 里的任何路径。暂存目录一律经 `os.Root`；每个文件 Lstat 只认普通文件、大小上限、
   `O_NOFOLLOW|O_NONBLOCK` 打开后 `SameFile` 核对、链接数必须为 1（防硬链接），先拷进 root 0700 工作区 `/var/lib/pandora-native-upgrade/` 再验，验过的那份才装。
   工作区 `applying` 记 installing / installed / rolling_back，被打断后按当前二进制摘要续做；只补一次确认窗口（`Resumed`），回退不来回循环；记录最后删。
   重启前必须写成暂存 `applying` 并删掉旧 `healthy`（`prepareMarker`）：写不了就不重启、直接装回 `.prev`，结局 `apply_failed`（否则新进程写不出 healthy、面板却在新 Hello 上记成功、随后必然回退）。删不掉暂存 `request` 时报错退出，免得 path 单元空转。
@@ -91,7 +92,7 @@ paths:
 - 编排（`node/upgrade.go`）：只有本条流 Welcome 协商到 `upgrade_v1` 才接指令；暂存在 goroutine 里跑，结局经 `upgradeDone` 回主循环，主循环仍单 goroutine 无锁。
   同时只许一次。Welcome 时写 `healthy`（`applying` 的目标摘要等于自己的 binary_sha256 才写）；Hello 带上的 `last_upgrade` 内容一致才删结果文件；内务节拍把结果报出去后删。
   成功不写结果文件：面板看新 Hello 的 binary_sha256。`LastUpgrade()` 在会话 goroutine 里调，只读文件。
-- systemd：`pandora-native-upgrade.path` 监视 `request` 与工作区 `applying`（后者让助手被打断后开机续做）；助手单元 oneshot、`TimeoutStartSec=600`。
+- systemd：`pandora-native-upgrade.path` 监视 `request` 与工作区 `applying`（后者让助手被打断后开机续做）；助手单元 oneshot、`TimeoutStartSec=600`，加固后只能写 `/usr/local/bin`、暂存目录与自己的工作区，只有 AF_UNIX、能力只剩 CAP_DAC_OVERRIDE、PrivateNetwork：助手要读写新路径、联网、chown 或用别的能力时，同时改发布包单元与安装器 HELPERUNIT，并上真机验证（单元测试不跑 systemd，挡不住 EPERM / EROFS）。助手单元写死 `/usr/local/bin/pandora-native`，不跟 `PANDORA_INSTALL_DIR`。
   主单元 `StartLimitIntervalSec=300` / `StartLimitBurst=10`，助手重启前先 `reset-failed`。三个单元由安装器内联生成，`TestInstallScriptUpgradeUnitsMatchPackaged` 逐行对照 `pdnd/release/`。
 - 测试不需要 root 与 systemd：Agent / Helper 的根目录、二进制路径、`ServiceManager`、时钟、睡眠都可注入。
 

@@ -311,7 +311,7 @@ func (h *Helper) install(ctx context.Context, state *os.Root, req Request, art A
 		h.finish(state, nil, &Result{JobID: req.JobID, Phase: PhaseFailed, ReasonCode: ReasonApplyFailed, Detail: err.Error()})
 		return nil
 	}
-	if err := os.Rename(h.newPath(), h.binPath()); err != nil {
+	if err := renameSync(h.newPath(), h.binPath()); err != nil {
 		_ = os.Remove(h.newPath())
 		h.finish(state, nil, &Result{JobID: req.JobID, Phase: PhaseFailed, ReasonCode: ReasonApplyFailed, Detail: err.Error()})
 		return nil
@@ -421,7 +421,7 @@ func (h *Helper) rollbackWith(ctx context.Context, state *os.Root, rec workRecor
 			h.finish(state, &rec, &Result{JobID: rec.JobID, Phase: PhaseFailed, ReasonCode: ReasonRollbackFailed, Detail: err.Error()})
 			return nil
 		}
-		if err := os.Rename(h.newPath(), h.binPath()); err != nil {
+		if err := renameSync(h.newPath(), h.binPath()); err != nil {
 			h.finish(state, &rec, &Result{JobID: rec.JobID, Phase: PhaseFailed, ReasonCode: ReasonRollbackFailed, Detail: err.Error()})
 			return nil
 		}

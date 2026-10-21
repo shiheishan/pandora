@@ -1559,8 +1559,12 @@ sha256sum /usr/local/bin/pandora-native /usr/local/bin/pandora-native.prev  # �
    `result` 留着：节点连上面板后会把结局报上去再删。
 3. 看 `journalctl -u pandora-native -n 50` 连上了面板，后台这台服务器的版本回到旧版。
 
+`journalctl -u pandora-native-upgrade` 里看到 `pandora-native.prev` 执行失败、单元反复失败（被打断后续做交给 `.prev`，它坏了就续不下去），同样按上面的步骤手动回退，或重跑接入命令。
+
 手动回退之后，同一个版本面板仍会认为「可升级」：先修好问题、出新版本再升，不要对同一版本反复点升级。
 
 ### 17.4 节点不支持在线升级
 
 后台显示「不支持在线升级」，是节点没在 Hello 里声明 `upgrade_v1`。它要四项都满足：发布构建（不是本地编的 dev 版）、二进制里有公钥、装在 `/usr/local/bin/pandora-native`、装了 `/etc/systemd/system/pandora-native-upgrade.path`。`journalctl -u pandora-native | grep 不支持在线升级` 会打出缺的是哪一项。早于在线升级的安装少了助手单元：在后台给这台服务器重新签发令牌、在节点机上重跑接入命令，助手单元随之装上。
+
+助手单元只由接入命令写，在线升级只换二进制：v2026.10.17 及更早装的节点，助手单元没有加固、被打断后续做也不交给 `.prev`。要换上新单元同样重跑接入命令，核对：`systemctl cat pandora-native-upgrade.service | grep pandora-native.prev` 有输出。
