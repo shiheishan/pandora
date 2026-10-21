@@ -150,7 +150,7 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips、node_relays（中转节点，00045）、node_ech_keys（ECH 密钥，00045）、server_upgrades（在线升级任务，00060） | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
 | notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes、telegram_ticket_messages | 站内信、邮件、Telegram（含管理员群组提醒与工单提醒消息映射） |
 | support | tickets、ticket_messages、ticket_macros | 工单 |
-| content | content_pages、content_page_feedback | 内容页 |
+| content | content_pages | 内容页 |
 | appearance | site_themes、site_slots | 主题和槽位 |
 | plugin | plugin_hooks、plugin_hook_deliveries | 插件钩子 |
 | audit | audit_events、ip_cluster_reviews | 审计写入与查询、风控聚类复核 |

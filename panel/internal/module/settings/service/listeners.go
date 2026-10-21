@@ -44,7 +44,7 @@ func (s *Service) subscriptionExtrasChanged(ctx context.Context) {
 	})
 }
 
-// homeChanged 在首页设置事务提交后通知监听方；回滚不通知。serve 单实例、后台写都在 serve 里，进程内清就够；
+// homeChanged 在首页设置、注册方式、注册总闸（auth.registration）的事务提交后通知监听方；回滚不通知。serve 单实例、后台写都在 serve 里，进程内清就够；
 // ctx 里没有事务时 AfterCommit 会立即执行。
 func (s *Service) homeChanged(ctx context.Context) {
 	tx.AfterCommit(ctx, "settings:home_saved", func(context.Context) {

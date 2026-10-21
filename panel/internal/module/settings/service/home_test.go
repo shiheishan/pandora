@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/module/settings/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
 
@@ -182,5 +183,44 @@ func TestMissingPortsListsHomeListener(t *testing.T) {
 	ports = s.MissingPorts()
 	if slices.Contains(ports, "HomeChangeListener") {
 		t.Fatalf("after inject %v", ports)
+	}
+}
+
+// 首页片段按注册方式出入口：改注册方式、拨注册总闸后通知首页失效；值没变时不通知。
+func TestRegistrationChangesNotifyHome(t *testing.T) {
+	st := &kvStore{kv: map[string]json.RawMessage{}}
+	s := newService(st, fakeTx{}, nil, nil, &auditLog{})
+	ln := &homeCounter{}
+	s.UseHomeChangeListener(ln)
+	ctx := context.Background()
+
+	if err := s.SetRegistration(ctx, Registration{Mode: RegistrationClosed}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if ln.n != 1 {
+		t.Fatalf("改注册方式后应通知一次：%d", ln.n)
+	}
+	if err := s.SetRegistration(ctx, Registration{Mode: RegistrationClosed}); err != nil {
+		t.Fatalf("set again: %v", err)
+	}
+	if ln.n != 1 {
+		t.Fatalf("值没变不应通知：%d", ln.n)
+	}
+
+	sw := &fakeStore{rows: map[string]model.FeatureSwitch{
+		SwitchAuthRegistration: {Code: SwitchAuthRegistration, Enabled: true},
+		"billing.checkout":     {Code: "billing.checkout", Enabled: true},
+	}}
+	s2 := newService(sw, fakeTx{}, nil, nil, &auditLog{})
+	ln2 := &homeCounter{}
+	s2.UseHomeChangeListener(ln2)
+	if err := s2.SetSwitch(ctx, SwitchAuthRegistration, false, "演练"); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+	if err := s2.SetSwitch(ctx, "billing.checkout", false, "维护"); err != nil {
+		t.Fatalf("other switch: %v", err)
+	}
+	if ln2.n != 1 {
+		t.Fatalf("只有注册总闸变了才通知首页：%d", ln2.n)
 	}
 }

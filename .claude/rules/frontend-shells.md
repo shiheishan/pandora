@@ -72,9 +72,9 @@ paths:
 - 登录页（10-16 样稿 v5）：站点名与标语、公告、白卡片、页脚写注册方式；卡片里登录 / 注册两个页签（`v1/site-config` 的 `registration_mode` 为 closed 时注册页签整个藏掉，带邀请码打开也落到登录）；邀请码只有 invite_only 必填，open 模式下填了无效码的 403 落在邀请码框；邮件链接登录、快捷登录是登录按钮下的次级入口，找回密码从「忘记密码？」进，三者都是带返回的子页；后台关邮箱验证时注册只有一步
 - 快捷登录只收已登录设备在账号安全页生成的链接或令牌（保留规则 1，与设计稿不同）
 - 外观：生效主题的颜色经 CSSOM 写到 `<html>`，不注入 `<style>`
-- 站点名取 `GET v1/appearance` 的顶层 `site_name`（系统设置 `site.name`），不读主题 branding；标语与 Logo 才取生效主题。服务端下发入口页时已把站点名写进 `<title>`，`useAppearanceTheme` 接口回来后照样同步 `document.title`
+- 站点名取 `GET v1/appearance` 的顶层 `site_name`（系统设置 `site.name`），不读主题 branding；标语才取生效主题（主题 Logo 已删，10-21；外框的 Logo 是站点名展示字体加绿点）。服务端下发入口页时已把站点名写进 `<title>`，`useAppearanceTheme` 接口回来后照样同步 `document.title`
   - 键的白名单是 `styles/design-tokens.ts` 的 `COLOR_TOKENS`
-  - Logo 只认 `data:image/`，因为 CSP 的 img-src 只放行 `'self' data:`
+  - 深色模式的品牌色不存主题、由浅色品牌色现算（`styles/brand-palette.ts`）
 - 外框与页面共用同一个查询键的读接口，schema 必须是全字段，各处经 `select` 取自己要的部分
   - 涉及 `queries.ts` 的 `SUBSCRIPTIONS_KEY`、`COMMISSION_KEY`、`PENDING_ORDERS_KEY`（`v1/orders?status=pending_payment`，侧栏订单计数与我的套餐页的待支付横条共用）、`['portal','me']`、`['portal','balance']`
   - 页面不要另开键，也不要收窄这些 schema

@@ -1,7 +1,7 @@
 // 门户首页片段的内容：站点名、标语取 appearance 的入口页快照（PageMeta，自己有缓存与失效），
 // 首页开关、介绍、常见问题与注册方式（RegistrationPolicy，已算上 auth.registration 总闸）取 settings，
 // 套餐与价格取 catalog 的匿名目录；后几样缓存进程内快照：入口页是门户最热的地址，不能每次打开都查库。
-// 成功缓存 30 秒，本进程保存首页设置后经 HomeSettingsChanged 立刻失效（注册方式与套餐变动只靠 30 秒 TTL）；
+// 成功缓存 30 秒，本进程保存首页设置、注册方式或拨注册总闸后经 HomeSettingsChanged 立刻失效（套餐变动只靠 30 秒 TTL）；
 // 读失败缓存 5 秒、这段时间不出片段（照常回 SPA，不让 / 报错）；
 // 同一时刻只有一趟读库（singleflight），读库不跟随第一个调用者的取消，上限 2 秒。
 package app
