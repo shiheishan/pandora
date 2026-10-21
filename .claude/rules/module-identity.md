@@ -14,7 +14,8 @@ paths:
 
 ## 账号枚举防护（IAM-006）
 - 注册、登录、找回密码三个入口，账号存不存在对外的状态码、正文和耗时都一样：邮箱不存在时 `dummyVerify` 付一次真实校验的代价；找回密码第 1 步对不存在、非 active、管理员的邮箱回同样的响应，但不写码不发信。
-- 口令错、用户不存在、停用、登后台的不是管理员，auth 一律回同一个 `errInvalidCredentials`。管理员登门户回中性的 `ErrStaffPortalLogin`，不带后台路径。
+- 口令错、用户不存在、登后台的不是管理员，auth 一律回同一个 `errInvalidCredentials`。管理员登门户回中性的 `ErrStaffPortalLogin`，不带后台路径。
+- 停用 / 封禁账号**口令对时**回 403 `errAccountDisabled`「账号已停用」（用户 10-21 定）：门户一律这样回；后台只对管理员名单里的人这样回，其余同口令错。前提是 identity 只在 `verifyPHC` 通过之后才回 `ErrAccountInactive`，不许把状态判断提前（否则不知道口令的人也能探出停用状态）；口令对也计一次登录失败（第 11 次 429），不建会话。快捷登录第 2 步遇停用账号同样回它；邮件链接第 2 步先比凭据纪元、停用会推进纪元，所以停用前签发的链接通常回「登录链接无效或已过期」，只有状态已改、纪元还没推进的竞态才回「账号已停用」。已知代价：拿到停用管理员正确口令的人，在后台入口从 403 / 401 能看出它是不是管理员（账号活跃时正确口令本来就看得出，增量很小），不当成泄漏处理。守卫：auth 的 `TestLoginDisabledPublic`、`TestLoginDisabledCountsAsFailure`、`TestLoginDisabledAdminAudience`、`TestQuickLoginDisabledAccount`，identity `flows_pg_test.go` 断言停用账号口令错仍是 `ErrInvalidCredentials`。
 - 找回密码第 2 步一切「对不上」（没有码、过期、次数用完、账号不可用）统一回 `errCodeInvalid`。
 
 ## 口令与 Argon2id
@@ -29,7 +30,7 @@ paths:
 - Lua 脚本会拼出不在 KEYS 里的键，只适用于单实例 Redis（部署就是单实例）；要上集群先改脚本。
 - 登录失败计数按账号跨门户与后台共用（邮箱不存在时用邮箱哈希）：先原子占名额再验口令，窗口内第 11 次起口令对也 429；成功清零，没有结论的结果退回名额（`panel/internal/module/auth/service/login.go`）。`pandora admin reset-password` 成功后调 `ClearLoginFailures`。
 - 登录失败审计记 anonymous，被撞账号只作 ResourceID；同一邮箱或同一 IP 在窗口内只记一条（`loginFailed`）。
-- 邮件链接免密登录（`panel/internal/module/auth/service/mail_link.go`，`signup.mail_link_login` 开且配好发信才可用，否则 403）：第 1 步读开关用 `SignupWithoutSecret`（不解封 secret）；链接拼在 settings 的 `SiteURL` 上（主域名），令牌不绑域名（旧域名上的 hash 路由照常能用）；令牌一次性、15 分钟、Redis 只存哈希、同一用户只留最新一条、签发时记凭据纪元（之后改密、停用、后台改邮箱、注销即失效）；第 1 步开了人机验证时先过人机验证（auth 经 `MailLinkCaptcha` 端口调 identity 的 `VerifyCaptcha`，action `mail_login`，放在限频之前），再按邮箱 15 分钟 3 次限频，邮箱存不存在回同样的响应；第 2 步与快捷登录一样建门户会话（`amr` 记 `mail_link`），管理员不能用。
+- 邮件链接免密登录（`panel/internal/module/auth/service/mail_link.go`，`signup.mail_link_login` 开且配好发信才可用，否则 403；降级开关 `notify.email`（暂停邮件投递）开着时第 1 步回 503，只看设置）：第 1 步读开关用 `SignupWithoutSecret`（不解封 secret）；链接拼在 settings 的 `SiteURL` 上（主域名），令牌不绑域名（旧域名上的 hash 路由照常能用）；令牌一次性、15 分钟、Redis 只存哈希、同一用户只留最新一条、签发时记凭据纪元（之后改密、停用、后台改邮箱、注销即失效）；第 1 步开了人机验证时先过人机验证（auth 经 `MailLinkCaptcha` 端口调 identity 的 `VerifyCaptcha`，action `mail_login`，放在限频之前），再按邮箱 15 分钟 3 次限频，邮箱存不存在回同样的响应；第 2 步与快捷登录一样建门户会话（`amr` 记 `mail_link`），管理员不能用。
 
 ## 管理员与用户管理
 - 停用、封禁用户前在同一事务里过 `AdminGuard`：是最后一个有效管理员就 409。批量停用同源账号跳过管理员（`DisableIPClusterAccounts`）。
@@ -40,7 +41,7 @@ paths:
 - 用户导出、按条件预览、群发收件人共用同一套 `BulkFilter`；导出审计写不进去就整单失败，不交出名单（`ExportUsers`）。CSV 单元格过 `CSVCell`。
 
 ## 注册与登录设置（settings 的 signup 组，2026-10-14）
-- 人机验证（reCAPTCHA v2 / v3、Turnstile）在注册第 1 步、找回密码第 1 步、邮件链接登录第 1 步校验（`captcha.go`），没开时不查；第三方校验接口连不上回 422 `fields.captcha`，不放行。服务商回的 `hostname` 必须是 settings `SiteURLAliases` 里某个地址的主机名（当前主域名、改之前的那个、配置的 `public_base_url`：改域名期间旧域名上打开的页面也是本站；一个都取不到时按不可用处理）；v3 的 `action` 必须与入口一致（`register`、`password_reset`、`mail_login`，前端 `getToken` 传同一个值）。注册第 1 步先做 IP 限额再调第三方（少打一次出站请求；代价是共用出口 IP 时不过人机验证的脚本也能耗光这个 IP 的注册额度，影响只限这个 IP）；找回与邮件链接第 1 步先过人机验证，再按邮箱限频（按邮箱的额度不能让没过人机验证的请求占用，否则换 IP 就能锁住别人的找回）。secret 只经 Sealer 封存，后台只回 `has_captcha_secret`。门户入口页 CSP 的放行来源在 `panel/internal/app/portal_csp.go`。
+- 人机验证（reCAPTCHA v2 / v3、Turnstile）在注册第 1 步、找回密码第 1 步、邮件链接登录第 1 步校验（`captcha.go`），没开时不查；第三方校验接口连不上回 422 `fields.captcha`，不放行。服务商回的 `hostname` 必须是 settings `SiteURLAliases` 里某个地址的主机名（当前主域名、改之前的那个、配置的 `public_base_url`：改域名期间旧域名上打开的页面也是本站；一个都取不到时按不可用处理）；v3 的 `action` 必须与入口一致（`register`、`password_reset`、`mail_login`，前端 `getToken` 传同一个值）。注册第 1 步先做 IP 限额再调第三方（少打一次出站请求；代价是共用出口 IP 时不过人机验证的脚本也能耗光这个 IP 的注册额度，影响只限这个 IP）；找回与邮件链接第 1 步先过人机验证，再按邮箱限频（按邮箱的额度不能让没过人机验证的请求占用，否则换 IP 就能锁住别人的找回）。只看设置的拒绝排在这些之前：注册关闭、要验证邮箱而邮件暂停（注册第 1 步），没配 SMTP、邮件暂停（找回第 1 步）都在 IP 限额与人机验证之前直接回，不占额度、不打第三方（site-config 本就公开这些状态）。secret 只经 Sealer 封存，后台只回 `has_captcha_secret`。门户入口页 CSP 的放行来源在 `panel/internal/app/portal_csp.go`。
 - 邮箱规则在 `signup_policy.go`：后缀白名单开时域名必须在名单里；Gmail 别名限制只管 gmail.com / googlemail.com 的 `.` 与 `+`。注册第 1 步按 IP 限额（缺省开、10 次 / 1 分钟、可关），路由上的 `reg_start` 只留全局维度。
 - 注册试用在 `CompleteRegistration` 的同一事务里调 `TrialGranter`，每人终身一次（`subscription_trials` 主键）；套餐不可用时 subscription 记日志跳过，不挡注册。
 - `signup.invite_never_expire` 关时个人邀请码用一次就失效（`ConsumeInvite(id, singleUse)`）；后台发的码不受影响。

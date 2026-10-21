@@ -287,7 +287,7 @@ export const SWITCH_META: Readonly<Record<string, SwitchMeta>> = {
   'billing.checkout': { title: '暂停下单与支付', desc: '新购、续费、变更套餐、充值与发起支付一律拒绝；已发起支付的回调照常处理。', whenMissing: true },
   'marketing.giftcard.redeem': { title: '暂停礼品卡兑换', desc: '用户端兑换礼品卡一律拒绝，发现卡码泄露时使用。', whenMissing: true },
   'admin.writes': { title: '管理端只读模式', desc: '除降级开关、登录与二次认证、修改自己的密码外，后台所有写操作都会被拒绝。', whenMissing: true },
-  'notify.email': { title: '暂停邮件投递', desc: '邮件留在队列里不发送，恢复后按序投递。', note: '注册验证码也会滞留：开了注册邮箱验证时，暂停期间新用户注册实际走不通。', whenMissing: true },
+  'notify.email': { title: '暂停邮件投递', desc: '邮件留在队列里不发送，恢复后按序投递。', note: '暂停期间：要验证邮箱的注册、找回密码、邮件登录的第 1 步直接提示稍后再试，用户端也不显示找回密码与邮件登录入口；暂停前已发出的找回验证码照常可用。', whenMissing: true },
   'auth.login': { title: '用户登录', desc: '核心能力，数据库约束保证不能关闭。' },
   'subscription.renewal': { title: '订阅续费', desc: '核心能力，数据库约束保证不能关闭。' },
   'client.config_sync': { title: '客户端配置同步', desc: '核心能力，数据库约束保证不能关闭。' },

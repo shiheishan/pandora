@@ -31,6 +31,23 @@ func (s *Service) StartRegistration(ctx context.Context, email, inviteCode, capt
 	if err != nil {
 		return RegistrationStart{}, err
 	}
+	policy, err := s.settings.RegistrationPolicy(ctx)
+	if err != nil {
+		return RegistrationStart{}, err
+	}
+	if policy.Mode == settingssvc.RegistrationClosed {
+		return RegistrationStart{}, ErrRegistrationUnavailable
+	}
+	// 注册关着、或要验证邮箱而邮件暂停时先拒：只看设置（site-config 本就公开），不看邮箱存不存在，不占限额、不打第三方
+	if policy.EmailVerification {
+		paused, err := s.mailPaused(ctx)
+		if err != nil {
+			return RegistrationStart{}, err
+		}
+		if paused {
+			return RegistrationStart{}, ErrRegistrationMailPaused
+		}
+	}
 	// 先做本地的 IP 限额，再调第三方人机验证：被限的请求不再往外打一次 HTTP；人机验证失败的请求也计入限额
 	if err := s.limitRegisterIP(ctx, cfg); err != nil {
 		return RegistrationStart{}, err
@@ -51,23 +68,6 @@ func (s *Service) StartRegistration(ctx context.Context, email, inviteCode, capt
 	if inviteCode != "" {
 		if err := s.limit(ctx, ruleRegisterInvite, inviteCode); err != nil {
 			return RegistrationStart{}, err
-		}
-	}
-	policy, err := s.settings.RegistrationPolicy(ctx)
-	if err != nil {
-		return RegistrationStart{}, err
-	}
-	if policy.Mode == settingssvc.RegistrationClosed {
-		return RegistrationStart{}, ErrRegistrationUnavailable
-	}
-	// 要验证邮箱而邮件暂停时直接拒：只看设置，不看邮箱存不存在，不泄露账号
-	if policy.EmailVerification {
-		paused, err := s.mailPaused(ctx)
-		if err != nil {
-			return RegistrationStart{}, err
-		}
-		if paused {
-			return RegistrationStart{}, ErrRegistrationMailPaused
 		}
 	}
 	token, err := newToken(registrationTokenBytes)

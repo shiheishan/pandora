@@ -28,14 +28,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken st
 	if err != nil {
 		return PasswordResetStart{}, err
 	}
-	// 先过人机验证、再按邮箱限频：额度按受害者邮箱计，没过人机验证的请求不能占用，
-	// 否则攻击者换 IP 发垃圾令牌就能一直锁住别人的找回（IP 维度在路由层 pwreset_start，本就在这之前）
-	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionPasswordReset); err != nil {
-		return PasswordResetStart{}, err
-	}
-	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
-		return PasswordResetStart{}, err
-	}
+	// 找回关着（没配 SMTP）或邮件暂停时先拒：只看设置（site-config 本就公开），不打第三方人机验证、不占该邮箱的找回额度
 	ok, err := s.PasswordResetAvailable(ctx)
 	if err != nil {
 		return PasswordResetStart{}, err
@@ -49,6 +42,14 @@ func (s *Service) StartPasswordReset(ctx context.Context, email, captchaToken st
 	}
 	if paused {
 		return PasswordResetStart{}, ErrPasswordResetMailPaused
+	}
+	// 再过人机验证、再按邮箱限频：额度按受害者邮箱计，没过人机验证的请求不能占用，
+	// 否则攻击者换 IP 发垃圾令牌就能一直锁住别人的找回（IP 维度在路由层 pwreset_start，本就在这之前）
+	if err := s.captcha.verify(ctx, cfg, captchaToken, captchaActionPasswordReset); err != nil {
+		return PasswordResetStart{}, err
+	}
+	if err := s.limit(ctx, ruleResetStartEmail, email); err != nil {
+		return PasswordResetStart{}, err
 	}
 	code, err := newNumericCode(verificationCodeDigits)
 	if err != nil {

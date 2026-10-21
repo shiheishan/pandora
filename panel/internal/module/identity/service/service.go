@@ -199,8 +199,8 @@ func (s *Service) writeSelfAudit(ctx context.Context, userID uuid.UUID, e audits
 var (
 	// ErrInvalidCredentials 是邮箱不存在或口令不对。
 	ErrInvalidCredentials = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
-	// ErrAccountInactive 是账号已停用或封禁：对外与 ErrInvalidCredentials 完全相同（IAM-006），
-	// 单独一个变量只为让 auth 在失败审计里区分原因。
+	// ErrAccountInactive 是账号已停用或封禁，只在口令校验通过之后返回：auth 据此在口令正确时明确提示
+	// 「账号已停用」（用户 10-21 定），所以必须先验口令、再看状态，不许把状态判断提前（否则不知道口令的人也能探出状态）。
 	ErrAccountInactive = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
 	// ErrWrongCurrentPassword 是改密时当前口令不对。
 	ErrWrongCurrentPassword = errs.Newf(errs.Unauthorized, "当前密码不正确")

@@ -367,6 +367,11 @@ func TestPGAuthenticate(t *testing.T) {
 	if !errors.Is(err, ErrAccountInactive) || errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("inactive: %v", err)
 	}
+	// 停用账号口令错：照旧是口令错，不能露出停用状态（先验口令、再看状态）
+	_, err = e.svc.Authenticate(ctx, authn.AudiencePublic, susp.Email, "wrong")
+	if !errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrAccountInactive) {
+		t.Fatalf("inactive wrong pw: %v", err)
+	}
 
 	_, err = e.svc.Authenticate(ctx, authn.AudiencePublic, email, "Passw0rdLong1")
 	if err != nil {

@@ -253,6 +253,39 @@ func TestLoginFailureAuditDedup(t *testing.T) {
 	}
 }
 
+// 签发后账号被停用：消费时回「账号已停用」，不建会话（快捷登录不绑凭据纪元，60 秒内能走到这一支）。
+func TestQuickLoginDisabledAccount(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	uid := h.Users.addUser("qd@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "qd@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	p, err := h.S.Authenticate(ctx, authn.AudiencePublic, tok.AccessToken)
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	link, err := h.S.IssueQuickLogin(authn.With(ctx, p))
+	if err != nil {
+		t.Fatalf("issue quick: %v", err)
+	}
+
+	h.Users.mu.Lock()
+	u := h.Users.users[uid]
+	u.Status = "suspended"
+	h.Users.users[uid] = u
+	h.Users.mu.Unlock()
+
+	got, err := h.S.ConsumeQuickLogin(ctx, link.Token)
+	if !errors.Is(err, errAccountDisabled) {
+		t.Fatalf("停用后消费应回账号已停用：%v", err)
+	}
+	if got.AccessToken != "" {
+		t.Fatal("停用账号不应拿到令牌")
+	}
+}
+
 func TestQuickLogin(t *testing.T) {
 	h := newTestService(t)
 	ctx := testCtx("203.0.113.7")
