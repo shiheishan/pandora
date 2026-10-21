@@ -9,7 +9,7 @@ import { NodeMonitor } from './NodeMonitor'
 import { NodeHeaderAction, NodeOps } from './NodeOps'
 import { NodeProtocol } from './NodeProtocol'
 import { NodeSettings } from './NodeSettings'
-import { runState } from './runtime'
+import { runState, certBadge } from './runtime'
 import { useNodeDetail, useNodes } from './queries'
 import type { NodeRow } from './schemas'
 import { trafficUsageLabel } from './xb'
@@ -62,6 +62,7 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
 
   const state = nodeState(row)
   const run = runState(row)
+  const cert = certBadge(row.cert, Date.now())
 
   return (
     <DetailPage
@@ -122,6 +123,12 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
             {run === null ? '—' : run.label}
             {run !== null && run.detail !== '' && (
               <span className={css.faint}>{run.detail}</span>
+            )}
+          </SideFact>
+          <SideFact label="证书">
+            {row.cert === null ? '—' : (cert?.label ?? '—')}
+            {cert !== null && cert.detail !== '' && (
+              <span className={css.faint}>{cert.detail}</span>
             )}
           </SideFact>
         </SideFacts>

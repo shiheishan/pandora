@@ -95,6 +95,7 @@ export const NODE_LINE_FIELDS = [
   'traffic',
   'relay_count',
   'ech_enabled',
+  'cert',
 ] as const satisfies ReadonlyArray<keyof NodeRow>
 export type NodeLineData = Pick<NodeRow, (typeof NODE_LINE_FIELDS)[number]>
 
@@ -337,6 +338,8 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
     else if (f.kind === 'boolean') out[f.path] = v === true || v === 'true' ? 'true' : v === false || v === 'false' ? 'false' : ''
     else if (f.kind === 'json' || (typeof v === 'object' && v !== null)) out[f.path] = JSON.stringify(v, null, 2)
     else out[f.path] = String(v)
+    // 旧节点没有 cert_mode，后端按 file 处理；留空会让手填路径被 show_if 藏起来且必填拦保存
+    if (f.path === 'cert_mode' && (v === undefined || v === null)) out[f.path] = 'file'
   }
   return out
 }
