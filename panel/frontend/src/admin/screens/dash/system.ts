@@ -91,7 +91,7 @@ function stateTone(state: ComponentState): 'ok' | 'warn' | 'bad' | 'off' {
   }
 }
 
-function computeWhy(c: SystemComponent): string {
+function computeWhy(c: SystemComponent, offlineNames: readonly string[]): string {
   if (c.state === 'ok') return '正常'
   const msg = c.message?.trim()
   if (msg) return msg
@@ -102,7 +102,8 @@ function computeWhy(c: SystemComponent): string {
       const parts: string[] = []
       if (typeof total === 'number' && typeof online === 'number') {
         const offline = total - online
-        if (offline > 0) parts.push(`${offline} 个节点离线`)
+        // 点名：待办接口的 nodes_offline 带最多 3 个离线节点名，多出来的写「等」
+        if (offline > 0) parts.push(`${offline} 个节点离线${offlineNames.length > 0 ? `：${offlineNames.join('、')}${offline > offlineNames.length ? ' 等' : ''}` : ''}`)
       }
       const lagging = config_lagging ?? 0
       if (lagging > 0) parts.push(`${lagging} 个节点配置未同步`)
@@ -159,7 +160,7 @@ function computeMetric(c: SystemComponent): string {
   }
 }
 
-export function systemView(status: SystemStatus): SystemView {
+export function systemView(status: SystemStatus, offlineNames: readonly string[] = []): SystemView {
   const backupServer = status.components.find((c) => c.key === 'backup')
   const backupSummaryResult = backupSummary(status.backup)
   const backupState = backupServer ? backupServer.state : backupSummaryResult.state
@@ -185,7 +186,7 @@ export function systemView(status: SystemStatus): SystemView {
       name: COMPONENT_NAMES[c.key],
       tone: stateTone(c.state),
       attention,
-      why: computeWhy(c),
+      why: computeWhy(c, offlineNames),
       metric: computeMetric(c),
       action: target ? { kind: 'go', target } : undefined,
     }

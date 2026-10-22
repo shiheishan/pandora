@@ -224,6 +224,24 @@ export function bindBlock(n: Pick<NodeRow, 'serving_status' | 'movable'>): strin
 /** 服务器下拉里能不能选：与后端 lockServerForNodes 一致，新建、绑定、复制都只拒已退役（容量满由后端 409 标到表单） */
 export const serverAcceptsNodes = (s: { status: ServerStatus }) => s.status !== 'retired'
 
+type PickServer = { id: string; name: string; region: string | null; node_count: number; capacity_nodes: number; status: ServerStatus; enrolled: boolean }
+
+/**
+ * 绑定弹窗与新建向导的服务器下拉：按地区排、地区写在前面（客服找「大阪」，不认 jp-osa-edge-1，10-21 测试员要滚到底才找到），
+ * 括号里写「已有几个节点 / 最多几个」；没接入的标「（未接入）」，已退役的置灰
+ */
+export function serverPickOptions(servers: readonly PickServer[]): { value: string; label: string; disabled: boolean }[] {
+  const key = (s: PickServer) => s.region?.trim() || s.name
+  return [...servers]
+    .sort((a, b) => key(a).localeCompare(key(b), 'zh-CN') || a.name.localeCompare(b.name))
+    .map((s) => {
+      const region = s.region?.trim()
+      const base = `${region ? `${region} · ` : ''}${s.name}（${s.node_count}/${s.capacity_nodes} 个节点）`
+      const unenrolled = !s.enrolled && s.status !== 'retired'
+      return { value: s.id, label: unenrolled ? `${base}（未接入）` : base, disabled: !serverAcceptsNodes(s) }
+    })
+}
+
 /** 绑定弹窗的校验：服务器必选，端口 1–65535 必填 */
 export function validateBind(serverId: string, port: string): Record<string, string> {
   const e: Record<string, string> = {}
@@ -241,12 +259,25 @@ const PORT_CANDIDATES = [443, 8443, 2053, 2083, 2087, 2096, 10443]
  * 后端按 L4 判冲突更宽，这里保守些；候选都被占时从 20000 往上找。只是缺省值，占用以后端 409 为准
  */
 export function freePort(serverId: string, nodes: readonly Pick<NodeRow, 'id' | 'server_id' | 'server_port'>[], selfId?: string): number {
-  const used = new Set(nodes.filter((n) => n.server_id === serverId && n.id !== selfId && n.server_port != null).map((n) => n.server_port))
+  const used = new Set(usedPorts(serverId, nodes, selfId))
   const hit = PORT_CANDIDATES.find((p) => !used.has(p))
   if (hit != null) return hit
   let p = 20000
   while (used.has(p)) p++
   return p
+}
+
+/** 这台服务器上别的节点已用的端口（升序去重），端口框的说明用 */
+export function usedPorts(serverId: string, nodes: readonly Pick<NodeRow, 'id' | 'server_id' | 'server_port'>[], selfId?: string): number[] {
+  const ports = nodes.flatMap((n) => (n.server_id === serverId && n.id !== selfId && n.server_port != null ? [n.server_port] : []))
+  return [...new Set(ports)].sort((a, b) => a - b)
+}
+
+/** 端口框说明：选了服务器就列出这台已用的端口（最多 6 个） */
+export function portHint(ports: readonly number[]): string {
+  if (ports.length === 0) return '同一台服务器上端口先到先得；这台还没有别的节点占端口'
+  const shown = ports.slice(0, 6).join('、')
+  return `同一台服务器上端口先到先得；这台已用 ${shown}${ports.length > 6 ? ` 等 ${ports.length} 个` : ''}，缺省已避开`
 }
 
 /** POST v1/nodes/:id/bind 的请求体 */

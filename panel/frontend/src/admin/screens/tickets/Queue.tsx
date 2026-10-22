@@ -7,6 +7,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Menu, SearchField, Skeleton, Tabs, Tag, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { useNow } from '../../kit'
+import { taskCount, useDashboardTasks } from '../../tasks'
 import { pageHelp } from '../../page-help'
 import { PageHelpTip } from '../../PageHelp'
 import { escalatedSchema, useInvalidateTickets, useTicketQueue, type QueueParams, type Ticket } from './api'
@@ -33,6 +34,9 @@ export function Queue({
   const q = useTicketQueue(params)
   const tickets = q.data?.pages.flatMap((p) => p.tickets) ?? []
   const total = q.data?.pages[0]?.total ?? 0
+  // 侧栏徽标数的是「待处理」（要客服动作）；别的筛选下标题旁的数更大，给一个跳到待处理的入口说清两个数的关系
+  const todo = taskCount(useDashboardTasks().data?.items, 'tickets_open')
+  const filterLabel = FILTERS.find(([v]) => v === filter)?.[1] ?? ''
   const now = useNow()
 
   const api = useApi()
@@ -56,7 +60,16 @@ export function Queue({
     <aside className={css.queue} aria-label="工单列表">
       <div className={css.head}>
         <h1>工单</h1>
-        {!q.isPending && <span className={css.count}>{total}</span>}
+        {!q.isPending && (
+          <span className={css.count} title={`「${filterLabel}」${total} 张`}>
+            {total}
+          </span>
+        )}
+        {filter !== 'todo' && todo > 0 && (
+          <button type="button" className={css.todoJump} onClick={() => onFilter('todo')} title="要客服动作的工单：新提交、用户回复了、已升级（侧栏的数字就是它）">
+            待处理 {todo}
+          </button>
+        )}
         <span className={css.sp} />
         <Menu
           label="工单操作"

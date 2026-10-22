@@ -155,6 +155,10 @@ describe('系统状态', () => {
       why: '4 个节点离线',
       action: { kind: 'go', target: { module: 'nodes', tab: 'nodes', query: { f: 'offline' } } },
     })
+    // 待办给了离线节点名就点名，名字比离线数少时写「等」
+    expect(systemView(offlineOnly, ['新加坡 02', '东京 03']).rows.find((r) => r.key === 'node_fabric')!.why).toBe('4 个节点离线：新加坡 02、东京 03 等')
+    const one: SystemStatus = { ...offlineOnly, components: [{ key: 'node_fabric', state: 'warn', metrics: { total: 7, online: 6, config_lagging: 0 } }, offlineOnly.components[1]!] }
+    expect(systemView(one, ['新加坡 02']).rows.find((r) => r.key === 'node_fabric')!.why).toBe('1 个节点离线：新加坡 02')
   })
 })
 

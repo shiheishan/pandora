@@ -43,6 +43,7 @@ import {
   UPGRADE_REASON_TEXT,
   UPGRADE_STATUS,
   validateServerForm,
+  meterEmptyText,
 } from './infra'
 import { nodeRowSchema, poolsResponse, serverSchema, serversResponse, UPGRADE_STATUSES, type NodeRow, type Server } from './schemas'
 
@@ -357,6 +358,13 @@ describe('pools', () => {
     expect(patchPoolBody(pool, poolFormFrom(pool))).toBeNull()
     expect(patchPoolBody(pool, { ...poolFormFrom(pool), region: '', status: 'draining', code: 'x' })).toEqual({ status: 'draining' })
     expect(patchPoolBody(pool, { ...poolFormFrom(pool), name: '亚太精选' })).toEqual({ name: '亚太精选' })
+  })
+})
+
+describe('占用说明', () => {
+  it('meterEmptyText 已接入时不再叫人去装 agent', () => {
+    expect(meterEmptyText({ enrolled: false })).toBe('装好 agent 后这里显示占用')
+    expect(meterEmptyText({ enrolled: true })).toBe('还没收到占用数据：agent 每分钟上报一次，稍后再看')
   })
 })
 

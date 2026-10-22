@@ -187,6 +187,11 @@ export const meterLevel = (p: number): MeterLevel => (p > 85 ? 'hot' : p > 65 ? 
 
 const ratio = (used: number | null, total: number | null) => (used === null || !total ? null : Math.min(100, Math.round((used / total) * 100)))
 
+/** 占用还没有数据时的说明：没接入叫去装 agent；已接入（可能已在服务）说明还没收到上报，不再叫人去装 */
+export function meterEmptyText(s: Pick<Server, 'enrolled'>): string {
+  return s.enrolled ? '还没收到占用数据：agent 每分钟上报一次，稍后再看' : '装好 agent 后这里显示占用'
+}
+
 export function serverMeters(s: Pick<Server, 'cpu_bp' | 'mem_used_mb' | 'mem_total_mb' | 'disk_used_gb' | 'disk_total_gb'>): Meter[] {
   const cpu = s.cpu_bp === null ? null : Math.min(100, Math.round(s.cpu_bp / 100))
   return [

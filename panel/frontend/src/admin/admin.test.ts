@@ -7,7 +7,7 @@ import { hasOwnHead, isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS
 import { PAGE_HELP, pageHelp } from './page-help'
 import { createReauthController } from './reauth'
 import { documentSiteName } from './site-name'
-import { formatWait, navBadges, taskCount, tasksSchema, ticketAlert } from './tasks'
+import { formatWait, navBadges, offlineNodeNames, taskCount, tasksSchema, ticketAlert } from './tasks'
 
 describe('documentSiteName', () => {
   it('reads the server-written application-name meta and falls back to Pandora', () => {
@@ -250,6 +250,15 @@ describe('dashboard/tasks', () => {
     }).items
     expect(navBadges(withdrawals)).toEqual({ marketing: { count: 3, label: '提现待审核 3 笔' } })
     expect(navBadges(undefined)).toEqual({})
+  })
+
+  it('offlineNodeNames：取 nodes_offline 的样例名，缺席为空', () => {
+    const items = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'nodes_offline', count: 4, sample: [{ id: 'n1', name: '新加坡 02' }, { id: 'n2', name: '东京 03' }], longest_offline_seconds: 1380 }],
+    }).items
+    expect(offlineNodeNames(items)).toEqual(['新加坡 02', '东京 03'])
+    expect(offlineNodeNames(undefined)).toEqual([])
   })
 
   it('ticketAlert：无工单为 null，有工单带最久等待', () => {

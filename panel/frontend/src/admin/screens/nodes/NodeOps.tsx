@@ -16,7 +16,9 @@ import {
   canActivate,
   freePort,
   regionLabel,
-  serverAcceptsNodes,
+  serverPickOptions,
+  portHint,
+  usedPorts,
   UNBOUND_HINT,
   validateBind,
 } from './logic'
@@ -276,11 +278,7 @@ function NodeServerBinding({
                 return next
               })
             }}
-            options={(servers.data ?? []).map((s) => ({
-              value: s.id,
-              label: `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`,
-              disabled: !serverAcceptsNodes(s),
-            }))}
+            options={serverPickOptions(servers.data ?? [])}
           />
           {serverId ? (
             <p className={css.faint}>
@@ -294,7 +292,7 @@ function NodeServerBinding({
             inputMode="numeric"
             value={port}
             error={errors.server_port}
-            hint="同一台服务器上端口先到先得；已自动避开这台上别的节点用过的端口"
+            hint={serverId ? portHint(usedPorts(serverId, nodeList, node.id)) : '同一台服务器上端口先到先得'}
             disabled={bind.isPending}
             onChange={(e) => {
               setPortManual(true)

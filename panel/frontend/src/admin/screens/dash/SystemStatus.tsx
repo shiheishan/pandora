@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { relativeTime } from '../../../core/format'
 import { Card, Tag } from '../../../ui'
 import { StatusDot } from '../../kit'
+import { offlineNodeNames, useDashboardTasks } from '../../tasks'
 import { useSystemStatus } from './api'
 import { BackupDrawer } from './BackupDrawer'
 import css from './Ops.module.css'
@@ -13,7 +14,8 @@ import { systemView, type SystemRow } from './system'
 export function SystemStatus() {
   const q = useSystemStatus()
   const [backupOpen, setBackupOpen] = useState(false)
-  const view = q.data ? systemView(q.data) : null
+  const tasks = useDashboardTasks()
+  const view = q.data ? systemView(q.data, offlineNodeNames(tasks.data?.items)) : null
 
   // relativeTime：刚刚 / N 分钟 / N 小时 / MM-DD；只有前两种后面补「前」
   const updatedRaw = q.dataUpdatedAt ? relativeTime(new Date(q.dataUpdatedAt)) : ''

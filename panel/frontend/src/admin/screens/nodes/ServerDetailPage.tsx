@@ -19,6 +19,7 @@ import {
   type StatusTone,
 } from '../../kit'
 import {
+  meterEmptyText,
   quickToggle,
   SERVER_STATUS,
   capacityMinimum,
@@ -362,7 +363,7 @@ function ServerDetailBody({
         <div className={css.stack}>
           <SectionTitle>占用</SectionTitle>
           {nextStep ? <Callout>{nextStep}</Callout> : null}
-          {allMetersNull ? <Callout>装好 agent 后这里显示占用</Callout> : <Meters meters={meters} />}
+          {allMetersNull ? <Callout>{meterEmptyText(s)}</Callout> : <Meters meters={meters} />}
           {notes.map((note) => (
             <Callout key={note}>{note}</Callout>
           ))}

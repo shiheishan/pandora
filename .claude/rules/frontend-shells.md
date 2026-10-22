@@ -28,7 +28,7 @@ paths:
   - 前端不按权限隐藏任何入口、按钮或页签；侧栏、⌘K、页签栏、仪表盘卡片全部照 `modules.ts` 的登记显示
   - 页面不等 `GET v1/me` 回来再渲染；me 只给头像与名字用（`me.ts`），身份一律显示「管理员」
 - 外框布局（样稿 `dev/prototype/admin-v4.html`，av4 落地）：`Shell.tsx` 是两栏网格（侧栏 232 + 主区），页面随文档滚动；**桌面（≥ 960）没有顶栏**
-  - 侧栏（`Sidebar.tsx`，`id="admin-sidebar"`，`position: sticky` 贴顶，z-index 20 让侧栏里的弹层盖住内容）自上而下：环形 Logo + 站点名 + 版本徽标（`__APP_RELEASE__`）；搜索框（点开 ⌘K，显示 ⌘K 提示）；`<nav aria-label="主导航">`（浏览器测试的入口，不要改）——第一项「实时动态」（`EventsTrigger variant="nav"`），然后照 `NAV_GROUPS` 分组（第一组标题为 null 不画组名：仪表盘、工单 / 业务 / 网络 / 设置）；工单提醒卡（`tasks.ts` 的 `ticketAlert`，仪表盘与工单页不显示，点进工单）；账户区：头像 + 名字（ui `Menu` 向上弹出：名字 + 邮箱、修改密码、绑定 Telegram、外观「浅色 / 深色」choice、退出登录），旁边「打开用户端」（`../`，新标签）与主题切换两个图标按钮
+  - 侧栏（`Sidebar.tsx`，`id="admin-sidebar"`，`position: sticky` 贴顶，z-index 20 让侧栏里的弹层盖住内容）自上而下：环形 Logo + 站点名 + 版本徽标（`__APP_RELEASE__`）；搜索框（点开 ⌘K，显示 ⌘K 提示）；`<nav aria-label="主导航">`（浏览器测试的入口，不要改）——第一项「实时动态」（`EventsTrigger variant="nav"`），然后照 `NAV_GROUPS` 分组（第一组标题为 null 不画组名：仪表盘、工单 / 业务 / 网络 / 设置）；工单提醒卡（`tasks.ts` 的 `ticketAlert`，仪表盘与工单页不显示，点进工单的待处理筛选 `?f=todo`，与卡上的数同口径）；账户区：头像 + 名字（ui `Menu` 向上弹出：名字 + 邮箱、修改密码、绑定 Telegram、外观「浅色 / 深色」choice、退出登录），旁边「打开用户端」（`../`，新标签）与主题切换两个图标按钮
   - 导航徽标（`navBadges`）：工单（红，`hot`）、订单与收款 `orders_pending_stale`、营销 `withdrawals_pending`、节点 `nodes_offline`；数字 `aria-hidden`，不进链接的无障碍名称（浏览器用例按精确名点导航）；每个徽标带 `label`，挂在数字的 `title` 上写清数的是什么（「待处理工单 N 个」「超时未支付订单 N 个：下单超过 M 分钟还没到账，与「待处理到账」无关」「提现待审核 N 笔」「离线节点 N 个」）——订单与收款下的「待处理到账」是钱到了没对上订单，与徽标口径不同（10-21 测试员对错过）
   - 侧栏收起成图标栏的功能与 `pandora-admin-sidebar` 存储键已删，不再恢复
   - 窄于 960（`useMedia('(max-width: 959px)')`）：主区顶上一条 52 高的手机顶栏（`Topbar.tsx`：汉堡「打开导航」+ 页名 + 操作插槽 + `EventsTrigger variant="top"`），侧栏变成 272 宽的抽屉：遮罩、Esc、换页、点遮罩关闭，收着时 `inert`

@@ -88,6 +88,12 @@ export function navBadges(items: readonly TaskItem[] | undefined): Partial<Recor
   return out
 }
 
+/** 离线节点名（待办 nodes_offline 的 sample，最多 3 个）；条目缺席时为空，仪表盘系统状态用来点名 */
+export function offlineNodeNames(items: readonly TaskItem[] | undefined): string[] {
+  const item = items?.find((i): i is Extract<TaskItem, { kind: 'nodes_offline' }> => i.kind === 'nodes_offline')
+  return item ? item.sample.map((n) => n.name) : []
+}
+
 /** 侧栏底部工单提醒卡：tickets_open 的数量与最久等待秒数；数量为 0（或条目缺席）时返回 null */
 export function ticketAlert(items: readonly TaskItem[] | undefined): { count: number; oldestWaitSeconds: number | null } | null {
   const item = items?.find((i): i is Extract<TaskItem, { kind: 'tickets_open' }> => i.kind === 'tickets_open')

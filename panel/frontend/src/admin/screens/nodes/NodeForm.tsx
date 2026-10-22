@@ -26,7 +26,9 @@ import {
   protocolNotices,
   realityEnabled,
   realityKeypairToast,
-  serverAcceptsNodes,
+  serverPickOptions,
+  portHint,
+  usedPorts,
   toFormValues,
   toProtocolConfig,
   UNBOUND_HINT,
@@ -294,12 +296,22 @@ export function NodeCreateWizard({
     })
   }
 
+  // 地址空着（或还是上次自动填的）时，选服务器顺手填它的公网 IPv4；用户改过就不动
+  const hostAuto = useRef('')
+  const withServerHost = (b: BasicForm, serverId: string): BasicForm => {
+    const ip = (servers.data ?? []).find((sv) => sv.id === serverId)?.public_ipv4?.trim() ?? ''
+    if (!ip || (b.host.trim() !== '' && b.host !== hostAuto.current)) return b
+    hostAuto.current = ip
+    return { ...b, host: ip }
+  }
+
   const applyServerId = (serverId: string) => {
     userTouched.current = true
     setBasic((b) => {
       if (!serverId) return { ...b, serverId: '' }
-      if (portManual.current) return { ...b, serverId }
-      return { ...b, serverId, port: String(freePort(serverId, allNodes)) }
+      const next = withServerHost({ ...b, serverId }, serverId)
+      if (portManual.current) return next
+      return { ...next, port: String(freePort(serverId, allNodes)) }
     })
   }
 
@@ -324,8 +336,14 @@ export function NodeCreateWizard({
     if (!open || !basic.serverId || portManual.current) return
     const sid = basic.serverId
     const want = String(freePort(sid, allNodes))
-    setBasic((b) => (b.serverId === sid && b.port !== want ? { ...b, port: want } : b))
-  }, [open, basic.serverId, allNodes])
+    setBasic((b) => {
+      if (b.serverId !== sid) return b
+      const next = withServerHost(b, sid)
+      return next.port !== want ? { ...next, port: want } : next
+    })
+    // withServerHost 只读 servers.data 与 ref，随 servers.data 重跑即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, basic.serverId, allNodes, servers.data])
 
   // 进入协议参数步：REALITY 可见且无私钥时自动生成一次（失败静默）
   const mutateReality = reality.mutate
@@ -586,7 +604,7 @@ export function NodeCreateWizard({
               </div>
               <Input
                 label="地址"
-                hint="域名或 IP；上线前要填"
+                hint="用户的 App 连这个地址：这台服务器的公网 IP，或解析到它的域名；选了服务器会先填上它的 IP，上线前要填"
                 placeholder="hk3.example.com"
                 mono
                 value={basic.host}
@@ -596,7 +614,7 @@ export function NodeCreateWizard({
               />
               <Input
                 label="端口"
-                hint={basic.serverId ? undefined : '暂不绑定时可以先空着，绑定服务器时要填'}
+                hint={basic.serverId ? portHint(usedPorts(basic.serverId, allNodes)) : '暂不绑定时可以先空着，绑定服务器时要填'}
                 mono
                 inputMode="numeric"
                 value={basic.port}
@@ -616,15 +634,7 @@ export function NodeCreateWizard({
                   error={errors.server_id ?? errors.capacity_nodes}
                   disabled={disabled}
                   onChange={(e) => applyServerId(e.target.value)}
-                  options={(servers.data ?? []).map((s) => {
-                    const base = `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`
-                    const unenrolled = !s.enrolled && s.status !== 'retired'
-                    return {
-                      value: s.id,
-                      label: unenrolled ? `${base}（未接入）` : base,
-                      disabled: !serverAcceptsNodes(s),
-                    }
-                  })}
+                  options={serverPickOptions(servers.data ?? [])}
                 />
               </div>
               <div className={css.span2}>

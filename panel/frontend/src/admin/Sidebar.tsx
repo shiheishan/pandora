@@ -99,7 +99,7 @@ export function Sidebar(p: SidebarProps) {
       </nav>
 
       {alert != null && current !== 'dash' && current !== 'tickets' && (
-        <a href={href(modulePath('tickets'))} className={css.alert}>
+        <a href={href(modulePath('tickets'), { f: 'todo' })} className={css.alert}>
           <b>
             <i aria-hidden="true" />
             {alert.count} 个工单没回复

@@ -216,7 +216,8 @@ export function todoBoard(items: readonly TaskItem[] | undefined, asOf?: string)
       count: tickets?.count ?? 0,
       meta: ticketMeta(tickets),
       action: '去回复',
-      target: { module: 'tickets', tab: null },
+      // 与侧栏徽标同口径（open + pending_agent + escalated），落到工单页「待处理」筛选，数对得上
+      target: { module: 'tickets', tab: null, query: { f: 'todo' } },
       hot: (tickets?.count ?? 0) > 0,
     },
     {

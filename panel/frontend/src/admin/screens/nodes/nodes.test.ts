@@ -55,6 +55,9 @@ import {
   validateBasic,
   validateBind,
   freePort,
+  portHint,
+  serverPickOptions,
+  usedPorts,
   NO_POOL_HINT,
   NODE_LINE_FIELDS,
   sameNodeLine,
@@ -457,6 +460,33 @@ describe('basic info and PATCH', () => {
     expect(freePort('s1', [n('a', 's1', 443), n('b', 's2', 8443)])).toBe(8443)
     expect(freePort('s1', [n('a', 's1', 443)], 'a')).toBe(443)
     expect(freePort('s1', [443, 8443, 2053, 2083, 2087, 2096, 10443, 20000].map((p, i) => n(String(i), 's1', p)))).toBe(20001)
+  })
+
+  it('usedPorts and portHint list ports taken on the chosen server', () => {
+    const n = (id: string, server_id: string | null, server_port: number | null) => ({ id, server_id, server_port })
+    const nodes = [n('a', 's1', 8389), n('b', 's1', 8388), n('c', 's1', 8388), n('d', 's2', 443), n('e', 's1', null)]
+    expect(usedPorts('s1', nodes)).toEqual([8388, 8389])
+    expect(usedPorts('s1', nodes, 'a')).toEqual([8388])
+    expect(portHint([])).toBe('同一台服务器上端口先到先得；这台还没有别的节点占端口')
+    expect(portHint([8388, 8389])).toBe('同一台服务器上端口先到先得；这台已用 8388、8389，缺省已避开')
+    expect(portHint([1, 2, 3, 4, 5, 6, 7])).toBe('同一台服务器上端口先到先得；这台已用 1、2、3、4、5、6 等 7 个，缺省已避开')
+  })
+
+  it('serverPickOptions sorts by region and puts the region first', () => {
+    const s = (id: string, name: string, region: string | null, extra: Partial<{ enrolled: boolean; status: 'ready' | 'draft' | 'retired' }> = {}) => ({
+      id,
+      name,
+      region,
+      node_count: 2,
+      capacity_nodes: 16,
+      status: extra.status ?? ('ready' as const),
+      enrolled: extra.enrolled ?? true,
+    })
+    const opts = serverPickOptions([s('1', 'jp-tyo-edge-2', '东京'), s('2', 'jp-osa-edge-1', '大阪'), s('3', 'zz-new', null, { enrolled: false, status: 'draft' }), s('4', 'old', '香港', { status: 'retired' })])
+    expect(opts.map((o) => o.value)).toEqual(['2', '1', '4', '3'])
+    expect(opts[0]).toEqual({ value: '2', label: '大阪 · jp-osa-edge-1（2/16 个节点）', disabled: false })
+    expect(opts[2]!.disabled).toBe(true)
+    expect(opts[3]!.label).toBe('zz-new（2/16 个节点）（未接入）')
   })
 
   it('sends only changed fields and leaves protocol_config out unless the protocol changed', () => {

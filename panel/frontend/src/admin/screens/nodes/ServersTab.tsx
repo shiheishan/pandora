@@ -6,6 +6,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
 import { BulkAction, BulkBar, PageActions, StatusDot } from '../../kit'
 import {
+  meterEmptyText,
   createServerBody,
   deleteServerNotice,
   emptyServerForm,
@@ -214,7 +215,7 @@ function ServerCard({
           <Tag tone="info">{offer}</Tag>
         </div>
       ) : null}
-      {allMetersNull ? <div className={css.faint}>装好 agent 后这里显示占用</div> : <Meters meters={meters} />}
+      {allMetersNull ? <div className={css.faint}>{meterEmptyText(s)}</div> : <Meters meters={meters} />}
       <div className={x.chips}>
         {nodes.length > 0 ? (
           nodes.map((n) => <Tag key={n}>{n}</Tag>)
