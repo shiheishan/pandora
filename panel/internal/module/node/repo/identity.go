@@ -242,3 +242,15 @@ func (r *Repo) FillServerRegionIfEmpty(ctx context.Context, serverID uuid.UUID, 
 		region, serverID,
 	).Error
 }
+
+// FillServerPublicIPIfEmpty 在服务器的 public_ipv4 / public_ipv6 为空时写入接入时的公网地址（空串表示没有这一族），
+// 管理员填过的不覆盖；推进 row_version 的理由同 FillServerRegionIfEmpty。
+func (r *Repo) FillServerPublicIPIfEmpty(ctx context.Context, serverID uuid.UUID, ipv4, ipv6 string) error {
+	return r.d.Conn(ctx).Exec(
+		`UPDATE servers SET public_ipv4 = COALESCE(public_ipv4, CAST(NULLIF(?::text, '') AS inet)),
+		   public_ipv6 = COALESCE(public_ipv6, CAST(NULLIF(?::text, '') AS inet)),
+		   row_version = row_version + 1, updated_at = now()
+		  WHERE id = ? AND ((public_ipv4 IS NULL AND ?::text <> '') OR (public_ipv6 IS NULL AND ?::text <> ''))`,
+		ipv4, ipv6, serverID, ipv4, ipv6,
+	).Error
+}

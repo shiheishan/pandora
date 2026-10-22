@@ -195,9 +195,15 @@ jobs:
           for arch in amd64 arm64; do
             pkg="pandora-panel_${VERSION}_linux_${arch}.tar.gz"
             cp -- "$dist/$pkg" "$dist/$pkg.sha256" "$dist/$pkg.manifest.sha256" "$out/"
+            # 列表先落文件再查：tar | grep -q 在 pipefail 下会因 SIGPIPE 误判（v2026.10.21 踩过）。
+            # 清单演练也查，让这段在演练里就跑到；.sig 只有推标签签过名才有
+            list="$RUNNER_TEMP/$pkg.list"
+            tar -tzf "$dist/$pkg" > "$list"
+            prefix="pandora-panel_${VERSION}_linux_${arch}/pdnd-dist"
+            grep -qx "$prefix/pdnd-manifest.json" "$list" \
+              || { echo "::error::发布包缺少 pdnd-manifest.json: $pkg"; exit 1; }
             if [ "$PUBLISH" = true ]; then
-              # 不用 grep -q：它匹配到就退出，tar 写剩下的列表时收到 SIGPIPE，pipefail 下整条判失败
-              tar -tzf "$dist/$pkg" | grep -x "pandora-panel_${VERSION}_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" >/dev/null \
+              grep -qx "$prefix/pdnd-manifest.json.sig" "$list" \
                 || { echo "::error::发布包缺少 pdnd-manifest.json.sig: $pkg"; exit 1; }
             fi
           done

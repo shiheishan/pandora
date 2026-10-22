@@ -69,6 +69,7 @@ paths:
 - 上线结果的 `warnings`（`activationWarnings`，`service/nodes_lifecycle.go`）：无池 `nodeNoPoolWarning`；池没绑在用套餐 `nodePoolUnboundWarning`（与列表下发说明同一口径：`poolLivePlans` / `livePlansFromUsage`，`service/pool_live_plans.go`，列表的 `nodeListExtrasFor` 也调它）；读 catalog 出错只记警告、不挡上线。前端 `logic.activationHint` 按这两句原文匹配，改文案两边一起改。
 - 服务器 DTO 的 `enrolled`：有没有有效接入身份（`HasActiveIdentity` 口径；列表一次 `ActiveIdentitySeqs` 批量读，详情 `HasActiveIdentity`）。后台据此区分「还没接入」与「已接入」，不要按心跳猜。`heartbeat_online` 只对 ready 为真，草稿的心跳新鲜与否前端按 `last_heartbeat_at` 自己判。
 - 上线时服务器没接入回 409 `serverNotEnrolledMsg`（「先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令」；叫法与后台一致，假后端 `nodes.ts` 有逐字副本）。
+- 接入时按 gRPC 对端地址回填空的 `servers.public_ipv4` / `public_ipv6`（`enrollPublicIP`：只认公网地址，内网、回环、链路本地、CGNAT 不填；按族各填各的列；管理员填过的不覆盖，`repo.FillServerPublicIPIfEmpty`，推进 row_version）。只在接入时填，之后换 IP 不跟（Hello 不改），重新接入也不覆盖已填的值。对端地址是节点连面板的出口地址，可能与用户该连的入口不同（WARP、NAT64、负载均衡、IPv6 临时地址），回填的值只当预填，管理员上线前核对节点地址。双栈机器多半只填到 IPv6，前端预填用 `infra.serverPublicIp`（v4 优先，没有用 v6）。后台「添加服务器」不让填 IP、新建节点地址框按服务器 IP 预填都依赖它（10-22 实装验收发现原先只填地区）。
 - 接入时按公网 IP 回填空的 `servers.region`：`regionText`（`service/geo.go`）拼国家、省 / 州、城市，去首尾空白，相邻两段相同（忽略大小写）只留一段（「Austria Vienna Vienna」→「Austria Vienna」）；存量数据不回头修。
 - 服务器心跳在 `servers.last_heartbeat_at`；后台失联 `NodeStaleAfter`（90s，`service/node_types.go`）。`RecordHeartbeat` 每拍写服务器心跳，节点 `runtime_status` 只在变化时写（`service/session_store.go`）。
 - 配置回执 `RecordConfigAck`：`switched`/`health_passed` 写 `applied_config_*` 并清 `apply_failed_*`；`failed` 只写失败台账，已应用版本不动。
