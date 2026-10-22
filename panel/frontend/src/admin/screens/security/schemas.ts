@@ -27,6 +27,8 @@ const auditEventSchema = z.object({
   auth_context: z.enum(['session', 'reauth']).nullable(),
   /** 解不开（早于加密上线）为 null */
   source_ip: z.string().nullable(),
+  /** 事件详情（库里 data 原样，对象；写入方约定不放秘密），展开一行时显示 */
+  data: z.record(z.string(), z.unknown()),
 })
 export type AuditEvent = z.output<typeof auditEventSchema>
 export const auditResponse = z.object({ events: z.array(auditEventSchema), total: z.number().int() })

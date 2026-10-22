@@ -59,6 +59,31 @@ func TestSetHomeNormalizesAndAudits(t *testing.T) {
 	}
 }
 
+// 写满 20 条中文 FAQ 时审计 data 仍在 16KB 上限内：只记条数与摘要，不记正文
+func TestSetHomeFullFAQAuditStaysSmall(t *testing.T) {
+	st := &kvStore{kv: map[string]json.RawMessage{}}
+	al := &auditLog{}
+	s := newService(st, fakeTx{}, nil, nil, al)
+	faq := make([]HomeFAQ, HomeFAQMax)
+	for i := range faq {
+		faq[i] = HomeFAQ{Q: strings.Repeat("问", HomeFAQQuestionMax), A: strings.Repeat("答", HomeFAQAnswerMax)}
+	}
+	if err := s.SetHome(context.Background(), HomeUpdate{FAQ: &faq}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if len(al.entries) != 1 {
+		t.Fatalf("audit %d", len(al.entries))
+	}
+	b, _ := json.Marshal(al.entries[0].data)
+	if len(b) > 16<<10 || strings.Contains(string(b), "问问") {
+		t.Fatalf("audit data %d 字节，不该带正文：%.200s", len(b), b)
+	}
+	after := al.entries[0].data["after"].(map[string]any)
+	if after[keyHomeFAQ+"_count"] != HomeFAQMax || after[keyHomeFAQ+"_sha256"] != faqDigest(faq) {
+		t.Fatalf("after %v", after)
+	}
+}
+
 func TestSetHomeNoopDoesNotWriteOrNotify(t *testing.T) {
 	st := &kvStore{kv: map[string]json.RawMessage{}}
 	al := &auditLog{}

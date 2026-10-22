@@ -49,6 +49,8 @@ type Record struct {
 	Outcome       string     `gorm:"column:outcome"`
 	Reason        *string    `gorm:"column:reason"`
 	IPEnc         []byte     `gorm:"column:ip_enc"`
+	// Data 是整份 data（jsonb 原文），只有 List 取；导出不取
+	Data []byte `gorm:"column:data"`
 }
 
 // Count 返回命中行数和库里的 now()（一条 SQL：SELECT count(*), now() ...）。
@@ -64,7 +66,7 @@ func (r *Repo) Count(ctx context.Context, q Query) (int64, time.Time, error) {
 // List 按 occurred_at DESC, id DESC 取一页。
 func (r *Repo) List(ctx context.Context, q Query, limit, offset int) ([]Record, error) {
 	var recs []Record
-	err := selectRecords(apply(r.d.Conn(ctx).Table("audit_events"), q)).
+	err := selectRecords(apply(r.d.Conn(ctx).Table("audit_events"), q), "data").
 		Order("occurred_at DESC, id DESC").
 		Limit(limit).Offset(offset).
 		Scan(&recs).Error
@@ -110,12 +112,14 @@ func (r *Repo) Purge(ctx context.Context, before time.Time, batch int) (int, err
 	return n, err
 }
 
-func selectRecords(tx *gorm.DB) *gorm.DB {
-	return tx.Select(
+// selectRecords 取 Record 的列；extra 追加列（列表多取整份 data）。
+func selectRecords(tx *gorm.DB, extra ...string) *gorm.DB {
+	cols := []string{
 		"id", "occurred_at", "actor_kind", "actor_id", "actor_audience", "auth_context",
 		"action", "resource_type", "resource_id", "outcome",
 		"data->>'reason' AS reason", "ip_enc",
-	)
+	}
+	return tx.Select(append(cols, extra...))
 }
 
 func apply(tx *gorm.DB, q Query) *gorm.DB {

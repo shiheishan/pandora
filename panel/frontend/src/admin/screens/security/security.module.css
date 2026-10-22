@@ -98,6 +98,73 @@
   }
 }
 
+/* 结果标签后的展开箭头：展开时转向下 */
+.auditOutcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+tr[aria-expanded='true'] .chevron {
+  transform: rotate(45deg);
+}
+
+.auditDetail {
+  display: grid;
+  gap: 10px;
+  padding: 2px 4px 6px;
+  white-space: normal;
+}
+
+.auditDetailMeta {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.auditDetailList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.auditDetailList > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 160px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.auditDetailList dt {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.auditDetailList dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.auditDetailSame,
+.auditDetailSame dt {
+  color: var(--text-3);
+}
+
+.auditBefore {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
 /* 手机上只剩操作人与结果两列：按内容排，操作人占满剩余宽度
    （列宽是 Table 写在 col 上的行内样式，只能用 !important 盖掉） */
 @media (max-width: 639px) {

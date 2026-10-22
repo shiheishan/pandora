@@ -55,6 +55,7 @@ paths:
 
 ## 查询、导出与敏感查看
 
+- 列表多取整份 `data`（`selectRecords(..., "data")` → `Row.Data` → DTO `data`，空时回 `{}`），后台展开一行看细节用；导出不取。所以 **`Event.Data` 里的东西后台页面都看得到**：秘密只记 `*_changed` 布尔，不放令牌、口令、私钥、整份请求体或带秘密字段的结构体。单条 data 上限 16KB（`maxDataBytes`，超了整笔写失败），长文本只记条数与摘要（首页 FAQ 记 `home.faq_count` / `home.faq_sha256`，通知模板记 `body_sha256_*`）。节点注册 `server.enrollment.commit` 的 `remote_ip` 是服务器自己的公网地址（后台本来就显示），不属于「来源 IP 只进封存列」的范围。
 - 列表/导出共用 `repo.Query` 形状（`repo/repo.go`）；导出先 `Count`，超过 `ExportMax`（50000）回 422，再 `Write` 动作 `audit.export`，再写 CSV（`service/query.go`）。
 - 搜索框（`Filter.Query` → `repo.Query.Text`）：动作 ILIKE 包含；邮箱包含反查出的用户 id（`ActorDirectory.IDsByEmail`，存 `TextUserIDs`）命中 `actor_id IN` 或 `resource_type = 'user' AND resource_id IN`（别人对他的操作、冲着他的匿名登录失败都能搜到）；整串是 uuid 时 `resource_id =` 或 `actor_id =`（用户详情「看审计记录」传用户 id 跳过来，只搜这一个人，不走邮箱包含匹配混进别人）。对象名（套餐名、节点名）不能搜：可读名只有登记了 labeler 的类型（`wire.go` 的 `UseResourceLabeler`：user → 邮箱、ticket → 工单号、plan → 套餐名、plan_version → 「套餐名 · v版本号」），查不到的 id 与其余类型前端显示「类型 · id 前 8 位」。守卫 `service/query_pg_test.go` 的 `TestListQueryMatchesUserAsResource`。
 - 访问明细 `AccessEvents`（`service/ops.go`、`repo/ops.go`）：`FilterActors` 时只看 `ActorIDs` 这些操作者；再带 `TargetActions` 时这些动作另按对象匹配（`resource_type = 'user' AND resource_id = ANY(ActorIDs)`，identity 用它把匿名的 `user.login_failed` 挂到被试账号上）；行里带 `ResourceType`（没有为空串）与 `ResourceID`。守卫 `service/ops_pg_test.go` 的 `TestAccessEventsTargetActionsPG`。

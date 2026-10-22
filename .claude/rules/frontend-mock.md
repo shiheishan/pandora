@@ -28,6 +28,7 @@ paths:
   - 页面上「同口径」的数字靠这份共享数据成立：仪表盘的超时未支付 = 订单页待支付筛选（`stalePendingCount`），按池在线数 = 节点池列表（`activeNodesInPool`）
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
 - 安全与运维（`admin/security.ts`）照 Go 由审计行现算，不写死结果：
+  - 审计行可带 `data`（reason 之外的键，照 Go 各写入方的键名造：余额调整、节点修改、渠道开关、改账号状态、延长订阅几类种子带了），列表回 `data` 时并上 `reason`（Go 的 reason 就是 `data->>'reason'`）
   - 审计行带内部 `ip_hash`（直接用 IP 串；存量行 source_ip 为 null 但 ip_hash 仍在；早于 30 天的种子按存量写）；对象可读名读时由 `labelOf` 解析，只有用户（邮箱）和工单（工单号）
   - 搜索照 Go：动作包含；邮箱反查出的 id 命中操作人或「对象是这个用户」；整串等于对象 id 或操作人 id。操作者类型只有 user / admin / system / anonymous；动作代号只用 Go 写的（对照 `security/logic.ts` 的 `ACTION_NAMES`）
   - 风控聚类 `computeClusters` 和用户画像 `profileOf` 都由审计行算：近 90 天、操作者是用户、按 ip_hash 分组；画像经 `setProfileSource` 交给 users.ts 的 profile 路由；复核结论按 ip_hash 存在 `reviews`

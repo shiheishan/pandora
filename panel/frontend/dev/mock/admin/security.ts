@@ -91,6 +91,8 @@ interface AuditRow {
   user_agent: string | null
   /** 同一来源 IP 的稳定键（Go 是 HMAC，这里直接用 IP 串）；存量行 source_ip 为 null 但 ip_hash 仍在；不出现在任何响应里 */
   ip_hash: string | null
+  /** 审计的 data（reason 之外的键）；列表回 data 时并上 reason，与 Go 的 data->>'reason' 同源 */
+  data?: Record<string, unknown>
 }
 const audit: AuditRow[] = []
 
@@ -321,13 +323,13 @@ const CLUSTER_SCENES: ReadonlyArray<{ ip: string; members: number[]; lastMin: nu
     }
     const mod = k % 12
     if (mod === 0) {
-      seed({ ...base, ...staffRow, action: 'balance.adjusted', resource_type: 'user', resource_id: t.id, reason: '线路故障补偿', auth_context: 'reauth', at })
+      seed({ ...base, ...staffRow, action: 'balance.adjusted', resource_type: 'user', resource_id: t.id, reason: '线路故障补偿', auth_context: 'reauth', at, data: { amount: '20.00', balance_after: `${35 + (k % 5)}.50`, ledger_txn: randomUUID() } })
     } else if (mod === 1) {
       seed({ ...base, actor_kind: 'system', actor_id: null, actor_email: null, api_domain: null, auth_context: null, source_ip: null, user_agent: null, action: 'order.expired', resource_type: 'order', resource_id: randomUUID(), at })
     } else if (mod === 2) {
       seed({ ...base, ...staffRow, action: 'ticket.assign', resource_type: 'ticket', resource_id: randomUUID(), resource_label: ticketNo(k, atMs), auth_context: 'session', at })
     } else if (mod === 3) {
-      seed({ ...base, ...staffRow, action: 'node.update', resource_type: 'node', resource_id: randomUUID(), auth_context: 'session', at })
+      seed({ ...base, ...staffRow, action: 'node.update', resource_type: 'node', resource_id: randomUUID(), auth_context: 'session', at, data: { before_row_version: 3, name: '香港 02 · IPLC', pool_id: randomUUID(), schema_version: 1, country_code: 'HK', protocol_changed: k % 2 === 0, tags: ['IPLC'], traffic_limit_bytes: null, traffic_reset_day: null, rate_schedule_changed: false, traffic_exceeded: false } })
     } else if (mod === 4) {
       seed({ ...base, ...staffRow, action: 'gift_card.batch_exported', resource_type: 'gift_card_batch', resource_id: randomUUID(), auth_context: 'reauth', at })
     } else if (mod === 5) {
@@ -350,13 +352,13 @@ const CLUSTER_SCENES: ReadonlyArray<{ ip: string; members: number[]; lastMin: nu
         at,
       })
     } else if (mod === 7) {
-      seed({ ...base, ...staffRow, action: 'payment_provider.toggle', resource_type: 'payment_provider', resource_id: randomUUID(), reason: '渠道维护', auth_context: 'reauth', at })
+      seed({ ...base, ...staffRow, action: 'payment_provider.toggle', resource_type: 'payment_provider', resource_id: randomUUID(), reason: '渠道维护', auth_context: 'reauth', at, data: { before: { enabled: true, accepting_new: true }, after: { enabled: true, accepting_new: false } } })
     } else if (mod === 8) {
-      seed({ ...base, ...staffRow, action: 'user.status_change', resource_type: 'user', resource_id: t.id, reason: '多次恶意退单', auth_context: 'reauth', at })
+      seed({ ...base, ...staffRow, action: 'user.status_change', resource_type: 'user', resource_id: t.id, reason: '多次恶意退单', auth_context: 'reauth', at, data: { before: 'active', status: 'suspended', sessions_revoked: true, source: 'admin' } })
     } else if (mod === 9) {
       seed({ ...base, ...staffRow, action: 'withdrawal.approve', resource_type: 'withdrawal', resource_id: randomUUID(), auth_context: 'reauth', outcome: k % 7 === 0 ? 'partial' : 'success', at })
     } else if (mod === 10) {
-      seed({ ...base, ...staffRow, action: 'subscription.extended', resource_type: 'subscription', resource_id: randomUUID(), reason: '线路故障补偿', auth_context: 'reauth', at })
+      seed({ ...base, ...staffRow, action: 'subscription.extended', resource_type: 'subscription', resource_id: randomUUID(), reason: '线路故障补偿', auth_context: 'reauth', at, data: { user_id: t.id, days: 7, previous_end: iso(ago - 20 * DAY), period_end: iso(ago - 27 * DAY), rescued: false } })
     } else {
       // 溯源「显示」明文 IP（Go 只这一处记 source_ip_viewed，对象为空）
       seed({ ...base, ...staffRow, action: 'security.source_ip_viewed', resource_type: null, resource_id: null, auth_context: 'session', at })
@@ -493,6 +495,7 @@ const auditJson = (r: AuditRow) => ({
   resource_label: labelOf(r),
   auth_context: r.auth_context,
   source_ip: r.source_ip,
+  data: { ...(r.reason !== null ? { reason: r.reason } : {}), ...r.data },
 })
 
 interface AuditQuery {

@@ -173,3 +173,30 @@ describe('Table sorting and footer', () => {
     expect(out).toContain('sticky')
   })
 })
+
+describe('Table expanded rows', () => {
+  const columns: TableColumn<{ id: string; name: string }>[] = [
+    { key: 'name', header: '名称', render: (r) => r.name },
+    { key: 'x', header: '其他', render: () => '—' },
+  ]
+  const rows = [
+    { id: 'a', name: 'alpha' },
+    { id: 'b', name: 'beta' },
+  ]
+
+  it('renders a full-width detail row only under expanded rows and marks aria-expanded', () => {
+    const out = html(
+      <Table label="展开" columns={columns} rows={rows} rowKey={(r) => r.id} onRowClick={() => {}} expanded={{ keys: new Set(['b']), render: (r) => `细节 ${r.name}` }} />,
+    )
+    expect(out.match(/aria-expanded="false"/g)).toHaveLength(1)
+    expect(out.match(/aria-expanded="true"/g)).toHaveLength(1)
+    expect(out).toMatch(/<tr class="[^"]*detailRow[^"]*"><td colSpan="2">细节 beta<\/td><\/tr>/i)
+    expect(out).not.toContain('细节 alpha')
+  })
+
+  it('adds no aria-expanded or detail rows without the prop', () => {
+    const out = html(<Table label="不展开" columns={columns} rows={rows} rowKey={(r) => r.id} />)
+    expect(out).not.toContain('aria-expanded')
+    expect(out).not.toContain('细节')
+  })
+})

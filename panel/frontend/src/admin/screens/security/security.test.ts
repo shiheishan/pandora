@@ -104,7 +104,7 @@ describe('audit log', () => {
   })
 
   it('rejects legacy node, agent and plugin actors, accepts anonymous and rejects unknown outcomes', () => {
-    const row = { id: '1', occurred_at: '2026-09-01T00:00:00Z', actor_kind: 'anonymous', actor_email: null, action: 'node.enroll', resource_type: null, resource_id: null, api_domain: 'node', outcome: 'success', reason: null, resource_label: null, auth_context: null, source_ip: null }
+    const row = { id: '1', occurred_at: '2026-09-01T00:00:00Z', actor_kind: 'anonymous', actor_email: null, action: 'node.enroll', resource_type: null, resource_id: null, api_domain: 'node', outcome: 'success', reason: null, resource_label: null, auth_context: null, source_ip: null, data: {} }
     expect(auditResponse.safeParse({ events: [row], total: 1 }).success).toBe(true)
     expect(auditResponse.safeParse({ events: [{ ...row, actor_kind: 'node' }], total: 1 }).success).toBe(false)
     expect(auditResponse.safeParse({ events: [{ ...row, actor_kind: 'agent' }], total: 1 }).success).toBe(false)

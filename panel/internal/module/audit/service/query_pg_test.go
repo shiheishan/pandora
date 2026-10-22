@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"strings"
 	"sync"
@@ -115,6 +116,7 @@ func TestListFilterAndPagination(t *testing.T) {
 		if i == 4 {
 			e.ResourceType = "user"
 			e.ResourceID = &resID
+			e.Data = map[string]any{"reason": "核对", "amount": "12.50"}
 		}
 		if err := svc.Write(ctx, e); err != nil {
 			t.Fatal(err)
@@ -147,6 +149,11 @@ func TestListFilterAndPagination(t *testing.T) {
 	lastWritten := writeOrder[len(writeOrder)-1]
 	if rows[0].Action != lastWritten {
 		t.Fatalf("first row action %q want %q", rows[0].Action, lastWritten)
+	}
+	// 列表带整份 data（展开一行看细节）
+	var data map[string]any
+	if err := json.Unmarshal(rows[0].Data, &data); err != nil || data["reason"] != "核对" || data["amount"] != "12.50" {
+		t.Fatalf("data %s err %v", rows[0].Data, err)
 	}
 
 	byRes, _, err := svc.List(ctx, Filter{Query: resID.String()}, Page{Limit: 10})

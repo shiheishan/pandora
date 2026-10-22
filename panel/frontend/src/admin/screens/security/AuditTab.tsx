@@ -5,6 +5,7 @@ import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Modal, Pager, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { PageActions } from '../../kit'
+import { auditDetail, detailKeyLabel } from './audit-detail'
 import { DebouncedInput } from './DebouncedInput'
 import {
   ACTOR_LABEL,
@@ -109,15 +110,73 @@ const columns: TableColumn<AuditEvent>[] = [
     header: '结果',
     width: '90px',
     align: 'right',
-    render: (e) => <Tag tone={OUTCOME_TONE[e.outcome]}>{OUTCOME_LABEL[e.outcome]}</Tag>,
+    render: (e) => (
+      <span className={css.auditOutcome}>
+        <Tag tone={OUTCOME_TONE[e.outcome]}>{OUTCOME_LABEL[e.outcome]}</Tag>
+        <span className={css.chevron} aria-hidden="true" />
+      </span>
+    ),
   },
 ]
+
+/** 展开一行后的细节：完整时间、代号、来源与认证（手机上这些列是收起的），再列改前 → 改后与其余字段 */
+function AuditDetailView({ e }: { e: AuditEvent }) {
+  const { changes, facts } = auditDetail(e.data)
+  const auth = authLabel(e.auth_context)
+  const meta = [formatDateTime(e.occurred_at), e.action, e.source_ip && `来源 IP ${e.source_ip}`, `认证：${auth.label}`, e.resource_id && `对象 ID ${e.resource_id}`].filter(Boolean)
+  const label = (key: string) => {
+    const l = detailKeyLabel(key)
+    return <span className={l.raw ? 'mono' : undefined}>{l.text}</span>
+  }
+  return (
+    <div className={css.auditDetail}>
+      <p className={css.auditDetailMeta}>{meta.join(' · ')}</p>
+      {changes.length > 0 && (
+        <dl className={css.auditDetailList} aria-label="改前 → 改后">
+          {changes.map((c) => (
+            <div key={c.key} className={c.changed ? undefined : css.auditDetailSame}>
+              <dt>{label(c.key)}</dt>
+              <dd>
+                {c.changed ? (
+                  <>
+                    <span className={css.auditBefore}>{c.before}</span> → <span>{c.after}</span>
+                  </>
+                ) : (
+                  <>{c.after}（没变）</>
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {facts.length > 0 && (
+        <dl className={css.auditDetailList}>
+          {facts.map((f) => (
+            <div key={f.key}>
+              <dt>{label(f.key)}</dt>
+              <dd>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {changes.length === 0 && facts.length === 0 && <p className={css.auditDetailMeta}>这条记录没有更多细节。</p>}
+    </div>
+  )
+}
 
 export function AuditTab() {
   const location = useHashLocation()
   const { filter, offset } = auditFromQuery(location.query)
   const [exporting, setExporting] = useState(false)
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
   const audit = useAudit(filter, offset)
+  const toggle = (e: AuditEvent) =>
+    setOpen((cur) => {
+      const next = new Set(cur)
+      if (next.has(e.id)) next.delete(e.id)
+      else next.add(e.id)
+      return next
+    })
 
   const go = (f: AuditFilter, o: number) => navigate('/security/audit', { replace: true, query: auditToQuery(f, o) })
   const patch = (next: Partial<AuditFilter>) => go({ ...filter, ...next }, 0)
@@ -168,6 +227,8 @@ export function AuditTab() {
               columns={columns}
               rows={page.events}
               rowKey={(e) => e.id}
+              onRowClick={toggle}
+              expanded={{ keys: open, render: (e) => <AuditDetailView e={e} /> }}
               footer={page.total > AUDIT_PAGE ? <Pager inline total={page.total} limit={AUDIT_PAGE} offset={offset} onChange={(o) => go(filter, o)} /> : <span>共 {formatCount(page.total)} 条</span>}
             />
           )}

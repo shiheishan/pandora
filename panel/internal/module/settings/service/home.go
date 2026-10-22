@@ -3,6 +3,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -134,8 +136,9 @@ func (s *Service) SetHome(ctx context.Context, u HomeUpdate) error {
 			changes = append(changes, change{key: keyHomeIntro, value: v.Intro})
 		}
 		if !slices.Equal(old.FAQ, v.FAQ) {
-			before[keyHomeFAQ] = old.FAQ
-			after[keyHomeFAQ] = v.FAQ
+			// 整份 FAQ 最长约 36KB（20 条 × 600 字），超过审计 data 的 16KB 上限，只记条数与摘要
+			before[keyHomeFAQ+"_count"], before[keyHomeFAQ+"_sha256"] = len(old.FAQ), faqDigest(old.FAQ)
+			after[keyHomeFAQ+"_count"], after[keyHomeFAQ+"_sha256"] = len(v.FAQ), faqDigest(v.FAQ)
 			changes = append(changes, change{key: keyHomeFAQ, value: v.FAQ})
 		}
 		if len(changes) == 0 {
@@ -154,6 +157,13 @@ func (s *Service) SetHome(ctx context.Context, u HomeUpdate) error {
 		s.homeChanged(ctx)
 		return nil
 	})
+}
+
+// faqDigest 是整份 FAQ 的 JSON 的 SHA-256（小写 hex），审计里用来看出改没改、改回去没有。
+func faqDigest(faq []HomeFAQ) string {
+	b, _ := json.Marshal(faq) // 只有字符串字段，不会失败
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func normalizeMultiline(s string) string {
