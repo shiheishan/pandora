@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/letsencrypt/pebble/v2 v2.10.1
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
-	github.com/sagernet/sing v0.8.14
+	github.com/sagernet/sing v0.9.6
 	github.com/sagernet/sing-quic v0.6.1
 	github.com/sagernet/sing-shadowsocks v0.2.8
 	github.com/sagernet/sing-shadowsocks2 v0.2.2
