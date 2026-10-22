@@ -112,27 +112,3 @@ func (h *Handler) setGroupRouting(c *gin.Context) {
 	}
 	httpx.OK(c, groupRoutingSavedResponse{OK: true, RowVersion: res.RowVersion, AffectedNodes: res.AffectedNodes})
 }
-
-func (h *Handler) setRouteGroupMembers(c *gin.Context) {
-	id, err := routingPathID(c)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	var req routeGroupMembersRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	nodeIDs, err := parseUUIDList("node_ids", req.NodeIDs)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	res, err := h.svc.SetRouteGroupMembers(c.Request.Context(), id, req.RowVersion, nodeIDs)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.OK(c, groupMembersSavedResponse{OK: true, RowVersion: res.RowVersion, AffectedNodes: res.AffectedNodes})
-}

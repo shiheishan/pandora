@@ -41,7 +41,7 @@ func renderSingboxDoc(t *testing.T, nodes []Node, opt Options) (singboxTemplateD
 
 func renderSingboxDocFor(t *testing.T, nodes []Node, ua string, opt Options) (singboxTemplateDoc, string) {
 	t.Helper()
-	body, _, _ := Render(FormatSingbox, nodes, fixtureUUID, ua, opt)
+	body, _, _ := renderPlain(FormatSingbox, nodes, fixtureUUID, ua, opt)
 	var doc singboxTemplateDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
 		t.Fatalf("invalid sing-box JSON: %v\n%s", err, body)

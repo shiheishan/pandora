@@ -27,6 +27,7 @@ type ssGatedPlane struct {
 	udpRelayTestPlane
 	gatedPort   int
 	fail        bool
+	failed      atomic.Int32  // fail 为真时 ListenUDP 返回错误的次数
 	entered     chan struct{} // 每进入一次卡住的 ListenUDP 送一个（缓冲 16，满了不送）
 	release     chan struct{}
 	releaseOnce sync.Once
@@ -44,6 +45,7 @@ func newSSGatedPlane(gatedPort int, fail bool) *ssGatedPlane {
 func (p *ssGatedPlane) ListenUDP(ctx context.Context, meta route.Meta, dest M.Socksaddr) (net.PacketConn, error) {
 	if int(dest.Port) == p.gatedPort {
 		if p.fail {
+			p.failed.Add(1)
 			return nil, errors.New("gated plane: upstream unavailable")
 		}
 		select {
@@ -203,10 +205,14 @@ func TestShadowsocksUDPEstablishFailureReleases(t *testing.T) {
 		if _, err := pc.WriteTo([]byte(fmt.Sprintf("fail-%d", i)), gated); err != nil {
 			t.Fatal(err)
 		}
+		// 先等这一包真的走到建上游失败：包还没到服务端时「会话 0、名额 0」本来就成立，只看释放会提前放行；
+		// 第三包还在路上就发 after-fail 的话，两包都没会话、由慢路径 worker 并发处理，after-fail 先建好会话时
+		// fail-2 会进同一会话、经它的上游发到 gated 回显，往返读到的就是 fail-2（10-20 查明的偶发）
+		want := int32(i + 1)
 		if ok, why := waitFor(2*time.Second, func() (bool, string) {
-			return ssUDPSessionCount(a) == 0 && ssUDPQuotaInUse(a, user.ID) == 0 &&
+			return plane.failed.Load() == want && ssUDPSessionCount(a) == 0 && ssUDPQuotaInUse(a, user.ID) == 0 &&
 					len(a.OnlineIPs()[user.ID]) == 0 && liveSessionsOf(a) == 0,
-				fmt.Sprintf("会话=%d 名额=%d 在线=%d 登记=%d",
+				fmt.Sprintf("建上游失败=%d（期望 %d） 会话=%d 名额=%d 在线=%d 登记=%d", plane.failed.Load(), want,
 					ssUDPSessionCount(a), ssUDPQuotaInUse(a, user.ID), len(a.OnlineIPs()[user.ID]), liveSessionsOf(a))
 		}); !ok {
 			t.Fatalf("第 %d 次失败后未释放资源：%s", i+1, why)

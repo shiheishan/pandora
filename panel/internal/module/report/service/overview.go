@@ -82,7 +82,8 @@ func (s *Service) loadOverview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	drift, err := s.deps.Ledger.DriftAccounts(ctx)
+	// 概览的漂移数现算（e2e 在操作后立刻核对它为 0）；待办里的巡检结果读 integrity_checks
+	drift, err := s.deps.Ledger.CheckDrift(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -125,6 +126,6 @@ func (s *Service) loadOverview(ctx context.Context) (Overview, error) {
 			Pending:     orders.Pending,
 			FailedToday: orders.ClosedSince,
 		},
-		LedgerDriftAccounts: drift,
+		LedgerDriftAccounts: drift.Count,
 	}, nil
 }

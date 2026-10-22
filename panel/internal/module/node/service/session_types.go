@@ -26,6 +26,10 @@ type Hello struct {
 	AppliedConfigs map[uuid.UUID]string
 	// AppliedUsers 是各节点内核里的名单版本（节点 id → u1-…）
 	AppliedUsers map[uuid.UUID]string
+	// BuildSerial 是节点二进制的发版序号（开发构建为 0），在线升级判断目标是否更新用
+	BuildSerial uint64
+	// LastUpgrade 是上一次升级的结局（节点本机结果文件）；没有为 nil
+	LastUpgrade *UpgradeReport
 }
 
 // 节点运行状态（nodes.runtime_status 的取值）。
@@ -34,6 +38,15 @@ const (
 	RuntimeDegraded = "degraded"
 	RuntimeDown     = "down"
 )
+
+// NodeCert 是节点端报的入站证书状态（心跳 NodeRuntime.cert）。
+type NodeCert struct {
+	Identifier  string     // acme 证书的名字（域名或 IP）；file 为空
+	NotAfter    *time.Time // 当前证书到期时间；nil = 还没有证书
+	ErrorCode   string     // 最近一次申请 / 续期失败的原因码；成功后为空
+	ErrorDetail string
+	NextAttempt *time.Time // 下次申请或续期的计划时间；nil = 没有
+}
 
 // NodeRuntime 是心跳里一个节点的运行状态。
 type NodeRuntime struct {
@@ -44,6 +57,8 @@ type NodeRuntime struct {
 	Reason string
 	// ReasonNodeID 是端口被同机另一节点占用时的占用者
 	ReasonNodeID *uuid.UUID
+	// Cert 是这拍心跳带的入站证书状态；nil = 这拍没带（不用证书的协议，或旧节点端）
+	Cert *NodeCert
 }
 
 // Heartbeat 是一拍心跳。
@@ -83,7 +98,7 @@ type UsersAck struct {
 // OutKind 是面板发往节点的消息种类。
 type OutKind int
 
-// 发往节点的消息种类（与 proto SessionResponse.body 一一对应；OutReconnect、OutTombstone 是 Command）。
+// 发往节点的消息种类（与 proto SessionResponse.body 一一对应；OutReconnect、OutTombstone、OutUpgrade 是 Command）。
 const (
 	OutWelcome OutKind = iota + 1
 	OutConfig
@@ -93,6 +108,7 @@ const (
 	OutCertificate
 	OutReconnect
 	OutTombstone
+	OutUpgrade
 )
 
 // Welcome 是对 Hello 的应答。
@@ -134,4 +150,6 @@ type Outbound struct {
 	Reconnect Reconnect
 	// OutTombstone
 	Reason string
+	// OutUpgrade
+	Upgrade UpgradeCommand
 }

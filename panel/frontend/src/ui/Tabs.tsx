@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { cx } from './cx'
 import css from './Tabs.module.css'
 
@@ -20,7 +20,43 @@ export interface TabsProps<T extends string> {
 }
 
 export function Tabs<T extends string>({ items, value, onChange, label, idPrefix, className }: TabsProps<T>) {
+  const scrollRef = useRef<HTMLDivElement>(null)
   const refs = useRef<(HTMLButtonElement | null)[]>([])
+  const [fadeLeft, setFadeLeft] = useState(false)
+  const [fadeRight, setFadeRight] = useState(false)
+
+  const updateFade = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const canLeft = el.scrollLeft > 1
+    const canRight = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+    setFadeLeft(canLeft)
+    setFadeRight(canRight)
+  }, [])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    updateFade()
+    const ro = new ResizeObserver(() => updateFade())
+    ro.observe(el)
+    el.addEventListener('scroll', updateFade, { passive: true })
+    return () => {
+      ro.disconnect()
+      el.removeEventListener('scroll', updateFade)
+    }
+  }, [updateFade, items])
+
+  // 选中的页签在可视区外时只横向滚动页签栏，不用 scrollIntoView（它会连带滚动整页）
+  useEffect(() => {
+    const el = scrollRef.current
+    const tab = refs.current[items.findIndex((t) => t.value === value)]
+    if (!el || !tab) return
+    const left = tab.getBoundingClientRect().left - el.getBoundingClientRect().left + el.scrollLeft
+    const right = left + tab.offsetWidth
+    if (left < el.scrollLeft) el.scrollLeft = left
+    else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth
+  }, [value, items])
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const current = items.findIndex((t) => t.value === value)
@@ -38,7 +74,15 @@ export function Tabs<T extends string>({ items, value, onChange, label, idPrefix
   }
 
   return (
-    <div role="tablist" aria-label={label} className={cx(css.tabs, className)} onKeyDown={onKeyDown}>
+    <div
+      ref={scrollRef}
+      role="tablist"
+      aria-label={label}
+      className={cx(css.tabs, className)}
+      data-fade-left={fadeLeft ? '' : undefined}
+      data-fade-right={fadeRight ? '' : undefined}
+      onKeyDown={onKeyDown}
+    >
       {items.map((t, i) => {
         const on = t.value === value
         return (

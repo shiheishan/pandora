@@ -4,7 +4,7 @@ package render
 //
 // 读 E2E_OUT/fixtures_index.json，逐个、再整份（ALL / EMPTY）渲染成 clash / clash-premium / singbox / uri，
 // 写到 E2E_OUT：<id>.<格式>、ALL.<格式>、EMPTY.<格式>、summary.json。
-// 依赖 Render、Node、Options、fixtureUUID、fixtureHost。2022 方法的 password 由 e2eSS2022Password 照面板补上。格式名用字符串转 Format，不用包内常量（修前基点可能还没有某格式）。
+// 依赖 RenderRequest、Request、Node、fixtureUUID、fixtureHost（RenderRequest 自 10-14 起有，更早的修前基点要临时改回旧的 Render）。2022 方法的 password 由 e2eSS2022Password 照面板补上。格式名用字符串转 Format，不用包内常量（修前基点可能还没有某格式）。
 // E2E_UA 只影响 sing-box 的版本写法，空即兼容写法。
 
 import (
@@ -62,7 +62,7 @@ func TestE2EDump(t *testing.T) {
 		n := Node{Name: id, Type: f.Type, Host: fixtureHost, Port: f.Port, Config: f.Kernel, TrafficRate: 1}
 		summary[id] = map[string]int{}
 		for _, format := range formats {
-			body, _, cnt := Render(format, []Node{n}, fixtureUUID, ua, Options{})
+			body, _, cnt := RenderRequest(Request{Format: format, Nodes: []Node{n}, ProxyUUID: fixtureUUID, UA: ua})
 			summary[id][string(format)] = cnt
 			e2eWrite(t, filepath.Join(out, fmt.Sprintf("%s.%s", id, format)), body)
 		}
@@ -71,10 +71,10 @@ func TestE2EDump(t *testing.T) {
 
 	summary["ALL"], summary["EMPTY"] = map[string]int{}, map[string]int{}
 	for _, format := range formats {
-		body, _, cnt := Render(format, all, fixtureUUID, ua, Options{})
+		body, _, cnt := RenderRequest(Request{Format: format, Nodes: all, ProxyUUID: fixtureUUID, UA: ua})
 		summary["ALL"][string(format)] = cnt
 		e2eWrite(t, filepath.Join(out, "ALL."+string(format)), body)
-		body, _, cnt = Render(format, nil, fixtureUUID, ua, Options{})
+		body, _, cnt = RenderRequest(Request{Format: format, ProxyUUID: fixtureUUID, UA: ua})
 		summary["EMPTY"][string(format)] = cnt
 		e2eWrite(t, filepath.Join(out, "EMPTY."+string(format)), body)
 	}

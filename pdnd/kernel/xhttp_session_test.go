@@ -23,7 +23,7 @@ func TestXHTTPSessionReapedWithoutDownlink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	base, adapter := startAutoXHTTPVLESS(t, ctx, 7603, uuid.New())
-	transport := h2cTransport()
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 	// 只发 seq 1：会话建起来，请求头永远不到。
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/xhttp/lonely/1/", bytes.NewReader([]byte("x")))

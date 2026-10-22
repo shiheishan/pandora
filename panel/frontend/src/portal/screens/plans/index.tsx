@@ -74,10 +74,11 @@ export default function Plans() {
               return (
                 <PlanCard
                   key={plan.id}
-                  plan={plan}
+                  plan={v.shown}
                   site={h.site}
                   badge={badge}
                   current={v.current}
+                  factsNote={v.nextUsage}
                   action={
                     <Btn
                       href={v.href}

@@ -20,6 +20,8 @@ interface ChoiceItem {
   label: ReactNode
   desc?: ReactNode
   badge?: string
+  /** 不可选：置灰、点了没反应，desc 写原因 */
+  disabled?: boolean
 }
 
 /** 单选列表（原型 .choice）：selected 为 null 时一个都不选 */
@@ -27,7 +29,18 @@ export function ChoiceList({ items, selected, onSelect, label }: { items: readon
   return (
     <div className={css.choices} role="radiogroup" aria-label={label}>
       {items.map((it) => (
-        <button key={it.key} type="button" role="radio" aria-checked={it.key === selected} className={css.choice} onClick={() => onSelect(it.key)}>
+        <button
+          key={it.key}
+          type="button"
+          role="radio"
+          aria-checked={it.key === selected}
+          disabled={it.disabled}
+          aria-disabled={it.disabled ? 'true' : undefined}
+          className={it.disabled ? `${css.choice} ${css.choiceOff}` : css.choice}
+          onClick={() => {
+            if (!it.disabled) onSelect(it.key)
+          }}
+        >
           <span className={css.dot} aria-hidden="true" />
           <span className={css.choiceText}>
             <span className={css.choiceLabel}>{it.label}</span>

@@ -17,13 +17,16 @@ import (
 // testCaptchaHost 是用例里的面板对外主机名（虚构）。
 const testCaptchaHost = "panel.example.test"
 
+// testSiteURLs 是用例里本站认的根地址（与 settings 的 SiteURLAliases 同形：以 / 结尾）。
+func testSiteURLs(context.Context) []string { return []string{"https://" + testCaptchaHost + "/"} }
+
 // captchaServer 起一个假的服务商校验接口，回给定的 JSON。
 func captchaServer(t *testing.T, resp map[string]any) (*captchaVerifier, func()) {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
-	v := &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+	v := &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, siteURLs: testSiteURLs}
 	return v, srv.Close
 }
 
@@ -48,14 +51,14 @@ func TestCaptchaVerify(t *testing.T) {
 	ts := settingssvc.Signup{CaptchaProvider: settingssvc.CaptchaTurnstile, CaptchaSecret: "s"}
 
 	t.Run("没开直接过", func(t *testing.T) {
-		v := newCaptchaVerifier("https://" + testCaptchaHost)
+		v := newCaptchaVerifier(testSiteURLs)
 		if err := v.verify(ctx, settingssvc.Signup{}, "", captchaActionRegister); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("token空", func(t *testing.T) {
-		v := newCaptchaVerifier("https://" + testCaptchaHost)
+		v := newCaptchaVerifier(testSiteURLs)
 		assertFieldErr(t, v.verify(ctx, ts, "  ", captchaActionRegister), "captcha", "人机验证未通过")
 	})
 
@@ -72,7 +75,7 @@ func TestCaptchaVerify(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "hostname": testCaptchaHost})
 		}))
 		defer srv.Close()
-		v := &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+		v := &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, siteURLs: testSiteURLs}
 		cfg := settingssvc.Signup{CaptchaProvider: settingssvc.CaptchaTurnstile, CaptchaSecret: "test-secret"}
 		if err := v.verify(ctx, cfg, "tok", captchaActionRegister); err != nil {
 			t.Fatal(err)
@@ -105,10 +108,30 @@ func TestCaptchaVerify(t *testing.T) {
 		}
 	})
 
+	t.Run("当前主域名与配置的地址都是本站", func(t *testing.T) {
+		for _, host := range []string{"new.example.test", testCaptchaHost} {
+			v, done := captchaServer(t, map[string]any{"success": true, "hostname": host})
+			v.siteURLs = func(context.Context) []string {
+				return []string{"https://new.example.test/", "https://" + testCaptchaHost + "/"}
+			}
+			if err := v.verify(ctx, ts, "tok", captchaActionRegister); err != nil {
+				done()
+				t.Fatalf("%s: %v", host, err)
+			}
+			done()
+		}
+		v, done := captchaServer(t, map[string]any{"success": true, "hostname": "evil.example.test"})
+		defer done()
+		v.siteURLs = func(context.Context) []string {
+			return []string{"https://new.example.test/", "https://" + testCaptchaHost + "/"}
+		}
+		assertFieldErr(t, v.verify(ctx, ts, "tok", captchaActionRegister), "captcha", "人机验证未通过")
+	})
+
 	t.Run("对外地址取不到主机名就不放行", func(t *testing.T) {
 		v, done := captchaServer(t, map[string]any{"success": true, "hostname": ""})
 		defer done()
-		v.expectedHost = ""
+		v.siteURLs = func(context.Context) []string { return nil }
 		assertFieldErr(t, v.verify(ctx, ts, "tok", captchaActionRegister), "captcha", "暂时连不上")
 	})
 
@@ -157,19 +180,19 @@ func TestCaptchaVerify(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer srv.Close()
-		v := &captchaVerifier{client: srv.Client(), turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+		v := &captchaVerifier{client: srv.Client(), turnstileURL: srv.URL, siteURLs: testSiteURLs}
 		assertFieldErr(t, v.verify(ctx, ts, "tok", captchaActionRegister), "captcha", "暂时连不上")
 	})
 
 	t.Run("连不上", func(t *testing.T) {
 		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 		srv.Close()
-		v := &captchaVerifier{client: srv.Client(), turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+		v := &captchaVerifier{client: srv.Client(), turnstileURL: srv.URL, siteURLs: testSiteURLs}
 		assertFieldErr(t, v.verify(ctx, ts, "tok", captchaActionRegister), "captcha", "暂时连不上")
 	})
 
 	t.Run("密钥空", func(t *testing.T) {
-		v := newCaptchaVerifier("https://" + testCaptchaHost)
+		v := newCaptchaVerifier(testSiteURLs)
 		cfg := settingssvc.Signup{CaptchaProvider: settingssvc.CaptchaTurnstile, CaptchaSecret: ""}
 		assertFieldErr(t, v.verify(ctx, cfg, "tok", captchaActionRegister), "captcha", "暂时连不上")
 	})

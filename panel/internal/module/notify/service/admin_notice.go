@@ -23,7 +23,7 @@ type adminNotice struct {
 	Code     string // TemplateAdmin*
 	Vars     map[string]string
 	Key      string     // 去重键
-	AboutID  uuid.UUID  // 事件涉及的用户（notification_events.user_id）
+	AboutID  uuid.UUID  // 事件涉及的用户（notification_events.user_id）；uuid.Nil 表示不关某个用户，只许数据巡检告警这样传（writeAdminNotice 拦其余模板）
 	TicketID *uuid.UUID // 工单提醒带上，派发成功后记映射
 }
 
@@ -41,7 +41,7 @@ type AdminTicketInput struct {
 // adminTicketBodyMax 是工单提醒里正文最多带的字数（Telegram 单条上限 4096）。
 const adminTicketBodyMax = 1500
 
-// maskEmail 给邮箱打码：保留 @ 前两个字符（不足三个字符全打码）与域名；不是邮箱时返回 "***"（与 commission.MaskEmail 同一规则）。
+// maskEmail 给邮箱打码：保留 @ 前两个字符（不足三个字符全打码）与域名；不是邮箱时返回 "***"。只给管理员群组看；用户端的打码在 identity 的 MaskEmail（已注销写「已注销的账号」）。
 func maskEmail(e string) string {
 	for i := 0; i < len(e); i++ {
 		if e[i] == '@' {
@@ -78,9 +78,17 @@ func (s *Service) writeAdminNotice(ctx context.Context, chatID int64, n adminNot
 		return false, errs.Wrap(errs.Internal, fmt.Errorf("notify: 未登记的通知模板 %q", n.Code))
 	}
 
+	// 只有巡检告警不关某个用户；别的管理员提醒漏传用户 id 当 bug 报出来，不悄悄写成空
+	var about *uuid.UUID
+	switch {
+	case n.AboutID != uuid.Nil:
+		about = &n.AboutID
+	case n.Code != TemplateAdminIntegrityAlert:
+		return false, errs.Wrap(errs.Internal, fmt.Errorf("notify: 管理员提醒 %q 缺用户 id", n.Code))
+	}
 	inserted, err := s.store.InsertEvent(ctx, &model.Event{
 		DedupeKey:    n.Key,
-		UserID:       n.AboutID,
+		UserID:       about,
 		TemplateCode: n.Code,
 	})
 	if err != nil {

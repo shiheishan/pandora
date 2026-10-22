@@ -286,7 +286,7 @@ func TestLegacyReadCompatibleProtocolsAreGone(t *testing.T) {
 		if version != 0 || fields["node_type"] != "不支持的协议类型" {
 			t.Fatalf("%s version=%d fields=%#v, want unsupported", nodeType, version, fields)
 		}
-		if containsString(StableTypes(), nodeType) {
+		if containsString(stableTypes[:], nodeType) {
 			t.Fatalf("%s is still a stable protocol", nodeType)
 		}
 	}

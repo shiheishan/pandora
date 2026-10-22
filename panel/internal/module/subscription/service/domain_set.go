@@ -207,12 +207,8 @@ func (s *Service) domainConfigRows(ctx context.Context) (repo.DomainConfigRows, 
 	return rows, err
 }
 
-// extrasSource 是拉取快照的读取面：模板直读 repo，订阅域名配置走 domainConfigRows（同一快照）。
+// extrasSource 是拉取快照的读取面：订阅域名配置走 domainConfigRows（同一快照）。
 type extrasSource struct{ s *Service }
-
-func (e extrasSource) TemplateContents(ctx context.Context) (map[string]string, error) {
-	return e.s.repo.TemplateContents(ctx)
-}
 
 func (e extrasSource) DomainConfig(ctx context.Context) (repo.DomainConfigRows, error) {
 	return e.s.domainConfigRows(ctx)

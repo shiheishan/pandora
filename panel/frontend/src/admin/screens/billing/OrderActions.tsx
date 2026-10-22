@@ -9,7 +9,7 @@ import { cancelledSchema, markedPaidSchema, useInvalidateBilling, type OrderDeta
 import css from './Orders.module.css'
 import { markPaidConfirm, markPaidToast, reasonProblem, referenceProblem } from './model'
 
-/** 取消订单：原因必填，写入审计 */
+/** 取消订单：原因必填，写入审计，并原样显示给用户 */
 export function CancelDialog({ o, open, onClose }: { o: OrderDetail; open: boolean; onClose: () => void }) {
   const api = useApi()
   const toast = useToast()
@@ -64,8 +64,9 @@ export function CancelDialog({ o, open, onClose }: { o: OrderDetail; open: boole
         <p className={css.dialogText}>
           {o.order_no} 取消后不能恢复，未完成的支付尝试会一并关闭；取消后才到账的钱会进「待处理到账」。
         </p>
+        {/* 原因原样显示在用户订单详情的第一行（用户 10-21 定：不拆字段，标签写明） */}
         <TextArea
-          label="取消原因（写入审计）"
+          label="原因（用户能看到）"
           rows={3}
           value={reason}
           onChange={(e) => {

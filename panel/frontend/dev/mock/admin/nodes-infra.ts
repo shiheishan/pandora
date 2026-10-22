@@ -24,14 +24,14 @@ export const emptyBody = (ctx: MockContext) => {
   return h['content-length'] === '0' || (h['content-length'] === undefined && h['transfer-encoding'] === undefined)
 }
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+const MOCK_CA_SHA256 = 'sha256:' + createHash('sha256').update('pandora-mock-node-ca').digest('hex')
 
 /**
- * 心跳保活：种子里 60 秒内有心跳的行视为在线，之后每 10 秒刷新一次，否则 vite 起来 90 秒后全部变成离线。
+ * 心跳保活：60 秒内有心跳且 alive 的行每 10 秒刷新；心跳停在更早的（如种子里的新加坡机器）不会被拉回来。
  * alive 判断行此刻是否还该心跳（如已退役、身份已吊销就停）。定时器 unref，不拖住测试进程退出
  */
 export function keepAlive<T extends { last_heartbeat_at: string | null }>(rows: readonly T[], alive: (row: T) => boolean = () => true): void {
-  const live = new Set(rows.filter((r) => r.last_heartbeat_at && Date.now() - new Date(r.last_heartbeat_at).getTime() < 60_000))
-  setInterval(() => live.forEach((r) => alive(r) && (r.last_heartbeat_at = ago(5))), 10_000).unref()
+  setInterval(() => rows.forEach((r) => r.last_heartbeat_at && Date.now() - new Date(r.last_heartbeat_at).getTime() < 60_000 && alive(r) && (r.last_heartbeat_at = ago(5))), 10_000).unref()
 }
 
 /** nodes.ts 的节点存储里服务器与节点池逻辑要读写的字段（结构类型，nodes.ts 的 Node 满足它） */
@@ -49,11 +49,9 @@ export interface InfraNode {
   server_port: number | null
   traffic_rate: number
   sort_order: number
-  last_heartbeat_at: string | null
   created_at: string
   updated_at: string
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Json[] }
-  identityRevoked: boolean
 }
 
 /** 路由组假接口要推进成员节点的行版本（route-groups.ts），nodes.ts 的 Node 满足它 */
@@ -62,7 +60,13 @@ export type RoutedNode = InfraNode & { row_version: number }
 // ---------------------------------------------------------------------------
 // 服务器
 // ---------------------------------------------------------------------------
-interface MockServer {
+/** 假发布包（在线升级目标，与 Go 的 PdndTarget 对齐） */
+const UPGRADE_TARGET = { version: 'v2026.10.21', serial: 1792540800, sha256: 'a'.repeat(64) }
+
+export interface MockIdentity { seq: number; status: 'active' | 'revoked'; issued_at: string; expires_at: string; revoked_at: string | null; revoked_reason: string | null; fingerprint: string }
+export interface MockToken { expires_at: string; used: boolean; voided: boolean }
+
+export interface MockServer {
   id: string
   name: string
   status: string
@@ -85,11 +89,30 @@ interface MockServer {
   created_at: string
   updated_at: string
   probe: { cpu_bp: number; mem_used_mb: number; mem_total_mb: number; disk_used_gb: number; disk_total_gb: number } | null
+  binary_sha256: string | null
+  last_upgrade: { status: string; target_version: string; reason_code: string | null; updated_at: string } | null
+  /** 假后端内部：Hello 是否协商 upgrade_v1，不吐给前端 */
+  upgradeV1: boolean
+  /** 假后端内部：节点二进制发版序号，不吐给前端 */
+  buildSerial: number
+  /** 假后端内部：服务器的接入身份（照 server_identities 的最新一条），不吐给前端 */
+  identity: MockIdentity | null
+  /** 假后端内部：签发过的安装令牌，不吐给前端 */
+  tokens: MockToken[]
 }
 
 function server(name: string, region: string, ip: string, opts: Partial<MockServer> & { cpu?: number; mem?: number; disk?: number } = {}): MockServer {
   const { cpu, mem, disk, ...rest } = opts
   const created = ago(86400 * 30)
+  const defaultIdentity: MockIdentity = {
+    seq: 3,
+    status: 'active',
+    issued_at: ago(86400 * 20),
+    expires_at: new Date(Date.now() + 70 * 86400 * 1000).toISOString(),
+    revoked_at: null,
+    revoked_reason: null,
+    fingerprint: createHash('sha256').update(name).digest('hex'),
+  }
   return {
     id: randomUUID(),
     name,
@@ -113,43 +136,182 @@ function server(name: string, region: string, ip: string, opts: Partial<MockServ
     created_at: created,
     updated_at: created,
     probe: cpu === undefined ? null : { cpu_bp: cpu * 100, mem_used_mb: Math.round(((mem ?? 0) / 100) * 8192), mem_total_mb: 8192, disk_used_gb: Math.round(((disk ?? 0) / 100) * 80), disk_total_gb: 80 },
+    binary_sha256: 'b'.repeat(64),
+    last_upgrade: null,
+    upgradeV1: true,
+    buildSerial: 1790000000,
+    identity: defaultIdentity,
+    tokens: [],
     ...rest,
   }
 }
 
 export const servers: MockServer[] = []
 servers.push(
-  server('hk-hkg-edge-1', '香港', '192.0.2.8', { cpu: 58, mem: 64, disk: 31 }),
-  server('jp-tyo-edge-2', '东京', '192.0.2.33', { cpu: 71, mem: 52, disk: 44 }),
-  server('sg-sin-edge-1', '新加坡', '192.0.2.7', { cpu: 91, mem: 78, disk: 38 }),
-  server('us-lax-edge-1', '洛杉矶', '192.0.2.190', { cpu: 34, mem: 40, disk: 22, agent_version: 'core r52' }),
+  server('hk-hkg-edge-1', '香港', '192.0.2.8', {
+    cpu: 58,
+    mem: 64,
+    disk: 31,
+    binary_sha256: UPGRADE_TARGET.sha256,
+    agent_version: 'v2026.10.21',
+    buildSerial: UPGRADE_TARGET.serial,
+  }),
+  server('jp-tyo-edge-2', '东京', '192.0.2.33', { cpu: 88, mem: 52, disk: 44, upgradeV1: false }),
+  // 「心跳超时仍下发」演示：这台服务器失联，其上的在役节点一起离线
+  server('sg-sin-edge-1', '新加坡', '192.0.2.7', { cpu: 47, mem: 55, disk: 38, last_heartbeat_at: ago(900) }),
+  server('us-lax-edge-1', '洛杉矶', '192.0.2.190', {
+    cpu: 34,
+    mem: 40,
+    disk: 22,
+    agent_version: 'core r52',
+    last_upgrade: { status: 'rolled_back', target_version: 'v2026.10.21', reason_code: 'confirm_timeout', updated_at: ago(3600 * 2) },
+  }),
   server('de-fra-edge-1', '法兰克福', '192.0.2.2', { status: 'maintenance', status_reason: '更换网卡', cpu: 22, mem: 30, disk: 18, notes: 'Hetzner FSN1，工单 #88213' }),
   server('tw-tpe-edge-1', '台北', '192.0.2.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
-  server('kr-sel-edge-1', '首尔', '', { status: 'draft', public_ipv4: null, hostname: null, architecture: null, os_name: null, agent_version: null, last_heartbeat_at: null, cpu_cores: null, memory_mb: null, disk_gb: null, capacity_nodes: 32 }),
+  server('kr-sel-edge-1', '首尔', '', {
+    status: 'draft',
+    public_ipv4: null,
+    hostname: null,
+    architecture: null,
+    os_name: null,
+    agent_version: null,
+    last_heartbeat_at: null,
+    cpu_cores: null,
+    memory_mb: null,
+    disk_gb: null,
+    capacity_nodes: 32,
+    binary_sha256: null,
+    upgradeV1: false,
+    buildSerial: 0,
+    identity: null,
+    tokens: [{ expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(), used: false, voided: false }],
+  }),
   // R108：刚装好、还在草稿的新服务器，上面有一个接入完成待上线的节点（nodes.ts 的「大阪 01（待上线）」）
-  server('jp-osa-edge-1', '大阪', '203.0.113.30', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
+  server('jp-osa-edge-1', '大阪', '203.0.113.30', {
+    status: 'draft',
+    agent_version: 'core r53',
+    capacity_nodes: 16,
+    identity: {
+      seq: 1,
+      status: 'active',
+      issued_at: ago(3600),
+      expires_at: new Date(Date.now() + 70 * 86400 * 1000).toISOString(),
+      revoked_at: null,
+      revoked_reason: null,
+      fingerprint: createHash('sha256').update('jp-osa-edge-1').digest('hex'),
+    },
+  }),
 )
 // 列表按 created_at 倒序：让第一台最新，顺序与设计稿一致
 servers.forEach((s, i) => (s.created_at = s.updated_at = ago(86400 * (10 + i))))
-keepAlive(servers, (s) => s.status !== 'retired')
+
+/** Go NodeStaleAfter：没有心跳或距今 ≥ 90 秒算超时 */
+export const heartbeatStale = (at: string | null): boolean => !at || Date.now() - new Date(at).getTime() >= 90_000
+/** 按 id 找服务器（已删除的不在数组里） */
+export const serverById = (id: string | null | undefined): MockServer | undefined => (id ? servers.find((s) => s.id === id) : undefined)
+/** Go HasActiveIdentity：身份 active 且没过期 */
+export function serverEnrolled(s: MockServer | undefined): boolean {
+  if (!s?.identity || s.identity.status !== 'active') return false
+  return Date.now() < new Date(s.identity.expires_at).getTime()
+}
+/** Go ActiveIdentitySeqs：有效身份的 seq，没有为 null */
+export function activeIdentitySeq(s: MockServer | undefined): number | null {
+  if (!serverEnrolled(s) || !s?.identity) return null
+  return s.identity.seq
+}
+/** Go revokeServerIdentities：有效身份改 revoked（revoked_at=现在、revoked_reason=reason），未用且未过期的令牌全部 voided；返回是否真吊销了一张有效身份 */
+export function revokeServerIdentity(s: MockServer, reason: string): boolean {
+  const id = s.identity
+  if (!id || id.status !== 'active' || Date.now() >= new Date(id.expires_at).getTime()) return false
+  const now = new Date().toISOString()
+  id.status = 'revoked'
+  id.revoked_at = now
+  id.revoked_reason = reason
+  const nowMs = Date.now()
+  for (const t of s.tokens) {
+    if (!t.used && !t.voided && new Date(t.expires_at).getTime() > nowMs) t.voided = true
+  }
+  return true
+}
+/** GET v1/nodes/:id/identity 的响应体（Go NodeIdentity）：s 为 undefined（节点没绑服务器）回 { identity: null, bootstrap_tokens_pending: 0 } */
+export function identityView(s: MockServer | undefined): { identity: Json | null; bootstrap_tokens_pending: number } {
+  const nowMs = Date.now()
+  if (!s) return { identity: null, bootstrap_tokens_pending: 0 }
+  const bootstrap_tokens_pending = s.tokens.filter((t) => !t.used && !t.voided && new Date(t.expires_at).getTime() > nowMs).length
+  if (!s.identity) return { identity: null, bootstrap_tokens_pending }
+  const id = s.identity
+  let status: string = id.status
+  if (status === 'active' && nowMs >= new Date(id.expires_at).getTime()) status = 'expired'
+  const out: Json = {
+    serial: id.seq,
+    status,
+    spiffe_id: `spiffe://pandora/server/${s.id}`,
+    fingerprint_sha256: id.fingerprint,
+    issued_at: id.issued_at,
+    expires_at: id.expires_at,
+  }
+  if (id.revoked_at) {
+    out.revoked_at = id.revoked_at
+    if (id.revoked_reason) out.revoked_reason = id.revoked_reason
+  }
+  return { identity: out, bootstrap_tokens_pending }
+}
+/** Go LatestServerMetrics：服务器最近一点指标（不限年龄）；没有探针或从没心跳为 null */
+export function serverMetricsLatest(s: MockServer | undefined): { cpu_percent: number; mem_percent: number; at: string } | null {
+  if (!s?.probe || !s.last_heartbeat_at) return null
+  return {
+    cpu_percent: s.probe.cpu_bp / 100,
+    mem_percent: Math.round((s.probe.mem_used_mb / s.probe.mem_total_mb) * 1000) / 10,
+    at: s.last_heartbeat_at,
+  }
+}
+/** 服务器状态的中文名（与前端 infra.ts 的 SERVER_STATUS 一致），给 409 文案用 */
+export const SERVER_STATUS_LABEL: Readonly<Record<string, string>> = { draft: '草稿', ready: '服务中', draining: '维护中', maintenance: '停机维护', retired: '已退役' }
+
+keepAlive(servers, (s) => s.status !== 'retired' && serverEnrolled(s))
+
+function upgradeOf(s: MockServer, online: boolean): { available: boolean; target_version: string | null; reason: string | null } {
+  const target_version = UPGRADE_TARGET.version
+  const st = s.last_upgrade?.status
+  if (st === 'sent' || st === 'staged') return { available: false, target_version, reason: 'in_progress' }
+  if (s.status !== 'ready') return { available: false, target_version, reason: 'not_ready' }
+  if (!online) return { available: false, target_version, reason: 'not_connected' }
+  if (!s.upgradeV1) return { available: false, target_version, reason: 'no_upgrade_support' }
+  const arch = (s.architecture ?? '').trim().toLowerCase()
+  if (arch !== 'amd64' && arch !== 'arm64') return { available: false, target_version, reason: 'arch_unsupported' }
+  if (s.binary_sha256 === UPGRADE_TARGET.sha256) return { available: false, target_version, reason: 'up_to_date' }
+  if (s.buildSerial >= UPGRADE_TARGET.serial) return { available: false, target_version, reason: 'serial_not_newer' }
+  return { available: true, target_version, reason: null }
+}
 
 function serverOut(s: MockServer, nodes: readonly InfraNode[]) {
   const mine = nodes.filter((n) => n.server_id === s.id)
   const active = mine.filter((n) => n.serving_status === 'active')
-  const { probe, ...rest } = s
+  const heartbeat_online = s.status === 'ready' && !!s.last_heartbeat_at && Date.now() - new Date(s.last_heartbeat_at).getTime() < 90_000
+  const { probe } = s
+  // 假后端内部字段，不吐给前端
+  const rest: Partial<MockServer> = { ...s }
+  delete rest.probe
+  delete rest.upgradeV1
+  delete rest.buildSerial
+  delete rest.identity
+  delete rest.tokens
+  const hasHeartbeat = !!s.last_heartbeat_at
   return {
     ...rest,
-    heartbeat_online: s.status === 'ready' && !!s.last_heartbeat_at && Date.now() - new Date(s.last_heartbeat_at).getTime() <= 90_000,
+    heartbeat_online,
+    enrolled: serverEnrolled(s),
+    upgrade: upgradeOf(s, heartbeat_online),
     node_count: mine.length,
     active_node_count: active.length,
-    serving_node_count: active.filter((n) => n.last_heartbeat_at).length,
-    never_seen_node_count: active.filter((n) => !n.last_heartbeat_at).length,
+    serving_node_count: hasHeartbeat ? active.length : 0,
+    never_seen_node_count: hasHeartbeat ? 0 : active.length,
     cpu_bp: probe?.cpu_bp ?? null,
     mem_used_mb: probe?.mem_used_mb ?? null,
     mem_total_mb: probe?.mem_total_mb ?? null,
     disk_used_gb: probe?.disk_used_gb ?? null,
     disk_total_gb: probe?.disk_total_gb ?? null,
-    metrics_at: probe ? ago(20) : null,
+    metrics_at: serverMetricsLatest(s)?.at ?? null,
   }
 }
 
@@ -330,7 +492,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
   return {
     // ---- 全局路由（静态段 routing 先于 /nodes/:id 系列）----
     'GET /v1/nodes/routing': (ctx) => {
-      const online = live().filter((n) => n.serving_status === 'active' && n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() <= 90_000).length
+      const online = live().filter((n) => n.serving_status === 'active' && !heartbeatStale(serverById(n.server_id)?.last_heartbeat_at ?? null)).length
       ctx.send(200, { revision: revisionOf(), outbounds: globalRouting.outbounds, routes: globalRouting.routes, online_nodes: online })
     },
     'PUT /v1/nodes/routing': async (ctx) => {
@@ -384,24 +546,92 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       const name = text(body.name).trim()
       if (servers.some((s) => s.name === name)) return ctx.fail(409, 'conflict', '服务器名称已存在')
       const opt = (k: string) => text(body[k]).trim() || null
-      const s = server(name, '', '', { status: 'draft', region: opt('region'), hostname: opt('hostname'), public_ipv4: opt('public_ipv4'), public_ipv6: opt('public_ipv6'), private_ipv4: opt('private_ipv4'), architecture: opt('architecture'), os_name: opt('os_name'), notes: opt('notes'), capacity_nodes: body.capacity_nodes as number, agent_version: null, last_heartbeat_at: null, cpu_cores: null, memory_mb: null, disk_gb: null, row_version: 1 })
+      const s = server(name, '', '', {
+        status: 'draft',
+        region: opt('region'),
+        hostname: opt('hostname'),
+        public_ipv4: opt('public_ipv4'),
+        public_ipv6: opt('public_ipv6'),
+        private_ipv4: opt('private_ipv4'),
+        architecture: opt('architecture'),
+        os_name: opt('os_name'),
+        notes: opt('notes'),
+        capacity_nodes: body.capacity_nodes as number,
+        agent_version: null,
+        last_heartbeat_at: null,
+        cpu_cores: null,
+        memory_mb: null,
+        disk_gb: null,
+        row_version: 1,
+        binary_sha256: null,
+        upgradeV1: false,
+        buildSerial: 0,
+        identity: null,
+        tokens: [],
+      })
       s.created_at = s.updated_at = new Date().toISOString()
       servers.push(s)
       ctx.send(201, serverOut(s, nodes))
+    },
+    'POST /v1/servers/upgrade': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      await ctx.idempotent('server_upgrade', async () => {
+        const extra = unknownField(body, ['server_ids'])
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        // Go 侧 server_ids 缺省为空切片（走 1..50 校验）；类型不符在解码时就是 400
+        const raw = body.server_ids ?? []
+        if (!Array.isArray(raw) || !raw.every((id) => typeof id === 'string')) return err(400, 'bad_request', '请求体不是合法的 JSON')
+        const ids = raw as string[]
+        if (!ids.every((id) => UUID.test(id))) return invalid({ server_ids: '服务器 ID 格式不正确' })
+        const seen = new Set<string>()
+        const unique: string[] = []
+        for (const id of ids) {
+          if (!seen.has(id)) {
+            seen.add(id)
+            unique.push(id)
+          }
+        }
+        if (unique.length < 1 || unique.length > 50) return invalid({ server_ids: '一次选 1 到 50 台服务器' })
+        const results: Array<{ server_id: string; ok: boolean; reason: string | null }> = []
+        for (const id of unique) {
+          const s = findServer(id)
+          if (!s) {
+            results.push({ server_id: id, ok: false, reason: 'not_found' })
+            continue
+          }
+          const heartbeat_online = s.status === 'ready' && !!s.last_heartbeat_at && Date.now() - new Date(s.last_heartbeat_at).getTime() < 90_000
+          const block = upgradeOf(s, heartbeat_online).reason
+          if (block) {
+            results.push({ server_id: id, ok: false, reason: block })
+            continue
+          }
+          const now = new Date().toISOString()
+          s.last_upgrade = { status: 'sent', target_version: UPGRADE_TARGET.version, reason_code: null, updated_at: now }
+          results.push({ server_id: id, ok: true, reason: null })
+          setTimeout(() => {
+            if (s.last_upgrade?.status === 'sent') {
+              s.last_upgrade = { ...s.last_upgrade, status: 'staged', updated_at: new Date().toISOString() }
+            }
+          }, 3000).unref()
+          setTimeout(() => {
+            const lu = s.last_upgrade
+            if (lu && (lu.status === 'staged' || lu.status === 'sent')) {
+              s.last_upgrade = { ...lu, status: 'succeeded', updated_at: new Date().toISOString() }
+              s.binary_sha256 = UPGRADE_TARGET.sha256
+              s.agent_version = UPGRADE_TARGET.version
+              s.buildSerial = UPGRADE_TARGET.serial
+            }
+          }, 8000).unref()
+        }
+        return { status: 200, body: { target_version: UPGRADE_TARGET.version, results } }
+      })
     },
     'GET /v1/servers/:id': (ctx) => {
       const s = findServer(ctx.params.id)
       if (!s) return reply(ctx, notFound())
       ctx.send(200, serverOut(s, nodes))
-    },
-    'GET /v1/servers/:id/nodes': (ctx) => {
-      const s = findServer(ctx.params.id)
-      if (!s) return reply(ctx, notFound())
-      const rows = nodes
-        .filter((n) => n.server_id === s.id)
-        .sort((a, b) => a.sort_order - b.sort_order)
-        .map((n) => ({ id: n.id, name: n.name, serving_status: n.serving_status, node_type: n.node_type, display_name: n.display_name, server_host: n.server_host, server_port: n.server_port, traffic_rate: n.traffic_rate, config_validated_at: n.node_type ? n.updated_at : null, last_heartbeat_at: n.last_heartbeat_at, created_at: n.created_at }))
-      ctx.send(200, { nodes: rows, total: rows.length })
     },
     'PATCH /v1/servers/:id': async (ctx) => {
       const s = findServer(ctx.params.id)
@@ -439,11 +669,12 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (Object.keys(f).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', f)
       if (body.row_version !== s.row_version) return reply(ctx, serverConflict(s))
       if (!SERVER_EDGES[s.status]!.includes(to)) return ctx.fail(409, 'conflict', '不允许的服务器状态转换', { status: `${s.status} -> ${to}` })
-      if (to === 'ready' && !nodes.some((n) => n.server_id === s.id && n.serving_status === 'active' && n.node_type && !n.deleted)) {
-        return ctx.fail(409, 'conflict', '服务器没有通过协议校验且可服务的活动节点，不能进入 ready', { nodes: 'requires_valid_active_node' })
+      if (to === 'ready' && !nodes.some((n) => n.server_id === s.id && n.serving_status === 'active' && !n.deleted)) {
+        return ctx.fail(409, 'conflict', '服务器还没有在役节点，不能投入服务：先新建节点或把节点绑到这台，再在节点上用「上线」（上线时这台会自动投入服务）', { nodes: 'requires_valid_active_node' })
       }
       s.status = to
       s.status_reason = text(body.reason).trim() || null
+      if (to === 'retired') revokeServerIdentity(s, '服务器已退役')
       touchServer(s)
       ctx.send(200, serverOut(s, nodes))
     },
@@ -458,12 +689,12 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (!(Number.isInteger(body.row_version) && (body.row_version as number) > 0)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { row_version: '必须提供正整数版本号' })
       if (body.row_version !== s.row_version) return reply(ctx, serverConflict(s))
       if (s.status !== 'draft' && s.status !== 'retired') return ctx.fail(409, 'conflict', '服务器仍在服务，请先在「状态」里退役', { status: s.status })
-      // 级联静默：名下节点 serving_status 置 retired、吊销身份、摘掉 server_id
+      // 同 Go DetachServerNodes：在役的退役并吊销身份；草稿与已停用的只解绑、留作配置；全部摘掉 server_id
       for (const n of nodes.filter((x) => x.server_id === s.id)) {
-        n.serving_status = 'retired'
-        n.identityRevoked = true
+        if (n.serving_status === 'active') n.serving_status = 'retired'
         n.server_id = null
       }
+      revokeServerIdentity(s, '服务器已删除')
       servers.splice(servers.indexOf(s), 1)
       ctx.send(200, { ok: true, id: s.id })
     },
@@ -471,17 +702,54 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (!ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('server_bootstrap_token_issue', () => {
-        const extra = unknownField(body, ['node_name', 'pool_id', 'server_id', 'ttl_minutes'])
+      await ctx.idempotent('server_bootstrap_token', () => {
+        const extra = unknownField(body, ['ttl_minutes'])
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
         const s = findServer(ctx.params.id)
-        if (!s || s.status === 'retired') return notFound()
-        const ttl = Number(body.ttl_minutes)
-        const minutes = Number.isInteger(ttl) && ttl >= 1 && ttl <= 30 ? ttl : 20
+        if (!s) return notFound()
+        if (s.status === 'retired') return err(409, 'conflict', '服务器已删除或已退役，不能签发安装令牌')
+        let minutes = 20
+        if (body.ttl_minutes !== undefined && body.ttl_minutes !== 0) {
+          const ttl = Number(body.ttl_minutes)
+          if (!(Number.isInteger(ttl) && ttl >= 1 && ttl <= 60)) return invalid({ ttl_minutes: '有效期须在 1–60 分钟' })
+          minutes = ttl
+        }
+        const token = randomBytes(32).toString('base64url')
+        const expires_at = new Date(Date.now() + minutes * 60_000).toISOString()
+        const mockToken: MockToken = { expires_at, used: false, voided: false }
+        s.tokens.push(mockToken)
+        const install_command = `curl --proto '=https' -fsSL 'https://panel.example.test/pdnd/install.sh' | sudo bash -s -- --panel 'panel.example.test:9443' --ca-sha256 '${MOCK_CA_SHA256}' --token '${token}'`
+        // 模拟管理员在机器上执行了安装命令（假后端特有）：真后端由节点端拿令牌来接入
+        setTimeout(() => {
+          if (s.status === 'retired') return
+          if (mockToken.used || mockToken.voided || Date.now() >= new Date(mockToken.expires_at).getTime()) return
+          mockToken.used = true
+          const now = new Date().toISOString()
+          const seq = (s.identity?.seq ?? 0) + 1
+          s.identity = {
+            seq,
+            status: 'active',
+            issued_at: now,
+            expires_at: new Date(Date.now() + 90 * 86400 * 1000).toISOString(),
+            revoked_at: null,
+            revoked_reason: null,
+            fingerprint: createHash('sha256').update(s.id + seq).digest('hex'),
+          }
+          s.hostname ??= `${s.name}.pandora.internal`
+          s.architecture ??= 'amd64'
+          s.os_name ??= 'Debian GNU/Linux 12'
+          s.agent_version ??= 'core r53'
+          s.cpu_cores ??= 4
+          s.memory_mb ??= 8192
+          s.disk_gb ??= 80
+          s.probe ??= { cpu_bp: 1200, mem_used_mb: 900, mem_total_mb: 8192, disk_used_gb: 6, disk_total_gb: 80 }
+          s.last_heartbeat_at = now
+          touchServer(s)
+        }, 15_000).unref()
         return {
           status: 201,
           unreplayable: true,
-          body: { token: `pbt_${randomBytes(24).toString('base64url')}`, expires_at: new Date(Date.now() + minutes * 60_000).toISOString(), install_command: 'curl -fsSL https://panel.example.test/pdnd/install.sh | sudo bash -s -- --enroll' },
+          body: { token, expires_at, install_command },
         }
       })
     },

@@ -108,13 +108,9 @@ func (s *Service) PublishVersion(ctx context.Context, in PublishInput) (PublishR
 		var superseded []repo.Superseded
 		if norm.Status == StatusPublished {
 			aud := repo.Audience{
-				Slug:             norm.Slug,
-				Locale:           norm.Locale,
-				TargetPlatforms:  encodeList(norm.TargetPlatforms),
-				MinClientVersion: norm.MinClientVersion,
-				MaxClientVersion: norm.MaxClientVersion,
-				TargetPlanIDs:    encodeList(norm.TargetPlanIDs),
-				Visibility:       norm.Visibility,
+				Slug:          norm.Slug,
+				TargetPlanIDs: encodeList(norm.TargetPlanIDs),
+				Visibility:    norm.Visibility,
 			}
 			superseded, err = s.repo.ArchivePublishedInAudience(ctx, aud)
 			if err != nil {
@@ -131,11 +127,7 @@ func (s *Service) PublishVersion(ctx context.Context, in PublishInput) (PublishR
 			Title:            norm.Title,
 			Summary:          norm.Summary,
 			Body:             norm.Body,
-			Locale:           norm.Locale,
 			SanitizerVersion: "plain-v1",
-			TargetPlatforms:  encodeList(norm.TargetPlatforms),
-			MinClientVersion: norm.MinClientVersion,
-			MaxClientVersion: norm.MaxClientVersion,
 			TargetPlanIDs:    encodeList(norm.TargetPlanIDs),
 			Visibility:       norm.Visibility,
 			Status:           norm.Status,

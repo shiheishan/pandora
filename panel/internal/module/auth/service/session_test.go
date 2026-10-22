@@ -44,13 +44,14 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("宽限期内用旧 refresh: %v", err)
 	}
-	if tok3.Refresh != "" {
-		t.Fatal("宽限期 refresh 不应再轮换 cookie")
+	if tok3.Refresh != refresh2 {
+		t.Fatal("宽限期应把当前那一枚原样再发一遍")
 	}
 	if tok3.AccessToken == "" {
 		t.Fatal("宽限期应发 access")
 	}
 
+	// 宽限不因再发延长：从第一次轮换算起过了 30 秒，旧的那枚照旧判重放
 	h.Clock.Advance(31 * time.Second)
 	_, err = h.S.Refresh(ctx, authn.AudiencePublic, refresh1)
 	if !errors.Is(err, errSessionInvalid) {
@@ -74,6 +75,145 @@ func TestRefreshRotateGraceReuse(t *testing.T) {
 	_, err = h.S.Refresh(ctx, authn.AudiencePublic, refresh2)
 	if !errors.Is(err, errSessionInvalid) {
 		t.Fatalf("会话已吊销后 refresh2 也应失败: %v", err)
+	}
+}
+
+// 轮换的响应没送到浏览器（关页、F5、断网）：浏览器仍拿着上一枚，宽限内再来一次就拿回有效的 cookie，过了宽限照常能用。
+func TestRefreshLostResponseRecovers(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("lost@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "lost@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	lost, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil {
+		t.Fatalf("首次 refresh（响应丢了）: %v", err)
+	}
+	h.Clock.Advance(10 * time.Second)
+	again, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil || again.Refresh != lost.Refresh {
+		t.Fatalf("宽限内用上一枚应拿回当前那一枚 refresh: %+v %v", again, err)
+	}
+	h.Clock.Advance(5 * time.Minute)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, again.Refresh); err != nil {
+		t.Fatalf("拿回的那枚过了宽限也应照常可用: %v", err)
+	}
+	for _, r := range h.Audit.events {
+		if r.ev.Action == "session.refresh_reuse" {
+			t.Fatal("响应丢失不应记成重放")
+		}
+	}
+}
+
+// 偷到上一枚的人在宽限内拿到的是当前那一枚（与合法用户同一枚），再轮换一次：
+// 合法用户手里那枚过了宽限再用，照旧判重放、吊销整条会话（攻击者那枚一起失效），不会被悄悄挤掉。
+func TestRefreshGraceThenRotateStillDetectsReuse(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("steal@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "steal@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	legit, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil {
+		t.Fatalf("合法用户轮换: %v", err)
+	}
+	// 攻击者在宽限内用上一枚，两次
+	for i := 0; i < 2; i++ {
+		got, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+		if err != nil || got.Refresh != legit.Refresh {
+			t.Fatalf("宽限内第 %d 次应拿到同一枚当前值: %v", i+1, err)
+		}
+	}
+	stolen, err := h.S.Refresh(ctx, authn.AudiencePublic, legit.Refresh)
+	if err != nil {
+		t.Fatalf("攻击者用当前那一枚轮换: %v", err)
+	}
+	h.Clock.Advance(31 * time.Second)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, legit.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("合法用户那枚过了宽限再用应判重放: %v", err)
+	}
+	reuse := 0
+	for _, r := range h.Audit.events {
+		if r.ev.Action == "session.refresh_reuse" {
+			reuse++
+		}
+	}
+	if reuse != 1 {
+		t.Fatalf("refresh_reuse 审计=%d want 1", reuse)
+	}
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, stolen.Refresh); !errors.Is(err, errSessionInvalid) {
+		t.Fatalf("会话已吊销，攻击者那枚也应失效: %v", err)
+	}
+}
+
+// 前端放弃的旧请求晚到：宽限内只把当前那一枚再发一遍、不改状态，浏览器手里那枚照常能用
+func TestRefreshLateGraceDoesNotDisturbCurrent(t *testing.T) {
+	h := newTestService(t)
+	ctx := testCtx("203.0.113.7")
+	h.Users.addUser("late@example.com", "pass", UserStatusActive)
+	tok, err := h.S.Login(ctx, authn.AudiencePublic, "late@example.com", "pass")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	kept, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil {
+		t.Fatalf("重试的那次: %v", err)
+	}
+	h.Clock.Advance(20 * time.Second)
+	late, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+	if err != nil || late.Refresh != kept.Refresh {
+		t.Fatalf("晚到的旧请求应拿到同一枚: %+v %v", late, err)
+	}
+	h.Clock.Advance(10 * time.Minute)
+	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, kept.Refresh); err != nil {
+		t.Fatalf("浏览器保留的那枚应照常可用: %v", err)
+	}
+	for _, r := range h.Audit.events {
+		if r.ev.Action == "session.refresh_reuse" {
+			t.Fatal("晚到的旧请求不应记成重放")
+		}
+	}
+}
+
+// 偷到当前那一枚的人连续轮换两次：合法用户手里那枚既不是当前也不是上一代，
+// 但确是这条会话签发过的旧代，再出现就判重放、吊销整条会话并留审计，不会只回 401 让人以为自己掉线（宽限内外都一样）。
+func TestRefreshDoubleRotateDetectsReuse(t *testing.T) {
+	for _, wait := range []time.Duration{0, 31 * time.Second} {
+		h := newTestService(t)
+		ctx := testCtx("203.0.113.7")
+		h.Users.addUser("double@example.com", "pass", UserStatusActive)
+		tok, err := h.S.Login(ctx, authn.AudiencePublic, "double@example.com", "pass")
+		if err != nil {
+			t.Fatalf("login: %v", err)
+		}
+		first, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh)
+		if err != nil {
+			t.Fatalf("攻击者第一次轮换: %v", err)
+		}
+		second, err := h.S.Refresh(ctx, authn.AudiencePublic, first.Refresh)
+		if err != nil {
+			t.Fatalf("攻击者第二次轮换: %v", err)
+		}
+		h.Clock.Advance(wait)
+		if _, err := h.S.Refresh(ctx, authn.AudiencePublic, tok.Refresh); !errors.Is(err, errSessionInvalid) {
+			t.Fatalf("等 %v：合法用户的旧代应判重放: %v", wait, err)
+		}
+		reuse := 0
+		for _, r := range h.Audit.events {
+			if r.ev.Action == "session.refresh_reuse" {
+				reuse++
+			}
+		}
+		if reuse != 1 {
+			t.Fatalf("等 %v：refresh_reuse 审计=%d want 1", wait, reuse)
+		}
+		if _, err := h.S.Refresh(ctx, authn.AudiencePublic, second.Refresh); !errors.Is(err, errSessionInvalid) {
+			t.Fatalf("等 %v：会话已吊销，攻击者那枚也应失效: %v", wait, err)
+		}
 	}
 }
 
@@ -354,13 +494,24 @@ func TestRefreshRandomSecretDoesNotRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	sid, _, ok := parseRefresh(tok.Refresh)
+	sid, _, _, ok := parseRefresh(tok.Refresh)
 	if !ok {
 		t.Fatal("refresh 格式")
 	}
-	// 只知道 sid（不保密）配一个随机值：401，但不吊销、不写重放审计
-	if _, err := h.S.Refresh(ctx, authn.AudiencePublic, formatRefresh(sid, "random-guess")); !errors.Is(err, errSessionInvalid) {
-		t.Fatalf("随机值应 401: %v", err)
+	// 只知道 sid（不保密）配一个格式正确的随机值，当前代、旧代、未来代都一样：401，但不吊销、不写重放审计
+	for _, gen := range []uint64{0, 1, 7} {
+		guess, err := newSecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.S.Refresh(ctx, authn.AudiencePublic, formatRefresh(sid, gen, guess)); !errors.Is(err, errSessionInvalid) {
+			t.Fatalf("第 %d 代的随机值应 401: %v", gen, err)
+		}
+	}
+	for _, bad := range []string{sid + ".01." + tok.Refresh[len(tok.Refresh)-43:], sid + "." + tok.Refresh[len(tok.Refresh)-43:]} {
+		if _, err := h.S.Refresh(ctx, authn.AudiencePublic, bad); !errors.Is(err, errSessionInvalid) {
+			t.Fatalf("格式不规范的值应 401: %q %v", bad, err)
+		}
 	}
 	for _, r := range h.Audit.events {
 		if r.ev.Action == "session.refresh_reuse" {

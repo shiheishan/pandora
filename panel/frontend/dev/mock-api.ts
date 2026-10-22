@@ -8,6 +8,7 @@ import { pickAdminEvent } from './mock/admin/events.ts'
 import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
 import { MOCK_SITE } from './mock/portal/fixtures.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
+import { effectiveRegistrationMode, patchPortalSignup, portalSignup } from './mock/portal/signup.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
 import { allowMailLinkSend, consumeMailLink, issueMailLink, lastMailLink } from './mock/mail-link.ts'
 import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
@@ -17,22 +18,33 @@ import { findRoute, matchPattern, type AnonContext, type Json, type MockApp, typ
 // 会话与 rat、reauth 窗口、幂等表、错误信封；模块接口写在 mock/<入口>/<模块>.ts，
 // 一个模块一个文件、各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
+// POST /__mock/portal-signup 改门户的注册方式、邮箱验证、降级开关等（dev/mock/portal/signup.ts），缺省与 Go 一致。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
   admin: { email: 'admin@example.test', password: 'pandora-dev-pass' },
   portal: { email: 'user@example.test', password: 'pandora-dev-pass' },
 } as const
 
+/** 门户演示用的停用账号：口令对时登录回 403「账号已停用」，口令错照旧 401（与 Go 一致）；不在用户表里，拿不到会话 */
+export const MOCK_DISABLED_ACCOUNT = { email: 'disabled@example.test', password: 'pandora-dev-pass' } as const
+
 const REAUTH_WINDOW_MS = 15 * 60 * 1000
+/** 与 Go auth/service/store.go 的 refreshGrace 一致 */
+const REFRESH_GRACE_MS = 30 * 1000
 /** access 令牌有效期（秒），与架构 8.3 一致 */
 const ACCESS_EXPIRES_IN = 15 * 60
 const TTL_SECONDS = 2592000
 
 const RT_COOKIE: Record<MockApp, string> = { portal: 'pandora_rt', admin: 'pandora_admin_rt' }
 
-interface RefreshRecord {
+/** 一条登录会话的 refresh 链：照 Go 记当前一枚、上一枚与轮换时间；retired 是更早的各代（Go 靠代数与 HMAC 认出它们） */
+interface RefreshFamily {
   userId: string
   app: MockApp
+  cur: string
+  prev: string | null
+  retired: Set<string>
+  rotatedAt: number
 }
 
 function parseCookieHeader(header: string | undefined): Record<string, string> {
@@ -99,7 +111,6 @@ const ADMIN_WRITE_ALLOWLIST = [
   'POST /me/password',
   'POST /switches/:code',
   'POST /mail/templates/preview',
-  'POST /subscription-templates/:format/preview',
 ] as const
 
 function adminWriteExempt(method: string, path: string): boolean {
@@ -164,22 +175,29 @@ function initialUsers(app: MockApp): MockUser[] {
 export function mockApi(app: MockApp): Plugin {
   const users = new Map<string, MockUser>(initialUsers(app).map((u) => [u.email, u]))
   const sessions = new Map<string, Session>()
-  const registrations = new Map<string, { email: string; code: string }>()
+  const registrations = new Map<string, { email: string; code: string | null }>()
   const resets = new Map<string, { code: string; attempts: number }>()
   const replays = new Map<string, Replay>()
-  const refreshTokens = new Map<string, RefreshRecord>()
+  const refreshFamilies = new Set<RefreshFamily>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
 
-  const mintRefresh = (userId: string) => {
-    const value = randomUUID()
-    refreshTokens.set(value, { userId, app })
-    return value
+  const findFamily = (value: string): { family: RefreshFamily; which: 'cur' | 'prev' | 'retired' } | null => {
+    for (const family of refreshFamilies) {
+      if (family.cur === value) return { family, which: 'cur' }
+      if (family.prev === value) return { family, which: 'prev' }
+      if (family.retired.has(value)) return { family, which: 'retired' }
+    }
+    return null
   }
-  const revokeRefreshValue = (value: string) => {
-    refreshTokens.delete(value)
+  const dropFamiliesOf = (userId: string) => {
+    for (const f of [...refreshFamilies]) {
+      if (f.userId === userId) refreshFamilies.delete(f)
+    }
   }
   const bindRefresh = (res: ServerResponse, userId: string) => {
-    const value = mintRefresh(userId)
+    const value = randomUUID()
+    const family: RefreshFamily = { userId, app, cur: value, prev: null, retired: new Set(), rotatedAt: Date.now() }
+    refreshFamilies.add(family)
     setRefreshCookie(res, app, value)
     return value
   }
@@ -222,7 +240,13 @@ export function mockApi(app: MockApp): Plugin {
     if (route === 'POST /v1/auth/login') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
-      const user = users.get(str(body.email).trim().toLowerCase())
+      const email = str(body.email).trim().toLowerCase()
+      if (app === 'portal' && email === MOCK_DISABLED_ACCOUNT.email) {
+        // 停用账号：口令对才明确提示，口令错与不存在的账号一样
+        if (str(body.password) === MOCK_DISABLED_ACCOUNT.password) return fail(res, 403, 'forbidden', '账号已停用')
+        return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
+      }
+      const user = users.get(email)
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
       const token = issue(user.userId, req)
       bindRefresh(res, user.userId)
@@ -231,24 +255,47 @@ export function mockApi(app: MockApp): Plugin {
     if (route === 'POST /v1/auth/refresh') {
       const cookies = parseCookieHeader(req.headers.cookie)
       const rt = cookies[RT_COOKIE[app]]
-      const rec = rt ? refreshTokens.get(rt) : undefined
-      if (!rt || !rec || rec.app !== app) return fail(res, 401, 'unauthorized', '需要登录')
-      const refreshedUser = userById(rec.userId)
-      if (!refreshedUser) {
-        revokeRefreshValue(rt)
+      if (!rt) return fail(res, 401, 'unauthorized', '需要登录')
+      const found = findFamily(rt)
+      if (!found || found.family.app !== app) {
+        clearRefreshCookie(res, app)
         return fail(res, 401, 'unauthorized', '需要登录')
       }
-      revokeRefreshValue(rt)
-      const access = issue(refreshedUser.userId, req)
-      bindRefresh(res, refreshedUser.userId)
-      return send(res, 200, { access_token: access, token_type: 'Bearer', expires_in: ACCESS_EXPIRES_IN })
+      const { family, which } = found
+      const refreshedUser = userById(family.userId)
+      if (!refreshedUser) {
+        refreshFamilies.delete(family)
+        clearRefreshCookie(res, app)
+        return fail(res, 401, 'unauthorized', '需要登录')
+      }
+      const okBody = (access: string) => ({ access_token: access, token_type: 'Bearer' as const, expires_in: ACCESS_EXPIRES_IN })
+      if (which === 'cur') {
+        if (family.prev !== null) family.retired.add(family.prev)
+        family.prev = family.cur
+        family.cur = randomUUID()
+        family.rotatedAt = Date.now()
+        setRefreshCookie(res, app, family.cur)
+        return send(res, 200, okBody(issue(refreshedUser.userId, req)))
+      }
+      // 上一枚在宽限内：照 Go 不改状态，把当前那一枚原样再发一遍（Go 用 HMAC 从上一枚重算出它，这里直接取）
+      if (which === 'prev' && Date.now() - family.rotatedAt <= REFRESH_GRACE_MS) {
+        setRefreshCookie(res, app, family.cur)
+        return send(res, 200, okBody(issue(refreshedUser.userId, req)))
+      }
+      // 上一枚过了宽限、或更早的一代（会话已被别人往前轮换过）：照 Go 判为重放、吊销整条会话；假后端的 access 不挂会话，已发的 access 照旧到期，这点与 Go 不同、不影响前端流程
+      refreshFamilies.delete(family)
+      clearRefreshCookie(res, app)
+      return fail(res, 401, 'unauthorized', '需要登录')
     }
+    // 同 Go settings/handler 的 siteConfig：演示环境当作已配好发信，password_reset 只看 notify.email 有没有停用
     if (app === 'portal' && route === 'GET /v1/site-config') {
-      return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
+      const cfg = portalSignup()
+      return send(res, 200, { registration_mode: effectiveRegistrationMode(), email_verification: cfg.email_verification, password_reset: !cfg.mail_paused })
     }
-    // 演示环境不连第三方人机验证；真实环境由后台设置决定 mail_link_login / captcha / email_suffixes
+    // 演示环境不连第三方人机验证；mail_link_login 同 Go：设置开了且 notify.email 没停用
     if (app === 'portal' && route === 'GET /v1/signup-config') {
-      return send(res, 200, { captcha: null, email_suffixes: [], mail_link_login: true })
+      const cfg = portalSignup()
+      return send(res, 200, { captcha: null, email_suffixes: [], mail_link_login: cfg.mail_link_login && !cfg.mail_paused })
     }
     if (app === 'portal' && route === 'GET /v1/appearance') {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
@@ -266,25 +313,34 @@ export function mockApi(app: MockApp): Plugin {
       if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
-      if (str(body.invite_code).toUpperCase() !== 'PANDORA') return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
+      const cfg = portalSignup()
+      const mode = effectiveRegistrationMode()
+      if (mode === 'closed') return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
+      if (cfg.email_verification && cfg.mail_paused) return fail(res, 503, 'service_unavailable', '邮件发送暂停，暂时无法注册，请稍后再试')
+      const invite = str(body.invite_code).trim().toUpperCase()
+      // 仅邀请时必填；开放注册时选填，填了也要有效（同 Go resolveInviteAtStart）。演示里唯一有效的邀请码是 PANDORA
+      if ((mode === 'invite_only' && !invite) || (invite && invite !== 'PANDORA')) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
       const token = randomUUID()
-      registrations.set(token, { email, code: '123456' })
+      const taken = users.has(email)
+      registrations.set(token, { email, code: cfg.email_verification ? '123456' : null })
       return send(res, 200, {
         registration_token: token,
-        verification_required: true,
+        verification_required: cfg.email_verification,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
-        message: '验证码已发送',
-        dev_code: '123456',
+        message: '若该邮箱可用于注册，验证码已发送',
+        // 同 Go 开发模式：只在要验证、且邮箱还没注册过时带
+        ...(cfg.email_verification && !taken ? { dev_code: '123456' } : {}),
       })
     }
     if (app === 'portal' && route === 'POST /v1/auth/register/complete') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
       const reg = registrations.get(str(body.registration_token))
-      if (!reg || reg.code !== str(body.code)) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
+      if (!reg || (reg.code !== null && reg.code !== str(body.code))) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
       const password = str(body.password)
       if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
       if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
+      if (users.has(reg.email)) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
       registrations.delete(str(body.registration_token))
       const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null }
       users.set(reg.email, user)
@@ -299,6 +355,7 @@ export function mockApi(app: MockApp): Plugin {
       if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
+      if (portalSignup().mail_paused) return fail(res, 503, 'service_unavailable', '邮件发送暂停，暂时无法找回密码，请稍后再试')
       const known = users.has(email)
       if (known) resets.set(email, { code: '123456', attempts: 0 })
       return send(res, 200, {
@@ -327,6 +384,7 @@ export function mockApi(app: MockApp): Plugin {
       user.password = password
       // 用户定：重置后吊销该账号的全部登录
       for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
+      dropFamiliesOf(user.userId)
       return send(res, 200, { ok: true })
     }
     if (app === 'portal' && route === 'POST /v1/auth/quick-login') {
@@ -340,6 +398,9 @@ export function mockApi(app: MockApp): Plugin {
     if (app === 'portal' && route === 'POST /v1/auth/mail-link/start') {
       const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      // 同 Go StartMailLogin：先看设置开没开，再看 notify.email，最后才校验邮箱
+      if (!portalSignup().mail_link_login) return fail(res, 403, 'forbidden', '邮件链接登录未开启')
+      if (portalSignup().mail_paused) return fail(res, 503, 'service_unavailable', '邮件发送暂停，暂时无法用邮件登录，请稍后再试')
       // 与找回第 1 步同口径：开了人机验证时带 captcha_token（演示环境不连第三方，只校验类型）
       const capErr = captchaFieldError(body)
       if (capErr) return fail(res, 422, 'validation_failed', '请求参数校验未通过', capErr)
@@ -368,9 +429,22 @@ export function mockApi(app: MockApp): Plugin {
       sessions.forEach((s) => (s.rat = 0))
       return send(res, 204)
     }
+    // 只有假后端有：把所有会话的上一次轮换拨到宽限之外，用来测「旧 cookie 超过 30 秒再用 = 重放」
+    if (route === 'POST /__mock/expire-refresh-grace') {
+      refreshFamilies.forEach((f) => (f.rotatedAt = 0))
+      return send(res, 204)
+    }
     // 只有假后端有：让测试与演示拿到刚发的登录链接
     if (app === 'portal' && route === 'GET /__mock/mail-link') {
       return send(res, 200, { token: lastMailLink() })
+    }
+    // 只有假后端有：改门户的注册与发信配置（后台假后端是另一个进程，改不到这里）。只改给出的键，reset: true 先恢复缺省
+    if (app === 'portal' && route === 'POST /__mock/portal-signup') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const fields = patchPortalSignup(body)
+      if (fields) return fail(res, 422, 'validation_failed', '请求参数校验未通过', fields)
+      return send(res, 200, portalSignup())
     }
 
     // --- admin.writes 只读门：Go 挂在整棵 /v1 上、先于认证 ----------------------
@@ -390,7 +464,11 @@ export function mockApi(app: MockApp): Plugin {
       if (current) sessions.delete(current.token)
       const cookies = parseCookieHeader(req.headers.cookie)
       const rt = cookies[RT_COOKIE[app]]
-      if (rt) revokeRefreshValue(rt)
+      if (rt) {
+        const found = findFamily(rt)
+        // 照 Go：本会话签发过的任一代（含被换下的旧代）都能退出整条会话
+        if (found) refreshFamilies.delete(found.family)
+      }
       clearRefreshCookie(res, app)
       return send(res, 204)
     }
@@ -426,6 +504,7 @@ export function mockApi(app: MockApp): Plugin {
         if (newPw.length < 12) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 12 个字符' })
         user.password = newPw
         for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
+        dropFamiliesOf(user.userId)
         return send(res, 200, { ok: true, reauthenticate: true })
       }
     } else if (route === 'GET /v1/me') {

@@ -14,10 +14,20 @@ type inviteVisitRequest struct {
 	Code string `json:"code" binding:"max=64"`
 }
 
+// inviteVisitResponse 是记录邀请访问的响应。
+type inviteVisitResponse struct {
+	OK bool `json:"ok"`
+}
+
 // admSetReferrerRequest 是后台改用户邀请人的请求体。
 type admSetReferrerRequest struct {
 	ReferrerID *string `json:"referrer_id"`
 	Reason     string  `json:"reason" binding:"max=1000"`
+}
+
+// setReferrerResponse 是后台改邀请人的响应。
+type setReferrerResponse struct {
+	OK bool `json:"ok"`
 }
 
 // createInviteCode 处理 POST /v1/me/invite/codes。
@@ -46,7 +56,7 @@ func (h *Handler) inviteVisit(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{"ok": true})
+	httpx.OK(c, inviteVisitResponse{OK: true})
 }
 
 // inviteVisitLimit 是邀请访问记录的按路由 IP 限流；不加 StrictMode，Redis 故障时放行，不因访问量统计返回 503。
@@ -87,5 +97,5 @@ func (h *Handler) setUserReferrer(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{"ok": true})
+	httpx.OK(c, setReferrerResponse{OK: true})
 }

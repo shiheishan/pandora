@@ -91,13 +91,19 @@ func (s *Service) AccessEvents(ctx context.Context, q AccessQuery) ([]AccessEven
 	}
 	out := make([]AccessEvent, 0, len(rows))
 	for _, row := range rows {
+		resType := ""
+		if row.ResourceType != nil {
+			resType = *row.ResourceType
+		}
 		out = append(out, AccessEvent{
-			Action:    row.Action,
-			Outcome:   row.Outcome,
-			IP:        s.openIP(row.IPEnc),
-			UserAgent: row.UserAgent,
-			ActorID:   row.ActorID,
-			At:        row.OccurredAt,
+			Action:       row.Action,
+			Outcome:      row.Outcome,
+			IP:           s.openIP(row.IPEnc),
+			UserAgent:    row.UserAgent,
+			ActorID:      row.ActorID,
+			ResourceType: resType,
+			ResourceID:   row.ResourceID,
+			At:           row.OccurredAt,
 		})
 	}
 	return out, nil
@@ -208,7 +214,7 @@ func (s *Service) MarkClusterDisabled(ctx context.Context, key, note string) (uu
 	return id, nil
 }
 
-// RecordSourceIPView 记录后台查看明文来源 IP 的审计。
+// RecordSourceIPView 记录后台查看明文来源 IP 的审计：只有溯源总览「显示」用（view = ViewTrace）；访问日志、聚类、画像的读取用户 10-21 定不记。
 func (s *Service) RecordSourceIPView(ctx context.Context, view string, userID *uuid.UUID, filter map[string]any) error {
 	data := filter
 	if data == nil {
@@ -285,11 +291,12 @@ func splitAccountIDs(s string) []uuid.UUID {
 
 func repoAccessFilter(q AccessQuery, limit int) repo.AccessFilter {
 	return repo.AccessFilter{
-		Include:      q.Include,
-		Exclude:      q.Exclude,
-		FilterActors: q.FilterActors,
-		ActorIDs:     q.ActorIDs,
-		Outcome:      q.Outcome,
-		Limit:        limit,
+		Include:       q.Include,
+		Exclude:       q.Exclude,
+		FilterActors:  q.FilterActors,
+		ActorIDs:      q.ActorIDs,
+		TargetActions: q.TargetActions,
+		Outcome:       q.Outcome,
+		Limit:         limit,
 	}
 }

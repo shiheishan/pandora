@@ -167,7 +167,7 @@ func takeUTLSBuffered(outer net.Conn) []byte {
 	var conn *utls.Conn
 	switch c := outer.(type) {
 	case *xrayreality.UConn:
-		conn = c.UConn.Conn
+		conn = c.Conn
 	case *utls.UConn:
 		conn = c.Conn
 	default:

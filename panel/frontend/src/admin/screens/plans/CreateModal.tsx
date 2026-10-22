@@ -292,7 +292,7 @@ function PoolSection({
   if (pools.isPending) {
     body = <p className={css.sectionNote}>载入节点池…</p>
   } else if (!pools.data || pools.data.length === 0) {
-    body = <p className={css.sectionNote}>还没有可用的节点池，先到「节点 › 节点池」建一个。</p>
+    body = <p className={css.sectionNote}>还没有可用的节点池，先到「节点与服务器 › 节点池」建一个。</p>
   } else {
     body = (
       <>

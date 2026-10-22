@@ -17,7 +17,6 @@ export const err = (status: number, code: string, message: string, fields?: Reco
 })
 export const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
 export const NOT_FOUND = err(404, 'not_found', '资源不存在或无权访问')
-export const DUP = err(409, 'conflict', '目录对象已存在或活动报价发生冲突')
 export const stale = (current: number, kind = '套餐') =>
   err(409, 'conflict', `${kind}已被其他管理员修改，请刷新后重试`, { row_version: `current=${current}` })
 export const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
@@ -680,7 +679,7 @@ export function publishProblems(p: { prices: Price[]; pool_ids: string[] }): Rec
   }
   const assignable = p.pool_ids.filter(livePool)
   if (assignable.length === 0) {
-    return { pool_ids: '绑定的节点池都已停用：先在「线路 · 节点池」里启用，或换绑一个启用中的池' }
+    return { pool_ids: '绑定的节点池都已停用：先在「节点与服务器 › 节点池」里启用，或换绑一个启用中的池' }
   }
   const totalActiveNodes = p.pool_ids.reduce((sum, pid) => sum + activeNodesInPool(pid), 0)
   if (totalActiveNodes === 0) {

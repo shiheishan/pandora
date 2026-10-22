@@ -26,6 +26,12 @@ const RenewBefore = 10 * 24 * time.Hour
 // FeatureUsersDelta 是 Hello 里声明「能收名单增量」的能力名。
 const FeatureUsersDelta = "users_delta"
 
+// FeatureUpgrade 是 Hello / Welcome 里「能在线升级」的能力名。
+const FeatureUpgrade = "upgrade_v1"
+
+// FeatureCertACME 是 Hello 里「能自动申请入站证书（cert_mode=acme）」的能力名，面板可据此分辨节点端支不支持。
+const FeatureCertACME = "cert_acme_v1"
+
 // 身份目录里的文件。
 const (
 	caFile       = "ca.pem"
@@ -76,6 +82,8 @@ const (
 	EventDisconnected
 	// EventTombstone：面板吊销了身份；会话随后停止重连。
 	EventTombstone
+	// EventUpgrade：面板下发升级指令；只有 Welcome 协商了 upgrade_v1 的流才该收到，是否执行由编排层判断。
+	EventUpgrade
 )
 
 // Event 是会话交给编排层的一条消息，按 Kind 只有对应字段有值。
@@ -85,6 +93,10 @@ type Event struct {
 	Config     *nodev1.ServerConfig
 	UsersFull  *UsersFull
 	UsersDelta *nodev1.UsersDelta
+	// Upgrade 是 EventUpgrade 的升级指令。
+	Upgrade *nodev1.Upgrade
+	// HelloUpgrade 是 EventWelcome 时这条流的 Hello 里带的 last_upgrade（没带就是 nil，编排层据此删结果文件）。
+	HelloUpgrade *nodev1.UpgradeReport
 	// ReportID 是 EventTrafficAck 确认的 report_id。
 	ReportID string
 	// Err 是 EventDisconnected 的原因。

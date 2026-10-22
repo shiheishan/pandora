@@ -76,6 +76,12 @@ func quoteNewLines(ctx context.Context, s *Service, userID uuid.UUID, in QuoteIn
 	if err := pendingNewOrderConflict(ctx, s, userID, planID, op.Plan.Name, now); err != nil {
 		return nil, err
 	}
+	// 每人份数上限：与建单同一个计数（不拿建单咨询锁），报价就拒，不让用户点了下单才知道
+	if refusal, err := s.subscriptionCapRefusal(ctx, userID, now); err != nil {
+		return nil, err
+	} else if refusal != nil {
+		return nil, refusal
+	}
 	out := make([]Quote, 0, len(op.Prices))
 	for _, p := range op.Prices {
 		periodEnd := subsvc.PeriodEndFor(now, priceSnap(p))

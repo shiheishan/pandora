@@ -24,6 +24,7 @@ import (
 	"github.com/aegispanel/aegis/internal/module/subscription/repo"
 	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 	"github.com/aegispanel/aegis/internal/pkg/tx"
@@ -85,18 +86,19 @@ type OnlineDeviceCounter interface {
 
 // Service 是 subscription 模块对外的唯一入口。
 type Service struct {
-	repo     *repo.Repo
-	tx       txRunner
-	events   pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
-	audit    auditWriter
-	settings SiteSettings
-	catalog  Catalog
-	users    Users
-	sealer   Sealer
-	roster   RosterNotifier
-	online   OnlineDeviceCounter
-	now      func() time.Time
-	rt       *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
+	repo         *repo.Repo
+	tx           txRunner
+	events       pluginevents.Emitter // 插件钩子出站事件，装配时注入（plugin_events.go）
+	audit        auditWriter
+	settings     SiteSettings
+	catalog      Catalog
+	users        Users
+	sealer       Sealer
+	roster       RosterNotifier
+	linkNotifier LinkNotifier // 后台换链接后通知属主，UseLinkNotifier 注入（link_notify.go）
+	online       OnlineDeviceCounter
+	now          func() time.Time
+	rt           *realtime.Publisher // 实时推送，装配时注入（realtime.go）；nil 时不推
 
 	// 订阅分发：nodes 与 delivery 由装配注入（nodes.go）。
 	nodes    NodeSource
@@ -105,10 +107,13 @@ type Service struct {
 	prefix atomic.Pointer[string]
 	// failures 给未认证失败的拉取日志采样（fetchlog.go）。
 	failures *failureSampler
-	// extras 是拉取用的后台模板与订阅附加设置的进程内快照（pull_extras.go），30 秒过期。
+	// extras 是拉取用的订阅附加设置与订阅域名分组的进程内快照（pull_extras.go），30 秒过期。
 	extras pullExtras
 	// scores 是订阅域名的分数（Redis，domain_scores.go）；装配时经 UseDomainScores 注入，nil 时一律按基础权重
 	scores *domainScores
+	// geo 是 IP 归属地查询（ip2region），订阅域名分数按访客的省份与运营商分桶用；装配时经 UseGeo 注入，
+	// nil 时一律只记、只读全国一级（domain_region.go）
+	geo geoLocator
 }
 
 // New 构造 subscription service。catalog 一般是 catalog service，users 是 identity service，sealer 是 crypto.Keys.Sealer()。
@@ -131,6 +136,14 @@ func (s *Service) UseRosterNotifier(n RosterNotifier) { s.roster = n }
 
 // UseOnlineDeviceCounter 只在启动装配时调用（不并发安全）。
 func (s *Service) UseOnlineDeviceCounter(c OnlineDeviceCounter) { s.online = c }
+
+// UseGeo 注入 IP 归属地解析器，订阅域名分数按访客地区分桶。只在启动装配时调用（不并发安全）。
+// r 为 nil（没放归属地数据文件）时不注入，分数只用全国一级；不存成带类型的 nil 接口。
+func (s *Service) UseGeo(r *geoip.Resolver) {
+	if r != nil {
+		s.geo = r
+	}
+}
 
 // clock 返回当前时刻（UTC、截到微秒，与库里的精度一致）。
 func (s *Service) clock() time.Time {
@@ -262,6 +275,7 @@ func (s *Service) deliveryReady() bool {
 }
 
 // MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 不算必需：geo（没放 IP 归属地数据文件时就是 nil，订阅域名分数只用全国一级）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	for _, p := range []struct {
@@ -272,6 +286,7 @@ func (s *Service) MissingPorts() []string {
 		{"NodeSource", s.nodes != nil},
 		{"OnlineDeviceCounter", s.online != nil},
 		{"RosterNotifier", s.roster != nil},
+		{"LinkNotifier", s.linkNotifier != nil},
 		{"PluginEvents", s.events != nil},
 		{"Realtime", s.rt != nil},
 		{"DomainScores", s.scores != nil},

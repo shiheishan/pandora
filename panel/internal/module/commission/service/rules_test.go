@@ -92,20 +92,6 @@ func TestTransitions(t *testing.T) {
 	}
 }
 
-func TestMaskEmail(t *testing.T) {
-	cases := map[string]string{
-		"alice@example.test": "al***@example.test",
-		"ab@example.test":    "***@example.test",
-		"":                   "***",
-		"noat":               "***",
-	}
-	for in, want := range cases {
-		if got := MaskEmail(in); got != want {
-			t.Errorf("MaskEmail(%q) = %q，想要 %q", in, got, want)
-		}
-	}
-}
-
 func TestMonthStartUsesSiteTimezone(t *testing.T) {
 	now := time.Date(2026, 10, 31, 20, 0, 0, 0, time.UTC) // 上海已是 11 月 1 日 04:00
 	got := monthStart(now, "Asia/Shanghai")

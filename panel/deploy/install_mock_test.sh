@@ -140,6 +140,9 @@ PAN
   chmod 0755 "$root/bin/pandora"
   printf 'pdnd-amd64-%s\n' "$ver" >"$root/pdnd-dist/pandora-native-linux-amd64"
   printf 'pdnd-arm64-%s\n' "$ver" >"$root/pdnd-dist/pandora-native-linux-arm64"
+  printf '{"schema":1,"version":"%s"}\n' "$ver" >"$root/pdnd-dist/pdnd-manifest.json"
+  # 只有 t1 带签名：升级到不带签名的 t2 后不能留着 t1 的 .sig
+  if [ "$ver" = t1 ]; then printf '{"key_id":"0000000000000000","sig":"stub"}\n' >"$root/pdnd-dist/pdnd-manifest.json.sig"; fi
   printf 'geoip-%s\n' "$ver" >"$root/geoip/ip2region_v4.xdb"
   deploy_real_files "$root"
   cat >"$root/deploy/release-artifact.env" <<EOF
@@ -469,6 +472,9 @@ done
 [ -x "$SB/opt/pandora/bin/pandora" ] || fail 'no pandora bin'
 [ -f "$SB/opt/pandora/pdnd-dist/pandora-native-linux-amd64" ] || fail 'pdnd amd64'
 [ -f "$SB/opt/pandora/pdnd-dist/pandora-native-linux-arm64" ] || fail 'pdnd arm64'
+[ "$(stat -c %a "$SB/opt/pandora/pdnd-dist/pandora-native-linux-amd64")" = 755 ] || fail 'pdnd binary mode'
+[ "$(stat -c %a "$SB/opt/pandora/pdnd-dist/pdnd-manifest.json")" = 644 ] || fail 'manifest mode'
+[ "$(stat -c %a "$SB/opt/pandora/pdnd-dist/pdnd-manifest.json.sig")" = 644 ] || fail 'manifest sig mode'
 [ -f "$SB/opt/pandora/geoip/ip2region_v4.xdb" ] || fail 'geoip'
 [ -f "$SB/opt/pandora/release.env" ] || fail 'release.env'
 for f in admin-url.sh bootstrap.sh render-nginx.sh backup-postgres.sh verify-backup.sh restore-postgres.sh \
@@ -535,6 +541,8 @@ ls "$SB/var/backups/pandora"/pre-upgrade-*.dump >/dev/null 2>&1 || fail 'no pre-
 grep -q '# build=t2' "$SB/opt/pandora/bin/pandora" || fail 'not t2'
 grep -q '# build=t1' "$SB/opt/pandora/bin/pandora.prev" || fail 'no prev t1'
 grep -q 'PANDORA_RELEASE_VERSION=t2' "$SB/opt/pandora/release.env" || fail 'release t2'
+grep -q '"version":"t2"' "$SB/opt/pandora/pdnd-dist/pdnd-manifest.json" || fail 'manifest t2'
+[ ! -e "$SB/opt/pandora/pdnd-dist/pdnd-manifest.json.sig" ] || fail 'stale t1 manifest signature kept'
 stop3="$(lineno_last 'systemctl stop pandora-serve pandora-worker')"
 dump3="$(lineno_last 'pg_dump')"
 mig3="$(lineno_last 'pandora migrate up')"

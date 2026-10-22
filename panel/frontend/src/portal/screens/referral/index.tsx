@@ -13,6 +13,7 @@ import {
   headlineParts,
   inviteLink,
   inviteUsage,
+  shortHash,
   withdrawBlock,
   withdrawClosedHere,
   withdrawClosedHint,
@@ -70,7 +71,7 @@ function InviteCard({ summary }: { summary: Commission['summary'] | undefined })
   const siteName = appearance.data?.site_name?.trim() || 'Pandora'
   const code = invite.data?.invite.code
   const link = code ? inviteLink(code, window.location.origin) : ''
-  const usage = invite.data ? inviteUsage(invite.data.invite) : null
+  const usage = invite.data ? inviteUsage(invite.data) : null
   const closed = site.data?.registration_mode === 'closed'
   const parts = summary ? headlineParts(summary.direct_rate_bp, summary.scope) : null
 
@@ -213,6 +214,14 @@ const RECORDS_PREVIEW = 8
 function RecordsList() {
   const commission = useCommission(commissionRecords)
   const [all, setAll] = useState(false)
+  const toast = useToast()
+
+  async function copyHash(hash: string, url: string | undefined) {
+    if (await copyText(hash)) toast('交易哈希已复制')
+    // 页面上只有缩写，选不到全文：有浏览器链接时引导去那里看完整哈希
+    else toast(url ? '复制失败，可以点「在区块浏览器查看」看完整哈希' : '复制失败，请再试一次', 'danger')
+  }
+
   return (
     <QueryView query={commission} rows={4} empty={
         <Rows>
@@ -224,30 +233,51 @@ function RecordsList() {
         return (
           <>
             <Rows className={css.rec}>
-              {shown.map((r) => (
-                <Row
-                  key={r.key}
-                  icon={r.icon}
-                  iconStyle={r.icon === 'gift' && r.tone !== 'void' ? 'round' : 'roundMuted'}
-                  title={
-                    <>
-                      <b>{r.title}</b>
-                      {r.ref && <span className={css.ref}>{r.ref}</span>}
-                    </>
-                  }
-                  sub={r.meta}
-                  end={
-                    <span className={css.oa}>
-                      <Num className={r.tone === 'plus' ? css.plus : r.tone === 'void' ? css.void : undefined}>
-                        {r.amount > 0 ? '+' : '−'}
-                        {formatMoney(Math.abs(r.amount))}
-                      </Num>
-                      <small>{r.status}</small>
+              {shown.map((r) => {
+                const txHash = r.txHash
+                const sub = txHash ? (
+                  <>
+                    {r.meta}
+                    <span className={css.tx}>
+                      交易哈希 <code className={css.txCode} title={txHash}>{shortHash(txHash)}</code>
+                      <button type="button" className={css.txAct} aria-label="复制交易哈希" onClick={() => void copyHash(txHash, r.txUrl)}>
+                        复制
+                      </button>
+                      {r.txUrl && (
+                        <a className={css.txAct} href={r.txUrl} target="_blank" rel="noopener noreferrer" aria-label="在区块浏览器查看（新窗口打开）">
+                          在区块浏览器查看
+                        </a>
+                      )}
                     </span>
-                  }
-                  className={r.tone === 'void' ? css.voidRow : undefined}
-                />
-              ))}
+                  </>
+                ) : (
+                  r.meta
+                )
+                return (
+                  <Row
+                    key={r.key}
+                    icon={r.icon}
+                    iconStyle={r.icon === 'gift' && r.tone !== 'void' ? 'round' : 'roundMuted'}
+                    title={
+                      <>
+                        <b>{r.title}</b>
+                        {r.ref && <span className={css.ref}>{r.ref}</span>}
+                      </>
+                    }
+                    sub={sub}
+                    end={
+                      <span className={css.oa}>
+                        <Num className={r.tone === 'plus' ? css.plus : r.tone === 'void' ? css.void : undefined}>
+                          {r.amount > 0 ? '+' : '−'}
+                          {formatMoney(Math.abs(r.amount))}
+                        </Num>
+                        <small>{r.status}</small>
+                      </span>
+                    }
+                    className={r.tone === 'void' ? css.voidRow : undefined}
+                  />
+                )
+              })}
             </Rows>
             {!all && rows.length > RECORDS_PREVIEW && (
               <button type="button" className={css.more} onClick={() => setAll(true)}>

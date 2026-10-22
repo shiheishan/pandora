@@ -106,6 +106,16 @@
   background: var(--surface-2);
 }
 
+/* 不可选的一项：置灰、不跟随悬停 */
+.choiceOff {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.choiceOff:hover {
+  background: var(--surface);
+}
+
 .choice[aria-checked='true'] {
   background: var(--surface-2);
   box-shadow: var(--lift), 0 0 0 1.5px var(--brand-line);

@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/aegispanel/aegis/internal/module/promo/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
@@ -228,43 +227,6 @@ func (s *Service) Capture(ctx context.Context, orderID uuid.UUID) error {
 // Codes 按券 ID 批量取券码。
 func (s *Service) Codes(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
 	return s.repo.CouponCodes(ctx, ids)
-}
-
-// Preview 门户试算套餐应付金额。
-func (s *Service) Preview(ctx context.Context, userID uuid.UUID, code string, item PreviewItem) (Preview, error) {
-	if c := NormalizeCode(code); c != "" && !validCode(c) {
-		return Preview{}, ErrCouponNotFound
-	}
-	cat, err := s.needCatalog()
-	if err != nil {
-		return Preview{}, err
-	}
-
-	amt, err := cat.PriceSubtotal(ctx, item.PlanID, item.PriceID)
-	if err != nil {
-		return Preview{}, err
-	}
-
-	planID := item.PlanID
-	applied, err := s.Evaluate(ctx, code, Target{
-		UserID:   userID,
-		PlanID:   &planID,
-		Subtotal: amt,
-	})
-	if err != nil {
-		return Preview{}, err
-	}
-
-	discount := decimal.Zero
-	if applied != nil {
-		discount = applied.Discount
-	}
-	return Preview{
-		Subtotal: amt,
-		Discount: discount,
-		Payable:  amt.Sub(discount),
-		Applied:  applied,
-	}, nil
 }
 
 func normalizeReleaseReason(reason string) *string {

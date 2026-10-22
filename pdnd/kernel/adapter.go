@@ -42,6 +42,10 @@ type AdapterHooks struct {
 	// 一条连接失败不是服务级故障，所以这里是观测出口而不是错误返回：
 	// 实现方自己决定按什么级别记、采样多少、要不要限流。
 	OnConnError func(ConnError)
+
+	// Certs 给 cert_mode=acme 的入站按标识符取证书（pdnd/certs.Manager）。可以为 nil：
+	// 那时 acme 入站起不来（报 cert_pending），file 入站不受影响。
+	Certs core.CertSource
 }
 
 // ConnError 是一条连接的失败现场。

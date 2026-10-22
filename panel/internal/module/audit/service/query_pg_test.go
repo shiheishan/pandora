@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"strings"
 	"sync"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/module/audit/repo"
+	"github.com/aegispanel/aegis/internal/pkg/authn"
+	"github.com/aegispanel/aegis/internal/pkg/reqid"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 	"github.com/google/uuid"
 )
@@ -112,6 +116,7 @@ func TestListFilterAndPagination(t *testing.T) {
 		if i == 4 {
 			e.ResourceType = "user"
 			e.ResourceID = &resID
+			e.Data = map[string]any{"reason": "核对", "amount": "12.50"}
 		}
 		if err := svc.Write(ctx, e); err != nil {
 			t.Fatal(err)
@@ -144,6 +149,11 @@ func TestListFilterAndPagination(t *testing.T) {
 	lastWritten := writeOrder[len(writeOrder)-1]
 	if rows[0].Action != lastWritten {
 		t.Fatalf("first row action %q want %q", rows[0].Action, lastWritten)
+	}
+	// 列表带整份 data（展开一行看细节）
+	var data map[string]any
+	if err := json.Unmarshal(rows[0].Data, &data); err != nil || data["reason"] != "核对" || data["amount"] != "12.50" {
+		t.Fatalf("data %s err %v", rows[0].Data, err)
 	}
 
 	byRes, _, err := svc.List(ctx, Filter{Query: resID.String()}, Page{Limit: 10})
@@ -240,6 +250,101 @@ func TestActorDirectory(t *testing.T) {
 	byMail, _, err := svc.List(ctx, Filter{ActionPrefix: prefix, Query: "alice@"}, Page{Limit: 10})
 	if err != nil || len(byMail) != 1 {
 		t.Fatalf("query alice@ len=%d", len(byMail))
+	}
+}
+
+func TestListQueryMatchesUserAsResource(t *testing.T) {
+	d := testkit.DB(t)
+	ctx := testkit.TxCtx(t, d)
+	svc := mustService(t, repo.New(d))
+
+	kim := uuid.New()
+	admin := uuid.New()
+	fake := &fakeActorDir{emails: map[uuid.UUID]string{
+		kim:   "kim@example.test",
+		admin: "ops@example.test",
+	}}
+	svc.UseActorDirectory(fake)
+
+	p := uniqueAction(t)
+
+	if err := svc.Write(reqCtx(ctx, kim, authn.AudiencePublic), Event{Action: p + ".self"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(reqCtx(ctx, admin, authn.AudienceAdmin), Event{
+		Action: p + ".adjust", ResourceType: "user", ResourceID: &kim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	anonCtx := reqmeta.With(reqid.With(ctx, reqid.New()), reqmeta.Meta{IP: "203.0.113.9", UserAgent: "ua-test/1"})
+	if err := svc.Write(anonCtx, Event{
+		Action: p + ".login_failed", Outcome: OutcomeFailure, ResourceType: "user", ResourceID: &kim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(reqCtx(ctx, admin, authn.AudienceAdmin), Event{
+		Action: p + ".order", ResourceType: "order", ResourceID: &kim,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Write(reqCtx(ctx, admin, authn.AudienceAdmin), Event{Action: p + ".other"}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantKim := map[string]bool{
+		p + ".self":         true,
+		p + ".adjust":       true,
+		p + ".login_failed": true,
+	}
+	rowsKim, _, err := svc.List(ctx, Filter{ActionPrefix: p, Query: "kim@example.test"}, Page{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsKim) != len(wantKim) {
+		t.Fatalf("kim query len %d want %d", len(rowsKim), len(wantKim))
+	}
+	for _, r := range rowsKim {
+		if !wantKim[r.Action] {
+			t.Fatalf("kim query unexpected action %q", r.Action)
+		}
+	}
+
+	// 整串是用户 id：他自己做的、对象是他的，外加对象 id 恰好等于它的（存量口径），不靠邮箱包含匹配
+	wantID := map[string]bool{
+		p + ".self":         true,
+		p + ".adjust":       true,
+		p + ".login_failed": true,
+		p + ".order":        true,
+	}
+	rowsID, _, err := svc.List(ctx, Filter{ActionPrefix: p, Query: kim.String()}, Page{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsID) != len(wantID) {
+		t.Fatalf("id query len %d want %d", len(rowsID), len(wantID))
+	}
+	for _, r := range rowsID {
+		if !wantID[r.Action] {
+			t.Fatalf("id query unexpected action %q", r.Action)
+		}
+	}
+
+	wantOps := map[string]bool{
+		p + ".adjust": true,
+		p + ".order":  true,
+		p + ".other":  true,
+	}
+	rowsOps, _, err := svc.List(ctx, Filter{ActionPrefix: p, Query: "ops@example.test"}, Page{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsOps) != len(wantOps) {
+		t.Fatalf("ops query len %d want %d", len(rowsOps), len(wantOps))
+	}
+	for _, r := range rowsOps {
+		if !wantOps[r.Action] {
+			t.Fatalf("ops query unexpected action %q", r.Action)
+		}
 	}
 }
 

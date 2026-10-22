@@ -18,6 +18,10 @@ const certPathHint = "绝对路径，放在 " + nodeCertificateDir + " 下，例
 const keyPathHint = "绝对路径，放在 " + nodeCertificateDir + " 下，例如 " +
 	nodeCertificateDir + "example.com/privkey.pem。"
 
+const certModeHint = "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。" +
+	"证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。" +
+	"选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。"
+
 // withCertHints 给带证书的协议补上 cert_path / key_path 的说明。
 func withCertHints(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in)+2)
@@ -26,6 +30,13 @@ func withCertHints(in map[string]string) map[string]string {
 	}
 	out["cert_path"] = certPathHint
 	out["key_path"] = keyPathHint
+	return out
+}
+
+// withCertModeHints 在 withCertHints 之上再补「证书来源」的说明，给能选自动申请的 8 个协议（vless / vmess 不能选）。
+func withCertModeHints(in map[string]string) map[string]string {
+	out := withCertHints(in)
+	out["cert_mode"] = certModeHint
 	return out
 }
 

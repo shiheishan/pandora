@@ -78,10 +78,9 @@ func (s *Service) Switches(ctx context.Context) ([]Switch, error) {
 	out := make([]Switch, 0, len(rows))
 	for _, sw := range rows {
 		out = append(out, Switch{
-			Code:      sw.Code,
-			Enabled:   sw.Enabled,
-			Essential: sw.Essential,
-			Reason:    sw.Reason,
+			Code:    sw.Code,
+			Enabled: sw.Enabled,
+			Reason:  sw.Reason,
 		})
 	}
 	return out, nil
@@ -100,9 +99,6 @@ func (s *Service) SetSwitch(ctx context.Context, code string, enabled bool, reas
 		}
 		if !ok {
 			return errs.New(errs.NotFound)
-		}
-		if sw.Essential && !enabled {
-			return errs.Newf(errs.Conflict, "开关 "+code+" 不允许该操作：核心开关不能关闭")
 		}
 		if !enabled && reason == "" {
 			return errs.Newf(errs.Conflict, "开关 "+code+" 不允许该操作：关闭开关必须填写原因")
@@ -127,6 +123,10 @@ func (s *Service) SetSwitch(ctx context.Context, code string, enabled bool, reas
 			s.publishSwitchChange(ctx)
 		})
 		s.switchChanged(ctx, code, enabled)
+		// 注册总闸算进门户首页的注册方式
+		if code == SwitchAuthRegistration && sw.Enabled != enabled {
+			s.homeChanged(ctx)
+		}
 		return nil
 	})
 }

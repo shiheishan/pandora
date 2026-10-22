@@ -193,10 +193,13 @@ func TestMyCommissionShape(t *testing.T) {
 		Summary: service.Summary{MinWithdraw: decimal.RequireFromString("100"), Scope: "every_order", RatePercent: 10},
 		Entries: []service.EntryView{{
 			Amount: decimal.RequireFromString("12.34"), Base: decimal.RequireFromString("123.45"), RateBP: 1000,
-			Status: "pending", FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "al***@x.test",
+			Status: "pending", UnderReview: true, FrozenUntil: now, CreatedAt: now, OrderNo: "N1", From: "al***@x.test",
 		}},
-		Withdrawals: []service.WithdrawalView{},
-		Transfers:   []service.TransferView{},
+		Withdrawals: []service.WithdrawalView{{
+			ID: uuid.New(), Amount: decimal.RequireFromString("10"), Status: "paid", Method: "usdt_trc20",
+			TxHash: strings.Repeat("ab", 32), RequestedAt: now,
+		}},
+		Transfers: []service.TransferView{},
 	}}
 	w := do(newEngine(f, false, nil), http.MethodGet, "/v1/me/commission", "")
 	if w.Code != http.StatusOK {
@@ -205,7 +208,7 @@ func TestMyCommissionShape(t *testing.T) {
 	var resp struct {
 		Summary     map[string]any   `json:"summary"`
 		Entries     []map[string]any `json:"entries"`
-		Withdrawals json.RawMessage  `json:"withdrawals"`
+		Withdrawals []map[string]any `json:"withdrawals"`
 		Transfers   json.RawMessage  `json:"transfers"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -217,8 +220,14 @@ func TestMyCommissionShape(t *testing.T) {
 	if resp.Entries[0]["amount"] != float64(1234) || resp.Entries[0]["base"] != float64(12345) || resp.Entries[0]["rate_percent"] != float64(10) {
 		t.Fatalf("entry %v", resp.Entries[0])
 	}
-	if string(resp.Withdrawals) != "[]" || string(resp.Transfers) != "[]" {
-		t.Fatalf("空列表应为 []：%s %s", resp.Withdrawals, resp.Transfers)
+	if resp.Entries[0]["under_review"] != true {
+		t.Fatalf("under_review 应为 true: %v", resp.Entries[0])
+	}
+	if len(resp.Withdrawals) != 1 || resp.Withdrawals[0]["tx_hash"] != strings.Repeat("ab", 32) {
+		t.Fatalf("withdrawal tx_hash 不对: %v", resp.Withdrawals)
+	}
+	if string(resp.Transfers) != "[]" {
+		t.Fatalf("空列表应为 []：%s", resp.Transfers)
 	}
 }
 

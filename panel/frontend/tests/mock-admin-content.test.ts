@@ -1,7 +1,8 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { announcementsResponse, annSaved, pageArchived, pageResponse, pageSaved, pagesResponse, siteSettingsSchema, slotSaved, slotsResponse, themesResponse } from '../src/admin/screens/content/schemas'
+import { announcementsResponse, annSaved, homeSettingsSchema, pageArchived, pageResponse, pageSaved, pagesResponse, siteSettingsSchema, slotSaved, slotsResponse, themesResponse } from '../src/admin/screens/content/schemas'
+import { darkBrandTokens } from '../src/styles/brand-palette'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin content', () => {
@@ -55,10 +56,11 @@ describe('mock api · admin content', () => {
     const detail = pageResponse.parse(await (await call('GET', `/v1/content-pages/${published.id}`)).json()).page
     expect(detail.body).toContain('礼品卡')
     expect(detail.created_by_name).toBeUndefined()
-    const body = { slug: 'gift-card', kind: 'kb_article', category: '账单与支付', title: '如何使用礼品卡', summary: '', body: `${detail.body}\n\n补充一句。`, locale: 'zh-CN', target_platforms: [], min_client_version: '', max_client_version: '', target_plan_ids: [], visibility: 'authenticated', status: 'published', expected_latest_version: 1 }
+    const body = { slug: 'gift-card', kind: 'kb_article', category: '账单与支付', title: '如何使用礼品卡', summary: '', body: `${detail.body}\n\n补充一句。`, target_plan_ids: [], visibility: 'authenticated', status: 'published', expected_latest_version: 1 }
     expect(await (await call('POST', '/v1/content-pages', body, 'k-1')).json()).toMatchObject({ error: { message: '内容已产生新版本，请刷新后重试' } })
     expect(await (await call('POST', '/v1/content-pages', { ...body, slug: 'Bad Slug', body: '短', expected_latest_version: 0 }, 'k-2')).json()).toMatchObject({ error: { fields: { slug: expect.any(String), body: expect.any(String) } } })
     expect((await call('POST', '/v1/content-pages', { ...body, review_due_at: '' }, 'k-3')).status).toBe(400)
+    expect((await call('POST', '/v1/content-pages', { ...body, locale: 'zh-CN' }, 'k-3b')).status).toBe(400)
     const saved = await call('POST', '/v1/content-pages', { ...body, expected_latest_version: 2 }, 'k-4')
     expect(saved.status).toBe(201)
     expect(pageSaved.parse(await saved.json()).page).toMatchObject({ version: 3, status: 'published' })
@@ -80,20 +82,80 @@ describe('mock api · admin content', () => {
     expect(themes[0]).toMatchObject({ code: 'paper', is_active: true })
     expect(themes[0]).not.toHaveProperty('custom_css')
     expect(Object.keys(themes[0]!.tokens.light)).toHaveLength(48)
-    expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots).toHaveLength(7)
+    const nightSea = themes.find((t) => t.code === 'night-sea')!
+    expect(nightSea.tokens.dark['--brand']).toBe(darkBrandTokens('#2b6cb9')!['--brand'])
+    expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots).toHaveLength(5)
     const dirty = slotSaved.parse(await (await call('POST', '/v1/slots/portal.home.banner', { content: '<b onclick="x()">欢迎</b><script>alert(1)</script>', enabled: true }, 's-1')).json())
     expect(dirty.dropped).toHaveLength(2)
     expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots.find((s) => s.key === 'portal.home.banner')).toMatchObject({ content: '<b>欢迎</b>', enabled: true })
     expect(slotSaved.parse(await (await call('POST', '/v1/slots/portal.home.banner', { content: '', enabled: false }, 's-2')).json()).dropped).toBeNull()
     expect(await (await call('POST', '/v1/slots/portal.nope', { content: '', enabled: false }, 's-3')).json()).toMatchObject({ error: { fields: { key: '未知的插槽位' } } })
-    expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json())).toEqual({ name: 'Pandora', timezone: 'Asia/Shanghai' })
+    expect(await (await call('POST', '/v1/slots/portal.footer', { content: '', enabled: false }, 's-3b')).json()).toMatchObject({ error: { fields: { key: '未知的插槽位' } } })
+    expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json())).toEqual({ name: 'Pandora', timezone: 'Asia/Shanghai', seo_keywords: '', seo_description: '', allow_indexing: false, url: '', url_fallback: 'https://panel.example.test' })
     for (const timezone of ['', 'Local', 'Mars/Base']) expect(await (await call('POST', '/v1/settings/site', { timezone })).json()).toMatchObject({ error: { fields: { timezone: '不是有效的时区' } } })
-    expect(await (await call('POST', '/v1/settings/site', { timezone: 'Asia/Tokyo' })).json()).toEqual({ name: 'Pandora', timezone: 'Asia/Tokyo' })
+    expect(await (await call('POST', '/v1/settings/site', { timezone: 'Asia/Tokyo' })).json()).toEqual({ name: 'Pandora', timezone: 'Asia/Tokyo', seo_keywords: '', seo_description: '', allow_indexing: false, url: '', url_fallback: 'https://panel.example.test' })
     expect(await (await call('POST', '/v1/settings/site', { name: '  ' })).json()).toMatchObject({ error: { fields: { name: '站点名必填' } } })
     expect(await (await call('POST', '/v1/settings/site', { name: '字'.repeat(41) })).json()).toMatchObject({ error: { fields: { name: '站点名最多 40 个字' } } })
-    expect(await (await call('POST', '/v1/settings/site', { name: ' 夜海加速 ' })).json()).toEqual({ name: '夜海加速', timezone: 'Asia/Tokyo' })
+    expect(await (await call('POST', '/v1/settings/site', { name: ' 夜海加速 ' })).json()).toEqual({ name: '夜海加速', timezone: 'Asia/Tokyo', seo_keywords: '', seo_description: '', allow_indexing: false, url: '', url_fallback: 'https://panel.example.test' })
     expect((await call('POST', '/v1/settings/site', { name: 'x', extra: 1 })).status).toBe(400)
+    expect(await (await call('POST', '/v1/settings/site', { seo_keywords: '词'.repeat(201) })).json()).toMatchObject({ error: { fields: { seo_keywords: '关键词最多 200 个字' } } })
+    expect(await (await call('POST', '/v1/settings/site', { seo_keywords: 'a\nb' })).json()).toMatchObject({ error: { fields: { seo_keywords: '关键词不能包含换行或控制字符' } } })
+    expect(await (await call('POST', '/v1/settings/site', { seo_description: '述'.repeat(161) })).json()).toMatchObject({ error: { fields: { seo_description: '站点描述最多 160 个字' } } })
+    expect(await (await call('POST', '/v1/settings/site', { seo_keywords: ' 加速, 节点 ', allow_indexing: true })).json()).toMatchObject({ name: '夜海加速', seo_keywords: '加速, 节点', allow_indexing: true })
+    // 主域名：规整（小写、去默认端口与末尾 /）、只收 https、不带路径与查询串；连通核对不过（假后端：.invalid 结尾）整次不写
+    expect(await (await call('POST', '/v1/settings/site', { url: ' HTTPS://New.Example.TEST:443/ ' })).json()).toMatchObject({ url: 'https://new.example.test', url_fallback: 'https://panel.example.test' })
+    const urlFormat = '请填写完整的地址，如 https://panel.example.com，不带路径和查询串'
+    for (const url of ['new.example.test', 'https://new.example.test/sub', 'https://new.example.test/?a=1', 'ftp://new.example.test', 'https://u:p@new.example.test'])
+      expect(await (await call('POST', '/v1/settings/site', { url })).json()).toMatchObject({ error: { fields: { url: urlFormat } } })
+    expect(await (await call('POST', '/v1/settings/site', { url: 'http://new.example.test' })).json()).toMatchObject({ error: { fields: { url: '主域名必须使用 https' } } })
+    expect(await (await call('POST', '/v1/settings/site', { url: 'https://typo.invalid', name: '不该写进去' })).json()).toMatchObject({ error: { fields: { url: '这个地址打不开本面板' } } })
+    expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json())).toMatchObject({ name: '夜海加速', url: 'https://new.example.test' })
+    expect(await (await call('POST', '/v1/settings/site', { url: '' })).json()).toMatchObject({ url: '' })
+    await call('POST', '/v1/settings/site', { seo_keywords: '', allow_indexing: false })
     await call('POST', '/v1/settings/site', { name: 'Pandora', timezone: 'Asia/Shanghai' })
+  })
+
+  it('saves home settings with the same rules as the backend', async () => {
+    expect(homeSettingsSchema.parse(await (await call('GET', '/v1/settings/home')).json())).toEqual({ enabled: true, intro: '', faq: [] })
+
+    expect((await (await call('POST', '/v1/settings/home', { intro: '字'.repeat(501) })).json()).error.fields.intro).toBe('介绍最多 500 个字')
+    expect((await (await call('POST', '/v1/settings/home', { intro: '你\u0007好' })).json()).error.fields.intro).toBe('介绍不能包含控制字符')
+    expect((await (await call('POST', '/v1/settings/home', { faq: Array.from({ length: 21 }, (_, i) => ({ q: `问题${i}`, a: '回答' })) })).json()).error.fields.faq).toBe('常见问题最多 20 条')
+
+    const twoBad = await (await call('POST', '/v1/settings/home', { faq: [{ q: '  ', a: '可以' }, { q: '能试用吗？', a: '' }] })).json()
+    expect(twoBad.error.fields['faq.0.q']).toBe('问题必填')
+    expect(twoBad.error.fields['faq.1.a']).toBe('回答必填')
+
+    expect((await (await call('POST', '/v1/settings/home', { faq: [{ q: '第一行\n第二行', a: '可以' }] })).json()).error.fields['faq.0.q']).toBe('问题不能包含换行或控制字符')
+
+    expect((await call('POST', '/v1/settings/home', { faq: [{ q: '能试用吗？', a: '可以', x: 1 }] })).status).toBe(400)
+    expect((await call('POST', '/v1/settings/home', { extra: 1 })).status).toBe(400)
+
+    expect(homeSettingsSchema.parse(await (await call('GET', '/v1/settings/home')).json())).toEqual({ enabled: true, intro: '', faq: [] })
+
+    expect(
+      homeSettingsSchema.parse(
+        await (
+          await call('POST', '/v1/settings/home', {
+            enabled: false,
+            intro: ' 欢迎光临\r\n虚构加速 ',
+            faq: [{ q: ' 能试用吗？ ', a: ' 可以\r\n先注册 ' }],
+          })
+        ).json(),
+      ),
+    ).toEqual({
+      enabled: false,
+      intro: '欢迎光临\n虚构加速',
+      faq: [{ q: '能试用吗？', a: '可以\n先注册' }],
+    })
+
+    expect(homeSettingsSchema.parse(await (await call('POST', '/v1/settings/home', { enabled: true })).json())).toEqual({
+      enabled: true,
+      intro: '欢迎光临\n虚构加速',
+      faq: [{ q: '能试用吗？', a: '可以\n先注册' }],
+    })
+
+    await call('POST', '/v1/settings/home', { intro: '', faq: [] })
   })
 
   it('creates, edits, switches and deletes themes with the Go rules', async () => {
@@ -101,8 +163,8 @@ describe('mock api · admin content', () => {
     const paper = (await list())[0]!
     const body = { code: 'autumn', name: '秋', create: true, tokens: paper.tokens, branding: { tagline: '稳' } }
     // 字段级 422：令牌逐键、品牌逐键，一次回齐
-    const bad = await (await call('POST', '/v1/themes', { ...body, name: '', tokens: { light: { '--bg': 'a{b' } }, branding: { site_name: '秋叶加速', logo: 'https://x.test/a.png' } }, 't-1')).json()
-    expect(bad).toMatchObject({ error: { code: 'validation_failed', fields: { name: expect.any(String), 'tokens.light.--bg': expect.any(String), 'branding.site_name': expect.any(String), 'branding.logo': expect.any(String) } } })
+    const bad = await (await call('POST', '/v1/themes', { ...body, name: '', tokens: { light: { '--bg': 'a{b' } }, branding: { site_name: '秋叶加速', logo: 'data:image/png;base64,AAAA' } }, 't-1')).json()
+    expect(bad).toMatchObject({ error: { code: 'validation_failed', fields: { name: expect.any(String), 'tokens.light.--bg': expect.any(String), 'branding.site_name': expect.any(String), branding: expect.stringContaining('logo') } } })
     expect((await call('POST', '/v1/themes', { ...body, custom_css: 'body{}' }, 't-2')).status).toBe(400)
     expect((await call('POST', '/v1/themes', { ...body, extra: 1 }, 't-3')).status).toBe(400)
     expect((await call('POST', '/v1/themes', body)).status).toBe(400) // 没带幂等键

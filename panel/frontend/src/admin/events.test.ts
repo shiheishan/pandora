@@ -27,23 +27,31 @@ describe('describeEvent', () => {
       tab: 'orders',
       path: `/billing/orders/${ID}`,
       unread: true,
+      lookup: { table: 'orders', id: ID },
     })
     expect(item.at).toEqual(at())
   })
 
   it('orders DELETE：退回订单列表路径', () => {
     const item = describeEvent(ev('orders.changed', { table: 'orders', op: 'DELETE', id: ID }), 2, at())
-    expect(item).toMatchObject({ title: '订单已删除', path: '/billing/orders' })
+    expect(item).toMatchObject({ title: '订单已删除', path: '/billing/orders', lookup: null })
   })
 
   it('orders 没有 id：列表路径，meta 只剩区域名', () => {
     const item = describeEvent(ev('orders.changed', { table: 'orders', op: 'UPDATE' }), 3, at())
-    expect(item).toMatchObject({ title: '订单有变化', meta: '订单与收款', path: '/billing/orders' })
+    expect(item).toMatchObject({ title: '订单有变化', meta: '订单与收款', path: '/billing/orders', lookup: null })
   })
 
   it('subscriptions：详情定位不到用户，恒回 /users/list', () => {
     const item = describeEvent(ev('subscriptions.changed', { table: 'subscriptions', op: 'INSERT', id: ID }), 4, at())
-    expect(item).toMatchObject({ title: '新订阅', meta: `用户 · ${ID.slice(0, 8)}`, tab: 'subscriptions', tone: 'info', path: '/users/list' })
+    expect(item).toMatchObject({
+      title: '新订阅',
+      meta: `用户 · ${ID.slice(0, 8)}`,
+      tab: 'subscriptions',
+      tone: 'info',
+      path: '/users/list',
+      lookup: null,
+    })
   })
 
   it('tickets.changed tickets 表：详情页；ticket_messages 表：恒回 /tickets，标题固定', () => {
@@ -53,14 +61,15 @@ describe('describeEvent', () => {
       tab: 'tickets',
       tone: 'danger',
       path: `/tickets/${ID}`,
+      lookup: { table: 'tickets', id: ID },
     })
     const msg = describeEvent(ev('tickets.changed', { table: 'ticket_messages', op: 'INSERT', id: ID, ticket_id: ID }), 6, at())
-    expect(msg).toMatchObject({ title: '工单有新消息', path: '/tickets' })
+    expect(msg).toMatchObject({ title: '工单有新消息', path: '/tickets', lookup: null })
   })
 
   it('tickets.changed 缺 table：按 tickets 行处理', () => {
     const item = describeEvent(ev('tickets.changed', { op: 'UPDATE', id: ID }), 7, at())
-    expect(item).toMatchObject({ title: '工单有更新', path: `/tickets/${ID}` })
+    expect(item).toMatchObject({ title: '工单有更新', path: `/tickets/${ID}`, lookup: { table: 'tickets', id: ID } })
   })
 
   it('ticket.updated：短 id 取 ticket_id，路径用 ticket_id；没有 ticket_id 时退回列表', () => {
@@ -68,8 +77,9 @@ describe('describeEvent', () => {
       title: '工单有新回复',
       meta: `工单 · ${ID.slice(0, 8)}`,
       path: `/tickets/${ID}`,
+      lookup: null,
     })
-    expect(describeEvent(ev('ticket.updated', {}), 9, at())).toMatchObject({ path: '/tickets', meta: '工单' })
+    expect(describeEvent(ev('ticket.updated', {}), 9, at())).toMatchObject({ path: '/tickets', meta: '工单', lookup: null })
   })
 
   it('nodes.changed servers 表与 nodes 表走不同路径', () => {
@@ -78,10 +88,12 @@ describe('describeEvent', () => {
       tab: 'nodes',
       tone: 'warn',
       path: `/nodes/servers/${ID}`,
+      lookup: { table: 'servers', id: ID },
     })
     expect(describeEvent(ev('nodes.changed', { table: 'nodes', op: 'INSERT', id: ID }), 11, at())).toMatchObject({
       title: '新节点',
       path: `/nodes/nodes/${ID}`,
+      lookup: { table: 'nodes', id: ID },
     })
   })
 
@@ -92,9 +104,10 @@ describe('describeEvent', () => {
       tab: 'other',
       tone: 'info',
       path: `/plans/${ID}`,
+      lookup: { table: 'plans', id: ID },
     })
     const price = describeEvent(ev('plans.changed', { table: 'prices', op: 'INSERT', id: ID }), 13, at())
-    expect(price).toMatchObject({ title: '套餐有变化', path: '/plans' })
+    expect(price).toMatchObject({ title: '套餐有变化', path: '/plans', lookup: null })
   })
 
   it('announcements：恒回 /content/announce', () => {
@@ -102,6 +115,7 @@ describe('describeEvent', () => {
       title: '公告已更新',
       meta: `内容与外观 · ${ID.slice(0, 8)}`,
       path: '/content/announce',
+      lookup: null,
     })
   })
 
@@ -111,12 +125,14 @@ describe('describeEvent', () => {
       tone: 'warn',
       meta: '安全与运维 · billing.checkout',
       path: '/security/switches',
+      lookup: null,
     })
     expect(describeEvent(ev('switches.changed', { code: 'admin.writes', enabled: true }), 16, at())).toMatchObject({
       title: '降级开关已恢复',
       tone: 'ok',
+      lookup: null,
     })
-    expect(describeEvent(ev('switches.changed', { code: 'x' }), 17, at())).toMatchObject({ title: '降级开关有变化', tone: 'warn' })
+    expect(describeEvent(ev('switches.changed', { code: 'x' }), 17, at())).toMatchObject({ title: '降级开关有变化', tone: 'warn', lookup: null })
   })
 
   it('未知 topic 与非 JSON 数据：标题「数据有变化」、path null、meta 空串', () => {
@@ -126,9 +142,10 @@ describe('describeEvent', () => {
       tab: 'other',
       tone: 'info',
       path: null,
+      lookup: null,
     })
     const bad = describeEvent({ event: 'orders.changed', data: 'not json' }, 19, at())
-    expect(bad).toMatchObject({ title: '订单有变化', meta: '订单与收款', path: '/billing/orders' })
+    expect(bad).toMatchObject({ title: '订单有变化', meta: '订单与收款', path: '/billing/orders', lookup: null })
   })
 })
 
@@ -142,6 +159,7 @@ describe('pushEvent / eventsInTab', () => {
     tab,
     path: null,
     unread: true,
+    lookup: null,
   })
 
   it('新的放最前，截到 MAX_EVENTS', () => {
@@ -170,6 +188,7 @@ describe('markRead / markAllRead / unreadCount', () => {
     tab: 'other',
     path: null,
     unread,
+    lookup: null,
   })
 
   it('markRead 只改指定的一条', () => {

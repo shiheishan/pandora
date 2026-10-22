@@ -130,12 +130,17 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
       />
       <div className={signupCss.dpTwoCols}>
         <Input
-          label="宽容值（0–5，仅「超限停止下发」生效）"
+          label="宽容值（0–5）"
           mono
           inputMode="numeric"
           value={grace}
           disabled={busy || !strict}
           error={error ?? undefined}
+          hint={
+            strict
+              ? '在线设备超过「上限 + 宽容值」才算超限、停止下发。比如上限 3、宽容值 1，同时在线第 5 台才停；用来容忍换网络时旧连接还没断的那一会儿。'
+              : '只对「超限停止下发」生效；「拒绝新设备」由节点按上限直接拒，不看宽容值。'
+          }
           onChange={(e) => {
             setGrace(e.target.value)
             setError(null)
@@ -149,8 +154,8 @@ function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { m
           onChange={(e) => setWin(Number(e.target.value) as DeviceWindow)}
           hint={
             strict
-              ? '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久；超限停止下发的订阅，大约要一个窗口后才恢复。'
-              : '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久。'
+              ? '多少分钟内出现过的不同来源 IP，算作同时在线的不同设备。窗口越长，换了网络的旧 IP 被多算得越久；超限停止下发的订阅，大约要一个窗口后才恢复。'
+              : '多少分钟内出现过的不同来源 IP，算作同时在线的不同设备。窗口越长，换了网络的旧 IP 被多算得越久。'
           }
         />
       </div>
@@ -214,7 +219,20 @@ function HotList({ rows, now }: { rows: OnlineDevice[]; now: Date }) {
       header: '状态',
       width: '92px',
       // exceeded 是后端按「上限 + 宽容值」算的；超了上限但还在宽容值内的单独标出来
-      render: (d) => (d.exceeded ? <Tag tone="danger">已超限</Tag> : d.online > d.limit ? <Tag tone="warn">宽容内</Tag> : <Tag tone="neutral">已满</Tag>),
+      render: (d) =>
+        d.exceeded ? (
+          <Tag tone="danger" title="在线数超过「上限 + 宽容值」">
+            已超限
+          </Tag>
+        ) : d.online > d.limit ? (
+          <Tag tone="warn" title="在线数超过了上限，但没超过「上限 + 宽容值」，暂不处理">
+            宽容内
+          </Tag>
+        ) : (
+          <Tag tone="neutral" title="在线数到了上限，再多一台就超出">
+            已满
+          </Tag>
+        ),
     },
     {
       key: 'seen',

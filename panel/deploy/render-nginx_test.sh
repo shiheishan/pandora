@@ -88,6 +88,35 @@ grep -Fq 'proxy_read_timeout 1h;' <<<"$adm_events"
 
 assert_proxy_headers_per_location "$OUT"
 
+# nginx 自己产生的错误：API 路径回 JSON 信封（map + error_page + 命名 location），限速回 429
+count_eq() {
+  local want="$1" pat="$2"
+  [[ "$(grep -cF -- "$pat" "$OUT")" -eq "$want" ]] || { printf 'want %s x %s\n' "$want" "$pat" >&2; exit 1; }
+}
+count_eq 1 'map $uri $pandora_api {'
+count_eq 1 '~^/v1/ 1;'
+count_eq 1 "~^/$path/v1/ 1;"
+count_eq 1 'limit_req_status 429;'
+count_eq 1 'limit_conn_status 429;'
+refute -Eq '^[[:space:]]*proxy_intercept_errors' "$OUT"
+refute -Fq '@pandora_503' "$OUT"
+[[ "$(grep -cE '^[[:space:]]*types \{ \}$' "$OUT")" -eq 4 ]]
+for pair in '413 payload_too_large' '429 rate_limited' '502 service_unavailable' '504 timeout'; do
+  code="${pair%% *}"
+  name="${pair#* }"
+  count_eq 1 "error_page $code @pandora_$code;"
+  count_eq 1 "location @pandora_$code {"
+  count_eq 1 "return $code;"
+  body="$(sed -n "s/^[[:space:]]*return $code '\(.*\)';\$/\1/p" "$OUT")"
+  [[ -n "$body" && "$(printf '%s\n' "$body" | wc -l | tr -d ' ')" -eq 1 ]] || {
+    printf 'want exactly one JSON body for %s\n' "$code" >&2
+    exit 1
+  }
+  body_json="${body//\$request_id/req-test}"
+  # message 里的中文写成 \uXXXX，解出来必须全是非 ASCII 字符（不能残留字面的 \u）
+  python3 -c 'import json,sys; d=json.loads(sys.argv[1]); e=d["error"]; assert e["code"]==sys.argv[2], e; assert e["message"] and all(ord(ch) > 127 for ch in e["message"]), e; assert e["request_id"]=="req-test", e; assert set(e)=={"code","message","request_id"}, e' "$body_json" "$name"
+done
+
 refute -Fq 'UniProxy' "$OUT"
 refute -Fq '/v1/nodes/' "$OUT"
 refute -Fq '9003' "$OUT"
@@ -194,6 +223,9 @@ refute -Fq 'sub-probe/' "$TEST_DIR/sub.conf"
 [[ "$(grep -c "$path" "$TEST_DIR/sub.conf")" -eq "$(grep -c "$path" "$OUT")" ]]
 refute -Fq '__PANDORA_' "$TEST_DIR/sub.conf"
 assert_proxy_headers_per_location "$TEST_DIR/sub.conf"
+# 订阅域名的 443 也回 429：主域名一处 + sub-a 的 443 一处（sub-b 缺证书只有 80）
+[[ "$(grep -c 'limit_req_status 429;' "$TEST_DIR/sub.conf")" -eq 2 ]]
+[[ "$(grep -c 'limit_conn_status 429;' "$TEST_DIR/sub.conf")" -eq 2 ]]
 banned_words "$TEST_DIR/sub.conf"
 [[ "$(grep -c -F 'return 308 https://$host$request_uri;' "$TEST_DIR/sub.conf")" -ge 2 ]]
 

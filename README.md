@@ -2,6 +2,8 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
+**第一次搭面板，从 [上手教程](docs/quickstart.md) 开始**：买服务器、域名解析、放行端口、一条命令安装、配支付、加节点、建套餐，到测试用户买到套餐、连上节点，一步一步写好了。
+
 本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.agents/skills/verify/](.agents/skills/verify/SKILL.md)。
 
 ## 架构
@@ -133,7 +135,7 @@ panel/internal/
 
 - 仪表盘：收入、用户、订单、订阅、节点、流量、工单统计；收入调整；趋势；节点 / 用户流量排行。
 - 用户（含批量建用户、风控与 IP 归属地）、套餐、订单、优惠券、礼品卡、支付渠道、待复核佣金与提现。
-- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制。节点入站证书由节点机自己的 certbot / acme.sh 签发，面板只填路径（见 docs/node-certificates.md）。
+- 服务器与节点（gRPC 接入、一键安装命令、会话状态）、节点池、路由、在线设备与设备数限制。节点入站证书缺省由节点端自动向 Let's Encrypt 申请并续期（要节点机的 80 端口），也可以手填节点机上已有证书的路径（见 docs/node-certificates.md）。
 - 公告、知识库、主题、插件、工单、审计日志、降级开关。
 - 后台权限只分有和没有：是管理员就能做全部后台操作；会话绝对寿命 7 天、空闲 2 小时退出；管理后台路径是安装时生成的高熵串。
 
@@ -245,13 +247,15 @@ cd panel && go build ./...          # 或 make build，产物在 panel/bin/pando
 cd pdnd  && go build -o pdnd .
 ```
 
-Go 版本按各自 `go.mod` 的 go 指令（现在是 1.26.9）。更新的 Go 1.27 下 pdnd 链接失败（sing-box 用 `go:linkname` 取 x/net 的私有符号），本机工具链更新时加 `GOTOOLCHAIN=go1.26.9`。
+Go 版本按各自 `go.mod` 的 go 指令（现在是 1.26.10）。更新的 Go 1.27 下 pdnd 链接失败（sing-box 用 `go:linkname` 取 x/net 的私有符号），本机工具链更新时加 `GOTOOLCHAIN=go1.26.9`。
 
 pdnd 的 Linux x64/ARM64 发布包用 `pdnd/release/build.sh`，生成带 SHA-256 的 `manifest.json`。Ubuntu runner 的 race/vet 与双架构构建门禁见 `.github/workflows/pandora-native.yml`。Windows / macOS 交叉构建不能替代真实 Linux race。
 
 ## 部署
 
-一条命令装完。提供两种装法：裸机部署（第 1–4 节，`install.sh` 脚本托管于 systemd）与 Docker / Compose / 1Panel 部署（第 5 节）；两套方案共用同一个二进制、同一套 `PANDORA_*` 配置键与数据库迁移，根据机器条件选一种装即可。
+第一次装、想照着一步一步做的，看 [上手教程](docs/quickstart.md)；本节是参考说明。
+
+一条命令装完。只有一种装法：裸机部署，`install.sh` 把面板装成 systemd 服务，PostgreSQL、Redis、nginx 用系统包。面板要独占一台机器：系统 nginx 的 80、443 归它（80 端口的默认站点也是它的），节点 gRPC 另占 9443。不提供 Docker / Compose / 1Panel 装法；已装了 1Panel、宝塔或别的站点的机器没有合适的装法，另开一台。
 
 目标机器：Debian 12–14 / Ubuntu 22.04–26.04（x86_64 或 aarch64）、systemd、root，外加 `curl` 与 `openssl`；安装器用 apt 装好 PostgreSQL 18（PGDG 源）、发行版的 `redis-server`（要求 6.0 以上）、nginx 与 age。
 
@@ -388,6 +392,13 @@ sudo /opt/pandora/deploy/edge-tls.sh status             # 面板 HTTPS 证书
 sudo systemd-run --pipe --quiet --uid=pandora -p EnvironmentFile=/etc/pandora/secrets.env /opt/pandora/bin/pandora admin list
 ```
 
+管理员账号：
+
+- 第一个管理员在首装时建（见上文「首装会问」）；网页上没有建管理员的入口。之后再加：上面的写法把子命令换成 `admin create --email <邮箱> --password-stdin`（口令经管道给，写法同 RUNBOOK 第 2 章「管理员进不来」的重置口令）；已有账号设为管理员用 `admin grant --email <邮箱>`，撤销用 `admin revoke --email <邮箱>`。
+- 改口令：后台左下账号菜单「修改密码」，成功后这个账号的全部后台会话（含当前）退出，用新口令重新登录。管理员口令至少 12 位，同时含字母和数字。
+- 忘了口令：管理员不能走用户端的找回密码，在服务器上 `admin reset-password`（见 RUNBOOK 第 2 章），会吊销全部会话并清掉登录失败暂停。
+- 换邮箱：后台不能改自己的邮箱。用新邮箱 `admin create` 一个管理员，登录确认后再 `admin revoke` 旧账号。
+
 nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对外。模板 include 的真实来源 IP 信任表 `/etc/pandora/cloudflare-realip.conf` 不存在时，渲染器写一份**不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP` 一律不采信。站点在 Cloudflare 后面（橙色云）时，渲染后再写入 Cloudflare 的官方网段并重载；升级重新渲染不会覆盖这个文件，Cloudflare 调整网段时重跑同一条命令即可：
 
 ```bash
@@ -398,24 +409,9 @@ nginx 只反代门户与后台的 HTTP；节点 gRPC（9443）由面板直接对
 
 排障按症状查 [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)。
 
-### 5. Docker / Compose / 1Panel
-
-适用于已有 Docker / 1Panel 环境、与其他站点共用机器、或希望由外部反代统一处理证书的场景。
-支持两种 TLS 方式：由内置 Nginx 直面公网终结 TLS（方式一，放行 80/443/9443）；或由外部反代（1Panel OpenResty / Caddy 等）终结 TLS，面板仅在宿主回环 9080 承接明文反代（方式二，只放行 9443）。
-
-首装三步命令：
-```bash
-mkdir -p /opt/pandora-docker && cd /opt/pandora-docker && V=v1.2.3   # 替换为 Release 版本号
-curl -fsSLo compose.yaml https://raw.githubusercontent.com/shiheishan/pandora/$V/panel/deploy/docker/compose.yaml
-(umask 077 && docker run --rm -e PANDORA_PUBLIC_BASE_URL=https://panel.example.test ghcr.io/shiheishan/pandora-ops:$V gen-env > .env)
-docker compose up -d
-```
-
-完整配置、证书申请、前置反代覆写 X-Real-IP、1Panel 导入与定时备份说明详见 [panel/deploy/docker/README.md](panel/deploy/docker/README.md)。
-
 ### 回归测试
 
-安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。Docker 装法由 `.github/workflows/panel-docker.yml` 从源码构建镜像、真起 compose 验证。
+安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh`、`*_static_test.sh` 等：把 systemctl、apt、psql 等换成桩，不需要目标机器（个别项要 root 或 PostgreSQL，只在 CI 里跑），随 CI 的 `panel-deploy.yml` 跑。真机上的首装与原地升级用一次性测试机验证。
 
 ### 上线前检查
 
@@ -507,8 +503,9 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 ## 相关文档
 
+- [docs/quickstart.md](docs/quickstart.md)：上手教程，从买服务器到测试用户买到套餐、连上节点。
 - [docs/architecture.md](docs/architecture.md)：换栈的设计全文（技术选型、模块与表属主、鉴权与会话、钱、节点通道、任务、配置、分步计划与产品结论）。
-- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（放在节点机上的 file 模式）。
+- [docs/node-certificates.md](docs/node-certificates.md)：节点入站证书（缺省自动申请，也可以手填节点机上的证书路径）。
 - [docs/perf-test-plan.md](docs/perf-test-plan.md)：P8 第一轮性能测试范围。
 - [docs/backlog.md](docs/backlog.md)：面板待办清单；前后端接口以代码为准：后端看各模块 `panel/internal/module/*/handler`，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。

@@ -100,16 +100,26 @@ func nodeCheckRate(r decimal.Decimal) error {
 	return nil
 }
 
+// nodeEndpointNeed 是一次协议写入对地址、端口的要求：在役节点要地址，绑了服务器的节点要端口；
+// 不要求时可以留空（0 / ""），给了就照常校验。
+type nodeEndpointNeed struct{ Host, Port bool }
+
 // nodeValidateProtocol 校验一次完整的协议写入（地址、端口、类型、配置体），返回 schema 版本。raw 为空当作 {}。
-func nodeValidateProtocol(nodeType, host string, port int, raw json.RawMessage) (int, error) {
+func nodeValidateProtocol(nodeType, host string, port int, raw json.RawMessage, need nodeEndpointNeed) (int, error) {
 	host = strings.TrimSpace(host)
 	switch {
 	case host == "":
-		return 0, inventoryInvalid("server_host", "必填")
+		if need.Host {
+			return 0, inventoryInvalid("server_host", "必填：上线前要填对外地址")
+		}
 	case len(host) > nodeHostMax || !nodeValidHost(host):
 		return 0, inventoryInvalid("server_host", "必须是有效的 IP 或 ASCII 主机名")
 	}
-	if port < 1 || port > 65535 {
+	if port == 0 {
+		if need.Port {
+			return 0, inventoryInvalid("server_port", "绑定了服务器就要填端口（1 到 65535）")
+		}
+	} else if port < 1 || port > 65535 {
 		return 0, inventoryInvalid("server_port", "端口必须在 1 到 65535 之间")
 	}
 	if protocol.CanonicalType(nodeType) == "" {
@@ -119,8 +129,16 @@ func nodeValidateProtocol(nodeType, host string, port int, raw json.RawMessage) 
 		raw = json.RawMessage("{}")
 	}
 	version, fields := protocol.Validate(nodeType, port, raw)
+	// 端口留空时 protocol 包的端口范围检查不适用，绑定时再校验端口。
+	if port == 0 {
+		delete(fields, "server_port")
+	}
 	if len(fields) > 0 {
 		return 0, errs.Invalid(fields)
+	}
+	// 自动申请证书的名字取 SNI 或连接地址，要能被 Let's Encrypt 签发，保存时就拦住内网 IP、单段名字。
+	if f := protocol.ValidateCertIdentity(nodeType, host, raw); len(f) > 0 {
+		return 0, errs.Invalid(f)
 	}
 	if version <= 0 {
 		return 0, inventoryInvalid("node_type", "不支持的协议类型")

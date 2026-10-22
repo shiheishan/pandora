@@ -2,9 +2,10 @@ import { PencilEdit01Icon } from '@hugeicons-pro/core-stroke-rounded'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
+import { formatDateTime } from '../../../core/format'
 import { href, navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Input, Modal, QueryView, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Input, Modal, QueryView, Tag, TextArea, useToast } from '../../../ui'
 import {
   Callout,
   DangerRow,
@@ -18,28 +19,35 @@ import {
   type StatusTone,
 } from '../../kit'
 import {
+  meterEmptyText,
+  quickToggle,
   SERVER_STATUS,
   capacityMinimum,
   deleteServerNotice,
   nextServerStatuses,
   patchServerBody,
+  lastUpgradeDetail,
   serverDeleteBlock,
   serverDot,
   serverFormFrom,
   serverMeters,
   serverNodeLines,
   serverNotes,
+  serverNextStep,
   serverSubtitle,
+  upgradeBlockNote,
+  upgradeOffer,
   validateServerForm,
   type Meter,
   type ServerForm,
 } from './infra'
 import x from './infra.module.css'
+import { InstallModal } from './InstallModal'
 import { addressLabel, heartbeatLabel, nodeState, protocolLabel, type Tone } from './logic'
 import css from './nodes.module.css'
 import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
 import { serverSchema, type NodeRow, type Server } from './schemas'
-import { useDeleteServer, useSetServerStatus } from './serverActions'
+import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
 
 // ---------------------------------------------------------------------------
 // 占用条：CPU、内存、磁盘（样稿 .meters / .meter 三行）
@@ -253,15 +261,23 @@ function ServerDetailBody({
   back: { href: string; label: string }
 }) {
   const [editing, setEditing] = useState(false)
+  const [install, setInstall] = useState<InstallSecret | null>(null)
   const [confirm, setConfirm] = useState<'retire' | 'delete' | null>(null)
+  const token = useIssueServerToken(setInstall)
   const status = useSetServerStatus()
   const remove = useDeleteServer(() => navigate('/nodes/servers'))
+  const toggle = quickToggle(s.status)
+  const nextStep = serverNextStep(s)
+  const actionBusy = (token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)
 
   const meters = serverMeters(s)
   const allMetersNull = meters.every((m) => m.percent === null)
   const lines = serverNodeLines(nodes, s.id)
   const canRetire = nextServerStatuses(s.status).includes('retired')
   const notes = serverNotes(s)
+  const offer = upgradeOffer(s)
+  const blockNote = upgradeBlockNote(s)
+  const lastUp = lastUpgradeDetail(s)
 
   return (
     <>
@@ -276,9 +292,29 @@ function ServerDetailBody({
         }
         actions={
           s.status !== 'retired' ? (
-            <Button size="sm" icon={PencilEdit01Icon} onClick={() => setEditing(true)}>
-              编辑
-            </Button>
+            <>
+              {toggle ? (
+                <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => status.mutate({ server: s, to: toggle.to, done: toggle.done })}>
+                  {toggle.label}
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant={s.status === 'draft' && !s.enrolled ? 'primary' : 'secondary'}
+                disabled={actionBusy}
+                onClick={() => token.mutate(s)}
+              >
+                安装令牌
+              </Button>
+              {s.status === 'draft' && s.enrolled ? (
+                <Button size="sm" variant="secondary" onClick={() => navigate('/nodes/nodes', { query: { new: s.id } })}>
+                  新建节点
+                </Button>
+              ) : null}
+              <Button size="sm" icon={PencilEdit01Icon} onClick={() => setEditing(true)}>
+                编辑
+              </Button>
+            </>
           ) : undefined
         }
         side={
@@ -296,7 +332,24 @@ function ServerDetailBody({
                 <span className={css.mono}>{s.public_ipv6}</span>
               </SideFact>
             ) : null}
-            <SideFact label="Agent">{s.agent_version ?? '未连接'}</SideFact>
+            <SideFact label="Agent">
+              <div>{s.agent_version ?? '未连接'}</div>
+              {offer ? <div className={css.faint}>{offer}</div> : null}
+              {blockNote ? <div className={css.faint}>{blockNote}</div> : null}
+            </SideFact>
+            <SideFact label="最近一次升级">
+              {lastUp === null ? (
+                '还没有在线升级过'
+              ) : (
+                <>
+                  <div>
+                    <Tag tone={lastUp.tone}>{lastUp.label}</Tag>
+                  </div>
+                  <div className={css.faint}>{lastUp.text}</div>
+                  <div className={css.faint}>{formatDateTime(s.last_upgrade!.updated_at)}</div>
+                </>
+              )}
+            </SideFact>
             <SideFact label="最近心跳">{heartbeatLabel(s.last_heartbeat_at)}</SideFact>
             {s.os_name ? <SideFact label="系统">{s.os_name}</SideFact> : null}
             {s.architecture ? <SideFact label="架构">{s.architecture}</SideFact> : null}
@@ -309,7 +362,8 @@ function ServerDetailBody({
       >
         <div className={css.stack}>
           <SectionTitle>占用</SectionTitle>
-          {allMetersNull ? <Callout>装好 agent 后这里显示占用</Callout> : <Meters meters={meters} />}
+          {nextStep ? <Callout>{nextStep}</Callout> : null}
+          {allMetersNull ? <Callout>{meterEmptyText(s)}</Callout> : <Meters meters={meters} />}
           {notes.map((note) => (
             <Callout key={note}>{note}</Callout>
           ))}
@@ -339,7 +393,7 @@ function ServerDetailBody({
               description={
                 canRetire
                   ? '退役后不能再改回其他状态，只能删除；名下节点会随之停止服务。'
-                  : '服务中的服务器先在卡片上「标记维护」，再退役。'
+                  : '服务中的服务器先「标记维护」，再退役。'
               }
               actionLabel="退役"
               disabled={!canRetire}
@@ -361,6 +415,8 @@ function ServerDetailBody({
       <Modal open={editing} onClose={() => setEditing(false)} size="md" title={`编辑服务器 · ${s.name}`}>
         <ServerDetailEdit server={s} onCancel={() => setEditing(false)} onSaved={() => setEditing(false)} />
       </Modal>
+
+      {install ? <InstallModal secret={install} onClose={() => setInstall(null)} /> : null}
 
       <ConfirmModal
         open={confirm === 'retire'}

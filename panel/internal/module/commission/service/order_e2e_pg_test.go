@@ -40,7 +40,6 @@ import (
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	subrepo "github.com/aegispanel/aegis/internal/module/subscription/repo"
 	subsvc "github.com/aegispanel/aegis/internal/module/subscription/service"
-	"github.com/aegispanel/aegis/internal/pkg/authn"
 	"github.com/aegispanel/aegis/internal/pkg/config"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/money"
@@ -86,19 +85,6 @@ func (a oePromoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uu
 	return missing, nil
 }
 
-func (a oePromoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
-	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
-	if p, ok := authn.From(ctx); ok {
-		uid := p.UserID
-		req.UserID = &uid
-	}
-	o, err := a.c.Offer(ctx, priceID, req)
-	if err != nil {
-		return decimal.Zero, err
-	}
-	return o.Price.UnitAmount, nil
-}
-
 // newOEEnv 按 wire.go 装配真 service；commit 为 false 时整例在测试事务里回滚。
 func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 	t.Helper()
@@ -125,8 +111,9 @@ func newOEEnv(t *testing.T, commit bool) (e *oeEnv, ctx context.Context) {
 	promoSvc := promosvc.New(promorepo.New(d), txm, auditSvc)
 	promoSvc.UseUsers(identitySvc)
 	promoSvc.UseCatalog(oePromoCatalog{c: catalogSvc})
+	// 站点地址（主域名缺省值）经 settings 读
+	settings.UseSiteURLConfig("https://panel.example.test", true)
 	paymentSvc := paymentsvc.New(paymentrepo.New(d), txm, ledgerSvc, identitySvc, settings, auditSvc, sealer, paymentsvc.Config{
-		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
 	})
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, identitySvc, sealer)

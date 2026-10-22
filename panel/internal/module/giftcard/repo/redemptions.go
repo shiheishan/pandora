@@ -60,18 +60,17 @@ func (r *Repo) LockUserTemplate(ctx context.Context, userID, templateID uuid.UUI
 	return r.d.Conn(ctx).Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", key).Error
 }
 
-// UserTemplateUsage 数用户在某模板上的兑换次数与最近一次兑换时间。
-func (r *Repo) UserTemplateUsage(ctx context.Context, userID, templateID uuid.UUID) (int64, *time.Time, error) {
+// UserTemplateUsage 数用户在某模板上的兑换次数。
+func (r *Repo) UserTemplateUsage(ctx context.Context, userID, templateID uuid.UUID) (int64, error) {
 	var n int64
-	var last *time.Time
 	err := r.d.Conn(ctx).Raw(
-		`SELECT count(*), max(redeemed_at) FROM gift_card_redemptions WHERE user_id = ? AND template_id = ?`,
+		`SELECT count(*) FROM gift_card_redemptions WHERE user_id = ? AND template_id = ?`,
 		userID, templateID,
-	).Row().Scan(&n, &last)
+	).Row().Scan(&n)
 	if err != nil {
-		return 0, nil, mapErr(err)
+		return 0, mapErr(err)
 	}
-	return n, last, nil
+	return n, nil
 }
 
 // Stats 取后台统计的原始数。

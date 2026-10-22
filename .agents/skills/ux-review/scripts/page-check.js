@@ -1,4 +1,4 @@
-// 体验审查的逐页检查：把整个文件作为 javascript_tool 的 text 执行，返回 JSON。
+// 体验审查的逐页检查：ego-browser 里读进整个文件，作为字符串交给 page.evaluate(源码) 求值，返回 JSON；
 // 只读，不点任何东西。查三件事：
 //   overflow   页面是否横向滚动，以及右边超出视口的元素（最多 10 个）
 //   words      禁用词命中：可见文字、打开着的 <dialog>、aria-label / title / placeholder / alt

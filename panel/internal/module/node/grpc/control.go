@@ -32,10 +32,6 @@ type controlServer struct {
 	auth sessionAuthorizer
 }
 
-func newControlServer(svc *service.Service, auth sessionAuthorizer) *controlServer {
-	return &controlServer{svc: svc, auth: auth}
-}
-
 // NewControlServer 构造 ControlService 的服务端实现；server.go 注册它。会话管理器每次建流时经
 // svc.SessionManager() 取（装配时 svc.UseSessions(svc.NewSessions(...))），没装配时建流回 Unavailable。
 func NewControlServer(svc *service.Service) nodev1.ControlServiceServer {
@@ -81,6 +77,12 @@ func (c *controlServer) Session(stream nodev1.ControlService_SessionServer) erro
 	}
 	// 拦截器的鉴权可能是很久之前做的（流建好后迟迟不发 Hello），登记前后各复核一次，副作用都落在复核之后
 	verify := func(ctx context.Context) error { return c.auth.AuthorizeSession(ctx, serverID, serial) }
+	if lu := hello.GetLastUpgrade(); lu != nil {
+		if _, ok := upgradeReportFromProto(lu); !ok {
+			// 与流上的升级回报同口径：不合法就丢，但留一条线索，排查「结局去哪了」时有据可查
+			log.Warn("Hello 里的升级结局不合法，忽略", zap.Int("job_id_len", len(lu.GetJobId())), zap.String("phase", lu.GetPhase().String()))
+		}
+	}
 	sess, err := m.OpenVerified(ctx, serverID, helloFromProto(hello), verify)
 	if err != nil {
 		switch {
@@ -213,6 +215,13 @@ func recvLoop(ctx context.Context, stream nodev1.ControlService_SessionServer, s
 			sess.HandleUsersAck(a)
 		case *nodev1.SessionRequest_Renew:
 			sess.HandleRenew(ctx, serial, body.Renew.GetCsrDer())
+		case *nodev1.SessionRequest_UpgradeReport:
+			r, ok := upgradeReportFromProto(body.UpgradeReport)
+			if !ok {
+				log.Warn("升级回报不合法，忽略", zap.Uint64("seq", req.GetSeq()))
+				continue
+			}
+			sess.HandleUpgradeReport(ctx, r)
 		case *nodev1.SessionRequest_Hello:
 			log.Warn("流中途又收到 Hello，忽略", zap.Uint64("seq", req.GetSeq()))
 		default:

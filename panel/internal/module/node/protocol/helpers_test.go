@@ -26,30 +26,21 @@ func TestHelperCanonicalType(t *testing.T) {
 	}
 }
 
-func TestHelperStableTypesCopyAndCount(t *testing.T) {
-	a := StableTypes()
-	if len(a) != 13 {
-		t.Fatalf("len=%d want 13", len(a))
-	}
-	if a[0] != stableTypes[0] {
-		t.Fatalf("order changed: %q", a[0])
-	}
-	a[0] = "mutated"
-	b := StableTypes()
-	if b[0] == "mutated" {
-		t.Fatal("StableTypes 应返回副本，修改返回值不应影响下次调用")
+func TestHelperStableTypesCount(t *testing.T) {
+	if len(stableTypes) != 13 {
+		t.Fatalf("len=%d want 13", len(stableTypes))
 	}
 	want := make(map[string]struct{})
 	for _, s := range Schemas() {
 		want[s.NodeType] = struct{}{}
 	}
-	for _, ty := range b {
+	for _, ty := range stableTypes {
 		if _, ok := want[ty]; !ok {
-			t.Errorf("StableTypes 含 %q 但 Schemas 没有", ty)
+			t.Errorf("stableTypes 含 %q 但 Schemas 没有", ty)
 		}
 	}
-	if len(want) != len(b) {
-		t.Fatalf("StableTypes 与 Schemas 集合大小不同: %d vs %d", len(b), len(want))
+	if len(want) != len(stableTypes) {
+		t.Fatalf("stableTypes 与 Schemas 集合大小不同: %d vs %d", len(stableTypes), len(want))
 	}
 }
 
@@ -522,7 +513,7 @@ func TestHelperSchemasNodeTypesMatchStableTypesLiteral(t *testing.T) {
 	for _, s := range Schemas() {
 		fromSchemas = append(fromSchemas, s.NodeType)
 	}
-	st := StableTypes()
+	st := append([]string(nil), stableTypes[:]...)
 	sort.Strings(st)
 	sort.Strings(fromSchemas)
 	if !reflect.DeepEqual(st, fromSchemas) {

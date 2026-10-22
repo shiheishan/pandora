@@ -1,17 +1,23 @@
-import { useEffect, useState } from 'react'
-import { Button, Empty, FilterTabs, Input, QueryView, Tag } from '../../../ui'
+import { useState } from 'react'
+import { href, navigate, useHashLocation } from '../../../core/router'
+import { Button, Empty, FilterTabs, QueryView, Tag } from '../../../ui'
 import { StatusDot } from '../../kit'
+import { DebouncedInput } from './DebouncedInput'
 import {
   ACCESS_PAGE,
   ACCESS_VIEWS,
+  accessAccount,
+  accessFromQuery,
+  accessIpText,
   accessKey,
   accessOutcomeLabel,
+  accessToQuery,
   accessTone,
   accessTooltip,
-  accessUser,
+  accessUserFilterLabel,
+  actionLabel,
   CATEGORY_LABEL,
   clockTime,
-  EMPTY_ACCESS_FILTER,
   type AccessFilter,
   type AccessTone,
   type AccessView,
@@ -25,41 +31,36 @@ const TONE_CLASS: Record<AccessTone, string | undefined> = { ok: css.toneOk, war
 const VIEW_ITEMS = ACCESS_VIEWS.map(([value, label]) => ({ value, label }))
 
 export function AccessTab() {
-  const [ip, setIp] = useState('')
-  const [user, setUser] = useState('')
-  const [filter, setFilter] = useState<AccessFilter>(EMPTY_ACCESS_FILTER)
-  const [offset, setOffset] = useState(0)
+  const { filter, offset } = accessFromQuery(useHashLocation().query)
   const [paused, setPaused] = useState(false)
   const tailing = !paused && offset === 0
   const log = useAccessLog(filter, offset, tailing)
 
-  // 两个筛选框停手 300ms 再查
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setFilter((f) => (f.ip === ip && f.user === user ? f : { ...f, ip, user }))
-      setOffset(0)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [ip, user])
-
-  const pick = (view: AccessView) => {
-    setFilter((f) => ({ ...f, view }))
-    setOffset(0)
-  }
-  const clearBoxes = () => {
-    setIp('')
-    setUser('')
-    setFilter((f) => ({ ...f, ip: '', user: '' }))
-    setOffset(0)
-  }
+  const go = (f: AccessFilter, o: number) => navigate('/security/access', { replace: true, query: accessToQuery(f, o) })
+  const pick = (view: AccessView) => go({ ...filter, view }, 0)
+  const clearBoxes = () => go({ ...filter, ip: '', user: '' }, 0)
   const hasBoxes = Boolean(filter.ip.trim() || filter.user.trim())
   const full = (log.data?.length ?? 0) >= ACCESS_PAGE
+  const userFilterEmail = accessUserFilterLabel(filter.user, log.data ?? [])
 
   return (
     <div className={css.stack}>
       <div className={css.toolbar}>
-        <Input size="sm" mono aria-label="按 IP 筛选" fieldClassName={css.prefix} placeholder="IP（精确匹配）" value={ip} onChange={(e) => setIp(e.target.value)} />
-        <Input size="sm" aria-label="按账号筛选" fieldClassName={css.search} placeholder="账号邮箱片段或用户 ID" value={user} onChange={(e) => setUser(e.target.value)} />
+        <DebouncedInput
+          value={filter.ip}
+          onChange={(ip) => go({ ...filter, ip }, 0)}
+          mono
+          aria-label="按 IP 筛选"
+          fieldClassName={css.prefix}
+          placeholder="IP（精确匹配）"
+        />
+        <DebouncedInput
+          value={filter.user}
+          onChange={(user) => go({ ...filter, user }, 0)}
+          aria-label="按账号筛选"
+          fieldClassName={css.search}
+          placeholder="账号邮箱片段或用户 ID（含冲着他的登录失败）"
+        />
         <span className={css.spacer} />
         <span className={css.faint}>{log.data?.length ?? 0} 条</span>
         {hasBoxes && (
@@ -68,6 +69,12 @@ export function AccessTab() {
           </button>
         )}
       </div>
+
+      {userFilterEmail && (
+        <p className={css.faint}>
+          只看 <span className={css.strong}>{userFilterEmail}</span> 的记录（含冲着这个账号的登录失败）
+        </p>
+      )}
 
       <section className={css.box} aria-label="安全事件实时监控">
         <header className={css.boxHead}>
@@ -107,10 +114,10 @@ export function AccessTab() {
         <footer className={css.boxFoot}>
           <span>第 {offset / ACCESS_PAGE + 1} 页</span>
           <span className={css.spacer} />
-          <Button size="sm" disabled={offset === 0} onClick={() => setOffset(0)}>
+          <Button size="sm" disabled={offset === 0} onClick={() => go(filter, 0)}>
             回到最新
           </Button>
-          <Button size="sm" disabled={!full || log.isFetching} onClick={() => setOffset(offset + ACCESS_PAGE)}>
+          <Button size="sm" disabled={!full || log.isFetching} onClick={() => go(filter, offset + ACCESS_PAGE)}>
             更早
           </Button>
         </footer>
@@ -121,6 +128,10 @@ export function AccessTab() {
 
 /** 一行事件（样稿 .lg）：时间、分类、结果、IP、账号 · 动作 */
 function AccessRow({ item }: { item: AccessItem }) {
+  const acc = accessAccount(item)
+  const actionText = item.action ? actionLabel(item.action) : null
+  const ipCell = accessIpText(item)
+
   return (
     <div role="row" className={css.logRow} title={accessTooltip(item)}>
       <span role="cell" className={css.logTime}>
@@ -132,12 +143,26 @@ function AccessRow({ item }: { item: AccessItem }) {
       <span role="cell" className={TONE_CLASS[accessTone(item)]}>
         {accessOutcomeLabel(item)}
       </span>
-      <span role="cell" className={css.logIp}>
-        {item.ip ?? '—'}
+      <span role="cell" className={css.logIp} title={ipCell.title}>
+        {ipCell.ip}
+        {ipCell.geo && <span className={css.logGeo}> · {ipCell.geo}</span>}
       </span>
       <span role="cell" className={css.logAccount}>
-        {accessUser(item)}
-        {item.action && <span className={css.logAction}> · {item.action}</span>}
+        {acc.prefix && <span className={css.logAction}>{acc.prefix}</span>}
+        {acc.userId ? (
+          <a className={css.logLink} href={href(`/users/list/${encodeURIComponent(acc.userId)}`)}>
+            {acc.label}
+          </a>
+        ) : (
+          acc.label
+        )}
+        {actionText && (
+          <span className={css.logAction}>
+            {' · '}
+            {actionText}
+            {actionText !== item.action && <span className={css.logCode}>{item.action}</span>}
+          </span>
+        )}
       </span>
     </div>
   )

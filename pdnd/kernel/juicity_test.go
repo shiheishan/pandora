@@ -59,7 +59,7 @@ func TestNativeJuicityQUICStreamAndPacketLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(0, "test complete")
+	defer func() { _ = client.CloseWithError(0, "test complete") }()
 	id, err := uuid.Parse(userID)
 	if err != nil {
 		t.Fatal(err)

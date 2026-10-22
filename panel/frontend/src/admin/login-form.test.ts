@@ -59,6 +59,18 @@ describe('loginFailure', () => {
     })
   })
 
+  // 停用的管理员口令对时后端回 403「账号已停用」（用户 10-21 定）：放表单级错误，不挂在密码框上（口令本身是对的）
+  it('maps 403 account disabled to form error', () => {
+    const err = new ApiError({
+      status: 403,
+      code: 'forbidden',
+      message: '账号已停用',
+    })
+    expect(loginFailure(err)).toEqual({
+      form: '账号已停用',
+    })
+  })
+
   it('maps 422 with fields.email to email field', () => {
     const err = new ApiError({
       status: 422,

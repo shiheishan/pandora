@@ -1,8 +1,17 @@
 import { useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
 import { QueryView } from '../../../ui'
+import { useNow } from '../../kit'
 import css from './detail.module.css'
-import { bandwidthBuckets, bandwidthPeak, heartbeatLabel } from './logic'
+import {
+  bandwidthAxis,
+  bandwidthBuckets,
+  bandwidthPeak,
+  bandwidthPeakLabel,
+  bucketRangeLabel,
+  heartbeatLabel,
+  onlineUsersView,
+} from './logic'
 import { useNodeMetrics } from './queries'
 import type { NodeRow } from './schemas'
 
@@ -55,22 +64,18 @@ function bucketMbps(b: { mbps: number | null }): number {
   return b.mbps ?? 0
 }
 
-function hoverLabel(index: number): string {
-  const hoursAgo = BUCKET_N - 1 - index
-  if (hoursAgo === 0) return '最近 1 小时'
-  return `${hoursAgo} 小时前`
-}
-
 export function NodeMonitor({ node }: { node: NodeRow }) {
+  const now = useNow()
   const metrics = useNodeMetrics(node.id)
   const [hover, setHover] = useState<number | null>(null)
   const latest = metrics.data?.latest
   const cpu = latest ? latest.cpu_percent : node.cpu_percent
 
-  const buckets = useMemo(() => bandwidthBuckets(metrics.data?.points ?? []), [metrics.data?.points])
+  const buckets = useMemo(() => bandwidthBuckets(metrics.data?.points ?? [], now), [metrics.data?.points, now])
   const vals = useMemo(() => buckets.map(bucketMbps), [buckets])
   const maxVal = useMemo(() => Math.max(1, ...vals), [vals])
   const { top, step } = useMemo(() => niceTicks(maxVal), [maxVal])
+  const axis = useMemo(() => bandwidthAxis(buckets), [buckets])
 
   const pts = useMemo(() => {
     const x = (i: number) => (i * W) / (BUCKET_N - 1)
@@ -94,17 +99,21 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
   const cur = hover ?? BUCKET_N - 1
   const curMbps = buckets[cur]?.mbps
   const curDisplay = curMbps == null ? '无数据' : `${curMbps} Mbps`
+  const curRangeLabel = buckets[cur] ? bucketRangeLabel(buckets[cur].start, now) : ''
 
-  // 标题小字：有数据时报峰值（Mbps · 峰值 N · HH:00），没有只写 Mbps
+  // 标题小字：有数据时报峰值，没有只写 Mbps
   const peak = useMemo(() => bandwidthPeak(buckets), [buckets])
-  const peakLabel = peak ? `Mbps · 峰值 ${peak.mbps} · ${String(peak.hour).padStart(2, '0')}:00` : 'Mbps'
+  const peakLabel = bandwidthPeakLabel(peak, now) ?? 'Mbps'
+
+  const usersView = onlineUsersView(node)
 
   return (
     <div>
       <div className={`${css.kpis} ${css.kpisBoxed}`}>
         <div className={css.kpi} title={`在线 IP ${formatCount(node.online_ips)}`}>
           <div className={css.kpiLabel}>在线用户</div>
-          <div className={css.kpiValue}>{node.online_users ? formatCount(node.online_users) : '—'}</div>
+          <div className={css.kpiValue}>{usersView.value}</div>
+          {usersView.note && <div className={css.faint}>{usersView.note}</div>}
         </div>
         <div className={css.kpi}>
           <div className={css.kpiLabel}>CPU</div>
@@ -128,7 +137,7 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
           </span>
           <span className={css.chartCur}>
             <span className={css.chartCurLine} aria-hidden="true" />
-            <span className={css.chartCurLabel}>{hoverLabel(cur)}</span>
+            <span className={css.chartCurLabel}>{curRangeLabel}</span>
             <span className={css.chartCurVal}>{curDisplay}</span>
           </span>
         </div>
@@ -165,18 +174,24 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
                   </>
                 )}
                 <div className={css.hitRow}>
-                  {vals.map((_, i) => (
-                    <span key={i} className={css.hitCell} onMouseEnter={() => setHover(i)} title={buckets[i]?.mbps == null ? '无数据' : `${buckets[i]!.mbps} Mbps`} />
-                  ))}
+                  {vals.map((_, i) => {
+                    const b = buckets[i]
+                    const title = b
+                      ? `${bucketRangeLabel(b.start, now)} · ${b.mbps == null ? '无数据' : `${b.mbps} Mbps`}`
+                      : '无数据'
+                    return (
+                      <span key={i} className={css.hitCell} onMouseEnter={() => setHover(i)} title={title} />
+                    )
+                  })}
                 </div>
               </div>
               <span />
               <div className={css.xLabels} style={{ gridColumn: 2 }}>
-                <span>-24h</span>
-                <span>-18h</span>
-                <span>-12h</span>
-                <span>-6h</span>
-                <span>现在</span>
+                {axis.map((t) => (
+                  <span key={t.index} style={{ left: `${(t.index / (BUCKET_N - 1)) * 100}%` }}>
+                    {t.label}
+                  </span>
+                ))}
               </div>
             </div>
           )}

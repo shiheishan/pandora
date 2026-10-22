@@ -29,9 +29,6 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 	if err != nil {
 		return UserProfile{}, err
 	}
-	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewUserProfile, &userID, nil); err != nil {
-		return UserProfile{}, err
-	}
 
 	out := UserProfile{
 		Events:         []ProfileEvent{},
@@ -52,13 +49,22 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 		})
 	}
 	for _, ip := range activity.IPs {
+		geo, kind := s.locate(ip.IP)
+		risk := ""
+		if ip.Accounts > 1 {
+			risk = clusterRisk(ip.Accounts, kind)
+		}
 		out.IPs = append(out.IPs, ProfileIP{
-			IP:       ip.IP,
-			Count:    ip.Count,
-			First:    ip.First,
-			Last:     ip.Last,
-			Accounts: ip.Accounts,
+			IP:          ip.IP,
+			Count:       ip.Count,
+			First:       ip.First,
+			Last:        ip.Last,
+			Accounts:    ip.Accounts,
+			Geo:         geo,
+			NetworkKind: kind,
+			Risk:        risk,
 		})
+		out.Risk = higherRisk(out.Risk, risk)
 	}
 
 	relatedSet := make(map[uuid.UUID]struct{})
@@ -116,13 +122,6 @@ func (s *Service) UserProfile(ctx context.Context, userID uuid.UUID) (UserProfil
 func (s *Service) IPClusters(ctx context.Context, includeReviewed bool) ([]IPCluster, error) {
 	clusters, err := s.ops.IPClusters(ctx, includeReviewed)
 	if err != nil {
-		return nil, err
-	}
-	filter := map[string]any{
-		"include_reviewed": includeReviewed,
-		"clusters":         len(clusters),
-	}
-	if err := s.ops.RecordSourceIPView(ctx, auditsvc.ViewIPClusters, nil, filter); err != nil {
 		return nil, err
 	}
 

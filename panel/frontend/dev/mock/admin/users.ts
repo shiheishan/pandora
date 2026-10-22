@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule } from '../types.ts'
 import { editRoutes } from './users-edit.ts'
+import { ledgerRoutes, recordAdjust, type LedgerDeps } from './users-ledger.ts'
 import { opsRoutes } from './users-ops.ts'
 import { subEditRoutes } from './users-sub-edit.ts'
 
@@ -36,6 +37,8 @@ export interface Sub {
   /** 订单与收款假后端还在读，那边改完后删 */
   /** 本期送的量，缺省 0 */
   bonus_bytes?: number
+  /** 注册试用发的那一份（Go 按 subscription_trials 判），缺省不是 */
+  trial?: boolean
   created_at: string
   /** 只用于 q 反查，永不出现在响应里（保留规则 2） */
   token: string
@@ -46,7 +49,6 @@ export interface User {
   email: string
   display_name: string | null
   status: 'pending' | 'active' | 'suspended' | 'banned' | 'deletion_scheduled' | 'anonymized' | 'deleted'
-  risk_level: 'trusted' | 'normal' | 'elevated' | 'high'
   group_id: string | null
   created_at: string
   last_login_at: string | null
@@ -87,6 +89,14 @@ export function setPoolSource(fn: (groupId: string) => PoolRef[]): void {
 }
 export const exclusivePoolsOf = (groupId: string) => poolSource(groupId)
 
+// 用户画像（GET v1/users/:id/profile）由审计与订阅拉取算出，数据归 security.ts：它经 setProfileSource 登记回来，
+// 与审计日志、访问日志、风控聚类是同一份数据；没登记时回空画像（形状照 identity/handler 的 userProfileResponse）
+type ProfileSource = (u: User) => Record<string, unknown>
+let profileSource: ProfileSource = () => ({ events: [], ips: [], related: [], fetches: [], fetch_sources_7d: 0, registered_ip: '', risk: '' })
+export function setProfileSource(fn: ProfileSource): void {
+  profileSource = fn
+}
+
 export const GROUPS: Group[] = [
   { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', status: 'active', plans: 2, coupons: 1 },
   { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', status: 'active', plans: 1, coupons: 0 },
@@ -103,7 +113,8 @@ const PLANS: Array<[string, number, number | null, number | null]> = [
 // 套餐 id 固定：批量运营按 plan_id 筛当前订阅的套餐；plans-store.ts 用同一组 id 建目录
 export const PLAN_IDS = PLANS.map((_, k) => `9c0e1a2b-3333-4b00-8000-00000000000${k + 1}`)
 
-const DOMAINS = ['qq.com', 'gmail.com', '163.com', 'outlook.com', 'proton.me', 'icloud.com', 'foxmail.com']
+// 仓库公开：邮箱只用保留域（RFC 2606），本地名照旧
+const DOMAINS = ['example.com', 'example.net', 'example.org', 'mail.example.com', 'mail.example.test', 'mail.example.net', 'mail.example.org']
 const NAMES = ['zhang.wei', 'k.liu', 'wu.qing', 'm.chen', 'yao_ops', 'tomato', 'grace.h', 'lin.xiao', 'sec.check', 'mira', 'hu.jun', 'sun.yue', 'zhao.lei', 'qian.fei', 'luo.an', 'ma.teng', 'he.xin', 'gao.yu', 'lin.bo', 'xu.ke']
 
 function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
@@ -148,10 +159,10 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     email,
     display_name: i % 4 === 0 ? `用户${i + 1}` : null,
     status: i % 15 === 9 ? 'suspended' : i % 23 === 17 ? 'banned' : i % 19 === 11 ? 'pending' : 'active',
-    risk_level: i % 17 === 3 ? 'high' : i % 9 === 2 ? 'elevated' : i % 10 === 0 ? 'trusted' : 'normal',
     group_id: i % 5 === 1 ? GROUPS[0]!.id : i % 11 === 4 ? GROUPS[1]!.id : i % 13 === 6 ? GROUPS[2]!.id : null,
     created_at: iso((i * 3 + 2) * DAY),
-    last_login_at: i % 6 === 5 ? null : iso(((i * 47) % 600) * 60_000),
+    // i % 19 === 11 是 pending：Go 只让 active 账号登录成功，没激活的从没登录过
+    last_login_at: i % 6 === 5 || i % 19 === 11 ? null : iso(((i * 47) % 600) * 60_000),
     email_verified: i % 8 !== 7,
     balance: (i * 1375) % 26500,
     currency: 'CNY',
@@ -161,6 +172,8 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     is_admin: i === 0,
   }
 })
+// k.liu（第 2 位）登录不上的场景：最后一次成功登录在两天前，之后全是冲着他的登录失败（审计种子在 security.ts）
+users[1]!.last_login_at = iso(2 * DAY)
 // 邀请关系：每隔几个人由第 0 号邀请
 for (let i = 2; i < users.length; i += 4) users[i]!.referrer = users[0]!.id
 
@@ -248,6 +261,13 @@ if (twinFirst) {
   twin.subs.push(second)
 }
 
+// 第 5 位（…05）：唯一那份是注册试用发的（P13 标「试用」）；试用不建订单，价格快照为 0
+const trialSub = users[4]!.subs[0]
+if (trialSub) {
+  trialSub.trial = true
+  trialSub.amount = 0
+}
+
 // ---------------------------------------------------------------------------
 // 视图：列表行与详情，字段与 Go 的 json tag 一一对应
 // ---------------------------------------------------------------------------
@@ -275,7 +295,6 @@ function row(u: User) {
     email: u.email,
     display_name: u.display_name,
     status: u.status,
-    risk_level: u.risk_level,
     group_name: groupName(u.group_id),
     group_id: u.group_id,
     created_at: u.created_at,
@@ -292,6 +311,7 @@ function row(u: User) {
           traffic: { limit: cs.traffic_limit, consumed: cs.traffic_used },
           device_limit: effectiveLimit(cs),
           online_devices: cs.online_devices,
+          is_trial: cs.trial ?? false,
         }
       : null,
   }
@@ -345,6 +365,12 @@ export function setOrderSource(source: (userId: string) => OrderView[]): void {
   orderSource = source
 }
 
+/** 余额流水（users-ledger.ts）要用户的订单：与详情的最近订单同一份 */
+const ledgerDeps: LedgerDeps = {
+  users,
+  ordersOf: (u) => (orderSource ? orderSource(u.id) : seedOrders(u).map(listView)),
+}
+
 function detail(u: User) {
   const orders: OrderView[] = orderSource ? orderSource(u.id) : seedOrders(u).map(listView)
   const referrer = users.find((r) => r.id === u.referrer)
@@ -378,6 +404,7 @@ function detail(u: User) {
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
+        is_trial: s.trial ?? false,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
     is_admin: u.is_admin,
@@ -433,7 +460,7 @@ export function activeSubscriptions(planId: string): number {
 /** 同一份用户数组：billing.ts 开单开订阅、挂账转入余额时直接改这里 */
 export const userStore: User[] = users
 
-export const users_: MockModule = {
+const users_: MockModule = {
   routes: {
     // ---- 读 -----------------------------------------------------------------
     'GET /v1/users': (ctx) => {
@@ -477,20 +504,11 @@ export const users_: MockModule = {
       ctx.send(200, detail(u))
     },
 
-    // 风控画像：明文 IP 只在这里
+    // 风控画像：明文 IP 只在这里；画像由审计与订阅拉取现算，属主是 security.ts（经 setProfileSource 登记）
     'GET /v1/users/:id/profile': (ctx) => {
       const u = findUser(ctx)
-      const n = u ? users.indexOf(u) : 0
-      const ip = (k: number) => `112.64.${(n * 7 + k) % 250}.${(k * 31 + 18) % 250}`
-      const shared = n % 4 === 2
-      ctx.send(200, {
-        events: Array.from({ length: 6 }, (_, k) => ({ action: k % 3 ? 'auth.login' : 'user.password_changed', outcome: k === 4 ? 'failure' : 'success', ip: ip(k % 2), ua: 'Mozilla/5.0', domain: 'public', at: iso((k * 9 + 1) * 3_600_000) })),
-        ips: [0, 1].map((k) => ({ ip: ip(k), count: 12 - k * 7, first: iso(20 * DAY), last: iso((k + 1) * 3_600_000), accounts: shared && k === 0 ? 3 : 1 })),
-        related: shared ? users.filter((r) => r !== u).slice(n % 5, (n % 5) + 2).map((r) => ({ id: r.id, email: r.email })) : [],
-        fetches: Array.from({ length: 5 }, (_, k) => ({ ip: ip(k % (shared ? 5 : 2)), ua: 'clash-verge/2.0', family: k % 2 ? 'clash' : 'sing-box', result: k === 3 ? 'denied' : 'ok', format: k % 2 ? 'clash' : 'singbox', at: iso((k * 5 + 2) * 3_600_000) })),
-        fetch_sources_7d: shared ? 6 : 1 + (n % 3),
-        registered_ip: n % 5 === 0 ? '' : ip(9),
-      })
+      if (!u) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
+      ctx.send(200, profileSource(u))
     },
 
     // ---- 写 -----------------------------------------------------------------
@@ -548,6 +566,7 @@ export const users_: MockModule = {
         const u = findUser(ctx)
         if (!u) return { status: 404, body: envelope('not_found', '资源不存在或无权访问') }
         if (u.balance + amount < 0) return { status: 409, body: envelope('conflict', '余额不足，无法扣减') }
+        recordAdjust(u, ledgerDeps, amount, String(body.reason))
         u.balance += amount
         return { status: 200, body: { balance: u.balance } }
       })
@@ -586,6 +605,8 @@ export const users_: MockModule = {
     // 后台改邮箱 / 显示名与备注 / 邀请人、注销（users-edit.ts）；改单份订阅的到期与流量上限（users-sub-edit.ts）
     ...editRoutes({ users }),
     ...subEditRoutes({ users }),
+    // 余额流水（只读，users-ledger.ts）
+    ...ledgerRoutes(ledgerDeps),
   },
 }
 

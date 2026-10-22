@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -85,27 +86,69 @@ func TestSaveSlotRejectsUnknownKeyAndNUL(t *testing.T) {
 	if !thIsValidationOn(err, "key") {
 		t.Fatalf("未知 key: %v", err)
 	}
-	_, err = s.SaveSlot(context.Background(), SaveSlotInput{Key: "portal.footer", Content: "a\x00b"})
+	_, err = s.SaveSlot(context.Background(), SaveSlotInput{Key: "portal.footer", Content: "hi"})
+	if !thIsValidationOn(err, "key") {
+		t.Fatalf("未知 key (portal.footer): %v", err)
+	}
+	_, err = s.SaveSlot(context.Background(), SaveSlotInput{Key: "portal.plans.notice", Content: "a\x00b"})
 	if !thIsValidationOn(err, "content") {
 		t.Fatalf("NUL content: %v", err)
 	}
 }
 
+// 插槽位以最新一次改 CHECK 的迁移为准，再改 CHECK 时把路径换成新迁移。
 func TestSlotCatalogMatchesMigration(t *testing.T) {
-	path := "../../../../db/migrations/00029_appearance.sql"
+	path := "../../../../db/migrations/00062_content_appearance_trim.sql"
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sql := string(b)
+	upIdx := strings.Index(sql, "-- +goose Up")
+	downIdx := strings.Index(sql, "-- +goose Down")
+	if upIdx == -1 || downIdx == -1 || upIdx >= downIdx {
+		t.Fatalf("无法截出 Up 段: up=%d down=%d", upIdx, downIdx)
+	}
+	upSQL := sql[upIdx:downIdx]
+
+	prefix := "ADD CONSTRAINT site_slots_slot_key_check CHECK (slot_key IN ("
+	start := strings.Index(upSQL, prefix)
+	if start == -1 {
+		t.Fatalf("Up 段未找到 CHECK 约束起始: %q", prefix)
+	}
+	endRel := strings.Index(upSQL[start:], "));")
+	if endRel == -1 {
+		t.Fatalf("未找到 CHECK 约束结束 ));")
+	}
+	checkSub := upSQL[start : start+endRel]
+
+	re := regexp.MustCompile(`'([a-z.]+)'`)
+	matches := re.FindAllStringSubmatch(checkSub, -1)
+	if len(matches) == 0 {
+		t.Fatalf("未正则匹配到插槽 key: %s", checkSub)
+	}
+
+	migKeys := make(map[string]struct{}, len(matches))
+	for _, m := range matches {
+		migKeys[m[1]] = struct{}{}
+	}
+
+	catalogKeys := make(map[string]struct{}, len(SlotCatalog))
 	for _, c := range SlotCatalog {
-		needle := "'" + c.Key + "'"
-		if !strings.Contains(sql, needle) {
-			t.Fatalf("迁移里没有插槽 %s（找 %s）", c.Key, needle)
+		catalogKeys[c.Key] = struct{}{}
+	}
+
+	if len(migKeys) != len(SlotCatalog) || len(catalogKeys) != len(SlotCatalog) {
+		t.Fatalf("数量不一致: 迁移中 %d 个 key, SlotCatalog 中 %d 个 key (去重 %d)", len(migKeys), len(SlotCatalog), len(catalogKeys))
+	}
+	for k := range migKeys {
+		if _, ok := catalogKeys[k]; !ok {
+			t.Fatalf("SlotCatalog 缺少迁移中定义的 key: %s", k)
 		}
 	}
-	portalCount := strings.Count(sql, "'portal.")
-	if portalCount != len(SlotCatalog) {
-		t.Fatalf("迁移里 portal. 出现 %d 次，SlotCatalog 有 %d 项", portalCount, len(SlotCatalog))
+	for k := range catalogKeys {
+		if _, ok := migKeys[k]; !ok {
+			t.Fatalf("迁移中缺少 SlotCatalog 定义的 key: %s", k)
+		}
 	}
 }

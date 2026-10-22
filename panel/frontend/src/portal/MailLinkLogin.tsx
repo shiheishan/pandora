@@ -3,11 +3,12 @@ import { z } from 'zod'
 import { isApiError, type ApiClient } from '../core/api'
 import type { TokenStore } from '../core/token'
 import { useRuntime } from '../shell/runtime'
-import { Input } from '../ui'
+import { Input } from '../ui/Input'
 import { useCaptcha } from './Captcha'
 import captchaCss from './Captcha.module.css'
 import css from './AuthPage.module.css'
-import { Btn, Icon } from './kit'
+import { Btn } from './kit/Btn'
+import { Icon } from './kit/Icon'
 import { useAppearance, useSignupConfig } from './queries'
 
 const startSchema = z.object({ ok: z.literal(true), message: z.string() })
@@ -17,7 +18,7 @@ const message = (err: unknown, fallback: string) => (isApiError(err) ? err.messa
 
 /** POST v1/auth/mail-link/login：邮件里的 token 换访问令牌。 */
 export async function consumeMailLogin(api: ApiClient, tokens: TokenStore, token: string): Promise<void> {
-  const out = await api.post('v1/auth/mail-link/login', loginSchema, { auth: false, body: { token } })
+  const out = await api.post('v1/auth/mail-link/login', loginSchema, { auth: false, withCookies: true, body: { token } })
   tokens.set(out.access_token)
 }
 

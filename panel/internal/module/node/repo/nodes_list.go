@@ -13,14 +13,16 @@ import (
 
 // NodeListFilter 是后台节点列表的筛选（service 已校验）。
 type NodeListFilter struct {
-	IncludeRetired bool
-	State          string // ''/all/online/offline/disabled/retired
-	Search         string
-	ID             *uuid.UUID
-	Tag            string
-	Limit          int
-	Offset         int
-	Detail         bool // true 时读 protocol_config，否则该列给 NULL
+	IncludeRetired     bool
+	State              string    // ''/all/online/offline/disabled/retired/cert
+	CertIPDeadline     time.Time // State 为 cert 时由 service 按 now 算好：IP 证书快到期的门槛
+	CertDomainDeadline time.Time // 同上：域名证书快到期的门槛
+	Search             string
+	ID                 *uuid.UUID
+	Tag                string
+	Limit              int
+	Offset             int
+	Detail             bool // true 时读 protocol_config，否则该列给 NULL
 }
 
 // NodeListRow 是后台节点列表的一行读模型：节点本身加所在服务器、节点池的展示字段。
@@ -54,6 +56,12 @@ type NodeListRow struct {
 	RuntimeReason         *string         `gorm:"column:runtime_reason"`
 	RuntimeStateAt        *time.Time      `gorm:"column:runtime_state_at"`
 	RuntimeReasonNode     *string         `gorm:"column:runtime_reason_node"`
+	CertIdentifier        *string         `gorm:"column:cert_identifier"`
+	CertNotAfter          *time.Time      `gorm:"column:cert_not_after"`
+	CertErrorCode         *string         `gorm:"column:cert_error_code"`
+	CertErrorDetail       *string         `gorm:"column:cert_error_detail"`
+	CertNextAttemptAt     *time.Time      `gorm:"column:cert_next_attempt_at"`
+	CertStateAt           *time.Time      `gorm:"column:cert_state_at"`
 	AppliedConfigSHA256   *string         `gorm:"column:applied_config_sha256"`
 	ApplyFailedSHA256     *string         `gorm:"column:apply_failed_sha256"`
 	ApplyFailedReason     *string         `gorm:"column:apply_failed_reason"`
@@ -95,6 +103,9 @@ func nodeListFilterSQL(f NodeListFilter) (string, []any) {
 		conds = append(conds, "n.serving_status IN ('draft', 'disabled')")
 	case "retired":
 		conds = append(conds, "n.serving_status = 'retired'")
+	case "cert":
+		conds = append(conds, CertAttentionBaseCond+" AND ("+CertFailingCond+" OR ("+CertExpiringCond+"))")
+		args = append(args, f.CertIPDeadline, f.CertDomainDeadline)
 	}
 	if f.Search != "" {
 		conds = append(conds, `strpos(lower(concat_ws(' ', n.name, n.display_name, s.name, n.country_code, n.node_type, n.server_host, n.node_no::text)), lower(?::text)) > 0`)
@@ -135,6 +146,7 @@ SELECT n.id, n.node_no, n.row_version, n.name, n.serving_status, n.server_id,
        s.agent_version, s.hostname, host(s.public_ipv4) AS public_ipv4, s.cpu_cores, s.memory_mb, s.disk_gb,
        n.node_type, n.server_host, n.server_port, n.display_name, n.country_code, n.sort_order, n.created_at,
        n.runtime_status, n.runtime_reason, n.runtime_state_at, ro.name AS runtime_reason_node,
+       n.cert_identifier, n.cert_not_after, n.cert_error_code, n.cert_error_detail, n.cert_next_attempt_at, n.cert_state_at,
        n.applied_config_sha256, n.apply_failed_sha256, n.apply_failed_reason, n.apply_failed_detail, n.apply_failed_at,
        n.traffic_rate, ` + protoCol + ` AS protocol_config, n.protocol_schema_version, n.config_validated_at,
        COALESCE(s.status = 'ready' AND s.deleted_at IS NULL, false) AS server_ready,

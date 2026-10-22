@@ -29,8 +29,6 @@ type fakeSvc struct {
 	extendOut   service.AdminExtendResult
 	grantBytes  int64
 	grantOut    service.AdminTrafficGrantResult
-	logFilter   service.ResetLogFilter
-	logs        []service.ResetLogView
 	limitSet    *int
 	limitCalled bool
 }
@@ -69,11 +67,6 @@ func (f *fakeSvc) AdminSetPeriodEnd(_ context.Context, _ uuid.UUID, _ time.Time,
 
 func (f *fakeSvc) AdminSetQuotaLimit(_ context.Context, _ uuid.UUID, _, _ string, _ *int64, _ string) error {
 	return nil
-}
-
-func (f *fakeSvc) ListTrafficResets(_ context.Context, fl service.ResetLogFilter) ([]service.ResetLogView, int64, error) {
-	f.logFilter = fl
-	return f.logs, int64(len(f.logs)), nil
 }
 
 func newEngine(svc Service, admin bool) *gin.Engine {
@@ -267,25 +260,5 @@ func TestAdminDeviceLimit(t *testing.T) {
 	w := do(e, http.MethodPost, "/v1/subscriptions/"+id+"/device-limit", `{"limit":null}`)
 	if w.Code != http.StatusOK || !f.limitCalled || f.limitSet != nil {
 		t.Fatalf("清覆盖: %d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestTrafficResetsQuery(t *testing.T) {
-	f := &fakeSvc{logs: []service.ResetLogView{{ID: uuid.New(), UserEmail: "a@example.com", Metric: service.MetricTraffic, Reason: service.ResetManual}}}
-	e := newEngine(f, true)
-	if w := do(e, http.MethodGet, "/v1/traffic-resets?reason=bogus", ""); w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("坏原因: %d", w.Code)
-	}
-	w := do(e, http.MethodGet, "/v1/traffic-resets?reason=manual", "")
-	if w.Code != http.StatusOK || f.logFilter.Reason != service.ResetManual || f.logFilter.Limit != 50 {
-		t.Fatalf("列表: %d %+v", w.Code, f.logFilter)
-	}
-	got := decMap(t, w)
-	if got["total"].(float64) != 1 || len(got["logs"].([]any)) != 1 {
-		t.Fatalf("body: %v", got)
-	}
-	uid := uuid.New()
-	if w := do(e, http.MethodGet, "/v1/users/"+uid.String()+"/traffic-resets", ""); w.Code != http.StatusOK || f.logFilter.UserID == nil || *f.logFilter.UserID != uid {
-		t.Fatalf("按用户: %d %+v", w.Code, f.logFilter)
 	}
 }

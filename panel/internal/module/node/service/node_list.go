@@ -18,7 +18,7 @@ import (
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 )
 
-var nodeListStates = []string{"", "all", "online", "offline", "disabled", "retired"}
+var nodeListStates = []string{"", "all", "online", "offline", "disabled", "retired", "cert"}
 
 const nodeSearchMax = 120
 
@@ -43,7 +43,7 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 		return nil, 0, errs.Invalid(map[string]string{"q": "搜索词太长"})
 	}
 	if !slices.Contains(nodeListStates, q.State) {
-		return nil, 0, errs.Invalid(map[string]string{"state": "只能是 all、online、offline、disabled、retired 之一"})
+		return nil, 0, errs.Invalid(map[string]string{"state": "只能是 all、online、offline、disabled、retired、cert 之一"})
 	}
 	if q.State != "" {
 		q.IncludeRetired = true
@@ -61,21 +61,23 @@ func (s *Service) QueryNodes(ctx context.Context, q NodeQuery) ([]NodeRow, int64
 		return nil, 0, errPoolPortMissing
 	}
 
+	now := s.now()
 	rows, total, err := s.repo.ListNodePage(ctx, repo.NodeListFilter{
-		IncludeRetired: q.IncludeRetired,
-		State:          q.State,
-		Search:         q.Search,
-		Tag:            tagFilter,
-		ID:             q.ID,
-		Limit:          q.Limit,
-		Offset:         q.Offset,
-		Detail:         q.ID != nil,
+		IncludeRetired:     q.IncludeRetired,
+		State:              q.State,
+		CertIPDeadline:     now.Add(CertExpiringIP),
+		CertDomainDeadline: now.Add(CertExpiringDomain),
+		Search:             q.Search,
+		Tag:                tagFilter,
+		ID:                 q.ID,
+		Limit:              q.Limit,
+		Offset:             q.Offset,
+		Detail:             q.ID != nil,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
 
-	now := s.now()
 	var extras nodeListExtras
 	if len(rows) > 0 {
 		extras, err = s.nodeListExtrasFor(ctx, rows)
@@ -131,23 +133,10 @@ func (s *Service) nodeListExtrasFor(ctx context.Context, rows []repo.NodeListRow
 	if err != nil {
 		return nodeListExtras{}, err
 	}
-	var notOnSale []uuid.UUID
-	for _, u := range usage {
-		for _, b := range u.Bindings {
-			if !b.OnSale {
-				notOnSale = append(notOnSale, b.VersionIDs...)
-			}
-		}
+	livePlans, err := s.livePlansFromUsage(ctx, usage)
+	if err != nil {
+		return nodeListExtras{}, err
 	}
-	notOnSale = dedupeUUIDs(notOnSale)
-	var inUse map[uuid.UUID]bool
-	if len(notOnSale) > 0 {
-		inUse, err = s.inUse.VersionsInUse(ctx, notOnSale)
-		if err != nil {
-			return nodeListExtras{}, err
-		}
-	}
-	livePlans := livePlanNames(usage, inUse)
 
 	desired := make(map[uuid.UUID]string)
 	// 单个节点的文档拼不出来（协议配置不是对象等）由 configSkips 带回，那一行显示为失败；
@@ -232,6 +221,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 	}
 
 	facts := nodeDeliveryFacts{
+		Bound:           row.ServerID != nil,
 		Serving:         row.ServingStatus,
 		Pooled:          row.PoolID != nil,
 		PoolActive:      poolActive,
@@ -270,7 +260,7 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		Delivered:         delivered,
 		DeliveryNote:      note,
 		CreatedAt:         row.CreatedAt,
-		Movable:           nodeMovableState(row.ServingStatus, row.AppliedConfigSHA256, row.ApplyFailedSHA256, row.RuntimeStatus),
+		Movable:           nodeMovableState(row.ServingStatus),
 		NodeType:          row.NodeType,
 		ServerHost:        row.ServerHost,
 		ServerPort:        row.ServerPort,
@@ -296,6 +286,16 @@ func nodeRowFromList(row repo.NodeListRow, now time.Time, detail bool, x nodeLis
 		RateSchedule: decodeRateScheduleInputs(row.RateSchedule),
 		RelayCount:   row.RelayCount,
 		ECHEnabled:   row.ECHEnabled,
+	}
+	if row.CertStateAt != nil {
+		nr.Cert = &NodeCertState{
+			Identifier:  row.CertIdentifier,
+			NotAfter:    row.CertNotAfter,
+			ErrorCode:   row.CertErrorCode,
+			ErrorDetail: row.CertErrorDetail,
+			NextAttempt: row.CertNextAttemptAt,
+			ReportedAt:  *row.CertStateAt,
+		}
 	}
 
 	if live, ok := x.live[row.ID]; ok {

@@ -2,6 +2,7 @@
 paths:
   - "panel/frontend/dev/**"
   - "panel/frontend/tests/mock-*.ts"
+  - "panel/frontend/tests/seed-emails.test.ts"
 ---
 
 # 面板前端：开发期假后端（dev/）
@@ -23,33 +24,66 @@ paths:
 - 路由按 `ADMIN_MODULES` / `PORTAL_MODULES` 的登记顺序、模块内按键的顺序匹配，先匹配先得（`types.ts` 的 `findRoute`）。字面段路由要排在同形的 `:param` 路由之前，例如 `admin/tickets.ts` 的 `GET /v1/tickets/assignees` 在 `:id` 之前
 - 跨模块的数据只有一份，各有属主：
   - 属主：用户与订阅归 `admin/users.ts`（`userStore`），订单归 `admin/billing-store.ts`，节点池与出站归 `admin/nodes-infra.ts`
-  - 被依赖的一方要反过来取数时，经 `setOrderSource` / `setPoolSource` / `setDanglingSource` 登记，不要反向 import（会成环），也不要复制种子
+  - 被依赖的一方要反过来取数时，经 `setOrderSource` / `setPoolSource` / `setDanglingSource` / `setProfileSource`（用户画像由 `admin/security.ts` 登记）登记，不要反向 import（会成环），也不要复制种子
   - 页面上「同口径」的数字靠这份共享数据成立：仪表盘的超时未支付 = 订单页待支付筛选（`stalePendingCount`），按池在线数 = 节点池列表（`activeNodesInPool`）
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
+- 安全与运维（`admin/security.ts`）照 Go 由审计行现算，不写死结果：
+  - 审计行可带 `data`（reason 之外的键，照 Go 各写入方的键名造：余额调整、节点修改、渠道开关、改账号状态、延长订阅几类种子带了），列表回 `data` 时并上 `reason`（Go 的 reason 就是 `data->>'reason'`）
+  - 审计行带内部 `ip_hash`（直接用 IP 串；存量行 source_ip 为 null 但 ip_hash 仍在；早于 30 天的种子按存量写）；对象可读名读时由 `labelOf` 解析，只有用户（邮箱）和工单（工单号）
+  - 搜索照 Go：动作包含；邮箱反查出的 id 命中操作人或「对象是这个用户」；整串等于对象 id 或操作人 id。操作者类型只有 user / admin / system / anonymous；动作代号只用 Go 写的（对照 `security/logic.ts` 的 `ACTION_NAMES`）
+  - 风控聚类 `computeClusters` 和用户画像 `profileOf` 都由审计行算：近 90 天、操作者是用户、按 ip_hash 分组；画像经 `setProfileSource` 交给 users.ts 的 profile 路由；复核结论按 ip_hash 存在 `reviews`
+  - 每个用户只从自己的 `homeIp(i)` / `mobileIp(i)` 出现，共用 IP 只来自 `CLUSTER_SCENES`；pending 账号没有登录行，`tick` 只让 active 账号登录成功
+  - 场景：k.liu（`userStore[1]`）最后成功登录在两天前，之后是机房 IP 发起、对象是他的匿名 `user.login_failed`（种子和 tick 都按 10 分钟去重）；tomato2（`userStore[25]`）和 tomato、tomato3 共用机房 IP 203.0.113.45，聚类和画像都是高风险
+  - 套餐审计：种子（`plan_version.publish` / `plan.usage_update`）由 plans-store 的版本生成；运行中 `plans.ts` 的每个写接口成功时照 catalog 的 `ActionPlan*` / `ActionVersionPublish` 记一条（新建带 `publish: true` 先 `plan.create` 再 `plan_version.publish`，对象 `plan_version`；空操作不记）。别的模块要记后台审计都经 `security.ts` 导出的 `recordAdminAudit(ctx, ev)`（单向 import，security.ts 不 import 调用方）；拉取结果只有迁移 00017 的五种，UA 族照 `render.UAFamily`
+  - 溯源总览（`admin/security-trace.ts` 的 `traceRoutes(deps)`，security.ts 把 `audit`、`fetches`、`geoOf`、`uaFamily`、`userStore` 与写 `security.source_ip_viewed` 的回调传进去）每次读时由审计行与拉取日志现算，口径照 identity `trace.go` / `trace_merge.go` 与两路 `trace_reads.go` 的 SQL：审计一路只算带 ip_hash、操作者 user / anonymous 的行，按明文 IP 合并两路（存量行无明文、不进合并）；账号排行的候选照 `traceAccountSortPair`。与 Go 不同处：数据量小，两路不截头部（Go 每路 5000 个 IP / 100 个用户，超了 `distinct_ips_approx`），所以 `distinct_ips_approx` 恒为 false；地区取归属地前两段模拟 Country + Region；「显示」令牌是 `mock-` + base64url(`秒|管理员 id|IP`)，不加密，只校验签发人与 2 小时有效期。守卫 `tests/mock-admin-security-trace.test.ts`
+  - 读访问日志、聚类列表、用户画像都不记 `security.source_ip_viewed`（照 Go，用户 10-21 定），只有溯源「显示」记
+  - 用户画像照 Go 的 `userProfileResponse` 仍带 `events`（本人作为操作者的审计），后台页面不读它；要删得先删 Go 的字段，假后端跟着删
+  - 守卫：`tests/mock-admin-security.test.ts`、`tests/mock-admin-security-profile.test.ts`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - 种子只造库里真有的状态与字段（迁移里的 CHECK）：订阅 active / expired，订单 5 态（不做退款，没有退款态与 refunded_amount），意图 requires_action / succeeded / cancelled / expired，收款只有 succeeded，节点服务状态没有 draining；Go 已删的键不吐。种子里的域名一律用保留域（`example.test`、`example.com`），IP 用文档段
+  - 邮箱（含打码的 `k***@…`）只用 RFC 2606 / 6761 保留域：`example.com` / `.net` / `.org` 及其子域、`.example`、`.test`、`.invalid`、`.localhost`；dev/ 与 tests/ 下（含 `dev/prototype` 样稿）以及 src/ 下的单测（`*.test.ts(x)`）一律适用，守卫 `tests/seed-emails.test.ts`（白名单 `RESERVED`；例外表 `EXCEPTIONS` 只有样稿里「禁止 Gmail 别名」的说明示例）。注册邮箱后缀白名单（`signup-settings.ts` 的 `email_suffixes`）是照 Go `defaultSignupEmailSuffixes` 的产品缺省，不是邮箱，不在此列
 - 节点补齐 Xboard 的部分（标签、流量上限与重置、时段倍率、中转、ECH、批量修改）在 `admin/nodes-xb.ts`：状态挂在 `Node.xb` 上，路由由 `xbRoutes(deps)` 生成、经 nodes.ts 展开；它只被 nodes.ts import（不反向 import，避免成环），要用 nodes.ts 的校验与写入（池、倍率、状态边）就经 `deps` 传进来
   - 中转、ECH、手动重置都不动节点的 `row_version`（Go 里中转与 ECH 是别的表，重置只改用量列）；批量修改先把所有节点校验完再一起写，模拟整批回滚
   - 种子演示：「香港 02 · IPLC」两条中转与时段倍率，「洛杉矶 01」超限（不下发），末尾「法兰克福 01 · ECH」已开 ECH；「新加坡 02」保持「心跳超时仍下发」的演示，不叠超限
   - 守卫测试：`tests/mock-admin-nodes-xb.test.ts`
+- 节点假后端（`nodes.ts` / `nodes-infra.ts`）照 Go 的服务器模型：接入身份与安装令牌挂在服务器上（`MockServer.identity` / `tokens`），节点上没有心跳、身份字段，别再加回去
+  - 心跳、stale、在线 / 离线都取所在服务器（`hbOf`）；列表负载、详情 CPU、服务器卡片同一份探针（`serverMetricsLatest`）
+  - 上线核对 `serverEnrolled`；节点的身份接口回所在服务器的身份（`identityView`，`spiffe://pandora/server/<id>`），吊销作用在整台服务器（`revokeServerIdentity`）。退役服务器吊销身份（原因「服务器已退役」）；删除服务器时名下在役节点退役、草稿与已停用的只解绑（原因「服务器已删除」）
+  - 安装令牌照 Go：幂等 scope `server_bootstrap_token`，只收 `ttl_minutes`（缺省 20，1–60，越界 422「有效期须在 1–60 分钟」），服务器已退役 409，令牌 32 字节 base64url，安装命令与 Go `buildInstallCommand` 同格式（域名用保留域）。签发 15 秒后模拟机器接入（令牌标记已用、生成身份、开始心跳），这条是假后端特有的
+  - 服务器 DTO 带 `enrolled`；`heartbeat_online` 只对 ready 为真（同 Go）。下发说明的顺序与文案逐字照 Go 的 `nodeDeliveryVerdict`，可下发条件照 `repo.DeliverableNodeCond`；REALITY 缺项的 422 键是表单路径 `protocol_config.reality_settings.<键>`
+  - 种子：有心跳的服务器都已接入，含草稿大阪机（「大阪 01（待上线）」能直接上线）；首尔机没接入、带 1 个待用令牌；新加坡机 15 分钟没心跳（演示「心跳超时仍下发」）；香港机已是最新版；东京机 CPU 88%
+  - 节点种子末尾「伦敦 01」是没绑服务器的草稿（`server_id: null`），演示「未绑定 · 去绑定」与上线置灰；新种子加在它之前会改它的 `node_no`。未绑节点照 Go：身份接口回空视图（`identity: null`、令牌 0），吊销身份 409
+  - 仪表盘假数据（`dash.ts`）的节点部分只从 nodes.ts 的 `reportNodeCounts` / `offlineNodes` / `certAttentionSummary` / `nodeTrafficRows` 取，不写死节点 id 与名字（单向 import，nodes.ts 不 import dash.ts）
+  - 种子里不放像真密钥的串（REALITY 私钥用低熵占位），gitleaks 会拦
 - `admin/node-schemas.ts` 是 `GET /v1/node-protocol-schemas` 响应（Go `protocol.Schemas()` 经 handler 的 DTO）的原样导出，守卫是 `panel/internal/module/node/handler/schemas_mock_test.go` 的 `TestMockNodeSchemasMatchGo`（逐字节比对）
   - Go 的协议 schema 或 DTO 一变，在 `panel/` 下跑 `go test ./internal/module/node/handler/ -run TestMockNodeSchemasMatchGo -update` 重导，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
+- 内容与外观（`admin/content.ts`、`portal/help.ts`）照 Go：插槽目录 `SLOT_CATALOG` 与 `SlotCatalog` 逐字一致（5 个）；branding 只收标语；知识库没有语言、平台、客户端版本与反馈（10-21 删）。种子主题的深色品牌色系用 `src/styles/brand-palette.ts` 的 `darkBrandTokens` 推，不手写
 - 门户场景（`portal/scenario.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
   - 基础六个：`default` / `empty` / `multi` / `legacy` / `error` / `slow`（说明在 `fixtures.ts` 文件头）
   - `proto-*`（`portal/proto.ts`、名单在 `portal/scenario.ts` 的 `PROTO_SCENARIOS`）：购买流程原型的场景，给首次点击测试用，数据照原型 SCENARIOS、套餐换成原型的三档目录，「今天」换成相对天数
     - `proto-s1`…`proto-s8`（含 `s5a` / `s5b`、`s7b` / `s7c`）照原型；`proto-s7d` 是余额 ¥0.20 加优惠码 `LUCKY99`，续费应付低于最低额下不了单
+    - `proto-s9`（10-21）：标准版那份锁定旧用量（`SubFixture.oldUsage` 50G / 2 台，目录 100G / 3 台），卡上写「下期起每期 100G，3 台设备同时用」；另一份是注册试用（`trial`）的基础版。`next_usage` 照 Go `nextUsageOf` 由 `oldUsage` 与目录现算；续费恢复、叠加、换套餐清掉 `oldUsage`（`billing.ts`）
     - 每个场景的起始页在 `proto.ts` 的 `PROTO_START`，加场景要同时登记 `PROTO_SCENARIOS` 与 `PROTO_START`
   - 测试用的两个接口（都只在假后端里，不进 Go）：
     - `GET /v1/__mock/proto?s=<proto-场景>&to=<门户地址>`：匿名可调，切到该场景（重建状态）后 302 跳到 `/#<to>`，不带 `to` 跳场景的起始页；`to` 只收 `/` 开头的门户地址。登录态在浏览器里，切场景不登出，测试员每个任务开一次这个地址就从头来
     - `POST /v1/__mock/expire-orders`：要登录，把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409：发起支付回 `order_lapsed`，同款再买回 `order_pending` 带 `fields.lapsed`
+    - `POST /v1/__mock/purchase-limits` `{max_subscriptions}`：要登录，设本人的每人份数上限（`PortalState.maxSubscriptions`，缺席或 0 = 不限，缺省不限；切场景复原）；测试里也可直接改 `portalState(userId).maxSubscriptions`
+  - 付款方式各带 `min_amount`（`catalog.ts` 的 `PAY_METHODS`：易支付两种与 QQ 钱包 ¥1、BTCPay ¥20）；`MIN_PAYMENT` 是其中最小的（Go `MinAcceptingAmount` 取最小，不是最大），报价的 `min_payment` 与建单按它判；发起支付按所选方式自己的 `min_amount` 判，低于回 409 `below_method_minimum`（原话同 Go）。`proto-s3` 里 ¥15 的基础版选 BTCPay 就能走到这条
+  - 每人份数上限照 Go `subscriptionCap` 计数（手里的份：生效的加过期但还能续费的，再加全部待付新购单），`quote.ts` 的 `subscriptionCapRefusal` 一份给三处用：落点新开那项带 `disabled_reason`，报价 `action: 'new'` 与新购建单回 409 `subscription_limit_reached`
+  - 后端会原样显示给门户用户的错误原话（同款再买、续费窗口关了、过期换链接等），假后端里的副本跟 Go 逐字同步
   - 发起支付：渠道是 `btcpay` 且这张单还没有它的意图时，第一次 `POST /v1/orders/{id}/pay` 回 409 `payment_in_progress`（模拟真后端 30 秒建单窗口），紧接着再发就建好（`checkout.ts` 的 `creatingByState`，按 PortalState 挂在 WeakMap 上）
   - 新增响应字段时照 Go 有没有 omitempty，决定 `legacy` 场景里它是否缺席
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
   - 按用户挂的模块状态放在 `WeakMap<PortalState, …>` 里，才能随切换场景一起重建
 - 外框顶栏读的余额、订阅、佣金、未读数按契约归各页面，所以住在对应页面的模块文件里（`wallet` / `subs` / `referral` / `messages`）；页面扩充这些接口时外框直接沿用
-- SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE），后台点事件能打开那一条；守卫 `tests/mock-admin-events.test.ts`
+- SSE（`dev/mock-api.ts` 的 `stream`）：后台每 15 秒推一条表变更，载荷照 Go 的 `{ table, op, id }`，由 `admin/events.ts` 的 `pickAdminEvent` 从订单、工单、节点、订阅、套餐的种子里挑真有的行（只发 INSERT / UPDATE）。UPDATE 任挑；INSERT 只挑看起来刚建的行：最新的待支付单、最新生效的订阅、草稿套餐、没人接手（open）的工单（`tickets.ts` 的 `freshTicketIds`），各按时间取前 3。节点模块只导出 id、看不出新旧，只发 UPDATE。后台点事件能打开那一条；弹层按表 + id 调订单、工单、节点（`GET /v1/nodes?id=`）、服务器、套餐的单条读接口显示可读内容，这几个接口的形状照 Go 写。守卫 `tests/mock-admin-events.test.ts`
 - 状态都在内存里，vite 重启即复原
   - `POST /__mock/expire-reauth` 让所有会话的 rat 立即过期，用来走 reauth 流程
-  - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`
+  - refresh 照 Go 记每条会话的当前、上一枚 cookie、更早各代（`retired`）与轮换时间（`RefreshFamily`）：上一枚 30 秒宽限内还能换 access，并把当前那一枚原样再发一遍（不改状态）；超过宽限再用上一枚、或用更早的一代判为重放、删整条；对不上或被拒的 401 清 cookie（没带 cookie 的 401 不清）。`POST /__mock/expire-refresh-grace` 把所有会话的轮换时间拨到宽限之外，用来测重放（守卫 `tests/mock-api.test.ts` 的 refresh cookie 那组）
+  - 演示账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`；另有门户停用账号 `MOCK_DISABLED_ACCOUNT`（`disabled@example.test`，不在用户表里）：口令对登录回 403「账号已停用」、口令错 401，与 Go 一致
+- 门户的注册与发信配置在 `portal/signup.ts`（`site-config`、`signup-config`、注册 / 找回 / 邮件登录第 1 步、`GET v1/me/invite` 的 `single_use` 都按它回）：
+  - 缺省同 Go：开放注册、不验证邮箱、邀请码永不失效、两个降级开关都没停用；演示环境另外当作已配好发信、开着邮件链接登录（Go 缺省关），好走找回与邮件登录
+  - 后台假后端是另一个进程，后台里改注册方式、降级开关、注册设置传不到门户（三项分在 `admin/system.ts`、`admin/security.ts`、`admin/signup-settings.ts`，`node_modules` 又是各 worktree 共用的链接，不做文件共享）；测试与演示用只在假后端里的 `POST /__mock/portal-signup`（匿名，只改给出的键，`reset: true` 先复原，多余键或类型错 422 什么都不改），切门户场景时复原
+  - 演示里唯一有效的邀请码是 `PANDORA`（开放注册时选填、填了要有效，同 Go `resolveInviteAtStart`）；要验证邮箱时 `dev_code` 固定 123456

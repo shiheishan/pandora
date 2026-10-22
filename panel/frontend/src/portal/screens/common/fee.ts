@@ -51,3 +51,8 @@ export function surchargeNote(surcharge: number, total: number): string {
   const orderAmount = total - surcharge
   return `含手续费 ${formatMoney(surcharge, 'CNY')}，订单 ${formatMoney(orderAmount, 'CNY')}`
 }
+
+/** 应付低于该方式最低额时的单行提示 */
+export function minLine(m: Pick<PaymentMethod, 'min_amount'>): string {
+  return `这个付款方式最低 ${formatMoney(m.min_amount, 'CNY')}`
+}

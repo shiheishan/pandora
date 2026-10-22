@@ -79,13 +79,21 @@ func TestPaymentMethodsFeeShape(t *testing.T) {
 	total := decimal.RequireFromString("10.55")
 	f := &fakeSvc{methods: []service.PaymentMethod{
 		{
-			Provider: "p1", DisplayName: "P1", Method: "alipay",
-			FeeFixed: decimal.RequireFromString("0.30"), FeePercent: decimal.RequireFromString("2.5"),
-			Fee: &fee, Total: &total,
+			Provider:    "p1",
+			DisplayName: "P1",
+			Method:      "alipay",
+			FeeFixed:    decimal.RequireFromString("0.30"),
+			FeePercent:  decimal.RequireFromString("2.5"),
+			MinAmount:   decimal.RequireFromString("20.00"),
+			Fee:         &fee,
+			Total:       &total,
 		},
 		{
-			Provider: "p2", DisplayName: "P2", Method: "",
-			FeeFixed: decimal.Zero, FeePercent: decimal.Zero,
+			Provider:    "p2",
+			DisplayName: "P2",
+			Method:      "",
+			FeeFixed:    decimal.Zero,
+			FeePercent:  decimal.Zero,
 		},
 	}}
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudiencePublic}
@@ -100,6 +108,9 @@ func TestPaymentMethodsFeeShape(t *testing.T) {
 	if !strings.Contains(raw, `"fee":55`) || !strings.Contains(raw, `"total":1055`) {
 		t.Fatalf("fee/total %s", raw)
 	}
+	if !strings.Contains(raw, `"min_amount":2000`) {
+		t.Fatalf("p1 min_amount %s", raw)
+	}
 	idx := strings.Index(raw, `"provider":"p2"`)
 	if idx < 0 {
 		t.Fatalf("p2 row missing %s", raw)
@@ -107,6 +118,9 @@ func TestPaymentMethodsFeeShape(t *testing.T) {
 	rest := raw[idx:]
 	if strings.Contains(rest, `"fee":`) || strings.Contains(rest, `"total":`) {
 		t.Fatalf("p2 should omit fee/total %s", rest)
+	}
+	if !strings.Contains(rest, `"min_amount":0`) {
+		t.Fatalf("p2 min_amount %s", rest)
 	}
 }
 
@@ -172,7 +186,7 @@ func TestPaymentSettingsRoutes(t *testing.T) {
 		cur: service.PaymentSettings{
 			NotifyBaseURL: "",
 			EffectiveBase: "https://site.example.test",
-			PublicBaseURL: "https://site.example.test",
+			SiteURL:       "https://site.example.test",
 		},
 	}
 	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
@@ -192,7 +206,7 @@ func TestPaymentSettingsRoutes(t *testing.T) {
 		fakeSvc: &fakeSvc{},
 		cur: service.PaymentSettings{
 			EffectiveBase: "https://site.example.test",
-			PublicBaseURL: "https://site.example.test",
+			SiteURL:       "https://site.example.test",
 		},
 	}
 	w2 := doJSON(newAdminEngine(sf2, p, &hooks), http.MethodPut, "/v1/payment-settings",

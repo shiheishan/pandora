@@ -12,6 +12,7 @@ on:
       - "panel/internal/pkg/webapp/**"
       - "panel/Makefile"
       - ".github/workflows/pandora-native.yml"
+      - ".github/scripts/deadcode.sh"
   pull_request:
     paths:
       - "pdnd/**"
@@ -22,6 +23,7 @@ on:
       - "panel/internal/pkg/webapp/**"
       - "panel/Makefile"
       - ".github/workflows/pandora-native.yml"
+      - ".github/scripts/deadcode.sh"
 
 permissions:
   contents: read
@@ -107,8 +109,8 @@ jobs:
           fi
           go test -mod=readonly ./web/ ./internal/pkg/webapp/
 
-  linux-race:
-    name: Linux race and vet
+  pdnd-lint:
+    name: pdnd lint (golangci-lint + deadcode)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -119,8 +121,71 @@ jobs:
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # 与面板同一版本；配置在 pdnd/.golangci.yml（fork 来的目录整目录排除）
+          version: v2.5.0
+          # 官方预编译包用 Go 1.25 构建，读不了 go 1.26 的模块；用 setup-go 装的版本现编
+          install-mode: goinstall
+          # 配置校验要在线拉 JSON schema，偶发超时会把整个 lint 判红；配置写错 golangci-lint run 本身也会报错
+          verify: false
+          working-directory: pdnd
+          args: ./...
+      # 从二进制入口（节点端、h3 探测、发布工具与模拟器）出发，只剩测试在调的函数也算死代码；误报写进 pdnd/.deadcode-ignore
+      - name: Dead code
+        working-directory: .
+        run: bash .github/scripts/deadcode.sh pdnd . ./cmd/... ./release/...
+
+  # 节点端的 race、vet 与构建、互通测试拆成并行的几个 job（10-21 提速）：原来串在一个 job 里约 12 分钟。
+  # race 按包分两片：kernel 一个包就要约 3 分钟，单独一片；每片里仍 -p 1，不因并行加重机器负载、多出偶发失败。
+  linux-race:
+    name: Linux race (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [kernel, rest]
+    defaults:
+      run:
+        working-directory: pdnd
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
       - name: Race tests
-        run: go test -mod=readonly -p 1 -race -count=1 ./... | tee amd64-race.log
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ "${SHARD}" = kernel ]; then
+            pkgs=./kernel
+          else
+            # 除 kernel 以外的全部包；go list 失败时由 -e 直接终止，不会变成空列表静默跑零个包
+            all="$(go list -mod=readonly ./...)"
+            pkgs="$(grep -vx 'github.com/aegispanel/nodeagent/kernel' <<<"${all}")"
+          fi
+          go test -mod=readonly -p 1 -race -count=1 ${pkgs} | tee "amd64-race-${SHARD}.log"
+      - name: Upload race log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pandora-native-linux-race-${{ matrix.shard }}
+          path: pdnd/amd64-race-${{ matrix.shard }}.log
+          if-no-files-found: warn
+
+  linux-vet:
+    name: Linux vet, cross-platform build and native gates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pdnd
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
       - name: Vet
         run: go vet -mod=readonly -p 1 ./... | tee amd64-vet.log
       - name: Cross-platform build and vet
@@ -149,8 +214,6 @@ jobs:
           printf '%s\n' "${report}" | tee native-self-check.json
           grep -q '"status": "ok"' <<<"${report}"
           grep -q '"capability_count": 13' <<<"${report}"
-      - name: Process REALITY H3 probe
-        run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
       - name: Default dependency boundary
         run: |
           # 发布物与全部测试都不许链 sing-box（它在 Go 1.27 下用 go:linkname 取 x/net 的私有符号，链接失败）。
@@ -180,6 +243,32 @@ jobs:
             exit 1
           fi
           cd .. && python3 -m unittest -v test_compare.py test_report.py test_collect.py
+      - name: Upload x64 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pandora-native-linux-evidence
+          path: |
+            pdnd/amd64-vet.log
+            pdnd/native-stdout-gate.log
+            pdnd/native-capabilities.json
+            pdnd/native-self-check.json
+          if-no-files-found: warn
+
+  linux-interop:
+    name: Linux interoperability (H3 probe, Xray, AnyTLS, Mihomo)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pdnd
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
+      - name: Process REALITY H3 probe
+        run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.
@@ -211,24 +300,16 @@ jobs:
           go test -mod=readonly -tags interop_mihomo -run 'TestExternalMihomo' -count=1 -v ./kernel 2>&1 | tee mihomo-interop.log
           # 没设上二进制时这些测试会跳过而不是失败：逐协议那组必须真的跑过
           grep -q -- '--- PASS: TestExternalMihomoProtocolsInterop' mihomo-interop.log
-      - name: Upload x64 acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pandora-native-linux-evidence
-          path: |
-            pdnd/amd64-race.log
-            pdnd/amd64-vet.log
-            pdnd/native-stdout-gate.log
-            pdnd/native-capabilities.json
-            pdnd/native-self-check.json
-          if-no-files-found: warn
 
   linux-arm64-runtime:
-    name: Native ARM64 runtime and race gate
+    name: Native ARM64 race (${{ matrix.shard }})
     # GitHub documents ubuntu-24.04-arm as a public-preview ARM64 hosted VM.
     # This job is intentionally native execution, not a cross-compile check.
     runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [kernel, rest]
     defaults:
       run:
         working-directory: pdnd
@@ -241,10 +322,22 @@ jobs:
       - name: Confirm runner architecture
         run: test "$(uname -m)" = aarch64
       - name: Native ARM64 race tests
-        run: go test -mod=readonly -p 1 -race -count=1 ./... | tee arm64-race.log
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if [ "${SHARD}" = kernel ]; then
+            pkgs=./kernel
+          else
+            all="$(go list -mod=readonly ./...)"
+            pkgs="$(grep -vx 'github.com/aegispanel/nodeagent/kernel' <<<"${all}")"
+          fi
+          go test -mod=readonly -p 1 -race -count=1 ${pkgs} | tee "arm64-race-${SHARD}.log"
+      # vet 与真机构建只在 rest 片做一次
       - name: Native ARM64 vet
+        if: matrix.shard == 'rest'
         run: go vet -mod=readonly -p 1 ./... | tee arm64-vet.log
       - name: Build and execute NativeCore binary
+        if: matrix.shard == 'rest'
         env:
           CGO_ENABLED: "0"
           GOOS: linux
@@ -256,11 +349,11 @@ jobs:
           ./pandora-native-linux-arm64 --capabilities | tee arm64-capabilities.json
       - name: Upload ARM64 acceptance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: pandora-native-arm64-evidence
+          name: pandora-native-arm64-evidence-${{ matrix.shard }}
           path: |
-            pdnd/arm64-race.log
+            pdnd/arm64-race-${{ matrix.shard }}.log
             pdnd/arm64-vet.log
             pdnd/arm64-self-check.json
             pdnd/arm64-capabilities.json

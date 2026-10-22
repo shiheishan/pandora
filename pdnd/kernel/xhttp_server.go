@@ -15,8 +15,6 @@ import (
 	realitytls "github.com/aegispanel/nodeagent/internal/reality"
 	realityhttp3 "github.com/aegispanel/nodeagent/internal/realityquic/http3"
 	"github.com/apernet/quic-go/http3"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // XHTTPRequestKind 是一次 XHTTP 请求在会话里扮演的角色，由 XHTTPServer 按
@@ -281,7 +279,8 @@ func (s XHTTPServer) Serve(listener net.Listener) (*http.Server, error) {
 	if s.Handler == nil {
 		return nil, fmt.Errorf("xhttp handler 不能为空")
 	}
-	server := newInboundHTTPServer(h2c.NewHandler(s, &http2.Server{}), s.Config.ServerMaxHeaderBytes)
+	server := newInboundHTTPServer(s, s.Config.ServerMaxHeaderBytes)
+	server.Protocols = inboundH2Protocols()
 	server.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
 		if session, ok := InspectRealityConn(conn); ok {
 			return withRealitySession(ctx, session)

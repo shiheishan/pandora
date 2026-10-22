@@ -1,5 +1,6 @@
 import { href } from '../../../core/router'
 import type { Plan } from '../common/catalog'
+import { nextUsageText } from '../common/card-text'
 import { headlinePrice } from '../common/PlanCard'
 import { day, daysLeft, endAfter, type Naming } from '../common/purchase'
 import { isLive, type Subscription } from '../common/subscriptions'
@@ -18,6 +19,10 @@ export interface PlanCardView {
   note: string | null
   /** 正在用的这一款：卡片换底色 */
   current: boolean
+  /** 卡上事实（流量、设备、限速）按哪份套餐字段显示：持有按时间款时用 owner.usage 盖住目录用量 */
+  shown: Plan
+  /** 下期用量与现在不同时的一行小字；没有 owner 或没有变化时为 null */
+  nextUsage: string | null
 }
 
 const endOf = (s: Subscription) => (s.current_period_end ? new Date(s.current_period_end).getTime() : Number.MAX_SAFE_INTEGER)
@@ -79,5 +84,16 @@ export function planCardView(plan: Plan, held: readonly Subscription[], naming: 
     note = '下一步选：另开一份，或换掉现在的一份'
   }
 
-  return { tag, label, cta, href: hrefOut, primary, note, current }
+  const shown: Plan =
+    owner && owner.plan_kind === 'subscription'
+      ? {
+          ...plan,
+          traffic_bytes: owner.usage.traffic_bytes,
+          max_devices: owner.usage.device_limit,
+          throttle_kbps: owner.usage.throttle_kbps,
+        }
+      : plan
+  const nextUsage = owner ? nextUsageText(owner) : null
+
+  return { tag, label, cta, href: hrefOut, primary, note, current, shown, nextUsage }
 }

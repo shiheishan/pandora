@@ -19,10 +19,11 @@ paths:
   - 在 `panel/frontend`：`npx playwright install --only-shell chromium`，再 `SMOKE_STATE=<状态目录> npx playwright test -c tests/browser/playwright.config.ts`；`node tests/browser/table.ts <状态目录>/browser` 出表
   - 种子写在状态目录的 `browser-world.json`（0600），文件在就整份复用，同一套栈重跑不撞套餐编码
   - 类型检查走 `npm run typecheck`（`tsconfig.node.json` 收 `tests/` 下除 smoke 外的文件），lint 走 `npm run lint`
+- 门户登录从 `/#/login` 进（`fixtures.ts` 的 `openPortal`）：首页缺省开，`/` 未登录时是首页而不是登录表单
 - 选择器只用角色与可见文字（`getByRole` / `getByText` / `getByLabel`），不为测试给组件加 `data-testid`
   - 选购页有「按时间 / 一次性」分段控件（`radiogroup`「套餐类型」，10-16 样稿）：一次性套餐要先点「一次性」；有份时买别的套餐先过落点选择（`radiogroup`「<套餐名>放到哪里」，不预选）
   - 我的套餐的卡片是 `<article>`、套餐卡是 `<section>`，按标题 heading 过滤（`card` / `planCard`）；完成页按「发生了什么」下的列表读（`happened`）
-  - 开关（ui/Switch）的透明 checkbox 被轨道盖住，点外面那层 label（`setSwitch`），和人点的是同一处
+  - 开关（ui/Switch）的透明 checkbox 被轨道盖住；要拨开关时点外面那层 label，和人点的是同一处（现有路径只读开关状态，`getByRole('switch')`）
   - 后台写操作要重新认证时，`openAdmin` 挂的 `addLocatorHandler` 自动在弹框里填口令；登录自带 15 分钟窗口，通常不出现
 - 每条路径一个现场注册的新用户，互不依赖，`fullyParallel` 4 个 worker；前提（赠送开一份、调余额、发卡号）经后台接口造，要验证的那一步在页面上点
 - 来源地址：网关在冒烟栈上直接信 `X-Real-IP`（见 panel-e2e 规则）。浏览器按机器速度点，门户每 IP 每分钟 120 次、后台 240 次会被打满，所以每个用户、每一步各用一个 198.18.0.0/15 里的虚构地址（`api.ts` 的 `freshIp`），相邻两个落在不同的 /24

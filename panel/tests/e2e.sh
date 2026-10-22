@@ -84,6 +84,8 @@ PY
 set_email_verification() {
   local body c
   body=$(mail_settings_body "$1") || return 1
+  # 改邮件设置要近期重新验证（RecentReauth）；退出时恢复可能隔了很久，每次都重新验证
+  admin_reauth || return 1
   MAIL_TOUCHED=1
   c=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${ADM}/v1/settings/mail" \
         -H "$AH" -H 'Content-Type: application/json' -d "$body")

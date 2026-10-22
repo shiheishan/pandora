@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { monthlyNote, periodName, periodOf, periodUnit, savingAmount, type Price } from '../common/catalog'
+import { periodOf, periodUnit, type Price } from '../common/catalog'
 import { payReturnUrl, paySuccessText } from '../common/PayFlow'
 import { makeNaming } from '../common/purchase'
 import { rebuyQuery } from '../common/orders'
 import { balanceSplit } from '../common/quote'
 import { BASIC, GIB, ONCE, PLANS as BASE_PLANS, quote, row, split, STD, sub } from '../common/testing'
 import { changeFormula, confirmCopy, payCopy, tierNote } from './copy'
-import { defaultTier, intentOf, landingHref, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
+import { defaultTier, intentOf, landingChoice, landingHref, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
 import { doneLines, doneQuery, doneSub, paidText, readDone } from './result-copy'
 
 const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, validity_days: number | null = null): Price => ({
@@ -58,6 +58,41 @@ describe('确认页地址（约定地址）', () => {
     expect(parse('new=gone')).toEqual({ problem: 'plan_gone' })
     expect(parse('stack=sub1')).toEqual({ problem: 'sub_gone' })
     expect(parse('stack=s1', [sub({ stackable: false })])).toEqual({ problem: 'sub_gone' })
+  })
+})
+
+describe('落点页：每人份数上限', () => {
+  it('只有 new 一项时自动跳', () => {
+    expect(landingChoice([{ mode: 'new' }])).toEqual({ auto: { mode: 'new' }, usable: [{ mode: 'new' }], blocked: [] })
+  })
+
+  it('new 与 renew 都可选时不自动跳', () => {
+    expect(landingChoice([{ mode: 'new' }, { mode: 'renew', subscription_id: 'a' }])).toEqual({
+      auto: null,
+      usable: [{ mode: 'new' }, { mode: 'renew', subscription_id: 'a' }],
+      blocked: [],
+    })
+  })
+
+  it('new 置灰时不自动跳，usable 只有 renew', () => {
+    expect(
+      landingChoice([
+        { mode: 'new', disabled_reason: '每人最多 1 份套餐' },
+        { mode: 'renew', subscription_id: 'a' },
+      ]),
+    ).toEqual({
+      auto: null,
+      usable: [{ mode: 'renew', subscription_id: 'a' }],
+      blocked: [{ mode: 'new', disabled_reason: '每人最多 1 份套餐' }],
+    })
+  })
+
+  it('只有置灰的 new 时 usable 为空', () => {
+    expect(landingChoice([{ mode: 'new', disabled_reason: '每人最多 1 份套餐' }])).toEqual({
+      auto: null,
+      usable: [],
+      blocked: [{ mode: 'new', disabled_reason: '每人最多 1 份套餐' }],
+    })
   })
 })
 
@@ -210,6 +245,8 @@ describe('完成页', () => {
     const pay = (amount: number, method?: string) => ({ status: 'succeeded', amount, created_at: '', method, provider_name: 'W9 演示收银（假商户）' })
     expect(paidText({ balance_applied: 850, payments: [pay(950, 'alipay')] })).toBe('余额付了 ¥8.50，支付宝付了 ¥9.50')
     expect(paidText({ balance_applied: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
+    expect(paidText({ balance_applied: 0, payments: [pay(3000, 'offline')] })).toBe('线下收款 ¥30.00')
+    expect(paidText({ balance_applied: 850, payments: [pay(950, 'offline')] })).toBe('余额付了 ¥8.50，线下收款 ¥9.50')
   })
 
   it('落到的那一份按订单详情的 subscription_id 认', () => {
@@ -239,14 +276,7 @@ describe('完成页', () => {
 describe('目录文案', () => {
   it('价格档归档与文案', () => {
     expect([periodOf(price('a', 1, 'month', 3)), periodOf(price('b', 1, 'year')), periodOf(price('c', 1, 'one_time'))]).toEqual(['3m', '12m', 'once'])
-    expect([periodName('12m'), periodName('once'), periodName('6m')]).toEqual(['年付', '一次性', '半年付'])
     expect([periodUnit('3m'), periodUnit('once')]).toEqual(['/ 季', ''])
-  })
-
-  it('折合月价与省额', () => {
-    expect(monthlyNote(price('m', 2900, 'month'))).toBe('按月付费')
-    expect(monthlyNote(price('y', 29900, 'year'))).toBe('折合 ¥24.92 / 月')
-    expect(savingAmount(STD, STD.prices[2]!)).toBe(3000 * 12 - 30000)
   })
 })
 

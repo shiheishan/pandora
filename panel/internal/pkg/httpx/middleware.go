@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -107,6 +108,9 @@ const hstsValue = "max-age=31536000"
 // permissionsPolicy 关掉面板用不到的浏览器能力（剪贴板不在内：门户要复制订阅链接）。
 const permissionsPolicy = "camera=(), microphone=(), geolocation=(), usb=(), payment=()"
 
+// robotsNoIndex 用于 /v1 API：接口响应不该被搜索引擎收录；入口页与静态资源不加，由入口页的 meta robots 与 robots.txt 管。
+const robotsNoIndex = "noindex, nofollow"
+
 // SecurityHeaders 写通用安全响应头。hsts 只在生产为 true：生产强制 https（public_base_url 校验），
 // 本机开发走 http，带上 HSTS 会让浏览器把 localhost 记成只许 https。
 // HSTS 放在这里而不是 nginx：nginx 里某个 location 一旦写了自己的 add_header，就不再继承 server 级的。
@@ -123,11 +127,15 @@ func SecurityHeaders(hsts bool) gin.HandlerFunc {
 		if hsts {
 			h.Set("Strict-Transport-Security", hstsValue)
 		}
+		path := c.Request.URL.Path
+		if path == "/v1" || strings.HasPrefix(path, "/v1/") {
+			h.Set("X-Robots-Tag", robotsNoIndex)
+		}
 		c.Next()
 	}
 }
 
-// Timeout 给请求 ctx 设期限；exempt 返回 true 的请求（如 SSE）不设。
+// Timeout 给请求 ctx 设期限；exempt 返回 true 的请求（如 SSE）不设。到期后 handler 报的 DeadlineExceeded 由 Errors 映射成 504 timeout。
 func Timeout(d time.Duration, exempt func(*gin.Context) bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if exempt != nil && exempt(c) {
@@ -170,6 +178,12 @@ func Errors() gin.HandlerFunc {
 		}
 		raw := c.Errors.Last().Err
 		e := errs.As(raw)
+		// 请求 ctx 已到期（Timeout 设的期限）且错误链里有 DeadlineExceeded：回 504 timeout，而不是 500。
+		// 只看请求 ctx 自己到期：handler 内部另设的短期限（如 readyz 的 2 秒 ping）到期不算请求超时。
+		if e.Status() >= 500 && errors.Is(raw, context.DeadlineExceeded) &&
+			errors.Is(c.Request.Context().Err(), context.DeadlineExceeded) {
+			e = errs.Wrap(errs.Timeout, raw)
+		}
 		l := plog.From(c.Request.Context())
 		if e.Status() >= 500 {
 			l.Error("request failed", zap.String("route", route(c)), zap.String("code", string(e.Code)), zap.Error(raw))

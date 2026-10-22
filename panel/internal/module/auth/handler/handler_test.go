@@ -401,7 +401,7 @@ func TestRefresh(t *testing.T) {
 		t.Fatalf("grace status %d", rec.Code)
 	}
 	if findSetCookie(rec, publicRefreshCookie) != nil {
-		t.Fatal("grace should not Set-Cookie")
+		t.Fatal("Refresh 为空（宽限内对不上当前值的旧会话）不应 Set-Cookie")
 	}
 
 	fake = &fakeAuth{refreshErr: errs.New(errs.Unauthorized)}

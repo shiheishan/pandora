@@ -242,7 +242,7 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 		orderh.New(svc.order, svc.limiter),
 		giftcardh.New(svc.giftcard, svc.limiter),
 		commissionh.New(svc.commission),
-		contenth.New(svc.content, svc.limiter, r.cfg.RateLimit.AccountPerMin),
+		contenth.New(svc.content),
 		appearanceh.New(svc.appearance),
 		supporth.New(svc.support, svc.limiter),
 		pluginh.New(svc.plugin),
@@ -261,10 +261,19 @@ func newEngines(r *runtime, svc *services, hub *realtime.Hub, httpm *metrics.HTT
 	)
 	// 前端页面：门户与后台各自的构建产物挂在各自引擎的 / 与 /assets/*；
 	// 门户开了人机验证时入口页 CSP 按设置追加那一家的来源（后台不用人机验证，CSP 不变）；
-	// 两个入口页的 <title>、描述与图标按站点名（系统设置）和生效主题的标语、Logo 改写（appearance 的进程内快照，不每次查库）
+	// 两个入口页的 <title>、描述与图标按站点名（系统设置）和生效主题的标语改写、图标用内置缺省（appearance 的进程内快照，不每次查库）；
+	// 门户入口页还在 #root 前插入首页片段（portal_home.go，进程内快照）
 	webapp.Mount(publicEng, web.PortalApp, webapp.WithExtraSources(portalCaptchaCSP(svc.settings)),
-		webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PagePortal)))
+		webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PagePortal)),
+		webapp.WithHome(svc.home.Home))
 	webapp.Mount(adminEng, web.AdminApp, webapp.WithIndexMeta(appearanceh.IndexMeta(svc.appearance, appearanceh.PageAdmin)))
+	// robots.txt：门户只看收录开关，后台恒为整站 Disallow；正文都固定、不含任何路径前缀
+	robots := appearanceh.Robots(svc.appearance)
+	publicEng.GET("/robots.txt", robots)
+	publicEng.HEAD("/robots.txt", robots)
+	adminRobots := appearanceh.RobotsDenyAll()
+	adminEng.GET("/robots.txt", adminRobots)
+	adminEng.HEAD("/robots.txt", adminRobots)
 	publicV1 := publicEng.Group("/v1")
 	adminV1 := adminEng.Group("/v1")
 	for _, m := range mods {
@@ -282,12 +291,27 @@ func authOptions(cfg *config.Config) authh.Options {
 	return authh.Options{AuthPerMin: cfg.RateLimit.AuthPerMin, SecureCookie: cfg.IsProduction()}
 }
 
+// healthzResponse 是 /healthz 的响应：进程活着。
+type healthzResponse struct {
+	Status string `json:"status"`
+}
+
+// readyzResponse 是 /readyz 的响应：PG 与 Redis 都 ping 得通。
+type readyzResponse struct {
+	Status string `json:"status"`
+}
+
 func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extra ...gin.HandlerFunc) *gin.Engine {
 	if r.cfg.Env != config.EnvDevelopment {
 		ginReleaseOnce.Do(func() { gin.SetMode(gin.ReleaseMode) })
 	}
 
 	e := gin.New()
+	// 错方法回 405 信封（gin 先写 Allow 头），不再落到 NoRoute 的 404；只开开关不挂 NoMethod 时 gin 回纯文本。
+	e.HandleMethodNotAllowed = true
+	// 不做尾斜杠跳转：后台挂在 nginx 的前缀下，gin 跳转的 Location 不带前缀，会把浏览器带到门户。多一个斜杠就是 404。
+	e.RedirectTrailingSlash = false
+
 	// 两个监听只绑回环，前面是 nginx：只信 nginx 覆写的 X-Real-IP，不解析 X-Forwarded-For 链。
 	e.TrustedPlatform = "X-Real-IP"
 	if err := e.SetTrustedProxies(nil); err != nil {
@@ -307,7 +331,7 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 	e.Use(extra...)
 
 	e.GET("/healthz", func(c *gin.Context) {
-		httpx.OK(c, gin.H{"status": "ok"})
+		httpx.OK(c, healthzResponse{Status: "ok"})
 	})
 	e.GET("/readyz", func(c *gin.Context) {
 		readyCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
@@ -320,9 +344,10 @@ func newEngine(r *runtime, sc config.HTTPServer, metricsMW gin.HandlerFunc, extr
 			httpx.Fail(c, errs.Wrap(errs.Unavailable, err))
 			return
 		}
-		httpx.OK(c, gin.H{"status": "ok"})
+		httpx.OK(c, readyzResponse{Status: "ok"})
 	})
 	e.NoRoute(httpx.NoRoute)
+	e.NoMethod(httpx.NoMethod)
 
 	return e
 }

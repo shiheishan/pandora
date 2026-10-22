@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Input, Modal, Select, Switch, Tag, TextArea, useToast } from '../../../ui'
@@ -13,6 +13,7 @@ import {
   clearedSecrets,
   createBody,
   emptyBasic,
+  freePort,
   enumOptions,
   isStable,
   mapProtocolErrors,
@@ -24,17 +25,24 @@ import {
   protocolLabel,
   protocolNotices,
   realityEnabled,
+  realityKeypairToast,
+  serverPickOptions,
+  portHint,
+  usedPorts,
   toFormValues,
   toProtocolConfig,
+  UNBOUND_HINT,
   validateBasic,
   visibleFields,
   withProtocolDefaults,
+  withRealityKeypair,
   type BasicForm,
   type FormValues,
   type ProtocolField,
 } from './logic'
+import { wizardServerHint } from './infra'
 import css from './form.module.css'
-import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
+import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
 
 const REGION_CODES = new Set(REGIONS.map(([c]) => c))
@@ -226,7 +234,17 @@ function ParamRows({
   )
 }
 
-export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (saved: AdminNode) => void }) {
+export function NodeCreateWizard({
+  open,
+  onClose,
+  onCreated,
+  initialServerId,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: (saved: AdminNode) => void
+  initialServerId?: string
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -235,16 +253,22 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
   const schemas = useProtocolSchemas()
   const servers = useServers()
   const pools = usePools()
+  const nodes = useNodes()
+  const allNodes = useMemo(() => nodes.data?.nodes ?? [], [nodes.data])
 
   const stable = useMemo(() => (schemas.data ?? []).filter(isStable), [schemas.data])
   const defaultType = useMemo(() => PROTOCOL_ORDER.find((t) => stable.some((s) => s.node_type === t)) ?? stable[0]?.node_type ?? '', [stable])
 
   const [step, setStep] = useState(0)
-  const [basic, setBasic] = useState<BasicForm>(() => emptyBasic())
+  const [basic, setBasic] = useState<BasicForm>(() => ({ ...emptyBasic(), serverId: initialServerId ?? '' }))
   const [values, setValues] = useState<FormValues>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [countryCustom, setCountryCustom] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const userTouched = useRef(false)
+  const portManual = useRef(false)
+  const realityAutoDone = useRef(false)
 
   const schema = stable.find((s) => s.node_type === basic.nodeType)
   const fields = useMemo(() => (schema ? protocolFields(schema) : []), [schema])
@@ -258,8 +282,12 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
     setValues(protocolDefaults(sch ? protocolFields(sch) : []))
   }
 
-  const setBasicKey = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => setBasic((b) => ({ ...b, [key]: v }))
+  const setBasicKey = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => {
+    userTouched.current = true
+    setBasic((b) => ({ ...b, [key]: v }))
+  }
   const setValue = (path: string, v: string) => {
+    userTouched.current = true
     setValues(withProtocolDefaults(basic.nodeType, path, { ...current, [path]: v }))
     setErrors((e) => {
       const next = { ...e }
@@ -268,7 +296,70 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
     })
   }
 
+  // 地址空着（或还是上次自动填的）时，选服务器顺手填它的公网 IPv4；用户改过就不动
+  const hostAuto = useRef('')
+  const withServerHost = (b: BasicForm, serverId: string): BasicForm => {
+    const ip = (servers.data ?? []).find((sv) => sv.id === serverId)?.public_ipv4?.trim() ?? ''
+    if (!ip || (b.host.trim() !== '' && b.host !== hostAuto.current)) return b
+    hostAuto.current = ip
+    return { ...b, host: ip }
+  }
+
+  const applyServerId = (serverId: string) => {
+    userTouched.current = true
+    setBasic((b) => {
+      if (!serverId) return { ...b, serverId: '' }
+      const next = withServerHost({ ...b, serverId }, serverId)
+      if (portManual.current) return next
+      return { ...next, port: String(freePort(serverId, allNodes)) }
+    })
+  }
+
+  const reality = useMutation({
+    mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
+  })
+
+  const generateReality = () => {
+    userTouched.current = true
+    reality.mutate(undefined, {
+      onSuccess: (k) => {
+        const next = withRealityKeypair(current, k)
+        setValues(next.values)
+        toast(realityKeypairToast(next.keptShortId))
+      },
+      onError: (error) => fail(error),
+    })
+  }
+
+  // 从服务器卡片「新建节点」预选时，列表到了且用户没手改端口则填空闲端口
+  useEffect(() => {
+    if (!open || !basic.serverId || portManual.current) return
+    const sid = basic.serverId
+    const want = String(freePort(sid, allNodes))
+    setBasic((b) => {
+      if (b.serverId !== sid) return b
+      const next = withServerHost(b, sid)
+      return next.port !== want ? { ...next, port: want } : next
+    })
+    // withServerHost 只读 servers.data 与 ref，随 servers.data 重跑即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, basic.serverId, allNodes, servers.data])
+
+  // 进入协议参数步：REALITY 可见且无私钥时自动生成一次（失败静默）
+  const mutateReality = reality.mutate
+  useEffect(() => {
+    if (!open || step !== 2 || realityAutoDone.current) return
+    if (!realityEnabled(basic.nodeType, values)) return
+    if ((values[REALITY_KEYS.private_key] ?? '').trim()) return
+    realityAutoDone.current = true
+    mutateReality(undefined, {
+      onSuccess: (k) => setValues((v) => withRealityKeypair(v, k).values),
+      onError: () => {},
+    })
+  }, [open, step, basic.nodeType, values, mutateReality])
+
   const pickProto = (nodeType: string) => {
+    userTouched.current = true
     const sch = stable.find((s) => s.node_type === nodeType)
     const flds = sch ? protocolFields(sch) : []
     setBasic((b) => ({ ...b, nodeType }))
@@ -291,7 +382,8 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
     if (i === 0) return protocolLabel(basic.nodeType)
     if (i === 1) {
       if (!basic.name.trim() && !basic.host.trim()) return '未填写'
-      const addr = basic.host.trim() ? `${basic.host.trim()}:${basic.port}` : ''
+      const host = basic.host.trim()
+      const addr = host ? (basic.port.trim() ? `${host}:${basic.port.trim()}` : host) : ''
       return basic.name.trim() ? `${basic.name.trim()}${addr ? ` · ${addr}` : ''}` : '未填写'
     }
     return visible.length ? `${visible.length} 项${reqCount ? `，${reqCount} 项必填` : ''}` : '—'
@@ -332,19 +424,11 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
     },
   })
 
-  const reality = useMutation({
-    mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
-    onSuccess: (k) => {
-      setValues({
-        ...current,
-        [REALITY_KEYS.private_key]: k.private_key,
-        [REALITY_KEYS.public_key]: k.public_key,
-        [REALITY_KEYS.short_id]: k.short_id,
-      })
-      toast('已生成 REALITY 密钥对，私钥保存后不再回显')
-    },
-    onError: (error) => fail(error),
-  })
+  const requestClose = () => {
+    if (save.isPending) return
+    if (userTouched.current) setConfirmClose(true)
+    else onClose()
+  }
 
   const goNext = () => {
     if (step === 0) return setStep(1)
@@ -373,10 +457,18 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
   const disabled = save.isPending
   const footNotes = ['第 1 步，共 3 步', '第 2 步，共 3 步', '创建后在节点详情右上角上线']
 
+  const selectedServer = basic.serverId ? (servers.data ?? []).find((sv) => sv.id === basic.serverId) : undefined
+  const serverHint = !basic.serverId ? UNBOUND_HINT : wizardServerHint(selectedServer)
+  const selectedPool = basic.poolId ? (pools.data ?? []).find((p) => p.id === basic.poolId) : undefined
+  const poolHint =
+    selectedPool && selectedPool.plan_names.length === 0
+      ? '这个节点池还没绑套餐：节点上线后暂不服务用户，到「套餐」详情的「线路」页签里打开它'
+      : '节点只服务所在节点池绑定的套餐'
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       size={760}
       divided
       dismissible={!save.isPending}
@@ -387,7 +479,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
       footerStart={<span className={css.faint}>{footNotes[step]}</span>}
       actions={
         <>
-          <Button size="dialog" onClick={step === 0 ? onClose : () => setStep(step - 1)} disabled={disabled}>
+          <Button size="dialog" onClick={step === 0 ? requestClose : () => setStep(step - 1)} disabled={disabled}>
             {step === 0 ? '取消' : '上一步'}
           </Button>
           {step < 2 ? (
@@ -477,6 +569,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
                   disabled={disabled}
                   onChange={(e) => {
                     const v = e.target.value
+                    userTouched.current = true
                     if (v === REGION_OTHER) {
                       setCountryCustom(true)
                       setBasicKey('country', '')
@@ -511,7 +604,7 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
               </div>
               <Input
                 label="地址"
-                hint="域名或 IP"
+                hint="用户的 App 连这个地址：这台服务器的公网 IP，或解析到它的域名；选了服务器会先填上它的 IP，上线前要填"
                 placeholder="hk3.example.com"
                 mono
                 value={basic.host}
@@ -521,39 +614,43 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
               />
               <Input
                 label="端口"
+                hint={basic.serverId ? portHint(usedPorts(basic.serverId, allNodes)) : '暂不绑定时可以先空着，绑定服务器时要填'}
                 mono
                 inputMode="numeric"
                 value={basic.port}
                 error={errors.server_port}
                 disabled={disabled}
-                onChange={(e) => setBasicKey('port', e.target.value)}
+                onChange={(e) => {
+                  portManual.current = true
+                  setBasicKey('port', e.target.value)
+                }}
               />
               <div className={css.span2}>
                 <Select
                   label="所在服务器"
-                  hint="服务器还没接入的，创建后到「服务器」页签发安装令牌"
-                  placeholder={servers.isPending ? '加载中…' : '选择服务器'}
+                  hint={serverHint}
+                  emptyOption="暂不绑定"
                   value={basic.serverId}
                   error={errors.server_id ?? errors.capacity_nodes}
                   disabled={disabled}
-                  onChange={(e) => setBasicKey('serverId', e.target.value)}
-                  options={(servers.data ?? []).map((s) => ({
-                    value: s.id,
-                    label: `${s.name}${s.region ? ` · ${s.region}` : ''}（${s.node_count}/${s.capacity_nodes}）`,
-                    disabled: s.status !== 'ready' && s.status !== 'draft',
-                  }))}
+                  onChange={(e) => applyServerId(e.target.value)}
+                  options={serverPickOptions(servers.data ?? [])}
                 />
               </div>
               <div className={css.span2}>
                 <Select
                   label="节点池"
-                  hint="节点只服务所在节点池绑定的套餐"
+                  hint={poolHint}
                   placeholder={pools.data && pools.data.length === 0 ? '还没有节点池，先到「节点池」新建' : '选择节点池'}
                   value={basic.poolId}
                   error={errors.pool_id}
                   disabled={disabled}
                   onChange={(e) => setBasicKey('poolId', e.target.value)}
-                  options={(pools.data ?? []).map((p) => ({ value: p.id, label: p.name, disabled: p.status === 'disabled' }))}
+                  options={(pools.data ?? []).map((p) => ({
+                    value: p.id,
+                    label: p.plan_names.length === 0 ? `${p.name} · 没绑套餐，暂不服务用户` : p.name,
+                    disabled: p.status === 'disabled',
+                  }))}
                 />
               </div>
             </div>
@@ -571,11 +668,23 @@ export function NodeCreateWizard({ open, onClose, onCreated }: { open: boolean; 
             showAdvanced={showAdvanced}
             onToggleAdvanced={() => setShowAdvanced((v) => !v)}
             onChange={setValue}
-            onGenerateReality={realityEnabled(basic.nodeType, current) ? () => reality.mutate() : undefined}
+            onGenerateReality={realityEnabled(basic.nodeType, current) ? generateReality : undefined}
             realityPending={reality.isPending}
           />
         )}
       </div>
+      <ConfirmModal
+        open={confirmClose}
+        title="放弃这个节点？"
+        body="已填的内容不会保存。"
+        confirmLabel="放弃"
+        tone="danger"
+        onConfirm={() => {
+          setConfirmClose(false)
+          onClose()
+        }}
+        onCancel={() => setConfirmClose(false)}
+      />
     </Modal>
   )
 }
@@ -659,20 +768,16 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
   const reality = useMutation({
     mutationFn: () => api.post('v1/nodes/reality-keypair', realityKeypairResponse),
     onSuccess: (k) => {
-      setValues({
-        ...current,
-        [REALITY_KEYS.private_key]: k.private_key,
-        [REALITY_KEYS.public_key]: k.public_key,
-        [REALITY_KEYS.short_id]: k.short_id,
-      })
-      toast('已生成 REALITY 密钥对，私钥保存后不再回显')
+      const next = withRealityKeypair(current, k)
+      setValues(next.values)
+      toast(realityKeypairToast(next.keptShortId))
     },
     onError: (error) => fail(error),
   })
 
   const submit = (event?: FormEvent, confirmed = false) => {
     event?.preventDefault()
-    const basicErrors = validateBasic(basic, false)
+    const basicErrors = validateBasic(basic, false, node.serving_status === 'active')
     const { config, errors: protoErrors } = toProtocolConfig(fields, current, schema?.property_types, { keepSecrets, cleared: liveCleared })
     if (!schema && basic.nodeType) basicErrors.node_type = '这是旧协议，请重新选择协议'
     const all = { ...basicErrors, ...protoErrors }
@@ -707,7 +812,7 @@ export function NodeForm({ node, onSaved, onDirtyChange }: { node: NodeDetail; o
           <Input label="地址" mono value={basic.host} onChange={(e) => set('host', e.target.value)} error={errors.server_host} disabled={disabled} />
           <Input label="端口" mono inputMode="numeric" value={basic.port} onChange={(e) => set('port', e.target.value)} error={errors.server_port} disabled={disabled} />
           <Input label="流量倍率" mono inputMode="decimal" value={basic.rate} onChange={(e) => set('rate', e.target.value)} error={errors.traffic_rate} disabled={disabled} />
-          <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="服务器不能在这里换" disabled readOnly fieldClassName={css.span2} />
+          <Input label="所在服务器" value={node.server_name ?? '未绑定'} hint="在「身份与操作」里绑定 / 改绑" disabled readOnly fieldClassName={css.span2} />
           <Select
             label="协议"
             placeholder="选择协议"

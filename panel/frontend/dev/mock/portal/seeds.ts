@@ -67,7 +67,7 @@ export function seedLedger(now: number): LedgerEntry[] {
     { kind: 'balance_hold', delta: -2000, memo: '订单 PD-2003', at: at(6) },
     { kind: 'balance_topup', delta: 10000, memo: '充值 PD-2004', at: at(9) },
     { kind: 'commission_to_balance', delta: 1650, memo: '佣金转入', at: at(15) },
-    { kind: 'late_payment_applied', delta: 500, memo: '挂账转入余额', at: at(22) },
+    { kind: 'late_payment_applied', delta: 500, memo: '待处理到账转入余额', at: at(22) },
     { kind: 'plan_change_refund', delta: 380, memo: '变更套餐差额退回', at: at(30) },
     { kind: 'balance_adjusted', delta: -8880, memo: '客服调整：重复充值退回', at: at(33) },
     { kind: 'balance_topup', delta: 3000, memo: '充值 PD-2008', at: at(40) },

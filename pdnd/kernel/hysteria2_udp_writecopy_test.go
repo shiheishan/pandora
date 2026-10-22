@@ -141,7 +141,7 @@ func TestHysteria2WritePacketCopiesBeforeReturn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.CloseWithError(nil)
+	defer func() { _ = client.CloseWithError(nil) }()
 	udp, err := client.ListenPacket(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestTUICWritePacketCopiesBeforeReturn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.CloseWithError(nil)
+			defer func() { _ = client.CloseWithError(nil) }()
 			udp, err := client.ListenPacket(ctx)
 			if err != nil {
 				t.Fatal(err)

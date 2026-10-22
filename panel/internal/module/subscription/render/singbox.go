@@ -57,37 +57,10 @@ func renderSingbox(rc renderCtx) ([]byte, string, int) {
 		}
 	}
 
-	if rc.tmpl == "" {
-		all := append([]map[string]any(nil), infoOuts...)
-		all = append(all, outs...)
-		all = append(all, helpers...)
-		finalOutbound, ruleSetVia := "direct", ""
-		if len(tags) > 0 {
-			selectorOutbounds := append([]string{"自动选择"}, infoTags...)
-			selectorOutbounds = append(selectorOutbounds, tags...)
-			selector := map[string]any{
-				"type": "selector", "tag": "节点选择",
-				"outbounds": selectorOutbounds,
-			}
-			urltest := map[string]any{
-				"type": "urltest", "tag": "自动选择",
-				"outbounds": tags, "url": "http://www.gstatic.com/generate_204", "interval": "5m",
-			}
-			all = append([]map[string]any{selector, urltest}, all...)
-			finalOutbound, ruleSetVia = "节点选择", "自动选择"
-		}
-		all = append(all, map[string]any{"type": "direct", "tag": "direct"})
-
-		// 入站、DNS 与路由模板见 singbox_template.go
-		body, err := json.MarshalIndent(singboxFrame(all, finalOutbound, ruleSetVia, dialect, rc.opt.Singbox), "", "  ")
-		if err != nil {
-			return []byte("{}"), "application/json; charset=utf-8", 0
-		}
-		return body, "application/json; charset=utf-8", len(outs)
-	}
-
-	// rc.tmpl != ""：后台自定义模板
-	var gen []map[string]any
+	all := append([]map[string]any(nil), infoOuts...)
+	all = append(all, outs...)
+	all = append(all, helpers...)
+	finalOutbound, ruleSetVia := "direct", ""
 	if len(tags) > 0 {
 		selectorOutbounds := append([]string{"自动选择"}, infoTags...)
 		selectorOutbounds = append(selectorOutbounds, tags...)
@@ -99,60 +72,17 @@ func renderSingbox(rc renderCtx) ([]byte, string, int) {
 			"type": "urltest", "tag": "自动选择",
 			"outbounds": tags, "url": "http://www.gstatic.com/generate_204", "interval": "5m",
 		}
-		gen = append(gen, selector, urltest)
-		gen = append(gen, infoOuts...)
-		gen = append(gen, outs...)
-		gen = append(gen, helpers...)
-		gen = append(gen, map[string]any{"type": "direct", "tag": "direct"})
-	} else {
-		gen = []map[string]any{
-			{"type": "selector", "tag": "节点选择", "outbounds": []string{"direct"}},
-			{"type": "selector", "tag": "自动选择", "outbounds": []string{"direct"}},
-			{"type": "direct", "tag": "direct"},
-		}
+		all = append([]map[string]any{selector, urltest}, all...)
+		finalOutbound, ruleSetVia = "节点选择", "自动选择"
 	}
+	all = append(all, map[string]any{"type": "direct", "tag": "direct"})
 
-	outboundStrs := make([]string, 0, len(gen))
-	for _, o := range gen {
-		b, err := json.Marshal(o)
-		if err != nil {
-			continue
-		}
-		outboundStrs = append(outboundStrs, string(b))
-	}
-	outboundsVal := strings.Join(outboundStrs, ", ")
-
-	var proxyTagsVal string
-	if len(tags) == 0 {
-		proxyTagsVal = `"direct"`
-	} else {
-		tagStrs := make([]string, 0, len(tags))
-		for _, t := range tags {
-			b, _ := json.Marshal(t)
-			tagStrs = append(tagStrs, string(b))
-		}
-		proxyTagsVal = strings.Join(tagStrs, ", ")
-	}
-
-	body := fillTemplate(rc.tmpl, map[string]string{
-		phOutbounds: outboundsVal,
-		phProxyTags: proxyTagsVal,
-	})
-
-	return body, "application/json; charset=utf-8", len(outs)
-}
-
-// singboxDefaultTemplate 返回 sing-box 的内置模板原文。
-// 自定义模板对所有 sing-box 版本原样下发（规则集出口用 download_detour 写法，1.14 起只多一条弃用警告），
-// 按版本切换写法只有内置模板做。
-func singboxDefaultTemplate(opt Options) string {
-	frame := singboxFrame(nil, "节点选择", "自动选择", singboxDialectCompat, opt.Singbox)
-	frame["outbounds"] = []string{"{{outbounds}}"}
-	b, err := json.MarshalIndent(frame, "", "  ")
+	// 入站、DNS 与路由模板见 singbox_template.go
+	body, err := json.MarshalIndent(singboxFrame(all, finalOutbound, ruleSetVia, dialect, rc.opt.Singbox), "", "  ")
 	if err != nil {
-		return ""
+		return []byte("{}"), "application/json; charset=utf-8", 0
 	}
-	return string(b) + "\n"
+	return body, "application/json; charset=utf-8", len(outs)
 }
 
 func uniqueTag(base string, used map[string]bool) string {

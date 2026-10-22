@@ -1,7 +1,7 @@
 // Package errs 是对外错误的唯一定义：封闭的错误码表、HTTP 状态和中性文案。
 //
 // 对外只给码和中文文案，内部原因只进日志。前端 core/api.ts 的 SERVER_ERROR_CODES
-// 与 Codes() 由 TestServerErrorCodesMatchFrontend 对齐，新增码两处同改。
+// 与 specs 的键由 TestServerErrorCodesMatchFrontend 对齐，新增码两处同改。
 package errs
 
 import (
@@ -25,10 +25,20 @@ const (
 	OrderLapsed      Code = "order_lapsed"
 	// PaymentInProgress 是同一张单上一次发起支付还在去渠道建单（订单仍可付，稍后重发）。
 	PaymentInProgress Code = "payment_in_progress"
-	ValidationFailed  Code = "validation_failed"
-	RateLimited       Code = "rate_limited"
-	Internal          Code = "internal_error"
-	Unavailable       Code = "service_unavailable"
+	// BelowMethodMinimum 是发起支付时应付低于所选付款方式的最低额（换一种付款方式还能付，不是「被新的发起取代」）。
+	BelowMethodMinimum Code = "below_method_minimum"
+	// SubscriptionLimitReached 是门户新开一份时已到每人份数上限（settings 的 purchase.max_subscriptions）。
+	SubscriptionLimitReached Code = "subscription_limit_reached"
+	ValidationFailed         Code = "validation_failed"
+	RateLimited              Code = "rate_limited"
+	Internal                 Code = "internal_error"
+	Unavailable              Code = "service_unavailable"
+	// MethodNotAllowed 是路由存在但方法不对（405，引擎的 NoMethod）。
+	MethodNotAllowed Code = "method_not_allowed"
+	// PayloadTooLarge 是 JSON 请求体超过 httpx.MaxBodyBytes 或幂等中间件的上限（413）。
+	PayloadTooLarge Code = "payload_too_large"
+	// Timeout 是请求 ctx 到期（httpx.Timeout）后 handler 报错（504，由 httpx.Errors 改写）。
+	Timeout Code = "timeout"
 )
 
 type spec struct {
@@ -37,30 +47,26 @@ type spec struct {
 }
 
 var specs = map[Code]spec{
-	BadRequest:        {http.StatusBadRequest, "请求格式不正确"},
-	Unauthorized:      {http.StatusUnauthorized, "凭据无效或已过期"},
-	Forbidden:         {http.StatusForbidden, "没有权限执行此操作"},
-	ReauthRequired:    {http.StatusForbidden, "此操作需要重新验证身份"},
-	NotFound:          {http.StatusNotFound, "资源不存在或无权访问"},
-	Conflict:          {http.StatusConflict, "数据已被修改，请刷新后重试"},
-	IdempotencyReuse:  {http.StatusConflict, "同一个幂等键不能用于不同的请求"},
-	QuoteChanged:      {http.StatusConflict, "价格已更新，请重新确认"},
-	OrderPending:      {http.StatusConflict, "已有一张待支付的订单"},
-	OrderLapsed:       {http.StatusConflict, "订单已过付款期限"},
-	PaymentInProgress: {http.StatusConflict, "支付正在发起，请稍候"},
-	ValidationFailed:  {http.StatusUnprocessableEntity, "请求参数校验未通过"},
-	RateLimited:       {http.StatusTooManyRequests, "操作太频繁，请稍后再试"},
-	Internal:          {http.StatusInternalServerError, "服务暂时不可用，请稍后重试"},
-	Unavailable:       {http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试"},
-}
-
-// Codes 返回全部对外错误码，供对齐测试使用。
-func Codes() []Code {
-	out := make([]Code, 0, len(specs))
-	for c := range specs {
-		out = append(out, c)
-	}
-	return out
+	BadRequest:               {http.StatusBadRequest, "请求格式不正确"},
+	Unauthorized:             {http.StatusUnauthorized, "凭据无效或已过期"},
+	Forbidden:                {http.StatusForbidden, "没有权限执行此操作"},
+	ReauthRequired:           {http.StatusForbidden, "此操作需要重新验证身份"},
+	NotFound:                 {http.StatusNotFound, "资源不存在或无权访问"},
+	Conflict:                 {http.StatusConflict, "数据已被修改，请刷新后重试"},
+	IdempotencyReuse:         {http.StatusConflict, "同一个幂等键不能用于不同的请求"},
+	QuoteChanged:             {http.StatusConflict, "价格已更新，请重新确认"},
+	OrderPending:             {http.StatusConflict, "已有一张待支付的订单"},
+	OrderLapsed:              {http.StatusConflict, "订单已过付款期限"},
+	PaymentInProgress:        {http.StatusConflict, "支付正在发起，请稍候"},
+	BelowMethodMinimum:       {http.StatusConflict, "支付金额低于这个付款方式的最低额，请换一种付款方式"},
+	SubscriptionLimitReached: {http.StatusConflict, "套餐份数已到上限"},
+	ValidationFailed:         {http.StatusUnprocessableEntity, "请求参数校验未通过"},
+	RateLimited:              {http.StatusTooManyRequests, "操作太频繁，请稍后再试"},
+	Internal:                 {http.StatusInternalServerError, "服务暂时不可用，请稍后重试"},
+	Unavailable:              {http.StatusServiceUnavailable, "服务暂时不可用，请稍后重试"},
+	MethodNotAllowed:         {http.StatusMethodNotAllowed, "请求方法不被允许"},
+	PayloadTooLarge:          {http.StatusRequestEntityTooLarge, "请求内容过大"},
+	Timeout:                  {http.StatusGatewayTimeout, "请求超时，请稍后再试"},
 }
 
 // Error 同时承载对外信息与只进日志的内部原因。

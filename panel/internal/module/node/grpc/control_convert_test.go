@@ -1,10 +1,14 @@
 package grpc
 
 import (
+	"bytes"
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
+	"time"
 
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/mem"
 	"google.golang.org/protobuf/proto"
@@ -59,5 +63,186 @@ func TestUsersFullChunksEmptyAndStop(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("break 后还在出块：%d", n)
+	}
+}
+
+func TestUpgradeReportFromProto(t *testing.T) {
+	job := uuid.MustParse("0190a000-0000-7000-8000-000000000099")
+	cases := []struct {
+		name string
+		in   *nodev1.UpgradeReport
+		ok   bool
+		want service.UpgradeReport
+	}{
+		{
+			name: "staged",
+			in: &nodev1.UpgradeReport{
+				JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED,
+				ReasonCode: "rc", Detail: "det",
+			},
+			ok:   true,
+			want: service.UpgradeReport{JobID: job, Phase: service.UpgradePhaseStaged, ReasonCode: "rc", Detail: "det"},
+		},
+		{
+			name: "failed",
+			in:   &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_FAILED},
+			ok:   true,
+			want: service.UpgradeReport{JobID: job, Phase: service.UpgradePhaseFailed},
+		},
+		{
+			name: "rolled_back",
+			in:   &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_ROLLED_BACK},
+			ok:   true,
+			want: service.UpgradeReport{JobID: job, Phase: service.UpgradePhaseRolledBack},
+		},
+		{name: "empty job", in: &nodev1.UpgradeReport{Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED}, ok: false},
+		{name: "bad job", in: &nodev1.UpgradeReport{JobId: "not-a-uuid", Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED}, ok: false},
+		{name: "unspecified", in: &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_UNSPECIFIED}, ok: false},
+		{name: "unknown phase", in: &nodev1.UpgradeReport{JobId: job.String(), Phase: nodev1.UpgradePhase(99)}, ok: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := upgradeReportFromProto(tc.in)
+			if ok != tc.ok {
+				t.Fatalf("ok=%v 期望 %v", ok, tc.ok)
+			}
+			if !tc.ok {
+				return
+			}
+			if got.JobID != tc.want.JobID || got.Phase != tc.want.Phase || got.ReasonCode != tc.want.ReasonCode || got.Detail != tc.want.Detail {
+				t.Fatalf("got %+v want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHeartbeatFromProtoCert(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	notAfter := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	next := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	hb := heartbeatFromProto(&nodev1.Heartbeat{
+		Nodes: []*nodev1.NodeRuntime{{
+			NodeId: id.String(),
+			Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING,
+			Cert: &nodev1.CertStatus{
+				Identifier:      "node.example.com",
+				NotAfterUnix:    notAfter.Unix(),
+				ErrorCode:       "challenge_failed",
+				ErrorDetail:     "detail",
+				NextAttemptUnix: next.Unix(),
+			},
+		}},
+	})
+	if len(hb.Nodes) != 1 {
+		t.Fatalf("nodes=%d", len(hb.Nodes))
+	}
+	rt := hb.Nodes[0]
+	if rt.Cert == nil {
+		t.Fatal("Cert 应为非 nil")
+	}
+	if rt.Cert.Identifier != "node.example.com" || rt.Cert.ErrorCode != "challenge_failed" || rt.Cert.ErrorDetail != "detail" {
+		t.Fatalf("Cert 字符串: %+v", rt.Cert)
+	}
+	if rt.Cert.NotAfter == nil || !rt.Cert.NotAfter.Equal(notAfter) {
+		t.Fatalf("NotAfter=%v want %v", rt.Cert.NotAfter, notAfter)
+	}
+	if rt.Cert.NextAttempt == nil || !rt.Cert.NextAttempt.Equal(next) {
+		t.Fatalf("NextAttempt=%v want %v", rt.Cert.NextAttempt, next)
+	}
+
+	hb0 := heartbeatFromProto(&nodev1.Heartbeat{
+		Nodes: []*nodev1.NodeRuntime{{
+			NodeId: id.String(),
+			Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING,
+			Cert:   &nodev1.CertStatus{NotAfterUnix: 0, NextAttemptUnix: 0},
+		}},
+	})
+	if hb0.Nodes[0].Cert == nil {
+		t.Fatal("Cert 应为非 nil")
+	}
+	if hb0.Nodes[0].Cert.NotAfter != nil || hb0.Nodes[0].Cert.NextAttempt != nil {
+		t.Fatalf("0 应转 nil: NotAfter=%v NextAttempt=%v", hb0.Nodes[0].Cert.NotAfter, hb0.Nodes[0].Cert.NextAttempt)
+	}
+}
+
+// 节点端自报的时间戳越界（毫秒误写成秒、int64 极值、负数）当没报，整拍运行状态仍能序列化（certs 审查 S6）。
+func TestHeartbeatFromProtoCertClampsTimestamps(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	for _, u := range []int64{math.MaxInt64, math.MinInt64, -1, time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(1999, 12, 31, 0, 0, 0, 0, time.UTC).Unix()} {
+		hb := heartbeatFromProto(&nodev1.Heartbeat{
+			Nodes: []*nodev1.NodeRuntime{{
+				NodeId: id.String(),
+				Status: nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING,
+				Cert:   &nodev1.CertStatus{Identifier: "node.example.com", NotAfterUnix: u, NextAttemptUnix: u},
+			}},
+		})
+		c := hb.Nodes[0].Cert
+		if c == nil || c.NotAfter != nil || c.NextAttempt != nil {
+			t.Fatalf("u=%d 应转 nil: %+v", u, c)
+		}
+		if _, err := json.Marshal(hb.Nodes); err != nil {
+			t.Fatalf("u=%d 序列化失败: %v", u, err)
+		}
+	}
+}
+
+func TestHelloFromProtoUpgradeFields(t *testing.T) {
+	job := uuid.MustParse("0190a000-0000-7000-8000-000000000088")
+	h := helloFromProto(&nodev1.Hello{
+		BuildSerial: 1792540800,
+		LastUpgrade: &nodev1.UpgradeReport{
+			JobId: job.String(), Phase: nodev1.UpgradePhase_UPGRADE_PHASE_ROLLED_BACK, ReasonCode: "confirm_timeout",
+		},
+	})
+	if h.BuildSerial != 1792540800 {
+		t.Fatalf("BuildSerial=%d", h.BuildSerial)
+	}
+	if h.LastUpgrade == nil {
+		t.Fatal("LastUpgrade 应为非 nil")
+	}
+	if h.LastUpgrade.JobID != job || h.LastUpgrade.Phase != service.UpgradePhaseRolledBack || h.LastUpgrade.ReasonCode != "confirm_timeout" {
+		t.Fatalf("LastUpgrade=%+v", h.LastUpgrade)
+	}
+
+	h2 := helloFromProto(&nodev1.Hello{
+		BuildSerial: 1,
+		LastUpgrade: &nodev1.UpgradeReport{JobId: "bad", Phase: nodev1.UpgradePhase_UPGRADE_PHASE_STAGED},
+	})
+	if h2.LastUpgrade != nil {
+		t.Fatalf("非法 LastUpgrade 应为 nil，得到 %+v", h2.LastUpgrade)
+	}
+
+	h3 := helloFromProto(&nodev1.Hello{BuildSerial: 2})
+	if h3.LastUpgrade != nil {
+		t.Fatal("无 LastUpgrade 应为 nil")
+	}
+}
+
+func TestOutboundUpgradeToProto(t *testing.T) {
+	job := uuid.MustParse("0190a000-0000-7000-8000-000000000077")
+	manifest := []byte("{}")
+	sig := []byte("sig")
+	msgs := outboundToProto(service.Outbound{
+		Kind: service.OutUpgrade,
+		Upgrade: service.UpgradeCommand{
+			JobID: job, Manifest: manifest, Signature: sig,
+			BinaryURL: "https://panel.example.com/pdnd/bin/pandora-native-linux-amd64", ConfirmWithinSec: 180,
+		},
+	})
+	if len(msgs) != 1 {
+		t.Fatalf("消息数 %d", len(msgs))
+	}
+	u := msgs[0].GetCommand().GetUpgrade()
+	if u == nil {
+		t.Fatal("期望 Upgrade command")
+	}
+	if u.GetJobId() != job.String() {
+		t.Fatalf("job_id=%q", u.GetJobId())
+	}
+	if !bytes.Equal(u.GetManifest(), manifest) || !bytes.Equal(u.GetSignature(), sig) {
+		t.Fatalf("manifest/sig 不符")
+	}
+	if u.GetBinaryUrl() != "https://panel.example.com/pdnd/bin/pandora-native-linux-amd64" || u.GetConfirmWithinSec() != 180 {
+		t.Fatalf("url/sec 不符 url=%q sec=%d", u.GetBinaryUrl(), u.GetConfirmWithinSec())
 	}
 }

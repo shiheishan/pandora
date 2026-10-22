@@ -3,7 +3,10 @@ import { z } from 'zod'
 import { isApiError, type ApiClient } from '../core/api'
 import type { TokenStore } from '../core/token'
 import { useRuntime } from '../shell/runtime'
-import { Input, Segmented, useToast } from '../ui'
+import { Input } from '../ui/Input'
+import { PasswordInput } from '../ui/PasswordInput'
+import { Segmented } from '../ui/Segmented'
+import { useToast } from '../ui/Toast'
 import css from './AuthPage.module.css'
 import { quickLoginTokenFromInput, readStoredInvite } from './entry-links'
 import { type CaptchaConfig, useCaptcha } from './Captcha'
@@ -12,7 +15,8 @@ import { MailLinkLoginForm } from './MailLinkLogin'
 import { PasswordResetForm } from './PasswordReset'
 import { useAppearance, useSignupConfig, useSiteConfig } from './queries'
 import { SiteBrand } from './SiteBrand'
-import { Btn, Icon } from './kit'
+import { Btn } from './kit/Btn'
+import { Icon } from './kit/Icon'
 
 type View = 'login' | 'reg' | 'forgot' | 'mail' | 'quick'
 
@@ -28,7 +32,7 @@ const message = (err: unknown, fallback: string) => (isApiError(err) ? err.messa
 
 /** 邮箱密码登录并写令牌；注册完成后也走它（complete 不签发令牌）。 */
 async function loginWithPassword(api: ApiClient, tokens: TokenStore, email: string, password: string): Promise<void> {
-  const out = await api.post('v1/auth/login', tokenSchema, { auth: false, body: { email, password } })
+  const out = await api.post('v1/auth/login', tokenSchema, { auth: false, withCookies: true, body: { email, password } })
   tokens.set(out.access_token)
 }
 
@@ -190,9 +194,8 @@ function LoginForm({
       <form className={css.form} onSubmit={submit} noValidate>
         <Input label="邮箱" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
         <div className={css.pwField}>
-          <Input
+          <PasswordInput
             label="密码"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => {
@@ -435,9 +438,8 @@ function RegisterForm({
               />
             </>
           )}
-          <Input
+          <PasswordInput
             label="设置密码"
-            type="password"
             autoComplete="new-password"
             hint="至少 8 位，同时包含字母和数字"
             value={password}
@@ -482,9 +484,8 @@ function RegisterForm({
           onChange={(e) => setInviteCode(e.target.value)}
           error={errors.invite}
         />
-        <Input
+        <PasswordInput
           label="设置密码"
-          type="password"
           autoComplete="new-password"
           hint="至少 8 位，同时包含字母和数字"
           value={password}
@@ -607,6 +608,6 @@ function QuickLoginForm({ initialError, onBack }: { initialError: string | null;
 
 /** POST v1/auth/quick-login：令牌一次性、60 秒有效；响应不含 token_type。 */
 export async function consumeQuickLogin(api: ApiClient, tokens: TokenStore, token: string): Promise<void> {
-  const out = await api.post('v1/auth/quick-login', tokenSchema, { auth: false, body: { token } })
+  const out = await api.post('v1/auth/quick-login', tokenSchema, { auth: false, withCookies: true, body: { token } })
   tokens.set(out.access_token)
 }

@@ -138,10 +138,7 @@ func TestRoutingNodeRefsGlobalAndGroupOutboundPG(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	gr2 := routeGroupRow(t, ctx, e, grp.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, grp.ID, gr2.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, grp.ID, nid)
 	ver := rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Routes: []RoutingRule{
@@ -350,14 +347,8 @@ func TestRoutingEffectivePreviewLayersPG(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	gg1 := routeGroupRow(t, ctx, e, g1.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g1.ID, gg1.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
-	gg2 := routeGroupRow(t, ctx, e, g2.ID)
-	if _, err := e.svc.SetRouteGroupMembers(ctx, g2.ID, gg2.RowVersion, []uuid.UUID{nid}); err != nil {
-		t.Fatal(err)
-	}
+	joinRouteGroup(t, ctx, e, g1.ID, nid)
+	joinRouteGroup(t, ctx, e, g2.ID, nid)
 	ver := rtNodeVersion(t, ctx, e, nid)
 	if _, err := e.svc.SetNodeRouting(ctx, nid, ver, RoutingInput{
 		Outbounds: []RoutingOutbound{ob("X", "shadowsocks")},

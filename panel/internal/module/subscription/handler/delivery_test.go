@@ -112,6 +112,7 @@ func TestSubscribeOKHeaders(t *testing.T) {
 		"Profile-Update-Interval": "12",
 		"Cache-Control":           "no-store, no-cache, must-revalidate",
 		"Content-Disposition":     "attachment; filename=x",
+		"X-Robots-Tag":            "noindex, nofollow",
 	}
 	for k, v := range checks {
 		if h.Get(k) != v {
@@ -158,6 +159,9 @@ func TestSubscribeDecoy(t *testing.T) {
 			h := w.Header()
 			if h.Get("Content-Type") != "text/html; charset=utf-8" {
 				t.Fatalf("Content-Type %q", h.Get("Content-Type"))
+			}
+			if h.Get("X-Robots-Tag") != "noindex, nofollow" {
+				t.Fatalf("X-Robots-Tag = %q", h.Get("X-Robots-Tag"))
 			}
 			for _, k := range []string{"Subscription-Userinfo", "Cache-Control", "Content-Disposition"} {
 				if h.Get(k) != "" {

@@ -3,7 +3,6 @@
 // 只用于展示，不能再选。USDT 地址与交易哈希只做格式提示，真正的校验（含校验和）在后端。
 // ---------------------------------------------------------------------------
 export const WITHDRAW_METHODS = ['alipay', 'wechat', 'bank', 'paypal', 'usdt_trc20', 'usdt_erc20', 'usdt_bep20'] as const
-export type WithdrawMethod = (typeof WITHDRAW_METHODS)[number]
 
 const LABEL: Record<string, string> = {
   alipay: '支付宝',

@@ -77,11 +77,7 @@ func (s *Service) UsePlans(p Plans) { s.plans = p }
 // UseSubscriptions 只在启动装配时调用（不并发安全）。
 func (s *Service) UseSubscriptions(x Subscriptions) { s.subs = x }
 
-// UsePublicBaseURL 设置面板对外地址（Telegram webhook 地址由它拼出）；只在启动装配时调用。
-func (s *Service) UsePublicBaseURL(u string) { s.publicBaseURL = u }
-
 // MissingPorts 返回没装配的必需端口名（装配完成后由 internal/app 统一检查）。
-// 不算必需：publicBaseURL（UsePublicBaseURL 是配置值，不是端口）。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.dir == nil {

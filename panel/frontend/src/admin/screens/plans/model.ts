@@ -240,10 +240,6 @@ export function draftVersion(p: PlanDetail): VersionRow | undefined {
   return p.versions.find((v) => v.status === 'draft')
 }
 
-export function currentVersion(p: PlanDetail): VersionRow | undefined {
-  return p.versions.find((v) => v.status === 'published' && v.version === p.version)
-}
-
 export type OverviewNote = { text: string; action?: { label: string; tab: DetailTab } }
 
 /** 概览顶部的提示，按严重程度排序 */
@@ -372,27 +368,70 @@ export function perMonthNote(amount: number, months: number, monthAmount: number
   return out
 }
 
+export interface PriceListRow {
+  id: string
+  label: string
+  amount: string
+  unitAmount: number
+  active: boolean
+  tier: TierKey | null
+  /** 状态标签 */
+  status: { label: '在售' | '已停售'; tone: 'ok' | 'neutral' }
+  /** 金额后的灰字：在售行是「折合每月…」（同现在）；已停售且同一档现在有在售价的行是「已换成新价」；其余空串 */
+  note: string
+  /** 这一档现在没有在售价、且这是该档最新的一条已停售价格、tier 不为 null 时为 true */
+  restorable: boolean
+}
+
 /** 价格列表：在售的按 TIERS 顺序在前，已归档的按 created_at 降序在后 */
-export function priceListRows(p: PlanDetail): Array<{ id: string; label: string; amount: string; active: boolean; tier: TierKey | null; note: string }> {
+export function priceListRows(p: PlanDetail): PriceListRow[] {
   const monthAmount = activeTierPrice(p, 'month:1')?.unit_amount ?? null
-  const rowOf = (pr: PriceRow, active: boolean) => {
+  const live: PriceListRow[] = activePrices(p.prices).map((pr) => {
     const tier = tierOf(pr.billing_interval, pr.interval_count)
     const months = tier ? TIERS.find((t) => t.key === tier)!.months : 1
-    const note = active && tier !== null ? perMonthNote(pr.unit_amount, months, monthAmount) : ''
+    const note = tier !== null ? perMonthNote(pr.unit_amount, months, monthAmount) : ''
     return {
       id: pr.id,
       label: periodLabel(pr.billing_interval, pr.interval_count),
       amount: formatMoney(pr.unit_amount),
-      active,
+      unitAmount: pr.unit_amount,
+      active: true,
       tier,
+      status: { label: '在售', tone: 'ok' },
       note,
+      restorable: false,
     }
-  }
-  const live = activePrices(p.prices).map((pr) => rowOf(pr, true))
-  const archived = p.prices
+  })
+
+  const activeTierSet = new Set(live.map((r) => r.tier).filter((t): t is TierKey => t !== null))
+  const seenArchivedTiers = new Set<TierKey>()
+
+  const archived: PriceListRow[] = p.prices
     .filter((pr) => pr.status !== 'active')
     .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
-    .map((pr) => rowOf(pr, false))
+    .map((pr) => {
+      const tier = tierOf(pr.billing_interval, pr.interval_count)
+      const hasActive = tier !== null && activeTierSet.has(tier)
+      let restorable = false
+      let note = ''
+      if (hasActive) {
+        note = '已换成新价'
+      } else if (tier !== null && !seenArchivedTiers.has(tier)) {
+        seenArchivedTiers.add(tier)
+        restorable = true
+      }
+      return {
+        id: pr.id,
+        label: periodLabel(pr.billing_interval, pr.interval_count),
+        amount: formatMoney(pr.unit_amount),
+        unitAmount: pr.unit_amount,
+        active: false,
+        tier,
+        status: { label: '已停售', tone: 'neutral' },
+        note,
+        restorable,
+      }
+    })
   return [...live, ...archived]
 }
 

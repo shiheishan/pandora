@@ -182,7 +182,7 @@ func TestRealityListenerCloseKillsHandshakingConn(t *testing.T) {
 // serverTLSHandshake 自带截止时间：对端只连不说话时按 timeout 失败，不会无限挂着。
 func TestServerTLSHandshakeTimesOutOnSilentPeer(t *testing.T) {
 	certPath, keyPath := testXHTTPServerCertFiles(t)
-	config, _, err := loadInboundTLSConfig(map[string]any{"tls": true, "cert_path": certPath, "key_path": keyPath})
+	config, _, err := loadInboundTLSConfig(map[string]any{"tls": true, "cert_path": certPath, "key_path": keyPath}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestServerTLSHandshakeTimesOutOnSilentPeer(t *testing.T) {
 // 握手成功后截止时间必须清掉，否则会话会在 10 秒后被莫名掐断。
 func TestServerTLSHandshakeClearsDeadline(t *testing.T) {
 	certPath, keyPath := testXHTTPServerCertFiles(t)
-	config, _, err := loadInboundTLSConfig(map[string]any{"tls": true, "cert_path": certPath, "key_path": keyPath})
+	config, _, err := loadInboundTLSConfig(map[string]any{"tls": true, "cert_path": certPath, "key_path": keyPath}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

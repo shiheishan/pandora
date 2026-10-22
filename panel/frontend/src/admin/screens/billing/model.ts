@@ -3,7 +3,7 @@ import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
 import type { PlacementChoice } from './placement'
-import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
+import type { Adjustment, LateCase, LateKind, LateStatus, ManualCreated, OrderQueried, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Placement, Provider, PurchaseLimits } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat }
 
@@ -89,7 +89,7 @@ export function queriedView(r: OrderQueried): { tone: Tone; text: string } {
   if (r.quarantine_kind)
     return {
       tone: 'warn',
-      text: `渠道确认已付款，但订单已${status}，款项已补记进待处理到账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「待处理到账」里处理。`,
+      text: `渠道确认已付款，但订单状态是「${status}」，款项已补记进待处理到账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「待处理到账」里处理。`,
     }
   if (r.reconciled) return { tone: 'ok', text: `渠道确认已付款，已按回调同一流程补记入账。订单：${status}。` }
   return { tone: 'warn', text: `渠道确认已付款，但没有补记，订单：${status}。` }
@@ -104,7 +104,9 @@ export function canCancel(o: Pick<OrderRow, 'status'>): boolean {
 // 系统写的取消原因是代码（后台取消写的是管理员填的原文，原样显示）
 const CANCEL_REASON_LABELS: Readonly<Record<string, string>> = {
   account_deleted: '账号已注销',
+  expired: '超时未支付',
   plan_archived: '套餐已归档，实付已转入用户余额',
+  user_cancelled: '用户自己取消',
 }
 
 export function cancelReasonLabel(reason: string): string {
@@ -267,7 +269,7 @@ export function referenceProblem(text: string): string | null {
 // ===========================================================================
 export type Settlement = 'grant' | 'pending' | 'offline'
 export const SETTLEMENTS: ReadonlyArray<{ value: Settlement; label: string; hint: string }> = [
-  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，用户在用户端「订单」里付款；30 分钟内不付自动过期' },
+  { value: 'pending', label: '待用户支付', hint: '生成一张待支付订单，系统会通知用户到用户端「订单」里付款；30 分钟内不付自动过期' },
   { value: 'offline', label: '线下已收款', hint: '已通过转账等方式收到钱：填凭证号，当场入账并开通，同时计收入与佣金' },
   { value: 'grant', label: '赠送（0 元）', hint: '全额减免、当场开通，不计收入' },
 ]
@@ -378,9 +380,6 @@ export const LATE_FILTERS = [
   ['applied', '已转入余额', 'applied'],
 ] as const
 export type LateFilter = (typeof LATE_FILTERS)[number][0]
-export function isLateFilter(v: string | null): v is LateFilter {
-  return LATE_FILTERS.some(([k]) => k === v)
-}
 
 /** 地址上的 s → 筛选；不认识或没有时默认只看待处理 */
 export function lateFilterOf(v: string | null): LateFilter {
@@ -839,6 +838,34 @@ export function adjustmentView(a: Adjustment) {
 /** 冲销原因的默认值：「冲销：」+ 原因（原因 ≥ 5 字，拼出来必然够长），截到 500 字 */
 export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
   return [...`冲销：${a.reason}`].slice(0, REASON_MAX).join('')
+}
+
+/** 购买限制弹窗的表单：存输入框原文，清空时不悄悄变成 0（= 不限） */
+export type PurchaseLimitsForm = { max_unpaid_orders: string; max_subscriptions: string }
+
+export function purchaseLimitsFormFrom(v: PurchaseLimits): PurchaseLimitsForm {
+  return { max_unpaid_orders: String(v.max_unpaid_orders), max_subscriptions: String(v.max_subscriptions) }
+}
+
+const PURCHASE_LIMIT_RANGE: Record<keyof PurchaseLimitsForm, string> = {
+  max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+  max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
+}
+
+/** GET/POST v1/settings/purchase：范围文案与后端 fields 一致；空的标「必填（0 表示不限）」 */
+export function purchaseLimitErrors(form: PurchaseLimitsForm): Record<string, string> {
+  const out: Fields = {}
+  for (const key of ['max_unpaid_orders', 'max_subscriptions'] as const) {
+    const text = form[key].trim()
+    if (text === '') out[key] = '必填（0 表示不限）'
+    else if (!/^\d+$/.test(text) || Number(text) > 50) out[key] = PURCHASE_LIMIT_RANGE[key]
+  }
+  return out
+}
+
+/** 校验通过后转成请求体（两个键整份提交） */
+export function purchaseLimitsBody(form: PurchaseLimitsForm): PurchaseLimits {
+  return { max_unpaid_orders: Number(form.max_unpaid_orders.trim()), max_subscriptions: Number(form.max_subscriptions.trim()) }
 }
 
 /** 开单成功的提示：按落点说清续了、换了还是新开了，换套餐时带上原订阅剩余价值的去向 */

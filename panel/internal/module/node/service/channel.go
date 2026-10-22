@@ -87,10 +87,15 @@ type RosterMembership interface {
 	Has(nodeID uuid.UUID, uid int64) bool
 }
 
-// SessionControl 由会话管理实现：身份吊销、服务器删除后调，事务提交之后才调。
+// SessionControl 由会话管理实现：身份吊销、服务器删除后调 Tombstone，在线升级查会话事实与下发 Command.upgrade（upgrades.go）；
+// 都在事务提交之后才调。
 type SessionControl interface {
 	// Tombstone 先给这台服务器的在途流发 Command.tombstone，再关闭它；没有在途流时什么也不做。
 	Tombstone(serverID uuid.UUID, reason string)
+	// UpgradeInfo 返回这台服务器在途会话的升级事实；没有在途会话（或会话在结束中）时 ok 为 false。
+	UpgradeInfo(serverID uuid.UUID) (info SessionUpgradeInfo, ok bool)
+	// SendUpgrade 给这台服务器的在途会话排一条 Command.upgrade；没有在途会话、没协商 upgrade_v1、会话在结束中或队列满时返回 false。
+	SendUpgrade(serverID uuid.UUID, cmd UpgradeCommand) bool
 }
 
 // UseSessions 只在启动装配时调用（不并发安全）。没装配时吊销只改库，在途流要等下一次建流校验才断。

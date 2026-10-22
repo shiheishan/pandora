@@ -155,11 +155,11 @@ function ProviderTable({
 }
 
 const COPY: Record<ProviderMode, { title: (n: string) => string; body: string; confirm: string; danger: boolean }> = {
-  on: { title: (n) => `启用 ${n}？`, body: '启用后用户端结账页立即可见。', confirm: '启用', danger: false },
-  paused: { title: (n) => `停用 ${n}？`, body: '用户端结账页将不再显示该渠道，进行中的支付仍会回调。', confirm: '停用', danger: true },
+  on: { title: (n) => `启用 ${n}？`, body: '用户端结账页最多 5 分钟内出现这个渠道。', confirm: '启用', danger: false },
+  paused: { title: (n) => `${n} 暂停收新单？`, body: '用户端结账页最多 5 分钟内不再显示这个渠道，进行中的支付仍会回调。', confirm: '暂停收新单', danger: true },
   off: {
     title: (n) => `完全停用 ${n}？`,
-    body: '结账页不再显示，渠道回调也不再处理：进行中的支付即使到账也不会自动入账，需要人工核对后「标记已支付」。一般用「停用」就够了。',
+    body: '结账页不再显示，渠道回调也不再处理：进行中的支付即使到账也不会自动入账，需要人工核对后「标记已支付」。一般暂停收新单就够了。',
     confirm: '完全停用',
     danger: true,
   },

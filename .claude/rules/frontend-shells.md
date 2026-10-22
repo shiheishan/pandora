@@ -8,6 +8,16 @@ paths:
 
 ## 后台（src/admin）
 
+- 首屏分包（10-20，后台与门户同口径）：两边 `App.tsx` 都不静态 import `Shell`，经各自的 `ShellLoader.tsx` 懒加载。它是 `shell/ShellLoader.tsx` 的 `createShellLoader(load, 文案)` 的薄封装：整页边界，分包取不到时提示刷新（`shell/chunk-error.ts` 判定）；`main.tsx` 有登录标志（`tokens.hasSessionHint()`）时调 `preloadShell()` 预取。外框的「改写成规范地址」effect 改写前先核对 `window.location.hash`：这次渲染的地址已过时就不改，免得外框晚挂上时拿旧地址把刚跳的新地址盖掉（10-20 CI 的 C3 就是这样挂的）
+  - 登录前就会加载的文件直接 import 具体组件文件（`../ui/Toast`、`../ui/Button`、`./kit/Btn`），不经 `../ui`、`./kit` 汇总出口。页面照旧从汇总出口 import
+    - 后台：`main.tsx`、`App.tsx`、`LoginPage.tsx`、`ReauthDialog.tsx`、`ShellLoader.tsx`、`site-name.ts`。不 import `screens/**` 与 `site.ts`（它带内容页 schema）
+    - 门户：`main.tsx`、`App.tsx`、`AuthPage.tsx`、`MailLinkLogin.tsx`、`PasswordReset.tsx`、`SiteBrand.tsx`、`Captcha.tsx`、`queries.ts`、`appearance.ts`、`entry-links.ts`、`home.ts`
+    - 两边共用：`shell/runtime.tsx`、`shell/ShellLoader.tsx`
+  - 守卫：`panel/web/app_test.go` 的 `TestEmbeddedEntryFirstScreenBudget`。它对嵌入的真实产物，把 index.html 里 script、modulepreload、stylesheet 引用的文件大小加起来，与 `firstScreenBudget` 比
+    - 10-20 实测：后台 JS 384KB、CSS 28KB；门户 JS 423KB、CSS 124KB
+    - 两边 JS 的大头都是 react-dom、zod、query-core 底座
+    - 门户 CSS 里约 95KB 是展示字体的 @font-face
+    - 超预算先查是不是有模块被静态 import 进了登录路径，不要直接调高预算
 - reauth 只在后台入口接线：`main.tsx` 建 `ReauthController`，作为 `requestReauth` 传给 `createAppRuntime`
   - 常驻的 `ReauthDialog` 接住任何页面写请求的 403 `reauth_required`，验证通过后 `api.ts` 用原幂等键重放
   - 页面自己不弹「重新验证」，也不做「先弹框后执行」：契约 1.6 规定先请求、按需弹框
@@ -18,8 +28,8 @@ paths:
   - 前端不按权限隐藏任何入口、按钮或页签；侧栏、⌘K、页签栏、仪表盘卡片全部照 `modules.ts` 的登记显示
   - 页面不等 `GET v1/me` 回来再渲染；me 只给头像与名字用（`me.ts`），身份一律显示「管理员」
 - 外框布局（样稿 `dev/prototype/admin-v4.html`，av4 落地）：`Shell.tsx` 是两栏网格（侧栏 232 + 主区），页面随文档滚动；**桌面（≥ 960）没有顶栏**
-  - 侧栏（`Sidebar.tsx`，`id="admin-sidebar"`，`position: sticky` 贴顶，z-index 20 让侧栏里的弹层盖住内容）自上而下：环形 Logo + 站点名 + 版本徽标（`__APP_RELEASE__`）；搜索框（点开 ⌘K，显示 ⌘K 提示）；`<nav aria-label="主导航">`（浏览器测试的入口，不要改）——第一项「实时动态」（`EventsTrigger variant="nav"`），然后照 `NAV_GROUPS` 分组（第一组标题为 null 不画组名：仪表盘、工单 / 业务 / 网络 / 设置）；工单提醒卡（`tasks.ts` 的 `ticketAlert`，仪表盘与工单页不显示，点进工单）；账户区：头像 + 名字（ui `Menu` 向上弹出：名字 + 邮箱、修改密码、绑定 Telegram、外观「浅色 / 深色」choice、退出登录），旁边「打开用户端」（`../`，新标签）与主题切换两个图标按钮
-  - 导航徽标（`navBadges`）：工单（红，`hot`）、订单与收款 `orders_pending_stale`、营销 `withdrawals_pending`、节点 `nodes_offline`；数字 `aria-hidden`，不进链接的无障碍名称（浏览器用例按精确名点导航）
+  - 侧栏（`Sidebar.tsx`，`id="admin-sidebar"`，`position: sticky` 贴顶，z-index 20 让侧栏里的弹层盖住内容）自上而下：环形 Logo + 站点名 + 版本徽标（`__APP_RELEASE__`）；搜索框（点开 ⌘K，显示 ⌘K 提示）；`<nav aria-label="主导航">`（浏览器测试的入口，不要改）——第一项「实时动态」（`EventsTrigger variant="nav"`），然后照 `NAV_GROUPS` 分组（第一组标题为 null 不画组名：仪表盘、工单 / 业务 / 网络 / 设置）；工单提醒卡（`tasks.ts` 的 `ticketAlert`，仪表盘与工单页不显示，点进工单的待处理筛选 `?f=todo`，与卡上的数同口径）；账户区：头像 + 名字（ui `Menu` 向上弹出：名字 + 邮箱、修改密码、绑定 Telegram、外观「浅色 / 深色」choice、退出登录），旁边「打开用户端」（`../`，新标签）与主题切换两个图标按钮
+  - 导航徽标（`navBadges`）：工单（红，`hot`）、订单与收款 `orders_pending_stale`、营销 `withdrawals_pending`、节点 `nodes_offline`；数字 `aria-hidden`，不进链接的无障碍名称（浏览器用例按精确名点导航）；每个徽标带 `label`，挂在数字的 `title` 上写清数的是什么（「待处理工单 N 个」「超时未支付订单 N 个：下单超过 M 分钟还没到账，与「待处理到账」无关」「提现待审核 N 笔」「离线节点 N 个」）——订单与收款下的「待处理到账」是钱到了没对上订单，与徽标口径不同（10-21 测试员对错过）
   - 侧栏收起成图标栏的功能与 `pandora-admin-sidebar` 存储键已删，不再恢复
   - 窄于 960（`useMedia('(max-width: 959px)')`）：主区顶上一条 52 高的手机顶栏（`Topbar.tsx`：汉堡「打开导航」+ 页名 + 操作插槽 + `EventsTrigger variant="top"`），侧栏变成 272 宽的抽屉：遮罩、Esc、换页、点遮罩关闭，收着时 `inert`
   - 页头由外框画（`Shell.tsx`）：20px 模块名 + 计数插槽 + 弹性空白 + 「?」（`PageHelp.tsx`，32 的图标按钮，悬停或聚焦展开阴影卡片，手机隐藏）+ 操作插槽；下面是页签栏（ui `Tabs`）。内容列最宽 1120、页边距 28 / 32 / 72（手机 24 / 16）
@@ -32,7 +42,8 @@ paths:
 - ⌘K（`CommandPalette.tsx`）：候选来自 `modules.ts` 的 `paletteGroups(query)`——空查询一组「快速跳转」列全部模块，有查询一组「页面」列模块、「模块 › 页签」与 `PALETTE_EXTRAS` 深链；实体搜索经组件的 `sources` 传入，分组接在「页面」之后
   - 实体搜索（10-16）：`entity-search.ts` 的 `useEntitySearch` 在有查询时并行查 `GET v1/users`、`v1/orders`、`v1/nodes`（`q`、`limit=4`），分「用户」「订单」「节点」三组接在「页面」之后、`sources` 之前；防抖 200ms，查询键带搜索词、`signal` 传给 `api.get`，搜索词变了旧请求由 react-query 取消；某组失败就不显示那组，不报错；没有结果且还在查时显示「正在搜索…」
   - 实体候选带 `path`（`EntityItem`），选中直接 `navigate` 到那一条：`/users/list/<用户id>`、`/billing/orders/<订单id>`、`/nodes/nodes/<节点id>`；只用本文件里的最小 schema 与状态文案，不 import `screens/**`（外框不把模块页面拉进主包）
-- 实时动态（`EventsCapsule.tsx`，纯函数在 `events.ts`）：`EventsProvider` 在 `Shell.tsx` 里包一次，是唯一的数据源（`useRealtime` 只调一次，每个入口只开一条 SSE）；`EventsTrigger` 有两种外观——侧栏第一项（`nav`，弹层贴侧栏右侧）与手机顶栏按钮（`top`，弹层横铺在顶栏下），共用同一个弹层内容。按 topic + table + op 生成通用条目（事件只说哪一行变了，没有业务内容），每条有未读点、「全部标为已读」，页签 全部 / 订单 / 订阅 / 工单 / 节点 / 其他（按现有 topic 归类，不新增事件类型）；最多留 30 条，已读只在内存，刷新即清（10-16 用户定，不持久化）
+- 实时动态（`EventsCapsule.tsx`，纯函数在 `events.ts` 与 `events-lookup.ts`）：`EventsProvider` 在 `Shell.tsx` 里包一次，是唯一的数据源（`useRealtime` 只调一次，每个入口只开一条 SSE）；`EventsTrigger` 有两种外观——侧栏第一项（`nav`，弹层贴侧栏右侧）与手机顶栏按钮（`top`，弹层横铺在顶栏下），共用同一个弹层内容；两种外观都带「实时」二字（手机顶栏也显示，10-21 测试员看不懂只有圆点的按钮）。空状态写「打开页面以来还没有新事件：订单、工单、节点等有变化时会出现在这里（刷新页面会清空）」。按 topic + table + op 生成通用条目（事件只说哪一行变了，没有业务内容），每条有未读点、「全部标为已读」，页签 全部 / 订单 / 订阅 / 工单 / 节点 / 其他（按现有 topic 归类，不新增事件类型）；最多留 30 条，已读只在内存，刷新即清（10-16 用户定，不持久化）
+  - 可读内容（10-21 用户定，纯前端）：条目带 `lookup`（表 + id），弹层打开时 `useEventLookups` 对当前页签可见的条目（按表 + id 去重、最多 30）各调一次现有单条读接口——订单 `GET v1/orders/<id>`、工单 `GET v1/tickets/<id>`、节点 `GET v1/nodes?id=<id>&include_retired=1`（没有 `/nodes/<id>`，空数组算已删）、服务器 `GET v1/servers/<id>`、套餐 `GET v1/plans/<id>`；react-query 键 `['admin','events','lookup',表,id]`、staleTime 10 分钟，同一行再来新事件时按键失效。标题变成「通用标题：主名」（订单号 / 工单标题 / 名字），第二行写用户、金额、状态等（`eventText`）；404 写「已删除」；读失败、删除事件、没有单条接口的表（订阅、公告、`ticket_messages`、`plan_versions`、`prices`、`subscription_credentials`）退回通用文案。schema 与状态文案在 `events-lookup.ts` 里自写最小一份，不 import `screens/**`，口径跟 `entity-search.ts` 与各模块 model 一致
   - 点事件标已读并跳到对应页：订单、工单、节点、服务器、套餐有 id 时直接打开那一条（工单消息、订阅、删除事件退回列表页）；底部「审计日志 →」去 `/security/audit`
 - 接口回 404 时统一显示「不存在或已删除」（`ui/QueryView`），不提权限
 - 与设计稿不同的产品命名：
@@ -51,6 +62,7 @@ paths:
   - 手机（≤ 959）：没有侧栏，内容列顶上只有 Logo；底部悬浮标签栏四项 `TAB_PAGES`（套餐 / 选购 / 钱包 / 我的），订单、邀请、消息、工单、帮助、账号安全都从「我的」页进，这些页上「我的」高亮（`tabOwner`）；「我的」上的小红点 = 有未读消息或待支付订单
   - 内容列 720 宽，`WIDE_PAGES` 1040；页标题 h1 在列里（`HIDDEN_TITLE_PAGES` 只给读屏）；标题行右侧插槽 `PageHeadAside`；换页整列重挂载触发 rise 进场
   - `#/me` 只在手机有：`resolvePage(path, { desktop })` 在 `matchMedia('(min-width: 960px)')` 为真时把它落回 `#/subs`（窗口拉宽同样跳回）；`#/overview` 已删，按未知页面落回 `#/subs`
+- 首页与登录入口（10-20）：服务端在入口页 `#root` 前给了首页片段（`home.ts` 的 `hasServerHome`，模板在 `panel/internal/pkg/webapp/home.go`）时，确定未登录（`useSession()` 为 signed-out；恢复中、暂时连不上都不露首页）、地址没有页面（`''` / `#` / `#/`）、不是邀请链接或快捷 / 邮件登录 → `#root` 不渲染、露出首页；`#/login`、`#/register`（`entry-links.ts` 的 `LOGIN_PATH`、`REGISTER_PATH`、`authTabFromPath`）进登录页对应页签（`AuthPage` 按页签做 key 重挂）；其余地址未登录照旧是登录页；退出登录（含令牌失效被清）时地址是空地址才 `navigate('/login')`，停在别的页面地址上不动（重新登录后回到原页）。显隐只经 `<html data-home="off">`（`home.ts` 的 `setHomeHidden`，`core/theme-boot.js` 首帧前先按登录标志 / hash / 邀请码打一次），样式在全局的 `home.css`。没有片段（vite dev、首页开关关着）时空地址直接是登录页
 - 外来链接不能用两段式路径（public 网关根下有订阅通配）
   - 邀请链接用 `/?invite=CODE`，渲染前就取走
   - 快捷登录链接用 `#/quick-login/<token>`，加载时即消费并抹掉
@@ -60,9 +72,9 @@ paths:
 - 登录页（10-16 样稿 v5）：站点名与标语、公告、白卡片、页脚写注册方式；卡片里登录 / 注册两个页签（`v1/site-config` 的 `registration_mode` 为 closed 时注册页签整个藏掉，带邀请码打开也落到登录）；邀请码只有 invite_only 必填，open 模式下填了无效码的 403 落在邀请码框；邮件链接登录、快捷登录是登录按钮下的次级入口，找回密码从「忘记密码？」进，三者都是带返回的子页；后台关邮箱验证时注册只有一步
 - 快捷登录只收已登录设备在账号安全页生成的链接或令牌（保留规则 1，与设计稿不同）
 - 外观：生效主题的颜色经 CSSOM 写到 `<html>`，不注入 `<style>`
-- 站点名取 `GET v1/appearance` 的顶层 `site_name`（系统设置 `site.name`），不读主题 branding；标语与 Logo 才取生效主题。服务端下发入口页时已把站点名写进 `<title>`，`useAppearanceTheme` 接口回来后照样同步 `document.title`
+- 站点名取 `GET v1/appearance` 的顶层 `site_name`（系统设置 `site.name`），不读主题 branding；标语才取生效主题（主题 Logo 已删，10-21；外框的 Logo 是站点名展示字体加绿点）。服务端下发入口页时已把站点名写进 `<title>`，`useAppearanceTheme` 接口回来后照样同步 `document.title`
   - 键的白名单是 `styles/design-tokens.ts` 的 `COLOR_TOKENS`
-  - Logo 只认 `data:image/`，因为 CSP 的 img-src 只放行 `'self' data:`
+  - 深色模式的品牌色不存主题、由浅色品牌色现算（`styles/brand-palette.ts`）
 - 外框与页面共用同一个查询键的读接口，schema 必须是全字段，各处经 `select` 取自己要的部分
   - 涉及 `queries.ts` 的 `SUBSCRIPTIONS_KEY`、`COMMISSION_KEY`、`PENDING_ORDERS_KEY`（`v1/orders?status=pending_payment`，侧栏订单计数与我的套餐页的待支付横条共用）、`['portal','me']`、`['portal','balance']`
   - 页面不要另开键，也不要收窄这些 schema

@@ -11,12 +11,24 @@ paths:
 - 批量停用走 `suspended`（可恢复），已停用 / 已封禁 / 后台账号由后端跳过：结果按 `disabled` / `skipped` 汇总，一个都没停成时后端不写结论、前端缓存补丁也不写。
 - 产品取舍：「订阅下发使用缓存」开关不做；字典不收 `ops.bulk_export` / `ops.reports` / `node.autoscale`（旧库残留的行按未知 code 显示、照后端极性可切）。
 - 审计导出要 reauth，导出日期校验与后端 `auditExportRange` 同键同文案。
-- 10-16 设计稿：审计日志「结果」单独一列（每行都有标签）；访问日志行里直接显示账号（`accessDetail`：邮箱 > 短用户 id > 匿名，再接动作），工具栏右侧显示本页条数与「清空筛选」。
-- 风控是三段筛选（待处理 / 已标记正常 / 全部，带计数）：待处理取默认列表，另两段取 `include_reviewed=1` 的列表再按有效的「标记正常」过滤（`clusterViews`），两个查询同时发；「标记正常」先确认再提交；成员不显示「最近出现」（后端没有）。风控列表下方挂用户块的 `DevicePolicy`，「注册防护」页签挂 `SignupSecurity`（组件归 users/，这里只接线）。
-- 降级开关页没有顶部说明与只读横幅（说明在 `PAGE_HELP`）；核心项画成禁用的打开开关。
+- 10-16 设计稿：审计日志「结果」单独一列（每行都有标签）；访问日志行里直接显示账号（`accessAccount`：本人邮箱 > 短用户 id；匿名的登录失败显示「匿名 · 试登 <被试邮箱>」，取后端 `target_user_id/email`；有 id 的账号是到用户详情的链接），后接「· 动作中文名」与代号小字，工具栏右侧显示本页条数与「清空筛选」。IP 格后接灰色小字「 · 归属地」（后端早有 `geo`，`logic.accessIpText`，正文字体，单行省略号；悬停再加网络类型，10-21 用户同意显示城市）。`user` 筛选是用户 UUID 时，工具条下一行写「只看 <邮箱> 的记录（含冲着这个账号的登录失败）」（`accessUserFilterLabel` 从本页行里找 `user_id` / `target_user_id` 的邮箱，找不到不显示）。
+- 审计与访问日志的筛选、翻页都在地址上（`auditFromQuery` / `auditToQuery`：`q`、`action`、`actor`、`outcome`、`o`；`accessFromQuery` / `accessToQuery`：`view`、`ip`、`user`、`o`；`navigate` 用 replace），搜索框与动作前缀都是 `DebouncedInput`（停手 300ms 回写，地址变了跟着地址走；受地址直接控制的输入框会在 hashchange 前被还原，光标跳、输入法组字被打断）。用户详情「看登录记录 →」（`#/security/access?view=login&user=<id>`）、「看审计记录 →」（`#/security/audit?q=<用户 id>`）与风控成员行的「登录记录」靠这个深链；`paused` 仍是组件状态。
+- 动作显示中文名：`logic.ts` 的 `ACTION_NAMES` 覆盖 Go 写进审计的全部代号（10-21 核过 181 个，同日随接口删掉 5 个复制节点、重下发、改组成员、订阅模板的动作，剩 176 个）外加访问日志的 `subscription.fetch`，`actionLabel` 查不到回退代号；Go 新增、改名、删除审计动作时同改这张表（单测查重复、代号格式、按代号排序；前后端对照守卫是 Go 侧 `panel/internal/module/audit/service/actions_frontend_test.go` 的 `TestAuditActionsMatchFrontend`，两边差一个都红，访问日志伪动作登记在它的 `frontendOnlyActions`）。对象类型中文名 `RESOURCE_TYPE_LABEL`（后端给了 `resource_label` 就显示它，否则 `objectLabel` 写「类型 · id 前 8 位」；Go 给用户、工单、套餐、套餐版本解析可读名，假后端 `labelOf` 同口径）；登录失败原因码 `reasonLabel`，在对象下面直接显示，不藏在悬停里。
+- 审计搜索框占位 `AUDIT_SEARCH_PLACEHOLDER`（邮箱、动作代号或对象 ID）与 Go 搜索口径一致：邮箱命中操作人或「对象是这个用户」，名称搜不到，空结果的说明里写明。操作者类型只有库里的四种（`ACTOR_KINDS`：user / admin / system / anonymous），订阅拉取结果只有迁移 00017 的五种（`FETCH_RESULT`）。
+- 访问日志行本身不可点，不加悬停底色（只有账号链接可点）。术语就地解释：表头与风险标签用 `TERM_HINT` 作 `title`，表头文字套 `.term`（点线下划线）；页面说明里同名 `{ term, text }` 条目口径一致。
+- 风控是三段筛选（待处理 / 已标记正常 / 全部，带计数）：待处理取默认列表，另两段取 `include_reviewed=1` 的列表再按有效的「标记正常」过滤（`clusterViews`），两个查询同时发；「标记正常」先确认再提交；成员不显示「最近出现」（后端没有）；成员行末尾「登录记录」链到访问日志的登录分段。三段筛选右侧有「按账号看：溯源总览 › 账号综合排行 →」（`#/security/trace?view=accounts`；风控只按 IP 聚，按账号不另做，10-21）。风控列表下方挂用户块的 `DevicePolicy`，「注册防护」页签挂 `SignupSecurity`（组件归 users/，这里只接线）。
+- 降级开关页没有顶部说明与只读横幅（说明在 `PAGE_HELP`）。没有关不掉的开关：00002 种的三个核心项（auth.login / subscription.renewal / client.config_sync）没有代码读取，迁移 00064 删去并取消 essential（10-21），`GET v1/switches` 每项只有 code、enabled、reason，按 code 升序。
 - av4（样稿 admin-v4）：
-  - 访问日志是亮底白框（不再是深色终端）：头部两行——第一行 `StatusDot`（监控中 / 已暂停 / 查看更早的记录）+ 说明 + 第一页的「暂停 / 继续」，第二行 `FilterTabs` 分段；事件行是 5 列 grid（时间、分类标签、结果、IP、账号 · 动作）；页脚常显，「回到最新」第一页置灰。结果色档在 `logic.ts` 的 `accessTone`：成功绿、订阅拉取 `rate_limited` 黄、其余非成功红、无结果灰。
-  - 风控每个聚类一张卡：一行头部（IP、归属地、风险标签、账号数、「标记正常」「禁用账号…」）+ 成员行（邮箱链接、状态、套餐），复核结论（如「已标记为正常，MM-DD 前不再提示」）在卡片最下一行；有效标记正常的卡整张淡显。
-  - 审计日志：「导出」在页头 `PageActions`；表格 `Table boxed`，表尾一页时「共 N 条」、多页 `<Pager inline>`；手机上只留操作人与结果（其余列 `hideOnMobile`），动作与时间挪到操作人下一行（全局类 `m-only`）。结果色档 `OUTCOME_TONE`：成功绿、失败红、拒绝黄、部分成功蓝。
-  - 降级开关：`Card flush` 里一项一行，暂停中整行 `--danger-soft` 底、开关 `Switch tone="danger"`（红），核心项是禁用的打开开关。
+  - 访问日志是亮底白框（不再是深色终端）：头部两行——第一行 `StatusDot`（监控中 / 已暂停 / 查看更早的记录）+ 说明 + 第一页的「暂停 / 继续」，第二行 `FilterTabs` 分段；事件行是 5 列 grid（时间、分类标签、结果、IP · 归属地（最宽 240）、账号 · 动作；时间列 104 放得下跨天的「MM-DD HH:mm:ss」），手机（≤639）分两行：时间、分类、结果、IP 一行，账号 · 动作占满第二行；页脚常显，「回到最新」第一页置灰。结果色档在 `logic.ts` 的 `accessTone`：成功绿、订阅拉取 `rate_limited` 黄、其余非成功红、无结果灰。
+  - 风控每个聚类一张卡：一行头部（IP、归属地、风险标签、账号数、「标记正常」「禁用账号…」）+ 成员行（四格：邮箱链接、状态、套餐、「登录记录」；手机分两行：邮箱 + 状态 / 套餐 + 登录记录），复核结论（如「已标记为正常，MM-DD 前不再提示」）在卡片最下一行；有效标记正常的卡整张淡显。
+  - 审计日志：点一行展开细节（10-21 用户同意，「只做 5 样」之外的例外）：后端列表每行带 `data`（库里原样的 JSON 对象，空回 `{}`；导出 CSV 不带），`audit-detail.ts` 的 `auditDetail` 拆成「改前 → 改后」（`before`/`after` 两个对象逐键；`X_before`/`X_after`、`before_X`/`after_X`、只有 `before_X` 而有 `X`；标量 `before` 配 `status`（identity 改账号状态，值译成正常 / 已停用等，只在这一对里译）或 `enabled`（降级开关）；`previous_end` → `period_end`）与其余键值，只有一边的 before / after 对象逐键列成「改前 · 键」；没变的键写「（没变）」淡显；键名中文表 `KEY_LABEL`，查不到显示原键（等宽），值：布尔是 / 否、ISO 时间按本地、标量数组顿号连、`reason` 走 `reasonLabel`。细节行最上一行补完整时间、动作代号、来源 IP、认证、对象 ID（手机上这几列收起）。行可 Tab 聚焦，Enter / 空格展开（ui `Table` 的 `expanded` + `onRowClick`，行带 `aria-expanded`），结果标签后有转向的箭头。
+  - 审计日志：「导出」在页头 `PageActions`；表格 `Table boxed`，表尾一页时「共 N 条」、多页 `<Pager inline>`；手机上只留操作人与结果（其余列 `hideOnMobile`），动作 · 时间挪到操作人下一行、对象（`objectLabel`，「—」不显示）再下一行（全局类 `m-only`；10-21 测试员在手机上看不出改的是哪个套餐）。结果色档 `OUTCOME_TONE`：成功绿、失败红、拒绝黄、部分成功蓝。
+  - 降级开关：`Card flush` 里一项一行，暂停中整行 `--danger-soft` 底、开关 `Switch tone="danger"`（红）；缺行的开关不能切换。
   - 注册防护（`users/SignupForm.tsx` 的 security 段）：「人机验证」「注册限制」两节 `SectionTitle variant="group"`，每项一个 kit `SettingRow`（打开才展开配置）；「开启人机验证」= `captcha_provider !== ''`，关掉时前端记住上次选的服务，第一次打开默认 Turnstile；验证服务用 `RadioCards`；邮箱后缀是 `TagInput`（上限 100，表单字段是数组）；整页一个 `SaveBar`（提示「保存时要再验证一次身份」），只提交改过的字段。
+- 溯源总览（`TraceTab.tsx`，数据层 `trace.ts`，10-20）：
+  - 初始排行取地址 `view`（`ips` / `subscribers` / `accounts`，其余落 `ips`），之后切换只是组件状态、不回写地址。
+  - 时间窗 24h / 7d / 30d（`Segmented`，24h 不带 `window` 参数）；选 30d 时提示拉取日志只保留 31 天。概览与 IP 排行是同一个请求（`/v1/trace/ips`），订阅、账号两张排行只在切到时才发请求；都不在 SSE 里、不轮询，换窗口保留上一份数据（`placeholderData`）；整窗聚合较重，`staleTime` 5 分钟、关掉 `refetchOnWindowFocus`，工具条上手动「刷新」（`useRefreshTrace` 作废 `TRACE_KEY` 整组）。「失败」= 拉取结果不是 ok，含到期提示与被限流（页面说明里写明）。
+  - IP 默认打码（后端给 `ip_masked` 与 `token`），点「显示」调 `/v1/trace/reveal`，每次都写审计，所以结果不进 react-query 缓存，只放组件状态；关联账号在单元格里展开，链接 `/users/list/<id>`，已注销显示 `traceUserLabel`（与 `userLabel` 同口径）。
+  - 账号排行手机上只留「账号」「与他人共用 IP」两列，关联 IP 与登录次数挪到账号下一行（`m-only`；四列时账号列只剩一个字宽）。
+  - 排序都是降序、由后端排（`SUB_SORTS` / `ACC_SORTS`，列 key 与 sort 值一致）；订阅排行的「地区数」只在本页内排（`sortByRegions`）。
+  - schema 与 `identity/handler/trace.go` 的 DTO 逐键一致、全部必有；假后端在 `dev/mock/admin/security-trace.ts`，由审计行与拉取日志现算（与访问日志、审计页对得上，口径与不同处见 frontend-mock），校验文案与 Go 相同。

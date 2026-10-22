@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
+import { useNow } from '../../kit'
 import { href, navigate, useHashLocation } from '../../../core/router'
 import type { AdminScreenProps } from '../index'
 import { BulkTab } from './BulkTab'
@@ -61,12 +62,3 @@ function ListTab({ rest, now }: { rest: string[]; now: Date }) {
   )
 }
 
-/** 相对时间与到期天数每分钟走一次 */
-function useNow(intervalMs = 60_000): Date {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
-  return now
-}

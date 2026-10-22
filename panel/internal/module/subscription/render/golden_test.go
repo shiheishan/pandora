@@ -21,7 +21,7 @@ func TestGoldenRender(t *testing.T) {
 			if !r.Empty {
 				nodes = loadNodes(t)
 			}
-			body, ct, count := Render(Format(r.Format), nodes, m.ProxyUUID, r.UA, r.Singbox.options())
+			body, ct, count := renderPlain(Format(r.Format), nodes, m.ProxyUUID, r.UA, r.Singbox.options())
 			if *update {
 				writeTestdata(t, "golden/"+r.File, body)
 				r.ContentType = ct

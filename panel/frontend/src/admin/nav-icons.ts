@@ -1,12 +1,10 @@
 import type { IconSvgElement } from '@hugeicons/react'
 import {
   BubbleChatIcon,
-  Cancel01Icon,
   CreditCardIcon,
   DashboardSquare01Icon,
   File01Icon,
   GiftIcon,
-  HelpCircleIcon,
   Key01Icon,
   LinkSquare02Icon,
   Logout01Icon,
@@ -58,7 +56,3 @@ export const TELEGRAM_ICON = TelegramIcon
 /** 账户菜单：退出登录 */
 export const LOGOUT_ICON = Logout01Icon
 
-/** 页头「?」帮助 */
-export const HELP_ICON = HelpCircleIcon
-
-export const CLOSE_ICON = Cancel01Icon

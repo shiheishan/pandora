@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/google/uuid"
 )
 
 func TestNormalizeEmail(t *testing.T) {
@@ -118,22 +119,24 @@ func TestNewInviteCode(t *testing.T) {
 
 func TestMaskEmail(t *testing.T) {
 	cases := map[string]string{
-		"alice@example.com": "al***@example.com",
-		"ab@x.io":           "a***@x.io",
-		"@x.io":             "***",
-		"a@x.io":            "***",
-		"noat":              "***",
+		"alice@example.com":         "al***@example.com",
+		"ab@x.io":                   "a***@x.io",
+		"@x.io":                     "***",
+		"a@x.io":                    "***",
+		"noat":                      "***",
+		DeletedEmail(uuid.New()):    DeletedAccountLabel,
+		"Deleted-x@DELETED.INVALID": DeletedAccountLabel,
 	}
 	for in, want := range cases {
-		got := maskEmail(in)
+		got := MaskEmail(in)
 		if got != want {
-			t.Fatalf("maskEmail(%q)=%q want %q", in, got, want)
+			t.Fatalf("MaskEmail(%q)=%q want %q", in, got, want)
 		}
 		if !utf8.ValidString(got) {
 			t.Fatalf("乱码: %q", got)
 		}
 	}
-	cn := maskEmail("中文名@example.com")
+	cn := MaskEmail("中文名@example.com")
 	if !utf8.ValidString(cn) {
 		t.Fatalf("中文本地部分: %q", cn)
 	}

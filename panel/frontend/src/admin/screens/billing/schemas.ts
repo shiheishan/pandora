@@ -281,7 +281,6 @@ export const paymentSettingsSchema = z.object({
   effective_base: z.string(),
   public_base_url: z.string(),
 })
-export type PaymentSettings = z.output<typeof paymentSettingsSchema>
 
 // ---------------------------------------------------------------------------
 // 收入调整（报表口径，只追加）：列表、登记与冲销同形；reversal_of 是 omitempty，R66 登记人
@@ -299,3 +298,7 @@ export const adjustmentSchema = z.object({
 })
 export const adjustmentsSchema = z.object({ adjustments: z.array(adjustmentSchema) })
 export type Adjustment = z.output<typeof adjustmentSchema>
+
+// 购买限制（GET/POST v1/settings/purchase）：0 = 不限
+export const purchaseLimitsSchema = z.object({ max_unpaid_orders: z.number().int(), max_subscriptions: z.number().int() })
+export type PurchaseLimits = z.output<typeof purchaseLimitsSchema>

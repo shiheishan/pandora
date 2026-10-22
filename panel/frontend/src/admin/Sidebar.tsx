@@ -85,8 +85,9 @@ export function Sidebar(p: SidebarProps) {
                   <HugeiconsIcon icon={NAV_ICONS[key]} size={16} strokeWidth={1.6} aria-hidden="true" />
                   <span>{MODULES[key].title}</span>
                   {badge != null && (
-                    // 数字不进链接的无障碍名称：浏览器用例按「工单」等精确名找导航链接；数量在仪表盘待办与提醒卡里读得到
-                    <span className={cx(css.ct, badge.hot && css.hot)} aria-hidden="true">
+                    // 数字不进链接的无障碍名称：浏览器用例按「工单」等精确名找导航链接；数量在仪表盘待办与提醒卡里读得到。
+                    // 悬停提示写清数的是什么（如「超时未支付订单 2 个」），免得和页内别的「待处理」对错口径
+                    <span className={cx(css.ct, badge.hot && css.hot)} aria-hidden="true" title={badge.label}>
                       {badge.count > 99 ? '99+' : badge.count}
                     </span>
                   )}
@@ -98,7 +99,7 @@ export function Sidebar(p: SidebarProps) {
       </nav>
 
       {alert != null && current !== 'dash' && current !== 'tickets' && (
-        <a href={href(modulePath('tickets'))} className={css.alert}>
+        <a href={href(modulePath('tickets'), { f: 'todo' })} className={css.alert}>
           <b>
             <i aria-hidden="true" />
             {alert.count} 个工单没回复

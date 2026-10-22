@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
-	"golang.org/x/net/http2"
 )
 
 func TestNativeNaiveH2Loopback(t *testing.T) {
@@ -43,18 +42,15 @@ func TestNativeNaiveH2Loopback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer adapter.Close()
-	raw, err := tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http2.NextProtoTLS}}) //nolint:gosec -- ephemeral test certificate.
+	raw, err := tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec -- ephemeral test certificate.
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer raw.Close()
-	if got := raw.ConnectionState().NegotiatedProtocol; got != http2.NextProtoTLS {
+	if got := raw.ConnectionState().NegotiatedProtocol; got != "h2" {
 		t.Fatalf("ALPN=%q", got)
 	}
-	clientConn, err := (&http2.Transport{}).NewClientConn(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
+	clientConn := h2OverConn(raw)
 	pipeReader, pipeWriter := io.Pipe()
 	req, err := http.NewRequest(http.MethodConnect, "https://127.0.0.1/", pipeReader)
 	if err != nil {

@@ -24,7 +24,7 @@ import (
 const defaultClashTemplate = "mixed-port: 7890\nallow-lan: false\nmode: rule\nlog-level: info\n\n{{proxies}}\n\nproxy-groups:\n{{proxy_groups}}\n\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n"
 
 // renderClash 渲染 Clash 系配置（Clash Meta / Premium / Stash）。
-// 支持后台自定义模板（rc.tmpl 为空时使用内置 defaultClashTemplate），通过占位符替换生成。
+// 用内置 defaultClashTemplate 做占位替换生成。
 // 信息节点（剩余流量等）排在最前，仅进手动选择组（节点选择），不进自动选择组（自动选择）；
 // 当没有真实节点时，不输出信息节点，节点数只计真实节点。
 func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
@@ -80,13 +80,11 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 	proxiesVal := w.b.String()
 
 	var proxyGroupsVal string
-	var proxyNamesVal string
 
 	if len(realProxies) == 0 {
 		proxyGroupsVal = "  - {name: 节点选择, type: select, proxies: [DIRECT]}"
-		proxyNamesVal = "DIRECT"
 	} else {
-		proxyNamesVal = joinQuoted(realNames)
+		proxyNamesVal := joinQuoted(realNames)
 		selectNames := proxyNamesVal
 		if len(infoNames) > 0 {
 			selectNames = joinQuoted(infoNames) + ", " + proxyNamesVal
@@ -96,15 +94,9 @@ func renderClash(rc renderCtx, kind clashKind) ([]byte, string, int) {
 			"  - {name: 节点选择, type: select, proxies: [自动选择, " + selectNames + "]}"
 	}
 
-	tmpl := rc.tmpl
-	if tmpl == "" {
-		tmpl = defaultClashTemplate
-	}
-
-	body := fillTemplate(tmpl, map[string]string{
+	body := fillTemplate(defaultClashTemplate, map[string]string{
 		phProxies:     proxiesVal,
 		phProxyGroups: proxyGroupsVal,
-		phProxyNames:  proxyNamesVal,
 	})
 
 	return body, "text/yaml; charset=utf-8", len(realProxies)

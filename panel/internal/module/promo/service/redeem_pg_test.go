@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -360,52 +359,5 @@ func TestReserveRules(t *testing.T) {
 	}
 	if cnt != 1 {
 		t.Fatalf("订单占用行 %d，期望 1", cnt)
-	}
-}
-
-func TestPreview(t *testing.T) {
-	e := newEnv(t)
-	ctx := e.txCtx()
-	admin := newUser(t, e, ctx)
-	u := newUser(t, e, ctx)
-
-	P := newPlan(t, e, ctx)
-	R := uuid.New()
-	e.cat.prices[R] = fakePrice{plan: P, amount: decimal.RequireFromString("30.00")}
-
-	code := randCode("PRV")
-	ps := percentSpec(1000)
-	ps.PlanIDs = []uuid.UUID{P}
-	createCoupon(t, e, ctx, admin, code, ps)
-
-	pv, err := e.svc.Preview(ctx, u, code, PreviewItem{PlanID: P, PriceID: R})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !pv.Subtotal.Equal(decimal.RequireFromString("30.00")) {
-		t.Fatalf("Subtotal %s", pv.Subtotal)
-	}
-	if !pv.Discount.Equal(decimal.RequireFromString("3.00")) {
-		t.Fatalf("Discount %s", pv.Discount)
-	}
-	if !pv.Payable.Equal(decimal.RequireFromString("27.00")) {
-		t.Fatalf("Payable %s", pv.Payable)
-	}
-	if pv.Applied == nil {
-		t.Fatal("Applied 应为非 nil")
-	}
-
-	pv, err = e.svc.Preview(ctx, u, "", PreviewItem{PlanID: P, PriceID: R})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !pv.Discount.IsZero() || !pv.Payable.Equal(decimal.RequireFromString("30.00")) || pv.Applied != nil {
-		t.Fatalf("空码 Preview: discount=%s payable=%s applied=%v", pv.Discount, pv.Payable, pv.Applied)
-	}
-
-	wrongPlan := uuid.New()
-	_, err = e.svc.Preview(ctx, u, code, PreviewItem{PlanID: wrongPlan, PriceID: R})
-	if errCode(err) != errs.NotFound {
-		t.Fatalf("价格不属于套餐: code=%s err=%v", errCode(err), err)
 	}
 }

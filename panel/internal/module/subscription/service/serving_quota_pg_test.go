@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -65,5 +66,31 @@ func TestServingMultiPeriodQuotaPG(t *testing.T) {
 	}
 	if row.TrafficLimit == nil || *row.TrafficLimit != 100*gib || row.TrafficConsumed == nil || *row.TrafficConsumed != 95*gib {
 		t.Fatalf("应取余量最小的 total 行，得 limit=%v consumed=%v", row.TrafficLimit, row.TrafficConsumed)
+	}
+}
+
+// 认证查询顺带取本期流量配额行的周期末（信息节点的「距下次重置」），与库里那一行一致。
+func TestPullRowTrafficPeriodEndPG(t *testing.T) {
+	e := newEnv(t)
+	ctx := e.txCtx()
+	user := newUser(t, e, ctx)
+	planID, versionID := newPlan(t, e, ctx, quotaSpec{MetricTraffic, PeriodCycle, i64(10 * gib)})
+	sub := provision(t, e, ctx, user, planID, versionID, "")
+	var hash []byte
+	if err := e.row(ctx, `SELECT token_hash FROM subscription_credentials WHERE subscription_id = ? AND status = 'active'`,
+		sub.ID).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	var want time.Time
+	if err := e.row(ctx, `SELECT period_end FROM quota_balances WHERE subscription_id = ? AND metric = ? AND period = ?`,
+		sub.ID, MetricTraffic, PeriodCycle).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := e.svc.repo.PullByTokenHash(ctx, hash, e.svc.clock())
+	if err != nil || !found {
+		t.Fatalf("按令牌哈希读: found=%v err=%v", found, err)
+	}
+	if row.TrafficPeriodEnd == nil || !row.TrafficPeriodEnd.Equal(want) {
+		t.Fatalf("TrafficPeriodEnd = %v，库里本期配额行周期末 %v", row.TrafficPeriodEnd, want)
 	}
 }

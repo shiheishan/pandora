@@ -47,7 +47,7 @@ func newPGEnv(t *testing.T) (*pgEnv, context.Context) {
 	p := newFakePorts()
 	deps := Deps{
 		Settings: p, Users: p, Subscriptions: p, Nodes: p, Ledger: p, Orders: p, Payments: p,
-		Commissions: p, Tickets: p, Notices: p, Activity: p, Redis: &fakeRedis{},
+		Commissions: p, Giftcards: p, Tickets: p, Notices: p, Activity: p, Redis: &fakeRedis{},
 	}
 	svc := New(repo.New(d), tx.NewManager(d), au, deps, Options{})
 
@@ -103,7 +103,7 @@ func newCommitPGEnv(t *testing.T) (*pgEnv, context.Context) {
 	p := newFakePorts()
 	deps := Deps{
 		Settings: p, Users: p, Subscriptions: p, Nodes: p, Ledger: p, Orders: p, Payments: p,
-		Commissions: p, Tickets: p, Notices: p, Activity: p, Redis: &fakeRedis{},
+		Commissions: p, Giftcards: p, Tickets: p, Notices: p, Activity: p, Redis: &fakeRedis{},
 	}
 	svc := New(repo.New(d), tx.NewManager(d), au, deps, Options{})
 

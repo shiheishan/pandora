@@ -10,7 +10,7 @@ import { useApi } from '../../../shell/runtime'
 // 字段与 Go order/handler 的 quoteResponse / quoteRowResponse 一一对应，都没有 omitempty：
 // 指针字段（各 id、优惠码、明细、周期）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
+export { type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 import { quoteSchema, type BalanceSplit, type Quote, type QuoteRow } from './quote-schema'
 
 export interface QuoteRequest {
@@ -43,6 +43,9 @@ export const balanceSplit = (row: QuoteRow, useBalance: boolean): BalanceSplit =
 export function expectation(quote: Quote, row: QuoteRow, split: BalanceSplit) {
   return { as_of: quote.as_of, expect: { total: row.total, balance_applied: split.applied, payable: split.payable } }
 }
+
+/** 门户新开一份到了每人份数上限（409）：报价、建单都回，原话显示，不当加载失败 */
+export const isSubscriptionLimit = (e: unknown) => isApiError(e, 'subscription_limit_reached')
 
 /** 建单被拒的两种购买特有情形（设计稿 2.2 / 2.4，httpx.CodeQuoteChanged / CodeOrderPending，都是 409），按码认 */
 export function purchaseRefusal(error: unknown): 'quote_changed' | 'order_pending' | null {

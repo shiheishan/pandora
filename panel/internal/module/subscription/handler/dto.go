@@ -23,6 +23,13 @@ type quotaResponse struct {
 	PeriodEnd   *time.Time `json:"period_end"`
 }
 
+// planUsageResponse 是一份订阅按套餐版本给的用量；三项 null 分别表示不限流量、不限台数、不限速。
+type planUsageResponse struct {
+	TrafficBytes *int64 `json:"traffic_bytes"`
+	DeviceLimit  *int   `json:"device_limit"`
+	ThrottleKbps *int   `json:"throttle_kbps"`
+}
+
 // renewalPriceResponse 是续费界面要的当前价格档（金额为分）。
 type renewalPriceResponse struct {
 	ID              string `json:"id"`
@@ -65,6 +72,9 @@ type mySubscriptionResponse struct {
 	ClientName   string                `json:"client_name"`
 	Changeable   bool                  `json:"changeable"`
 	RenewUntil   *time.Time            `json:"renew_until"`
+	Usage        planUsageResponse     `json:"usage"`
+	NextUsage    *planUsageResponse    `json:"next_usage"`
+	IsTrial      bool                  `json:"is_trial"`
 }
 
 // mySubscriptionsResponse 是 GET /me/subscriptions 的响应。
@@ -92,6 +102,15 @@ func mySubscriptionsFrom(in service.MySubscriptions) (mySubscriptionsResponse, e
 		out.Subscriptions = append(out.Subscriptions, v)
 	}
 	return out, nil
+}
+
+// planUsageFrom 转一份套餐用量。
+func planUsageFrom(u service.Usage) planUsageResponse {
+	return planUsageResponse{
+		TrafficBytes: u.TrafficBytes,
+		DeviceLimit:  u.DeviceLimit,
+		ThrottleKbps: u.ThrottleKbps,
+	}
 }
 
 // mySubscriptionFrom 转一份订阅。
@@ -128,6 +147,12 @@ func mySubscriptionFrom(s service.MySubscription) (mySubscriptionResponse, error
 		ClientName:    s.ClientName,
 		Changeable:    s.Changeable,
 		RenewUntil:    utcPtr(s.RenewUntil),
+		Usage:         planUsageFrom(s.Usage),
+		IsTrial:       s.IsTrial,
+	}
+	if s.NextUsage != nil {
+		nu := planUsageFrom(*s.NextUsage)
+		v.NextUsage = &nu
 	}
 	if s.ResetPrice != nil {
 		c, err := cents(*s.ResetPrice)
@@ -235,56 +260,4 @@ type deviceLimitRequest struct {
 // okResponse 是只回成功的响应。
 type okResponse struct {
 	OK bool `json:"ok"`
-}
-
-// resetLogsQuery 是重置日志的筛选参数。
-type resetLogsQuery struct {
-	Reason string `form:"reason" binding:"omitempty,oneof=renewal cycle_roll manual gift_card plan_change order"`
-	UserID string `form:"user_id" binding:"omitempty,uuid"`
-}
-
-// resetLogResponse 是一条重置日志。
-type resetLogResponse struct {
-	ID             string    `json:"id"`
-	UserEmail      string    `json:"user_email"`
-	PlanName       string    `json:"plan_name,omitempty"`
-	Metric         string    `json:"metric"`
-	Reason         string    `json:"reason"`
-	ConsumedBefore int64     `json:"consumed_before"`
-	ActorEmail     string    `json:"actor_email,omitempty"`
-	Note           string    `json:"note,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
-// resetLogsResponse 是重置日志列表。
-type resetLogsResponse struct {
-	Logs  []resetLogResponse `json:"logs"`
-	Total int64              `json:"total"`
-}
-
-// resetLogsFrom 转重置日志；永不为 nil。
-func resetLogsFrom(rows []service.ResetLogView, total int64) resetLogsResponse {
-	out := resetLogsResponse{Logs: make([]resetLogResponse, 0, len(rows)), Total: total}
-	for _, r := range rows {
-		out.Logs = append(out.Logs, resetLogResponse{
-			ID:             r.ID.String(),
-			UserEmail:      r.UserEmail,
-			PlanName:       r.PlanName,
-			Metric:         r.Metric,
-			Reason:         r.Reason,
-			ConsumedBefore: r.ConsumedBefore,
-			ActorEmail:     r.ActorEmail,
-			Note:           r.Note,
-			CreatedAt:      utc(r.CreatedAt),
-		})
-	}
-	return out
-}
-
-// resetStatsResponse 是近 30 天的重置统计。
-type resetStatsResponse struct {
-	Last30Days  int            `json:"last_30_days"`
-	ByReason    map[string]int `json:"by_reason"`
-	FreedBytes  int64          `json:"freed_bytes"`
-	ManualCount int            `json:"manual_count"`
 }

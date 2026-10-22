@@ -12,7 +12,7 @@ import (
 
 // Landings 是门户买 planID 的落点（GET /v1/me/checkout/landings?plan_id=）：用户自己选这单落到哪里。
 // 选项：第一项恒为 {Mode: LandingNew}；同款在先（一次性叠加 / 订阅续费），换掉别的未停用套餐在后。
-// 不加锁、不写库。
+// 到了每人份数上限时新开那项带 DisabledReason（与建单同一个计数，不拿锁）。不加锁、不写库。
 func (s *Service) Landings(ctx context.Context, planID uuid.UUID) (Landings, error) {
 	userID, err := portalUser(ctx)
 	if err != nil {
@@ -65,6 +65,11 @@ func (s *Service) Landings(ctx context.Context, planID uuid.UUID) (Landings, err
 	}
 
 	opts := []Landing{{Mode: LandingNew}}
+	if refusal, err := s.subscriptionCapRefusal(ctx, userID, now); err != nil {
+		return Landings{}, err
+	} else if refusal != nil {
+		opts[0].DisabledReason = refusal.Message
+	}
 	var sameOpts []Landing
 	var changeOpts []Landing
 

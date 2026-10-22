@@ -210,6 +210,8 @@ export interface PlanCardProps {
   action: ReactNode
   /** 按钮下的小字（样稿 .next） */
   note?: ReactNode
+  /** 事实列表下的一行小字，如「下期起每期 200G」 */
+  factsNote?: ReactNode
 }
 
 /**
@@ -222,6 +224,7 @@ export function PlanCard({
   current = false,
   action,
   note,
+  factsNote,
 }: PlanCardProps) {
   const price = headlinePrice(plan)
 
@@ -243,6 +246,7 @@ export function PlanCard({
       <PlanAltPrices plan={plan} />
       <div className={css.rule} />
       <PlanFacts plan={plan} />
+      {factsNote && <p className={css.factsNote}>{factsNote}</p>}
       <div className={css.act}>{action}</div>
       {note && <p className={css.next}>{note}</p>}
     </section>

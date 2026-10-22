@@ -41,7 +41,6 @@ const placementSchema = z.object({ question: z.string(), options: z.array(placem
 export const giftCardSchema = z.object({
   id: z.string(),
   name: z.string(),
-  description: z.string(),
   type: z.enum(['general', 'plan', 'mystery']),
   status: z.string(),
   rewards: z.object({
@@ -65,7 +64,6 @@ export const giftCardSchema = z.object({
   }),
   conditions: z.record(z.string(), z.unknown()),
   limits: z.record(z.string(), z.unknown()),
-  theme_color: z.string(),
   created_at: z.string(),
   plan_name: z.string().optional(),
   plan_kind: z.enum(['subscription', 'one_time']).optional(),

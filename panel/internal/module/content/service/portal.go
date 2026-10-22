@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/aegispanel/aegis/internal/module/content/model"
 	"github.com/aegispanel/aegis/internal/module/content/repo"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 )
@@ -30,13 +29,14 @@ func (s *Service) GetVisible(ctx context.Context, userID uuid.UUID, slug string,
 		return Page{}, err
 	}
 	// 端口没装时（只有单测会这样，生产由装配自检 MissingPorts 拦住）对应变量替换成空串
-	vars := RenderVars{SiteURL: strings.TrimRight(s.publicBaseURL, "/")}
+	var vars RenderVars
 	if s.site != nil {
 		site, err := s.site.Site(ctx)
 		if err != nil {
 			return Page{}, err
 		}
 		vars.SiteName = site.Name
+		vars.SiteURL = strings.TrimRight(s.site.SiteURL(ctx), "/")
 	}
 	if s.links != nil && NeedsSubscribeURL(page.Body) {
 		vars.SubscribeURL, err = s.links.CurrentLink(ctx)
@@ -63,23 +63,9 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 	if filter.Kind != "" && !allowedKinds[filter.Kind] {
 		return nil, false, errs.Invalid(map[string]string{"kind": "无效的内容类型"})
 	}
-	filter.Platform = strings.ToLower(strings.TrimSpace(filter.Platform))
-	if filter.Platform != "" && filter.Platform != PlatformAny && !allowedPlatforms[filter.Platform] {
-		return nil, false, errs.Invalid(map[string]string{"platform": "无效的平台"})
-	}
 	filter.Query = strings.TrimSpace(filter.Query)
 	if utf8.RuneCountInString(filter.Query) > 100 {
 		return nil, false, errs.Invalid(map[string]string{"q": "搜索词最多 100 个字"})
-	}
-	if filter.ClientVersion != "" && !versionPattern.MatchString(filter.ClientVersion) {
-		return nil, false, errs.Invalid(map[string]string{"client_version": "客户端版本格式不正确"})
-	}
-	filter.Locale = strings.TrimSpace(filter.Locale)
-	if filter.Locale == "" {
-		filter.Locale = DefaultLocale
-	}
-	if !localePattern.MatchString(filter.Locale) {
-		return nil, false, errs.Invalid(map[string]string{"locale": "语言格式不正确"})
 	}
 
 	planUUIDs, err := s.subs.LivePlanIDs(ctx, userID)
@@ -95,10 +81,7 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 	q := repo.VisibleQuery{
 		Kind:        filter.Kind,
 		Slug:        slug,
-		Locale:      filter.Locale,
 		Query:       filter.Query,
-		AnyPlatform: filter.Platform == PlatformAny,
-		Platform:    filter.Platform,
 		PlanIDs:     planStrs,
 		IncludeBody: includeBody,
 	}
@@ -121,9 +104,6 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 	seen := map[string]bool{}
 	for _, row := range rows {
 		if seen[row.Slug] {
-			continue
-		}
-		if !versionVisible(row.MinClientVersion, row.MaxClientVersion, filter.ClientVersion) {
 			continue
 		}
 		seen[row.Slug] = true
@@ -149,35 +129,4 @@ func (s *Service) visible(ctx context.Context, userID uuid.UUID, slug string, fi
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
 	return out, hasAccess, nil
-}
-
-// SubmitFeedback 记录用户对某版本是否有帮助。
-func (s *Service) SubmitFeedback(ctx context.Context, userID uuid.UUID, slug string, version int, helpful bool, f VisibleFilter) error {
-	slug = strings.ToLower(strings.TrimSpace(slug))
-	if !slugPattern.MatchString(slug) {
-		return errs.New(errs.NotFound)
-	}
-	if _, _, err := s.getVisible(ctx, userID, slug, f); err != nil {
-		return err
-	}
-	versionInvalid := errs.Invalid(map[string]string{"version": "该版本不存在"})
-	if version <= 0 {
-		return versionInvalid
-	}
-	return s.tx.Do(ctx, func(ctx context.Context) error {
-		ok, err := s.repo.PublishedVersionExists(ctx, slug, version)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return versionInvalid
-		}
-		fb := &model.Feedback{
-			PageSlug:    slug,
-			PageVersion: version,
-			UserID:      userID,
-			Helpful:     helpful,
-		}
-		return s.repo.UpsertFeedback(ctx, fb)
-	})
 }

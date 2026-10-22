@@ -147,7 +147,7 @@ func TestColdStartFollowsCachedOrder(t *testing.T) {
 
 func newNativeKernel(t *testing.T) *nativekernel.NativeCore {
 	t.Helper()
-	k := nativekernel.NewNativeCore(nil)
+	k := nativekernel.NewNativeCoreWithLogger(nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if err := k.Start(ctx); err != nil {
@@ -229,7 +229,7 @@ func TestServesFromCacheWhenPanelDown(t *testing.T) {
 	if socks5Auth(t, port, "mallory-uuid-999") {
 		t.Fatal("缓存起服务后未授权用户也认证通过了")
 	}
-	if rt := n.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
+	if rt := n.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_DEGRADED || rt.Reason != reasonServingCached {
 		t.Fatalf("面板确认前状态 = %v", rt)
 	}
 
@@ -243,7 +243,7 @@ func TestServesFromCacheWhenPanelDown(t *testing.T) {
 	if !socks5Auth(t, port, "bob-uuid-00002") {
 		t.Fatal("面板回来后已授权用户认证不过")
 	}
-	if rt := n.runtime(); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
+	if rt := n.runtime(time.Time{}); rt.Status != nodev1.RuntimeStatus_RUNTIME_STATUS_RUNNING {
 		t.Fatalf("面板回来后状态 = %v", rt)
 	}
 	assertStrings(t, "回执", restarted.link.acks("7"), "CONFIG_PHASE_SWITCHED:"+nc.GetContentSha256()[:8])

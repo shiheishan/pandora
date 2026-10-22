@@ -11,6 +11,7 @@ linters:
     - bodyclose
     - depguard
     - errcheck
+    - forbidigo
     - gosec
     - govet
     - ineffassign
@@ -8971,6 +8972,23 @@ linters:
               desc: 模块之间只调 service
             - pkg: github.com/aegispanel/aegis/internal/module/subscription/grpc
               desc: 模块之间只调 service
+    # handler 不直接写响应：信封与状态码只有 httpx 一套；白名单见 exclusions.rules
+    forbidigo:
+      # 按类型匹配（gin.Context 的方法、gin.ResponseWriter 的方法），不靠变量名；smtp.Client.Data 之类同名方法不误报
+      analyze-types: true
+      forbid:
+        - pattern: ^gin\.Context\.(JSON|IndentedJSON|SecureJSON|JSONP|AsciiJSON|PureJSON|String|Data|DataFromReader|Status|AbortWithStatus|AbortWithStatusJSON|AbortWithStatusPureJSON|AbortWithError|HTML|XML|YAML|TOML|ProtoBuf|Render|Redirect|File|FileFromFS|FileAttachment|SSEvent|Stream|Negotiate)$
+          pkg: ^github\.com/gin-gonic/gin$
+          msg: 不直接写响应：成功用 httpx.OK / Created / Accepted / NoContent，失败用 httpx.Fail（非 JSON 出口按文件放行，见 tools/depguardgen）
+        - pattern: ^gin\.H$
+          pkg: ^github\.com/gin-gonic/gin$
+          msg: 每个接口定义具名响应 DTO，经 httpx.OK 写出
+        - pattern: ^gin\.ResponseWriter\.(Write|WriteString|WriteHeader|WriteHeaderNow)$
+          pkg: ^github\.com/gin-gonic/gin$
+          msg: 不直接写响应：成功用 httpx.OK / Created / Accepted / NoContent，失败用 httpx.Fail（非 JSON 出口按文件放行，见 tools/depguardgen）
+        - pattern: ^http\.(Error|NotFound|ServeContent|ServeFile|Redirect)$
+          pkg: ^net/http$
+          msg: 不直接写响应：失败用 httpx.Fail 回统一信封（非 JSON 出口按文件放行，见 tools/depguardgen）
     gosec:
       excludes:
         # G104 与 errcheck 重复
@@ -8987,3 +9005,32 @@ linters:
       - path: _test\.go
         linters:
           - gosec
+          - forbidigo
+      # 写响应的基础设施与非 JSON 出口，可以直接写响应；加新的非 JSON 出口：把写响应的几行抽到单独文件，加在这里
+      # 信封本身、入口页与静态资源、SSE 流、幂等录响应的包装
+      - path: internal/pkg/(httpx|webapp)/
+        linters:
+          - forbidigo
+      - path: internal/pkg/realtime/sse\.go$
+        linters:
+          - forbidigo
+      - path: internal/module/idempotency/handler/recorder\.go$
+        linters:
+          - forbidigo
+      # robots.txt、订阅正文与伪装 404、订阅探测页、节点端安装脚本与二进制
+      - path: internal/module/appearance/handler/robots\.go$
+        linters:
+          - forbidigo
+      - path: internal/module/subscription/handler/(subscribe|probe_frame)\.go$
+        linters:
+          - forbidigo
+      - path: internal/module/node/handler/pdnd_dist\.go$
+        linters:
+          - forbidigo
+      # CSV 下载、支付回调应答（渠道要求的正文）
+      - path: internal/module/(identity|giftcard|audit)/handler/csv\.go$
+        linters:
+          - forbidigo
+      - path: internal/module/payment/handler/ack\.go$
+        linters:
+          - forbidigo

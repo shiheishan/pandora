@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -131,27 +130,5 @@ func TestRevenueTotalsPG(t *testing.T) {
 	}
 	if total.Debit.LessThan(dec("10.00")) {
 		t.Fatalf("debit 下界: %s", total.Debit)
-	}
-}
-
-func TestDriftAccountsPG(t *testing.T) {
-	e, ctx := newEnv(t)
-
-	n0, err := e.svc.DriftAccounts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := "drift-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
-	if err := e.exec(ctx, `
-			INSERT INTO ledger_accounts (account_type, owner_ref, balance)
-			VALUES ('suspense', ?, 5.00)`, ref); err != nil {
-		t.Fatal(err)
-	}
-	n1, err := e.svc.DriftAccounts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n1 != n0+1 {
-		t.Fatalf("漂移计数: n0=%d n1=%d", n0, n1)
 	}
 }

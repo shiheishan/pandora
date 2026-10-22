@@ -49,6 +49,8 @@ func TestSanitizeHTML_挡住脚本注入(t *testing.T) {
 			[]string{"<object"}},
 		{"协议相对地址", `<a href="//evil.example/x">x</a>`,
 			[]string{"//evil.example"}},
+		{"反斜杠伪装成站内路径", `<a href="/\evil.example/x">x</a>`,
+			[]string{"evil.example"}},
 		{"srcset 绕过", `<img src="/ok.png" srcset="https://evil.example/x.png">`,
 			[]string{"srcset"}},
 		{"formaction", `<button formaction="javascript:alert(1)">x</button>`,
@@ -78,8 +80,10 @@ func TestSanitizeHTML_保留正常内容(t *testing.T) {
 			[]string{"<p>", "<strong>", "不接受", "工单"}},
 		{"外链带 rel", `<a href="https://example.com" target="_blank">文档</a>`,
 			[]string{`href="https://example.com"`, `rel="noopener noreferrer"`}},
+		{"具名窗口也补 rel", `<a href="https://example.com" target="docs" rel="opener">文档</a>`,
+			[]string{`target="docs"`, `rel="noopener noreferrer"`}},
 		{"站内相对链接", `<a href="/help">帮助</a>`, []string{`href="/help"`}},
-		{"class 保留", `<div class="tip">提示</div>`, []string{`class="tip"`}},
+		{"class 保留", `<div class="slot-tip">提示</div>`, []string{`class="slot-tip"`}},
 		{"列表与表格", `<ul><li>一</li></ul><table><tr><td colspan="2">格</td></tr></table>`,
 			[]string{"<ul>", "<li>", "<td", `colspan="2"`}},
 		{"未知标签保留文字", `<section>这段话要留着</section>`, []string{"这段话要留着"}},
@@ -106,7 +110,7 @@ func TestSanitizeHTML_幂等(t *testing.T) {
 		`<p>普通<em>文字</em></p>`,
 		`<a href="https://x.example" target="_blank">链接</a>`,
 		`<img src="data:image/png;base64,iVBORw0KGgo=">`,
-		`<div class="a"><ul><li>项</li></ul></div>`,
+		`<div class="slot-a"><ul><li>项</li></ul></div>`,
 		`<section><script>alert(1)</script>文字</section>`,
 		`<p>&lt;script&gt; 这是文字不是标签</p>`,
 	}
@@ -164,5 +168,99 @@ func TestSanitizeHTML_坏图整个丢掉(t *testing.T) {
 	out, _ := SanitizeHTML(`<img src="/logo.png" alt="标">`)
 	if !strings.Contains(out, `src="/logo.png"`) {
 		t.Errorf("正常图片被误删: %s", out)
+	}
+}
+
+func TestSanitizeHTML_类名只留slot前缀(t *testing.T) {
+	out, notes := SanitizeHTML(`<div class="ph-hero slot-a evil slot-b">x</div>`)
+	if !strings.Contains(out, `class="slot-a slot-b"`) {
+		t.Errorf("应保留 slot 类名: %s", out)
+	}
+	if strings.Contains(out, "ph-hero") || strings.Contains(out, "evil") {
+		t.Errorf("非法类名不应出现: %s", out)
+	}
+	joined := strings.Join(notes, " ")
+	if !strings.Contains(joined, "slot-") {
+		t.Errorf("notes 应说明 slot- 类名规则: %v", notes)
+	}
+
+	out, _ = SanitizeHTML(`<p class="ph-hero">x</p>`)
+	if out != "<p>x</p>" {
+		t.Errorf("元素保留、去掉 class: 得到 %s", out)
+	}
+
+	out, _ = SanitizeHTML(`<p class="slot-">x</p>`)
+	if strings.Contains(out, "class=") {
+		t.Errorf("只有前缀不算合法类名: %s", out)
+	}
+}
+
+func TestSanitizeHTML_图片只认站内与data(t *testing.T) {
+	for _, in := range []string{
+		`<img src="https://cdn.example.com/a.png">`,
+		`<img src="http://cdn.example.com/a.png">`,
+		`<img src="//cdn.example.com/a.png">`,
+		`<img src="/\cdn.example.com/a.png">`,
+		`<img src="#x">`,
+		`<img src="mailto:a@example.com">`,
+	} {
+		out, _ := SanitizeHTML(in)
+		if strings.Contains(out, "<img") {
+			t.Errorf("外链或非法 src 应丢掉整图\n输入: %s\n输出: %s", in, out)
+		}
+	}
+	for _, in := range []string{
+		`<img src="/logo.png">`,
+		`<img src="data:image/png;base64,iVBORw0KGgo=">`,
+	} {
+		out, _ := SanitizeHTML(in)
+		if !strings.Contains(out, "<img") {
+			t.Errorf("合法图应保留\n输入: %s\n输出: %s", in, out)
+		}
+	}
+}
+
+func TestSanitizeHTML_不许诱导登录的链接(t *testing.T) {
+	blocked := []string{
+		`#/quick-login/abc`,
+		`#quick-login/abc`,
+		`#//mail-login/abc`,
+		`/#/quick-login/abc`,
+		`/x?y=1#/Mail-Login/abc`,
+		`https://panel.example.com/#/quick-login/abc`,
+	}
+	var allNotes []string
+	for _, href := range blocked {
+		in := `<a href="` + href + `">链</a>`
+		out, notes := SanitizeHTML(in)
+		if strings.Contains(out, "href=") {
+			t.Errorf("诱导登录链接应去掉 href\n输入: %s\n输出: %s", in, out)
+		}
+		if !strings.Contains(out, "链") {
+			t.Errorf("链接文字应保留\n输入: %s\n输出: %s", in, out)
+		}
+		allNotes = append(allNotes, strings.Join(notes, " "))
+	}
+	joined := strings.Join(allNotes, " ")
+	if !strings.Contains(joined, "快捷登录") {
+		t.Errorf("notes 应提到快捷登录: %s", joined)
+	}
+
+	allowed := []string{
+		`#/help`,
+		`/#/plans`,
+		`https://example.com/#/quick-start`,
+	}
+	for _, href := range allowed {
+		in := `<a href="` + href + `">ok</a>`
+		out, _ := SanitizeHTML(in)
+		if !strings.Contains(out, "href=") {
+			t.Errorf("合法锚点应保留 href\n输入: %s\n输出: %s", in, out)
+		}
+	}
+
+	out, _ := SanitizeHTML(`<a href="data:image/png;base64,iVBORw0KGgo=">x</a>`)
+	if strings.Contains(out, "href=") {
+		t.Errorf("链接上的 data: 应被丢掉: %s", out)
 	}
 }

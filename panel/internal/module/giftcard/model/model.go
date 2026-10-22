@@ -12,7 +12,6 @@ import (
 type Template struct {
 	ID            uuid.UUID        `gorm:"column:id;type:uuid;primaryKey;default:uuidv7()"`
 	Name          string           `gorm:"column:name"`
-	Description   string           `gorm:"column:description"`
 	Type          string           `gorm:"column:type"`
 	Status        string           `gorm:"column:status"`
 	BalanceAmount *decimal.Decimal `gorm:"column:balance_amount"`
@@ -23,10 +22,7 @@ type Template struct {
 	PriceID       *uuid.UUID       `gorm:"column:price_id;type:uuid"`
 	NewUserOnly   bool             `gorm:"column:new_user_only"`
 	PaidUserOnly  bool             `gorm:"column:paid_user_only"`
-	RequireInvite bool             `gorm:"column:require_invite"`
 	MaxUsePerUser int              `gorm:"column:max_use_per_user"`
-	CooldownHours int              `gorm:"column:cooldown_hours"`
-	ThemeColor    string           `gorm:"column:theme_color"`
 	CreatedBy     *uuid.UUID       `gorm:"column:created_by;type:uuid"`
 	CreatedAt     time.Time        `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt     time.Time        `gorm:"column:updated_at;autoUpdateTime"`
@@ -48,15 +44,6 @@ type Prize struct {
 
 // TableName 固定表名。
 func (Prize) TableName() string { return "gift_card_prizes" }
-
-// TemplatePlan 是 gift_card_template_plans 表的一行：模板限定的一个套餐。
-type TemplatePlan struct {
-	TemplateID uuid.UUID `gorm:"column:template_id;type:uuid;primaryKey"`
-	PlanID     uuid.UUID `gorm:"column:plan_id;type:uuid;primaryKey"`
-}
-
-// TableName 固定表名。
-func (TemplatePlan) TableName() string { return "gift_card_template_plans" }
 
 // Batch 是 gift_card_batches 表的一行。
 type Batch struct {

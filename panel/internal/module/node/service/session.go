@@ -44,7 +44,7 @@ const UsersChunkSize = 500
 const UsersDeltaMax = 5000
 
 // panelFeatures 是面板支持的可选能力。
-var panelFeatures = []string{FeatureUsersDelta}
+var panelFeatures = []string{FeatureUsersDelta, FeatureUpgradeV1}
 
 // 会话结束的原因（传输层译成 gRPC 状态码）。
 var (
@@ -72,6 +72,8 @@ type SessionBackend interface {
 	RecordHello(ctx context.Context, serverID uuid.UUID, h Hello, at time.Time) error
 	RecordHeartbeat(ctx context.Context, serverID uuid.UUID, nodes []NodeRuntime, at time.Time) error
 	RecordConfigAck(ctx context.Context, serverID uuid.UUID, ack ConfigAck, at time.Time) error
+	// RecordUpgradeReport 按节点回报对账升级任务（upgrades.go）
+	RecordUpgradeReport(ctx context.Context, serverID uuid.UUID, r UpgradeReport, at time.Time) error
 }
 
 // SessionOptions 是会话管理的参数；零值项取缺省（见 withDefaults）。
@@ -209,6 +211,10 @@ func (m *Sessions) Open(ctx context.Context, serverID uuid.UUID, h Hello) (*Sess
 	return m.OpenVerified(ctx, serverID, h, nil)
 }
 
+// ErrUpgradeOutcomeUnrecorded 是 Hello 带来的上一次升级结局没能记账（SessionBackend.RecordHello 返回）：建流失败、不发 Welcome，
+// 节点留着本机结局文件，退避重连后再报。
+var ErrUpgradeOutcomeUnrecorded = errors.New("node: 升级结局没记上")
+
 // ErrAlignBusy 是建流对齐在 AlignTimeout 内没等到结果（前面的批还没读完，或这批没读完）：回 Unavailable，节点退避重连。
 var ErrAlignBusy = errors.New("node: 建流对齐超时")
 
@@ -267,6 +273,11 @@ func (m *Sessions) OpenVerified(ctx context.Context, serverID uuid.UUID, h Hello
 	actx, cancel := context.WithTimeout(ctx, m.opt.AlignTimeout)
 	defer cancel()
 	if err := m.b.RecordHello(actx, serverID, h, at); err != nil {
+		if errors.Is(err, ErrUpgradeOutcomeUnrecorded) {
+			log.Warn("升级结局没记上，断开让节点留着结局文件重连再报", zap.Error(err))
+			s.Close(ErrSessionPeerGone)
+			return nil, err
+		}
 		// 主机信息与心跳时间只是展示；对齐照常做
 		log.Warn("记录 Hello 失败", zap.Error(err))
 	}

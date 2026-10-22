@@ -184,19 +184,13 @@ func TestSwitchEnabledErrorNotCached(t *testing.T) {
 
 func TestSetSwitchRules(t *testing.T) {
 	st := &fakeStore{rows: map[string]model.FeatureSwitch{
-		SwitchAuthLogin:    {Code: SwitchAuthLogin, Enabled: true, Essential: true},
-		"billing.checkout": {Code: "billing.checkout", Enabled: true, Essential: false},
+		"billing.checkout": {Code: "billing.checkout", Enabled: true},
 	}}
 	al := &auditLog{}
 	s := newService(st, fakeTx{}, nil, nil, al)
 	ctx := context.Background()
 
-	err := s.SetSwitch(ctx, SwitchAuthLogin, false, "维护")
-	if e := errs.As(err); e.Code != errs.Conflict {
-		t.Fatalf("essential: code=%s", e.Code)
-	}
-
-	err = s.SetSwitch(ctx, "billing.checkout", false, "  ")
+	err := s.SetSwitch(ctx, "billing.checkout", false, "  ")
 	if e := errs.As(err); e.Code != errs.Conflict {
 		t.Fatalf("blank reason: code=%s", e.Code)
 	}
@@ -237,7 +231,7 @@ func TestSetSwitchRules(t *testing.T) {
 func TestSetSwitchInvalidatesOtherProcess(t *testing.T) {
 	mr, rdb := testkit.Redis(t)
 	st := &fakeStore{rows: map[string]model.FeatureSwitch{
-		"billing.checkout": {Code: "billing.checkout", Enabled: false, Essential: false, Reason: strPtr("x")},
+		"billing.checkout": {Code: "billing.checkout", Enabled: false, Reason: strPtr("x")},
 	}}
 	a := newService(st, fakeTx{}, nil, rdb, &auditLog{})
 	b := newService(st, fakeTx{}, nil, rdb, &auditLog{})

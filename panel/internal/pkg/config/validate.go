@@ -145,9 +145,6 @@ func (c *Config) Validate() error {
 	if c.RateLimit.IPPerMin < 1 {
 		errs = append(errs, errors.New("ratelimit.ip_per_min 至少为 1"))
 	}
-	if c.RateLimit.AccountPerMin < 1 {
-		errs = append(errs, errors.New("ratelimit.account_per_min 至少为 1"))
-	}
 	if c.RateLimit.AuthPerMin < 1 {
 		errs = append(errs, errors.New("ratelimit.auth_per_min 至少为 1"))
 	}

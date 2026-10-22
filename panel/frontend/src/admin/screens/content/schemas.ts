@@ -44,12 +44,10 @@ export const annSaved = z.object({ id: uuid, status: z.enum(ANN_STATUSES), versi
 export const annWithdrawn = z.object({ ok: z.literal(true), version: z.number().int() })
 
 // ---------------------------------------------------------------------------
-// 知识库（content/model Page：category / summary / 客户端版本 / 日期 / 作者都是 omitempty）
+// 知识库（content/model Page：category / summary / 日期 / 作者都是 omitempty）
 // ---------------------------------------------------------------------------
 export const KINDS = ['kb_article', 'tutorial', 'page', 'legal'] as const
 export type Kind = (typeof KINDS)[number]
-export const PLATFORMS = ['web', 'windows', 'macos', 'linux', 'android', 'ios'] as const
-export type Platform = (typeof PLATFORMS)[number]
 const PAGE_STATUSES = ['draft', 'published', 'archived'] as const
 export const VISIBILITIES = ['authenticated', 'internal'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
@@ -64,11 +62,7 @@ export const pageSchema = z.object({
   summary: z.string().optional(),
   /** 只有单版本接口带正文 */
   body: z.string().optional(),
-  locale: z.string(),
   sanitizer_version: z.string(),
-  target_platforms: z.array(z.string()),
-  min_client_version: z.string().optional(),
-  max_client_version: z.string().optional(),
   target_plan_ids: z.array(uuid),
   visibility: z.enum(VISIBILITIES),
   status: z.enum(PAGE_STATUSES),
@@ -128,8 +122,27 @@ export const slotSaved = z.object({ saved: z.literal(true), dropped: z.array(z.s
 // ---------------------------------------------------------------------------
 // 站点设置：形状只在 admin/site.ts 定义一次，外框与本页共用
 // ---------------------------------------------------------------------------
-// 站点设置（GET/POST v1/settings/site）；放在这里而不是 admin/site.ts，测试与冒烟（node 侧 tsconfig）引它时不带进 tsx 运行时
-export const siteSettingsSchema = z.object({ name: z.string(), timezone: z.string() })
+// 站点设置（GET/POST v1/settings/site）；放在这里而不是 admin/site.ts，测试与冒烟（node 侧 tsconfig）引它时不带进 tsx 运行时；SEO 三项给门户入口页用。
+// url 是后台存的主域名（空 = 用安装时的地址 url_fallback），只影响链接；url_fallback 只读，POST 不收
+export const siteSettingsSchema = z.object({
+  name: z.string(),
+  timezone: z.string(),
+  seo_keywords: z.string(),
+  seo_description: z.string(),
+  allow_indexing: z.boolean(),
+  url: z.string(),
+  url_fallback: z.string(),
+})
+
+// ---------------------------------------------------------------------------
+// 首页设置（GET/POST v1/settings/home）：用户端根地址给未登录访客看的介绍与常见问题；套餐与价格取自套餐目录，不在这里
+// ---------------------------------------------------------------------------
+export const homeSettingsSchema = z.object({
+  enabled: z.boolean(),
+  intro: z.string(),
+  faq: z.array(z.object({ q: z.string(), a: z.string() })),
+})
+export type HomeSettings = z.output<typeof homeSettingsSchema>
 
 // ---------------------------------------------------------------------------
 // 套餐目录子集（GET v1/plans）：知识库「限定套餐」只要名字与状态

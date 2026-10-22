@@ -11,7 +11,7 @@ import (
 )
 
 // HTTP 承载入站（WebSocket、HTTP Upgrade、gRPC、XHTTP、Naive）的 http.Server 不能
-// 留空 ErrorLog：net/http 与 x/net/http2 会把「http: TLS handshake error from 完整IP:端口: …」
+// 留空 ErrorLog：net/http（含它内置的 HTTP/2）会把「http: TLS handshake error from 完整IP:端口: …」
 // 之类逐条写进标准库 log，客户端或扫描器每握手失败一次就一行、不限流，还落下完整用户
 // IP（节点日志只许出现截到网段的地址，见 maskRemoteAddr）。这里接住它：
 //   - TLS 握手失败改走适配器的 OnConnError（限流、地址截网段、原因脱敏），与其他
@@ -26,12 +26,12 @@ import (
 
 const httpTLSHandshakeErrorPrefix = "http: TLS handshake error from "
 
-// httpPanicPrefixes 是 handler panic 的两种写法：Go net/http（h1）与 x/net/http2、
-// 以及 net/http 内置的 h2（h2 / h2c）。
+// httpPanicPrefixes 是 handler panic 的两种写法：net/http 的 h1 与 HTTP/2（h2 / h2c，
+// 探测回落仍用的 x/net/http2 也是这个写法）。
 var httpPanicPrefixes = []string{"http: panic serving ", "http2: panic serving "}
 
-// httpPeerNoisePrefixes 是只由对端行为引起、对排障没有价值的行（x/net/http2 server.go
-// 的 logf 调用逐条对照）。h1 读请求头出错不写日志（直接回 400），不在此列。
+// httpPeerNoisePrefixes 是只由对端行为引起、对排障没有价值的行（net/http 的 h2_bundle.go
+// 与 x/net/http2 server.go 的 logf 调用逐条对照，两边同文）。h1 读请求头出错不写日志（直接回 400），不在此列。
 var httpPeerNoisePrefixes = []string{
 	"http2: server: error reading preface from client ", // 对端不说 h2 前言（扫描器、错协议）
 	"http2: server connection error from ",              // 对端发了违反协议的帧
@@ -53,7 +53,7 @@ func (w inboundHTTPErrorWriter) Write(p []byte) (int, error) {
 	line := strings.TrimRight(string(p), "\n")
 	if rest, ok := strings.CutPrefix(line, httpTLSHandshakeErrorPrefix); ok {
 		if remote, reason, ok := strings.Cut(rest, ": "); ok {
-			var err error = errors.New(reason)
+			err := errors.New(reason)
 			if reason == io.EOF.Error() {
 				err = io.EOF
 			}

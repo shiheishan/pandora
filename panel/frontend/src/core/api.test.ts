@@ -160,6 +160,23 @@ describe('responses and error envelope', () => {
     expect(error).toMatchObject({ status: 502, code: 'service_unavailable' })
   })
 
+  it.each([
+    [405, 'method_not_allowed', '请求方法不被允许'],
+    [413, 'payload_too_large', '请求内容过大'],
+    [503, 'service_unavailable', '服务暂时不可用，请稍后重试'],
+    [504, 'timeout', '请求超时，请稍后再试'],
+  ] as const)('an HTML %i without an envelope maps to %s', async (status, code, message) => {
+    const { client } = setup([new Response(`<html>${status}</html>`, { status })])
+    const error = await rejection(client.get('v1/overview', ok))
+    expect(error).toMatchObject({ status, code, message })
+  })
+
+  it('the edge JSON envelope for 504 keeps its code and request_id', async () => {
+    const { client } = setup([envelope(504, 'timeout', '请求超时，请稍后再试', { request_id: 'edge-1' })])
+    const error = await rejection(client.get('v1/overview', ok))
+    expect(error).toMatchObject({ status: 504, code: 'timeout', requestId: 'edge-1' })
+  })
+
   it('an unknown code keeps the server message and falls back to the status code', async () => {
     const { client } = setup([envelope(409, 'brand_new_code', '已被他人修改')])
     const error = await rejection(client.get('v1/overview', ok))
@@ -463,7 +480,16 @@ describe('access token refresh on 401', () => {
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
 
-  it('skips refresh when another tab already rotated the token inside the lock', async () => {
+  it('refresh 429 keeps the token and throws rate_limited', async () => {
+    const onUnauthorized = vi.fn()
+    const env = setup([envelope(401, 'unauthorized'), envelope(429, 'rate_limited')], { onUnauthorized })
+    const error = await rejection(env.client.get('v1/me', ok))
+    expect(error.code).toBe('rate_limited')
+    expect(env.tokens.get()).toBe('tok-1')
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('skips refresh when this page already swapped the token while waiting for the lock', async () => {
     const tokens = createTokenStore('admin', { storage: null, events: null })
     tokens.set('tok-1')
     const fake = fakeFetch([
@@ -474,7 +500,7 @@ describe('access token refresh on 401', () => {
       json(200, { ok: true }),
     ])
     const locks = {
-      request: vi.fn(async (_name: string, fn: () => Promise<unknown>) => {
+      request: vi.fn(async (_name: string, _opts: LockOptions, fn: () => Promise<unknown>) => {
         tokens.set('tok-other')
         return fn()
       }),
@@ -527,6 +553,102 @@ describe('access token refresh on 401', () => {
     await rejection(env.client.post('v1/auth/login', ok, { auth: false, body: { email: 'a@b.c', password: 'x' } }))
     expect(env.calls).toHaveLength(1)
     expect(env.tokens.get()).toBe('tok-1')
+  })
+})
+
+describe('refreshSession', () => {
+  it('returns true and stores the new token', async () => {
+    const { client, tokens, calls } = setup([refreshOk('tok-new')], {}, null)
+    const success = await client.refreshSession()
+    expect(success).toBe(true)
+    expect(tokens.get()).toBe('tok-new')
+    expect(calls[0]!.credentials).toBe('same-origin')
+    expect(calls[0]!.authorization).toBeNull()
+  })
+
+  it('returns false on a rejected cookie and keeps no token', async () => {
+    const { client, tokens } = setup([envelope(401, 'unauthorized')], {}, null)
+    const success = await client.refreshSession()
+    expect(success).toBe(false)
+    expect(tokens.get()).toBeNull()
+  })
+
+  it('throws rate_limited on 429 and service_unavailable on 503', async () => {
+    const env429 = setup([envelope(429, 'rate_limited')], {}, null)
+    const err429 = await rejection(env429.client.refreshSession())
+    expect(err429.code).toBe('rate_limited')
+
+    const env503 = setup([envelope(503, 'service_unavailable')], {}, null)
+    const err503 = await rejection(env503.client.refreshSession())
+    expect(err503.code).toBe('service_unavailable')
+  })
+
+  it('turns a failed fetch into network_error', async () => {
+    const { client } = setup([new TypeError('Failed to fetch')], {}, null)
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(err.status).toBe(0)
+  })
+
+  it('a stalled refresh times out as network_error and keeps the token', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    tokens.set('tok-1')
+    // 请求一直不回，只在被中止时失败
+    const stalled = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    const client = createApiClient({ tokens, fetch: stalled, baseUrl: () => ADMIN_BASE, refreshTimeoutMs: 20 })
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(tokens.get()).toBe('tok-1')
+    // 单飞已释放：再调一次会重新发请求
+    await rejection(client.refreshSession())
+    expect(stalled).toHaveBeenCalledTimes(2)
+  })
+
+  it('a refresh stalled after the lock is granted is aborted and released', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    tokens.set('tok-1')
+    let seen: AbortSignal | undefined
+    const stalled = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          seen = init?.signal ?? undefined
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    // 锁立即授予
+    const locks = { request: vi.fn((_name: string, _opts: LockOptions, fn: () => Promise<unknown>) => fn()) }
+    vi.stubGlobal('navigator', { locks })
+    const client = createApiClient({ tokens, fetch: stalled, baseUrl: () => ADMIN_BASE, refreshLockName: 'test-refresh-lock', refreshTimeoutMs: 20 })
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(seen?.aborted).toBe(true)
+    expect(tokens.get()).toBe('tok-1')
+    vi.unstubAllGlobals()
+  })
+
+  it('waiting too long for another tab holding the refresh lock times out as network_error', async () => {
+    const tokens = createTokenStore('admin', { storage: null, events: null })
+    const fetchSpy = vi.fn()
+    // 锁一直被别的标签页占着：只在 signal 中止时拒绝
+    const locks = {
+      request: vi.fn(
+        (_name: string, opts: LockOptions) =>
+          new Promise((_resolve, reject) => {
+            opts.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          }),
+      ),
+    }
+    vi.stubGlobal('navigator', { locks })
+    const client = createApiClient({ tokens, fetch: fetchSpy, baseUrl: () => ADMIN_BASE, refreshLockName: 'test-refresh-lock', refreshTimeoutMs: 20 })
+    const err = await rejection(client.refreshSession())
+    expect(err.code).toBe('network_error')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 })
 

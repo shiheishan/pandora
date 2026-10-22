@@ -16,8 +16,25 @@ import (
 type fakeMailSettings struct {
 	signup     settingssvc.Signup
 	configured bool
+	emailOff   bool
 	signupErr  error
 	configErr  error
+	// siteURL 是 SiteURL 的返回值；空时用 https://panel.example.test/
+	siteURL string
+}
+
+func (f *fakeMailSettings) SwitchEnabled(_ context.Context, code string) (bool, error) {
+	if code == settingssvc.SwitchNotifyEmail && f.emailOff {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (f *fakeMailSettings) SiteURL(context.Context) string {
+	if f.siteURL == "" {
+		return "https://panel.example.test/"
+	}
+	return f.siteURL
 }
 
 func (f *fakeMailSettings) SignupWithoutSecret(ctx context.Context) (settingssvc.Signup, error) {
@@ -58,7 +75,7 @@ func (f *fakeMailCaptcha) VerifyCaptcha(_ context.Context, token, action string)
 
 func wireMailLink(h *testHarness, settings *fakeMailSettings, mailer *fakeMailLinkMailer) *fakeMailCaptcha {
 	c := &fakeMailCaptcha{}
-	h.S.UseMailLink(settings, mailer, c, ratelimit.New(h.RDB), "https://panel.example.test")
+	h.S.UseMailLink(settings, mailer, c, ratelimit.New(h.RDB))
 	return c
 }
 
@@ -79,6 +96,30 @@ func TestStartMailLoginUnavailable(t *testing.T) {
 
 	if err := h.S.StartMailLogin(ctx, "user@example.com", ""); !errors.Is(err, ErrMailLinkUnavailable) {
 		t.Fatalf("开关关闭: %v", err)
+	}
+}
+
+func TestStartMailLoginMailPaused(t *testing.T) {
+	h := newTestService(t)
+	ctx := context.Background()
+
+	settings := &fakeMailSettings{
+		signup:     settingssvc.Signup{MailLinkLogin: true},
+		configured: true,
+		emailOff:   true,
+	}
+	mailer := &fakeMailLinkMailer{}
+	wireMailLink(h, settings, mailer)
+
+	err := h.S.StartMailLogin(ctx, "user@example.com", "")
+	if !errors.Is(err, errMailLinkMailPaused) {
+		t.Fatalf("应 Is errMailLinkMailPaused, 得 %v", err)
+	}
+	if e := errs.As(err); e.Code != errs.Unavailable {
+		t.Fatalf("code=%v want %v", e.Code, errs.Unavailable)
+	}
+	if mailer.calls != 0 {
+		t.Fatalf("暂停时不应发信，calls=%d", mailer.calls)
 	}
 }
 

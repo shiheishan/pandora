@@ -14,7 +14,7 @@ type FormField struct {
 	// 布尔为 "true"/"false"，数字为十进制文本，"" 表示没填）；所有键同时满足才显示。
 	ShowIf map[string][]string `json:"show_if,omitempty"`
 	// Default 是新建时预填的值，类型同存储（number→数字、boolean→布尔、其余→字符串）；
-	// 只给节点端实际缺省或唯一可选的值。
+	// 给推荐且能通过校验的值：照缺省预填后，校验只在没有缺省、必须由管理员填的字段上报错（守卫：TestSchemaFormDefaultsValidate）。
 	Default     any    `json:"default,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
 	// OptionLabels：枚举值 → 显示文字；键 "" 是选填枚举「不选」那一项的文字。
@@ -42,6 +42,22 @@ var showNetworkMKCP = map[string][]string{"network": {"mkcp"}}
 var showFlowVLESS = map[string][]string{"tls": {"2"}, "network": {"tcp", ""}}
 var showObfsSalamander = map[string][]string{"obfs.type": {"salamander"}}
 var showMaskAES = map[string][]string{"network": {"mkcp"}, "mask": {"mkcp-aes128gcm"}}
+var showCertModeFile = map[string][]string{"cert_mode": {"file"}}
+
+// mergeShowIf 合并两组显示条件（各键同时满足），拷贝出新 map，不改共享的 show* 变量。
+func mergeShowIf(base map[string][]string, extra map[string][]string) map[string][]string {
+	if base == nil && len(extra) == 0 {
+		return nil
+	}
+	out := make(map[string][]string)
+	for k, v := range base {
+		out[k] = append([]string(nil), v...)
+	}
+	for k, v := range extra {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
 
 func cloneFields(in []FormField) []FormField {
 	return append([]FormField(nil), in...)
@@ -49,8 +65,8 @@ func cloneFields(in []FormField) []FormField {
 
 func realityFields() []FormField {
 	return []FormField{
-		{Path: "reality_settings.dest", Label: "REALITY 目标站（dest）", ShowIf: showTLS2, Placeholder: "www.apple.com:443"},
-		{Path: "reality_settings.server_name", Label: "REALITY SNI", ShowIf: showTLS2, Placeholder: "www.apple.com"},
+		{Path: "reality_settings.dest", Label: "REALITY 目标站（dest）", ShowIf: showTLS2, Default: "www.apple.com:443", Placeholder: "www.apple.com:443"},
+		{Path: "reality_settings.server_name", Label: "REALITY SNI", ShowIf: showTLS2, Default: "www.apple.com", Placeholder: "www.apple.com"},
 		{Path: "reality_settings.private_key", Label: "REALITY 私钥", ShowIf: showTLS2},
 		{Path: "reality_settings.public_key", Label: "REALITY 公钥", ShowIf: showTLS2},
 		{Path: "reality_settings.short_id", Label: "REALITY short_id", ShowIf: showTLS2, Placeholder: "0a1b2c3d"},
@@ -116,15 +132,29 @@ func certFields(showIf map[string][]string) []FormField {
 	return out
 }
 
-func clientTLSFields(showIf map[string][]string) []FormField {
+func certModeFields(showIf map[string][]string) []FormField {
+	certPh := nodeCertificateDir + "example.com/fullchain.pem"
+	keyPh := nodeCertificateDir + "example.com/privkey.pem"
+	fileIf := mergeShowIf(showIf, showCertModeFile)
 	out := []FormField{
-		{Path: "tls_settings.server_name", Label: "客户端 SNI", Placeholder: "example.com"},
-		{Path: "tls_settings.allow_insecure", Label: "允许不安全证书"},
+		{Path: "cert_mode", Label: "证书来源", Default: "acme", OptionLabels: map[string]string{"acme": "自动申请（Let's Encrypt）", "file": "手填证书路径"}},
+		{Path: "cert_path", Label: "证书路径", Placeholder: certPh, ShowIf: fileIf},
+		{Path: "key_path", Label: "私钥路径", Placeholder: keyPh, ShowIf: fileIf},
 	}
 	if showIf != nil {
-		for i := range out {
-			out[i].ShowIf = showIf
-		}
+		out[0].ShowIf = showIf
+	}
+	return out
+}
+
+func clientTLSFieldsForCertMode(showIf map[string][]string) []FormField {
+	insecureIf := mergeShowIf(showIf, showCertModeFile)
+	out := []FormField{
+		{Path: "tls_settings.server_name", Label: "客户端 SNI", Placeholder: "example.com"},
+		{Path: "tls_settings.allow_insecure", Label: "允许不安全证书", ShowIf: insecureIf},
+	}
+	if showIf != nil {
+		out[0].ShowIf = showIf
 	}
 	return out
 }
@@ -138,12 +168,12 @@ func appendAll(dst []FormField, parts ...[]FormField) []FormField {
 
 var protocolForms = map[string]formSpec{
 	"vless": {
-		note: "REALITY + tcp 时用 xtls-rprx-vision；普通 TLS（tls=1）暂未开放。",
+		note: "缺省是 REALITY + tcp + xtls-rprx-vision：目标站与 SNI 已预填常用值（不懂就保持不动），密钥对进到这一步会自动生成；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
-				{Path: "tls", Label: "加密", OptionLabels: map[string]string{"0": "0 · 不加密", "2": "2 · REALITY"}},
-				{Path: "flow", Label: "流控（flow）", ShowIf: showFlowVLESS, OptionLabels: map[string]string{"": "留空"}},
+				{Path: "tls", Label: "加密", Default: 2, OptionLabels: map[string]string{"0": "0 · 不加密", "2": "2 · REALITY"}},
+				{Path: "flow", Label: "流控（flow）", Default: "xtls-rprx-vision", ShowIf: showFlowVLESS, OptionLabels: map[string]string{"": "留空"}},
 				{Path: "utls", Label: "uTLS 指纹", ShowIf: showTLS2, OptionLabels: utlsOptionLabels},
 			},
 			realityFields(), transportFields(),
@@ -151,14 +181,14 @@ var protocolForms = map[string]formSpec{
 			certFields(showTLS1), mkcpFields(), xhttpFields(),
 		),
 		hints: map[string]string{
-			"tls":       "不加密时不能用裸 tcp。",
+			"tls":       "缺省 2 · REALITY。选 0 · 不加密时传输不能是 tcp，否则保存会被拒绝。",
 			"ws_path":   "旧字段名，与「路径」二选一即可。",
 			"grpc_path": "旧字段名，与 serviceName 二选一即可。",
 			"mask":      "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
 		},
 	},
 	"vmess": {
-		note: "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+		note: "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式"},
@@ -176,14 +206,14 @@ var protocolForms = map[string]formSpec{
 		},
 	},
 	"trojan": {
-		note: "Trojan 支持普通 TLS（1）与 REALITY（2），不能不加密；没有流控。",
+		note: "缺省是普通 TLS（1）+ 自动申请证书（Let's Encrypt）：上线前把对外地址解析到这台服务器；也可选 REALITY（2）。Trojan 不能不加密；没有流控。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
-				{Path: "tls", Label: "加密", OptionLabels: map[string]string{"1": "1 · TLS", "2": "2 · REALITY"}},
+				{Path: "tls", Label: "加密", Default: 1, OptionLabels: map[string]string{"1": "1 · TLS", "2": "2 · REALITY"}},
 				{Path: "utls", Label: "uTLS 指纹", OptionLabels: utlsOptionLabels},
 			},
-			certFields(showTLS1), clientTLSFields(showTLS1), realityFields(), transportFields(),
+			certModeFields(showTLS1), clientTLSFieldsForCertMode(showTLS1), realityFields(), transportFields(),
 			[]FormField{{Path: "fallback", Label: "回落地址", ShowIf: showNetworkTCP, Placeholder: "127.0.0.1:80"}},
 			mkcpFields(),
 		),
@@ -192,18 +222,18 @@ var protocolForms = map[string]formSpec{
 			"grpc_path":                   "旧字段名，与 serviceName 二选一即可。",
 			"mask":                        "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"shadowsocks": {
 		note:   "只有加密方式一项；用户密钥由面板按订阅生成。",
-		fields: []FormField{{Path: "cipher", Label: "加密方式"}},
+		fields: []FormField{{Path: "cipher", Label: "加密方式", Default: "aes-256-gcm"}},
 	},
 	"hysteria2": {
-		note: "走 UDP；证书必填。",
+		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{{Path: "network", Label: "传输方式", Default: "udp"}},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{
 				{Path: "obfs.type", Label: "混淆类型", OptionLabels: map[string]string{"": "不混淆"}},
 				{Path: "obfs.password", Label: "混淆密码", ShowIf: showObfsSalamander},
@@ -211,18 +241,18 @@ var protocolForms = map[string]formSpec{
 				{Path: "bandwidth.down", Label: "下行带宽（Mbps）", Placeholder: "留空不限"},
 				{Path: "udp_timeout", Label: "UDP 超时", Advanced: true, Placeholder: "留空按 5m"},
 			},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"tuic": {
-		note: "走 UDP；证书必填。",
+		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{{Path: "network", Label: "传输方式", Default: "udp"}},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{
 				{Path: "congestion_control", Label: "拥塞控制", OptionLabels: map[string]string{"": "留空（cubic）"}},
 				{Path: "zero_rtt", Label: "0-RTT"},
@@ -230,56 +260,56 @@ var protocolForms = map[string]formSpec{
 				{Path: "heartbeat", Label: "心跳间隔", Advanced: true, Placeholder: "留空按 10s"},
 				{Path: "udp_timeout", Label: "UDP 超时", Advanced: true, Placeholder: "留空按 5m"},
 			},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"juicity": {
-		note: "走 UDP；证书必填。",
+		note: "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{{Path: "network", Label: "传输方式", Default: "udp"}},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{{Path: "congestion_control", Label: "拥塞控制", OptionLabels: map[string]string{"": "默认"}}},
 		),
 	},
 	"anytls": {
-		note: "证书必填：没证书时节点会以明文起，而客户端都强制 TLS，存得进去却谁都连不上。",
+		note: "证书必填（默认自动申请）：没证书时节点会以明文起，而客户端都强制 TLS，存得进去却谁都连不上。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
 				{Path: "tls", Label: "开启 TLS"},
 			},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{
 				{Path: "padding_scheme", Label: "填充方案", Advanced: true, Placeholder: `["stop=8","0=30-30"]`},
 				{Path: "utls", Label: "uTLS 指纹", OptionLabels: utlsOptionLabels},
 			},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 			[]FormField{{Path: "fallback", Label: "回落地址", Placeholder: "127.0.0.1:80"}},
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"naive": {
-		note: "必须开 TLS 并填证书。",
+		note: "必须开 TLS；证书默认自动申请，也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
 				{Path: "tls", Label: "开启 TLS", Default: true},
 			},
-			certFields(nil),
+			certModeFields(nil),
 			[]FormField{{Path: "security", Label: "security", Advanced: true, Default: "none"}},
-			clientTLSFields(nil),
+			clientTLSFieldsForCertMode(nil),
 			[]FormField{{Path: "fallback", Label: "回落地址", Placeholder: "127.0.0.1:80"}},
 		),
 		hints: map[string]string{
 			"tls_settings.server_name":    "只进订阅，告诉客户端握手用的域名。",
-			"tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+			"tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
 		},
 	},
 	"shadowtls": {
@@ -305,24 +335,24 @@ var protocolForms = map[string]formSpec{
 		fields: []FormField{{Path: "transport", Label: "传输方式", Default: "TCP"}},
 	},
 	"socks": {
-		note: "开 TLS 时需要填证书。",
+		note: "开 TLS 时需要证书：默认自动申请，也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式"},
 				{Path: "tls", Label: "开启 TLS", Default: false},
 			},
-			certFields(showTLSTrue),
+			certModeFields(showTLSTrue),
 			[]FormField{{Path: "security", Label: "security", Advanced: true, Default: "none"}},
 		),
 	},
 	"http": {
-		note: "开 TLS 时需要填证书。",
+		note: "开 TLS 时需要证书：默认自动申请，也可以手填路径。",
 		fields: appendAll(nil,
 			[]FormField{
 				{Path: "network", Label: "传输方式", Default: "tcp"},
 				{Path: "tls", Label: "开启 TLS", Default: false},
 			},
-			certFields(showTLSTrue),
+			certModeFields(showTLSTrue),
 			[]FormField{{Path: "security", Label: "security", Advanced: true, Default: "none"}},
 		),
 	},

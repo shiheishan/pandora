@@ -28,11 +28,11 @@ type Query struct {
 	ActionPrefix   string      // action LIKE 前缀（转义 % _ \ ）
 	ActorKind      string      // actor_kind = ?
 	Outcome        string      // outcome = ?
-	Text           string      // 搜索框：非空时加 (action ILIKE '%'||转义后||'%' OR actor_id IN TextActorIDs OR resource_id = TextResourceID)，
-	TextActorIDs   []uuid.UUID //   后两项分别只在切片非空 / 指针非空时出现在 OR 里
-	TextResourceID *uuid.UUID
-	From, To       *time.Time // occurred_at >= From、occurred_at < To
-	AsOf           *time.Time // occurred_at <= AsOf（导出用，冻结范围）
+	Text           string      // 搜索框：非空时加 (action ILIKE '%'||转义后||'%' OR actor_id IN TextUserIDs OR (resource_type = 'user' AND resource_id IN TextUserIDs) OR resource_id = TextResourceID OR actor_id = TextResourceID)，
+	TextUserIDs    []uuid.UUID // 邮箱包含搜索词的用户；命中 actor_id IN 或 (resource_type = 'user' AND resource_id IN)
+	TextResourceID *uuid.UUID  // 整串是 uuid 时：对象 id 或操作人 id 等于它（从用户详情按 id 跳进来，不用邮箱包含匹配混进别人）
+	From, To       *time.Time  // occurred_at >= From、occurred_at < To
+	AsOf           *time.Time  // occurred_at <= AsOf（导出用，冻结范围）
 }
 
 // Record 是查询出的一行（只取后台要的列）。
@@ -49,6 +49,8 @@ type Record struct {
 	Outcome       string     `gorm:"column:outcome"`
 	Reason        *string    `gorm:"column:reason"`
 	IPEnc         []byte     `gorm:"column:ip_enc"`
+	// Data 是整份 data（jsonb 原文），只有 List 取；导出不取
+	Data []byte `gorm:"column:data"`
 }
 
 // Count 返回命中行数和库里的 now()（一条 SQL：SELECT count(*), now() ...）。
@@ -64,7 +66,7 @@ func (r *Repo) Count(ctx context.Context, q Query) (int64, time.Time, error) {
 // List 按 occurred_at DESC, id DESC 取一页。
 func (r *Repo) List(ctx context.Context, q Query, limit, offset int) ([]Record, error) {
 	var recs []Record
-	err := selectRecords(apply(r.d.Conn(ctx).Table("audit_events"), q)).
+	err := selectRecords(apply(r.d.Conn(ctx).Table("audit_events"), q), "data").
 		Order("occurred_at DESC, id DESC").
 		Limit(limit).Offset(offset).
 		Scan(&recs).Error
@@ -110,12 +112,14 @@ func (r *Repo) Purge(ctx context.Context, before time.Time, batch int) (int, err
 	return n, err
 }
 
-func selectRecords(tx *gorm.DB) *gorm.DB {
-	return tx.Select(
+// selectRecords 取 Record 的列；extra 追加列（列表多取整份 data）。
+func selectRecords(tx *gorm.DB, extra ...string) *gorm.DB {
+	cols := []string{
 		"id", "occurred_at", "actor_kind", "actor_id", "actor_audience", "auth_context",
 		"action", "resource_type", "resource_id", "outcome",
 		"data->>'reason' AS reason", "ip_enc",
-	)
+	}
+	return tx.Select(append(cols, extra...))
 }
 
 func apply(tx *gorm.DB, q Query) *gorm.DB {
@@ -142,13 +146,13 @@ func apply(tx *gorm.DB, q Query) *gorm.DB {
 		pat := db.ContainsPattern(q.Text)
 		parts := []string{"action ILIKE ? ESCAPE '\\'"}
 		args := []any{pat}
-		if len(q.TextActorIDs) > 0 {
-			parts = append(parts, "actor_id IN ?")
-			args = append(args, q.TextActorIDs)
+		if len(q.TextUserIDs) > 0 {
+			parts = append(parts, "actor_id IN ?", "(resource_type = 'user' AND resource_id IN ?)")
+			args = append(args, q.TextUserIDs, q.TextUserIDs)
 		}
 		if q.TextResourceID != nil {
-			parts = append(parts, "resource_id = ?")
-			args = append(args, *q.TextResourceID)
+			parts = append(parts, "resource_id = ?", "actor_id = ?")
+			args = append(args, *q.TextResourceID, *q.TextResourceID)
 		}
 		tx = tx.Where("("+strings.Join(parts, " OR ")+")", args...)
 	}

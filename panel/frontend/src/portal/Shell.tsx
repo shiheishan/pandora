@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { formatMoney } from '../core/format'
-import { href, navigate, useHashLocation } from '../core/router'
+import { href, navigate, parseHash, useHashLocation } from '../core/router'
 import { setTheme, useTheme } from '../core/theme'
 import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRealtime, useRuntime } from '../shell/runtime'
@@ -258,8 +258,10 @@ export function Shell() {
     steps.current += 1
   }, [location.path, location.query])
 
+  // 外框是懒加载的：挂上前地址可能已经又变了，这次渲染的地址已过时就不改写，交给下一次渲染（同后台外框）
   useEffect(() => {
     if (location.path === canonical) return
+    if (parseHash(window.location.hash).path !== location.path) return
     navigate(canonical, {
       replace: true,
       query: location.path.split('/')[1] === page ? Object.fromEntries(location.query) : undefined,

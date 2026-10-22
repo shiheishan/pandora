@@ -72,8 +72,8 @@ func (a *tuicAdapter) Validate(spec InboundSpec) error {
 	if network := strings.TrimSpace(rawString(spec.Config.Raw, "network")); network != "" && !strings.EqualFold(network, "udp") {
 		return fmt.Errorf("tuic requires UDP transport, got %q", network)
 	}
-	if strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")) == "" || strings.TrimSpace(rawString(spec.Config.Raw, "key_path")) == "" {
-		return fmt.Errorf("tuic requires cert_path and key_path")
+	if err := checkInboundCertificate(spec.Config.Raw); err != nil {
+		return fmt.Errorf("tuic %w", err)
 	}
 	if cc := strings.ToLower(strings.TrimSpace(rawString(spec.Config.Raw, "congestion_control"))); cc != "" && cc != "cubic" && cc != "new_reno" && cc != "bbr" {
 		return fmt.Errorf("tuic unsupported congestion_control %q", cc)
@@ -124,9 +124,9 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 	if err := a.Validate(spec); err != nil {
 		return err
 	}
-	cert, err := tls.LoadX509KeyPair(rawString(spec.Config.Raw, "cert_path"), rawString(spec.Config.Raw, "key_path"))
+	getCert, err := inboundCertificate(spec.Config.Raw, hooks.Certs)
 	if err != nil {
-		return fmt.Errorf("tuic TLS certificate: %w", err)
+		return fmt.Errorf("tuic %w", err)
 	}
 	// QUIC 强制要求 ALPN：服务端不选，客户端直接
 	// CRYPTO_ERROR 0x178 "server did not select an ALPN protocol"。
@@ -144,9 +144,9 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 	}
 	ctx, cancel := context.WithCancel(parent)
 	tlsConfig := &hysteria2TLSConfig{std: &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS13,
-		NextProtos:   alpn,
+		GetCertificate: getCert,
+		MinVersion:     tls.VersionTLS13,
+		NextProtos:     alpn,
 	}}
 	congestionControl := strings.ToLower(strings.TrimSpace(rawString(spec.Config.Raw, "congestion_control")))
 	zeroRTT, _ := spec.Config.Raw["zero_rtt"].(bool)

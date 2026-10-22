@@ -38,7 +38,14 @@ export function UserSide({ d, now, onAdjustBalance }: { d: UserDetail; now: Date
           {d.email_verified ? <Tag tone="ok">已验证</Tag> : <Tag tone="warn">未验证</Tag>}
         </SideFact>
         <SideFact label="Telegram">
-          {d.telegram ? `@${d.telegram.username}` : <span className={css.muted}>未绑定</span>}
+          {/* 用户没设 Telegram 用户名时后端给空串：不写孤零零的「@」 */}
+          {!d.telegram ? (
+            <span className={css.muted}>未绑定</span>
+          ) : d.telegram.username.trim() ? (
+            `@${d.telegram.username.trim()}`
+          ) : (
+            '已绑定（无用户名）'
+          )}
         </SideFact>
         <SideFact label="最近登录">
           {!d.last_login_at ? (

@@ -33,6 +33,8 @@ type NativeCore struct {
 	applyTag map[string]*sync.Mutex
 	// connErrors 是全部入站共用的连接失败日志出口，见 connerror_log.go。
 	connErrors *connErrorLogSink
+	// certs 给 acme 入站取证书，经 SetCertSource 装配；nil 时 acme 入站报 cert_pending。
+	certs core.CertSource
 	// ports 是进程级端口登记表：(端口, L4) → 占着它的入站 tag。tagPorts 是每个
 	// 入站当前名下的全部键。都由 mu 保护，见 port_claims.go。
 	ports    map[portKey]string
@@ -100,11 +102,6 @@ func (p *routedDataPlane) ListenUDP(ctx context.Context, meta route.Meta, destin
 	return conn, markConnError(connErrUpstream, err)
 }
 
-// NewNativeCore 用 slog.Default() 记连接失败，给测试与不关心日志的调用方。
-func NewNativeCore(registry *AdapterRegistry) *NativeCore {
-	return NewNativeCoreWithLogger(registry, nil)
-}
-
 // NewNativeCoreWithLogger 是生产入口：main.go 把 installLogger 装好的 logger 直接传进来，
 // 入站连接失败与进程其余日志同级别、同格式、同一个出口。log 为 nil 时用 slog.Default()。
 func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *NativeCore {
@@ -131,8 +128,11 @@ func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *Nativ
 // adapterHooks 是两处 adapter.Start（新起与回滚恢复）共用的钩子装配，
 // 保证恢复出来的旧入站同样有失败观测，不会因为走了回滚分支就重新变哑。
 func (c *NativeCore) adapterHooks(plane DataPlane) AdapterHooks {
-	return AdapterHooks{DataPlane: plane, OnConnError: c.connErrors.Report}
+	return AdapterHooks{DataPlane: plane, OnConnError: c.connErrors.Report, Certs: c.certs}
 }
+
+// SetCertSource 装配自动申请证书的来源（main 在装第一个入站之前调用一次，之后不再改）。
+func (c *NativeCore) SetCertSource(src core.CertSource) { c.certs = src }
 
 var _ core.Core = (*NativeCore)(nil)
 
@@ -224,7 +224,7 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		return fmt.Errorf("入站 %s 端口 %d 无效", cfg.Tag, cfg.Port)
 	}
 	c.mu.RLock()
-	ctx, started, closed := c.ctx, c.started, c.closed
+	started, closed := c.started, c.closed
 	c.mu.RUnlock()
 	if closed || !started {
 		return fmt.Errorf("原生内核尚未启动或已关闭")
@@ -280,7 +280,7 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	c.seq++
 	spec.Generation = c.seq
 	c.desired[cfg.Tag] = spec.Generation
-	ctx = c.ctx
+	ctx := c.ctx
 	c.mu.Unlock()
 
 	// 替换同一个 tag 之前必须先把旧入站关掉。

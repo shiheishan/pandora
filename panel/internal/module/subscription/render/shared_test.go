@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// renderPlain 是不带过滤参数与信息节点的 RenderRequest，测试里按格式逐个渲染时用。
+func renderPlain(f Format, nodes []Node, proxyUUID, ua string, opt Options) ([]byte, string, int) {
+	return RenderRequest(Request{Format: f, Nodes: nodes, ProxyUUID: proxyUUID, UA: ua, Options: opt})
+}
+
 // 节点缓存里的 []Node 由所有命中者共享：RenderRequest 不能改它（包括协议配置 map 里嵌套的
 // 切片与 map），并发渲染同一份也必须得到相同的输出。覆盖全部格式与带前处理的 RenderRequest。
 // 检查机的 race 跑这条。
@@ -60,22 +65,6 @@ func TestRenderLeavesCachedNodesUntouched(t *testing.T) {
 		filtered.Keywords = []string{"ss", "vless"}
 		variants = append(variants, filtered)
 	}
-	variants = append(variants, Request{
-		Format: FormatLoon, Nodes: nodes, ProxyUUID: fixtureUUID,
-		ProtocolPrefix: true,
-		InfoLines:      preprocessInfo,
-		Status:         preprocessStatus,
-		SubscribeURL:   preprocessSubscribe,
-		Template:       "# 自定义\n{{proxies}}\n",
-	})
-	variants = append(variants, Request{
-		Format: FormatSurfboard, Nodes: nodes, ProxyUUID: fixtureUUID,
-		ProtocolPrefix: true,
-		InfoLines:      preprocessInfo,
-		Status:         preprocessStatus,
-		SubscribeURL:   preprocessSubscribe,
-		Template:       DefaultTemplate(FormatSurfboard, Options{}) + "\n# 自定义\n",
-	})
 
 	want := make([][]byte, len(variants))
 	for i, req := range variants {

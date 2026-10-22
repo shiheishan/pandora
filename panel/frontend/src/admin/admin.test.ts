@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
-import { classifyFailure, createIntentKey, handleFailure } from './actions'
+import { classifyFailure, handleFailure } from './actions'
+import { createIntentKey } from '../core/intent'
 import { passwordStrength } from './ChangePasswordDialog'
 import { hasOwnHead, isDetailRoute, isFullBleed, MODULES, modulePath, NAV_GROUPS, paletteGroups, resolveRoute } from './modules'
 import { PAGE_HELP, pageHelp } from './page-help'
 import { createReauthController } from './reauth'
-import { documentSiteName } from './site'
-import { formatWait, navBadges, taskCount, tasksSchema, ticketAlert } from './tasks'
+import { documentSiteName } from './site-name'
+import { formatWait, navBadges, offlineNodeNames, taskCount, tasksSchema, ticketAlert } from './tasks'
 
 describe('documentSiteName', () => {
   it('reads the server-written application-name meta and falls back to Pandora', () => {
@@ -196,12 +197,36 @@ describe('dashboard/tasks', () => {
     expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'tickets_open', count: 7 }] }).success).toBe(false)
   })
 
+  it('数据巡检条目：每项 code / count / checked_at，旧的 ledger_drift 不再认', () => {
+    const integrity = { kind: 'integrity', checks: [{ code: 'ledger_drift', count: 2, checked_at: '2026-10-20T08:00:00Z' }] }
+    const nodeCerts = {
+      kind: 'node_certs',
+      count: 3,
+      failing: 1,
+      expiring: 2,
+      sample: [{ id: 'n1', name: 'JP-TYO-03' }],
+    }
+    expect(tasksSchema.safeParse({ ...payload, items: [integrity] }).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [nodeCerts] }).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [] }] }).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [{ code: 'ledger_drift', count: -1, checked_at: 'x' }] }] }).success).toBe(false)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'integrity', checks: [{ code: 'ledger_drift', count: 1 }] }] }).success).toBe(false)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'ledger_drift', count: 0 }] }).success).toBe(false)
+  })
+
   it('徽标取数：条目缺失（无权限）为 0', () => {
     const items = tasksSchema.parse(payload).items
     expect(taskCount(items, 'tickets_open')).toBe(7)
     expect(taskCount(items, 'withdrawals_pending')).toBe(3)
     expect(taskCount(items, 'nodes_offline')).toBe(0)
     expect(taskCount(undefined, 'tickets_open')).toBe(0)
+    const withCerts = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [
+        { kind: 'node_certs', count: 3, failing: 1, expiring: 2, sample: [{ id: 'n1', name: 'JP-TYO-03' }] },
+      ],
+    }).items
+    expect(taskCount(withCerts, 'node_certs')).toBe(3)
   })
 
   it('navBadges：侧栏徽标映射与为 0 省略', () => {
@@ -215,11 +240,25 @@ describe('dashboard/tasks', () => {
       ],
     }).items
     expect(navBadges(badgeItems)).toEqual({
-      tickets: { count: 7, hot: true },
-      billing: { count: 2 },
-      nodes: { count: 3 },
+      tickets: { count: 7, label: '待处理工单 7 个', hot: true },
+      billing: { count: 2, label: '超时未支付订单 2 个：下单超过 60 分钟还没到账，与「待处理到账」无关' },
+      nodes: { count: 3, label: '离线节点 3 个' },
     })
+    const withdrawals = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'withdrawals_pending', count: 3, amount: 12000 }],
+    }).items
+    expect(navBadges(withdrawals)).toEqual({ marketing: { count: 3, label: '提现待审核 3 笔' } })
     expect(navBadges(undefined)).toEqual({})
+  })
+
+  it('offlineNodeNames：取 nodes_offline 的样例名，缺席为空', () => {
+    const items = tasksSchema.parse({
+      as_of: '2026-09-24T08:00:00Z',
+      items: [{ kind: 'nodes_offline', count: 4, sample: [{ id: 'n1', name: '新加坡 02' }, { id: 'n2', name: '东京 03' }], longest_offline_seconds: 1380 }],
+    }).items
+    expect(offlineNodeNames(items)).toEqual(['新加坡 02', '东京 03'])
+    expect(offlineNodeNames(undefined)).toEqual([])
   })
 
   it('ticketAlert：无工单为 null，有工单带最久等待', () => {

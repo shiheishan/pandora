@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	commissionsvc "github.com/aegispanel/aegis/internal/module/commission/service"
 	nodesvc "github.com/aegispanel/aegis/internal/module/node/service"
 	notifysvc "github.com/aegispanel/aegis/internal/module/notify/service"
+	"github.com/aegispanel/aegis/internal/module/report/model"
 	supportsvc "github.com/aegispanel/aegis/internal/module/support/service"
 )
 
@@ -134,6 +136,10 @@ func TestTasksMapping(t *testing.T) {
 		},
 		LongestOfflineSeconds: &long900,
 	}
+	e.ports.certs = nodesvc.CertAttention{
+		Count: 5, Failing: 2, Expiring: 3,
+		Sample: []nodesvc.NodeRef{{ID: id2, Name: "cert-b"}},
+	}
 	e.ports.pendingStale = 6
 	oneMinAgo := testNow.Add(-time.Minute)
 	e.ports.backlog = notifysvc.DeliveryBacklog{
@@ -142,7 +148,10 @@ func TestTasksMapping(t *testing.T) {
 		Failed:        7,
 		OldestReadyAt: &oneMinAgo,
 	}
-	e.ports.drift = 1
+	// 待办里的巡检读表：只给登记着的检查、按检查顺序；不认识的旧代号不给
+	e.store.integrity[CheckOrderPaidUnfulfilled] = model.IntegrityCheck{Code: CheckOrderPaidUnfulfilled, Count: 0, Sample: "[]", CheckedAt: testNow}
+	e.store.integrity[CheckLedgerDrift] = model.IntegrityCheck{Code: CheckLedgerDrift, Count: 1, Sample: `["x"]`, CheckedAt: testNow}
+	e.store.integrity["retired_check"] = model.IntegrityCheck{Code: "retired_check", Count: 9, Sample: "[]", CheckedAt: testNow}
 
 	tasks, err := e.svc.Tasks(ctx)
 	if err != nil {
@@ -165,6 +174,12 @@ func TestTasksMapping(t *testing.T) {
 		tasks.NodesOffline.Sample[1].ID != id2 || tasks.NodesOffline.Sample[1].Name != "node-b" {
 		t.Fatalf("sample=%+v", tasks.NodesOffline.Sample)
 	}
+	if tasks.NodeCerts.Count != 5 || tasks.NodeCerts.Failing != 2 || tasks.NodeCerts.Expiring != 3 {
+		t.Fatalf("NodeCerts=%+v", tasks.NodeCerts)
+	}
+	if len(tasks.NodeCerts.Sample) != 1 || tasks.NodeCerts.Sample[0].ID != id2 || tasks.NodeCerts.Sample[0].Name != "cert-b" {
+		t.Fatalf("NodeCerts.Sample=%+v", tasks.NodeCerts.Sample)
+	}
 	if tasks.OrdersPendingStale.Count != 6 || tasks.OrdersPendingStale.ThresholdSeconds != 1800 {
 		t.Fatalf("OrdersPendingStale=%+v", tasks.OrdersPendingStale)
 	}
@@ -172,8 +187,12 @@ func TestTasksMapping(t *testing.T) {
 		tasks.NotificationsBacklog.BacklogState != "clear" {
 		t.Fatalf("NotificationsBacklog=%+v", tasks.NotificationsBacklog)
 	}
-	if tasks.LedgerDrift != 1 {
-		t.Fatalf("LedgerDrift=%d", tasks.LedgerDrift)
+	want := []IntegrityItem{
+		{Code: CheckLedgerDrift, Count: 1, CheckedAt: testNow},
+		{Code: CheckOrderPaidUnfulfilled, Count: 0, CheckedAt: testNow},
+	}
+	if !slices.Equal(tasks.Integrity, want) {
+		t.Fatalf("Integrity=%+v want %+v", tasks.Integrity, want)
 	}
 }
 
@@ -185,6 +204,9 @@ func TestTasksEmptySlices(t *testing.T) {
 	}
 	if tasks.NodesOffline.Sample == nil || len(tasks.NodesOffline.Sample) != 0 {
 		t.Fatalf("NodesOffline.Sample=%v", tasks.NodesOffline.Sample)
+	}
+	if tasks.NodeCerts.Sample == nil || len(tasks.NodeCerts.Sample) != 0 {
+		t.Fatalf("NodeCerts.Sample=%v", tasks.NodeCerts.Sample)
 	}
 }
 
@@ -199,6 +221,13 @@ func TestTasksPortError(t *testing.T) {
 	e2 := newTestEnv()
 	e2.ports.errFor["PendingStaleCount"] = errBoom
 	_, err = e2.svc.Tasks(context.Background())
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("err=%v want errBoom", err)
+	}
+
+	e3 := newTestEnv()
+	e3.ports.errFor["CertAttentionNodes"] = errBoom
+	_, err = e3.svc.Tasks(context.Background())
 	if !errors.Is(err, errBoom) {
 		t.Fatalf("err=%v want errBoom", err)
 	}

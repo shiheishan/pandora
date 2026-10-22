@@ -4,7 +4,7 @@ package service
 // 缓存层用计数的 load；服务层用只实现 PlanPools 的假 catalog（套餐一律不绑池，走不到 repo）与假的 PlanVersions。
 // 并发用例要用 -race 跑才有意义：
 //
-//	GOTOOLCHAIN=go1.26.9 go test -race ./internal/module/node/service/ -run 'DeliveryCache|DeliverableNodesCache|DeliverableFromRows|DeliveryKey'
+//	GOTOOLCHAIN=go1.26.10 go test -race ./internal/module/node/service/ -run 'DeliveryCache|DeliverableNodesCache|DeliverableFromRows|DeliveryKey'
 
 import (
 	"context"
@@ -298,7 +298,7 @@ func TestDeliveryCacheConcurrentRender(t *testing.T) {
 			}
 			proxyUUID := uuid.NewString()
 			for _, f := range formats {
-				if body, _, _ := render.Render(f, nodes, proxyUUID, "sing-box 1.13.0", render.Options{}); len(body) == 0 {
+				if body, _, _ := render.RenderRequest(render.Request{Format: f, Nodes: nodes, ProxyUUID: proxyUUID, UA: "sing-box 1.13.0"}); len(body) == 0 {
 					errs <- fmt.Errorf("%s 渲染为空", f)
 					return
 				}

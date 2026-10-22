@@ -31,10 +31,10 @@ async function newContext(browser: Browser, baseURL: string): Promise<BrowserCon
   })
 }
 
-/** 门户：在登录页填邮箱与口令，落到「我的套餐」 */
+/** 门户：打开登录页（`/` 在首页开着时是首页），填邮箱与口令，落到「我的套餐」 */
 export async function openPortal(browser: Browser, u: User): Promise<Page> {
   const page = await (await newContext(browser, PUB)).newPage()
-  await page.goto('/')
+  await page.goto('/#/login')
   await page.getByLabel('邮箱').fill(u.email)
   await page.getByLabel('密码', { exact: true }).fill(u.password)
   await submit(page, page.getByRole('button', { name: '登录', exact: true }))
@@ -56,6 +56,8 @@ export async function openAdmin(browser: Browser): Promise<Page> {
     await expect(reauth).toBeHidden()
   })
   await expect(page.getByLabel('邮箱')).toBeHidden()
+  // 外框懒加载：等它挂上（地址改写成规范地址）再交给用例跳页
+  await expect(page.getByRole('main')).toBeVisible()
   return page
 }
 
@@ -143,9 +145,17 @@ export async function nav(page: Page, name: '我的套餐' | '选购' | '钱包'
   await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name, exact: true }).click()
 }
 
+/**
+ * 应用里的 <article>（限在 #root 里）：入口页 #root 前还有服务端首页片段，它的套餐卡也是 <article>，
+ * 登录后只是藏起来、仍在 DOM 里，不限范围会被一起数进去
+ */
+export function appArticles(page: Page): Locator {
+  return page.locator('#root article')
+}
+
 /** 我的套餐里的一张卡（<article>）：按卡片标题（备注名或套餐名）找 */
 export function card(page: Page, title: string): Locator {
-  return page.locator('article').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
+  return appArticles(page).filter({ has: page.getByRole('heading', { name: title, exact: true }) })
 }
 
 /**
@@ -154,7 +164,7 @@ export function card(page: Page, title: string): Locator {
  */
 export async function openCard(page: Page, title: string): Promise<Locator> {
   // 先等页面出了至少一份（切换条与各份同时渲染），再看有没有切换条
-  await expect(page.locator('article').first()).toBeAttached()
+  await expect(appArticles(page).first()).toBeAttached()
   const tabs = page.getByRole('tablist', { name: '你的几份' })
   if ((await tabs.count()) > 0) {
     const esc = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -204,16 +214,6 @@ export async function buyNew(page: Page, world: World, plan: { id: string; name:
   await payByCashier(page, world, yuan)
   await expect(page.getByRole('heading', { name: '新的一份买好了' })).toBeVisible({ timeout: 20_000 })
   await backToSubs(page)
-}
-
-/**
- * 开关（ui/Switch）：透明的 checkbox 被轨道盖住，人点的是外面那层 label，这里也点 label。
- * 点完核对状态真的变了
- */
-export async function setSwitch(page: Page, name: string, on: boolean): Promise<void> {
-  const sw = page.getByRole('switch', { name })
-  if ((await sw.isChecked()) !== on) await sw.locator('xpath=ancestor::label[1]').click()
-  await expect(sw).toBeChecked({ checked: on })
 }
 
 /** 页面上第一段匹配的文字（压成一行） */

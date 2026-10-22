@@ -27,6 +27,8 @@ const (
 	TemplateAdminOrderPaid     = "admin.order_paid"
 	TemplateAdminTicketOpened  = "admin.ticket_opened"
 	TemplateAdminTicketReplied = "admin.ticket_replied"
+	// 数据巡检告警（admin_integrity.go）：没有后台开关，配了管理员群组就发
+	TemplateAdminIntegrityAlert = "admin.integrity_alert"
 )
 
 // 模板类别：transactional 不可退订；service 是服务提醒，用户可在通知偏好里按渠道关闭；marketing 是营销/群发。
@@ -303,6 +305,20 @@ var templateDefs = []templateDef{
 		Allowed:     []string{"ticket_no", "subject", "body", "email", "plan", "traffic", "expires_at", "balance"},
 		Subject:     "工单 {{ticket_no}} 有新回复",
 		Body:        adminTicketBody,
+	},
+	// 默认内容与迁移 00059_report_integrity.sql 的种子逐字一致
+	{
+		Code:        TemplateAdminIntegrityAlert,
+		Channel:     ChannelTelegram,
+		Category:    categoryTransactional,
+		Description: "数据巡检（每 30 分钟）发现某项检查的违例从 0 变成非 0、或比上次告警时多时发一条到管理员群组（配了管理员群组就发，没有开关）；回到 0 不发",
+		Allowed:     []string{"check", "code", "count"},
+		Subject:     "数据巡检告警",
+		Body: `数据巡检发现异常
+检查：{{check}}（{{code}}）
+违例：{{count}} 条
+
+处理办法见运维手册「数据巡检告警」一章，修完下一轮巡检回到 0。`,
 	},
 }
 

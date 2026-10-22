@@ -358,7 +358,10 @@ const listed = ((await call(ADM, `/v1/nodes?id=${nodeId}&include_retired=1`, { t
 if (!listed) throw new Error('节点列表里找不到刚建的节点')
 const activated = await call(ADM, `/v1/nodes/${nodeId}/activate`, { token: admin, idem: true, body: { row_version: num(listed, 'row_version') } })
 if (activated.serving_status !== 'active') throw new Error(`上线后状态不对：${JSON.stringify(activated).slice(0, 300)}`)
-if (activated.warnings !== undefined) throw new Error(`上线带了提示：${JSON.stringify(activated.warnings)}`)
+// 两个套餐此刻还是草稿（下一步才发布），池还没被在用套餐绑定，上线只该带这一条提示
+const poolUnbound = '所在节点池没有绑定任何套餐，暂时不服务任何用户'
+const warnings = (activated.warnings as string[] | undefined) ?? []
+if (warnings.some((w) => w !== poolUnbound)) throw new Error(`上线带了提示：${JSON.stringify(warnings)}`)
 
 step('发布两个套餐的草稿版本（绑定的池里现在有可服务节点了）')
 // 乐观锁取自详情，与后台套餐页的发布对话框同一个请求
@@ -662,7 +665,6 @@ const lists: Array<[string, string, string, string?]> = [
   [ADM, '/v1/coupons', admin],
   [ADM, `/v1/coupons/${couponId}/redemptions`, admin],
   [ADM, '/v1/revenue/adjustments', admin],
-  [ADM, '/v1/traffic-resets', admin],
   [ADM, '/v1/late-payments', admin],
   [ADM, '/v1/withdrawals', admin],
   [ADM, '/v1/plugin-hooks', admin],

@@ -175,7 +175,7 @@ func TestOverviewCountsMapping(t *testing.T) {
 func TestOverviewPortError(t *testing.T) {
 	e := newTestEnv()
 	ctx := context.Background()
-	e.ports.errFor["DriftAccounts"] = errBoom
+	e.ports.errFor["CheckDrift"] = errBoom
 
 	_, err := e.svc.Overview(ctx)
 	if !errors.Is(err, errBoom) {

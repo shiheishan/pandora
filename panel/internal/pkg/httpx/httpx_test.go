@@ -1,8 +1,10 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -183,7 +185,7 @@ func TestBindJSON(t *testing.T) {
 		{"ok", `{"name":"a","count":1}`, http.StatusOK, ""},
 		{"unknown field", `{"name":"a","extra":1}`, http.StatusBadRequest, "bad_request"},
 		{"two values", `{"name":"a"}{"name":"b"}`, http.StatusBadRequest, "bad_request"},
-		{"too large", `{"name":"` + strings.Repeat("x", MaxBodyBytes) + `"}`, http.StatusBadRequest, "bad_request"},
+		{"too large", `{"name":"` + strings.Repeat("x", MaxBodyBytes) + `"}`, http.StatusRequestEntityTooLarge, "payload_too_large"},
 		{"missing required", `{"count":1}`, http.StatusUnprocessableEntity, "validation_failed"},
 	}
 	for _, tc := range cases {
@@ -292,5 +294,84 @@ func TestSecurityHeadersHSTSOnlyWhenAsked(t *testing.T) {
 		if got := h.Get("Strict-Transport-Security"); (got != "") != hsts || (hsts && got != hstsValue) {
 			t.Fatalf("hsts=%v Strict-Transport-Security = %q", hsts, got)
 		}
+	}
+}
+
+func TestSecurityHeadersRobotsTagOnlyOnV1(t *testing.T) {
+	e := gin.New()
+	e.Use(SecurityHeaders(false))
+	e.Any("/*path", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	for _, path := range []string{"/v1/x", "/v1"} {
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := w.Header().Get("X-Robots-Tag"); got != robotsNoIndex {
+			t.Fatalf("%s X-Robots-Tag = %q，要 %q", path, got, robotsNoIndex)
+		}
+	}
+	for _, path := range []string{"/", "/assets/a.js", "/v1x"} {
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := w.Header().Get("X-Robots-Tag"); got != "" {
+			t.Fatalf("%s 不该带 X-Robots-Tag，得到 %q", path, got)
+		}
+	}
+}
+
+func TestNoMethodWritesEnvelope(t *testing.T) {
+	e := newTestEngine()
+	e.HandleMethodNotAllowed = true
+	e.NoMethod(NoMethod)
+	e.GET("/only-get", func(c *gin.Context) { NoContent(c) })
+
+	w, env := do(t, e, http.MethodPost, "/only-get", "", nil)
+	if w.Code != http.StatusMethodNotAllowed || env.Error.Code != "method_not_allowed" {
+		t.Fatalf("got %d %+v", w.Code, env)
+	}
+	if w.Header().Get("Allow") != "GET" {
+		t.Fatalf("expected Allow: GET, got %q", w.Header().Get("Allow"))
+	}
+	if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("expected Content-Type to start with application/json, got %q", w.Header().Get("Content-Type"))
+	}
+	if env.Error.RequestID == "" {
+		t.Fatalf("expected non-empty request_id in envelope")
+	}
+
+	w, env = do(t, e, http.MethodPost, "/nowhere", "", nil)
+	if w.Code != http.StatusNotFound || env.Error.Code != "not_found" {
+		t.Fatalf("got %d %+v", w.Code, env)
+	}
+}
+
+func TestErrorsMapsExpiredRequestDeadlineToTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	e.Use(RequestID(zap.NewNop()), Errors(), Timeout(20*time.Millisecond, nil))
+
+	e.GET("/slow", func(c *gin.Context) {
+		<-c.Request.Context().Done()
+		Fail(c, errs.Wrap(errs.Internal, fmt.Errorf("query: %w", c.Request.Context().Err())))
+	})
+	e.GET("/inner", func(c *gin.Context) {
+		Fail(c, errs.Wrap(errs.Internal, context.DeadlineExceeded))
+	})
+	e.GET("/client", func(c *gin.Context) {
+		<-c.Request.Context().Done()
+		Fail(c, errs.Wrap(errs.Conflict, c.Request.Context().Err()))
+	})
+
+	w, env := do(t, e, http.MethodGet, "/slow", "", nil)
+	if w.Code != http.StatusGatewayTimeout || env.Error.Code != "timeout" {
+		t.Fatalf("got %d %+v, want 504 timeout", w.Code, env)
+	}
+
+	w, env = do(t, e, http.MethodGet, "/inner", "", nil)
+	if w.Code != http.StatusInternalServerError || env.Error.Code != "internal_error" {
+		t.Fatalf("got %d %+v, want 500 internal_error", w.Code, env)
+	}
+
+	w, env = do(t, e, http.MethodGet, "/client", "", nil)
+	if w.Code != http.StatusConflict || env.Error.Code != "conflict" {
+		t.Fatalf("got %d %+v, want 409 conflict", w.Code, env)
 	}
 }

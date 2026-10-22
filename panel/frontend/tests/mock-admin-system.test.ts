@@ -47,7 +47,7 @@ describe('mock api · admin notifications and hooks', () => {
 
   it('saves, previews, resets and test-sends templates within the variable whitelist', async () => {
     const list = templatesResponse.parse(await json(await call('GET', '/v1/mail/templates'))).templates
-    expect(list).toHaveLength(15)
+    expect(list).toHaveLength(21)
     expect(list.find((t) => t.code === 'admin.broadcast')).toMatchObject({ has_default: false, is_default: false })
     const t = list.find((x) => x.code === 'quota.warning' && x.channel === 'email')!
     expect(t).toMatchObject({ has_default: true, is_default: true })
@@ -60,6 +60,9 @@ describe('mock api · admin notifications and hooks', () => {
     expect((await call('POST', '/v1/mail/templates/reset', { code: 'admin.broadcast', channel: 'email' })).status).toBe(404)
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
     expect(await json(await call('POST', '/v1/mail/templates/test', { code: t.code, channel: 'email', to: 'me@example.test' }))).toMatchObject({ error: { code: 'reauth_required' } })
+    // 保存、恢复默认与 Go 一样要近期重认证（用户 10-21 定）
+    expect(await json(await call('POST', '/v1/mail/templates', { code: t.code, channel: t.channel, subject: 'x', body: 'y' }))).toMatchObject({ error: { code: 'reauth_required' } })
+    expect(await json(await call('POST', '/v1/mail/templates/reset', { code: t.code, channel: t.channel }))).toMatchObject({ error: { code: 'reauth_required' } })
   })
 
   it('upserts hooks, hands out a generated secret once and rejects private endpoints', async () => {

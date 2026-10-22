@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/csv"
-	"net/http"
 	"strconv"
 
 	"github.com/aegispanel/aegis/internal/module/identity/service"
@@ -52,7 +51,6 @@ func (h *Handler) bulkExport(c *gin.Context) {
 	}
 
 	writeCSVHead(c, "users.csv")
-	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
 	cw := csv.NewWriter(c.Writer)
 	_ = cw.Write([]string{"邮箱", "状态", "分组", "生效订阅", "订单数", "累计实付", "注册时间", "最近登录"})
 	for _, u := range rows {
@@ -133,7 +131,6 @@ func (h *Handler) generationResult(c *gin.Context) {
 	}
 
 	writeCSVHead(c, "generated-users.csv")
-	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
 	cw := csv.NewWriter(c.Writer)
 	_ = cw.Write([]string{"邮箱", "初始密码"})
 	for _, u := range users {
@@ -144,12 +141,4 @@ func (h *Handler) generationResult(c *gin.Context) {
 	if err := cw.Error(); err != nil {
 		plog.From(c.Request.Context()).Error("generation result csv flush", zap.Error(err))
 	}
-}
-
-// writeCSVHead 设置 CSV 下载响应头并标记 200（BOM 由调用方写入）。
-func writeCSVHead(c *gin.Context, filename string) {
-	c.Header("Content-Type", "text/csv; charset=utf-8")
-	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
-	c.Header("Cache-Control", "no-store")
-	c.Status(http.StatusOK)
 }

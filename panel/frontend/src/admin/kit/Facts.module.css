@@ -90,6 +90,8 @@
 
 .kvValue {
   min-width: 0;
+  /* 公钥、指纹这类没有断点的长串在手机上要能折行，否则撑出横向滚动 */
+  overflow-wrap: anywhere;
 }
 
 .kvAction {

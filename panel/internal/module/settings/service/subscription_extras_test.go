@@ -80,3 +80,46 @@ func TestSetSubscriptionExtrasSameValuesNoExtraAudit(t *testing.T) {
 		t.Fatalf("audit after noop: %d", len(al.entries))
 	}
 }
+
+func TestSetSubscriptionExtrasFetchLimit(t *testing.T) {
+	st := &kvStore{kv: map[string]json.RawMessage{}}
+	al := &auditLog{}
+	s := newSubscriptionExtrasService(st, al)
+	ctx := context.Background()
+
+	lim := 120
+	if err := s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{FetchLimitPerHour: &lim}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	got, err := s.SubscriptionFetchLimit(ctx)
+	if err != nil {
+		t.Fatalf("fetch limit: %v", err)
+	}
+	if got != 120 {
+		t.Fatalf("fetch limit: %d want 120", got)
+	}
+	if len(al.entries) != 1 {
+		t.Fatalf("audit count %d", len(al.entries))
+	}
+
+	e, err := s.SubscriptionExtras(ctx)
+	if err != nil {
+		t.Fatalf("extras: %v", err)
+	}
+	if e.InfoNodes || e.ProtocolPrefix {
+		t.Fatalf("info_nodes should stay false: %+v", e)
+	}
+}
+
+func TestSetSubscriptionExtrasFetchLimitValidation(t *testing.T) {
+	ctx := context.Background()
+	s := newSubscriptionExtrasService(&kvStore{kv: map[string]json.RawMessage{}}, &auditLog{})
+
+	zero := 0
+	err := s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{FetchLimitPerHour: &zero})
+	assertFieldValidation(t, err, "fetch_limit_per_hour")
+
+	big := 10001
+	err = s.SetSubscriptionExtras(ctx, SubscriptionExtrasUpdate{FetchLimitPerHour: &big})
+	assertFieldValidation(t, err, "fetch_limit_per_hour")
+}

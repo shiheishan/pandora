@@ -3,6 +3,7 @@ import { runInNewContext } from 'node:vm'
 import type { ConfigEnv, UserConfig } from 'vite'
 import { describe, expect, it } from 'vitest'
 import { THEME_STORAGE_KEY } from '../src/core/theme'
+import { sessionHintKey } from '../src/core/token'
 import { COLOR_TOKENS } from '../src/styles/design-tokens'
 import viteConfig, { themeBootFileName } from '../vite.config'
 
@@ -11,11 +12,18 @@ const source = readFileSync(new URL('../src/core/theme-boot.js', import.meta.url
 const appearanceSource = readFileSync(new URL('../src/portal/appearance.ts', import.meta.url), 'utf8')
 const APPEARANCE_CACHE_KEY = 'pandora-portal-appearance'
 
-function run(getItem: (key: string) => string | null, app = 'portal') {
+function run(
+  getItem: (key: string) => string | null,
+  app = 'portal',
+  loc: { hash?: string; search?: string } = {},
+) {
   const attrs: Record<string, string> = { 'data-app': app }
   const props: Record<string, string> = {}
   runInNewContext(source, {
-    window: { localStorage: { getItem } },
+    window: {
+      localStorage: { getItem },
+      location: { hash: loc.hash ?? '', search: loc.search ?? '' },
+    },
     document: {
       documentElement: {
         setAttribute: (k: string, v: string) => (attrs[k] = v),
@@ -24,7 +32,7 @@ function run(getItem: (key: string) => string | null, app = 'portal') {
       },
     },
   })
-  return { theme: attrs['data-theme'], props }
+  return { theme: attrs['data-theme'], props, home: attrs['data-home'] }
 }
 
 function boot(getItem: (key: string) => string | null): string | undefined {
@@ -65,8 +73,10 @@ describe('theme-boot.js cached portal theme', () => {
   })
 
   it('applies the cached colours of the current theme before the first frame', () => {
-    expect(run(storage(null, cache)).props).toEqual({ '--brand': '#b9442b', '--bg': '#fffaf0' })
-    expect(run(storage('dark', cache))).toEqual({ theme: 'dark', props: { '--brand': '#e46e52' } })
+    const { props } = run(storage(null, cache))
+    expect(props).toEqual({ '--brand': '#b9442b', '--bg': '#fffaf0' })
+    const dark = run(storage('dark', cache))
+    expect(dark).toEqual({ theme: 'dark', props: { '--brand': '#e46e52' }, home: undefined })
   })
 
   it('never paints the portal colours onto the admin console (same origin, same storage)', () => {
@@ -75,7 +85,8 @@ describe('theme-boot.js cached portal theme', () => {
 
   it('ignores broken, foreign-shaped or hostile cache entries', () => {
     for (const bad of ['{', 'null', '[]', '{"v":2,"light":{"--brand":"red"}}', '{"v":1,"light":"red"}']) {
-      expect(run(storage(null, bad))).toEqual({ theme: 'light', props: {} })
+      const { theme, props } = run(storage(null, bad))
+      expect({ theme, props }).toEqual({ theme: 'light', props: {} })
     }
     const hostile = JSON.stringify({ v: 1, light: { color: 'red', '--Brand': 'red', '--ok': 'x'.repeat(201), '--fine': 'blue', '--n': 3 } })
     expect(run(storage(null, hostile)).props).toEqual({ '--fine': 'blue' })
@@ -83,6 +94,52 @@ describe('theme-boot.js cached portal theme', () => {
 
   it('accepts every themeable token name', () => {
     for (const { name } of COLOR_TOKENS) expect(name).toMatch(/^--[a-z0-9-]+$/)
+  })
+})
+
+describe('theme-boot.js portal home', () => {
+  const portalKey = sessionHintKey('portal')
+  const withHint = (value: string | null) => (key: string) => (key === portalKey ? value : null)
+
+  it('reads the same portal session hint key as token.ts', () => {
+    expect(source).toContain(`'${portalKey}'`)
+  })
+
+  it.each(['', '#', '#/', '#/?x=1'] as const)('portal without token and empty hash %j leaves home unset', (hash) => {
+    expect(run(withHint(null), 'portal', { hash }).home).toBeUndefined()
+  })
+
+  it('portal with the session hint sets data-home off', () => {
+    expect(run(withHint('1'), 'portal').home).toBe('off')
+  })
+
+  it('a hint value other than "1" does not count', () => {
+    expect(run(withHint('x'), 'portal').home).toBeUndefined()
+  })
+
+  it('never reads the old token keys', () => {
+    expect(source).not.toContain('pandora-portal-token')
+    expect(source).not.toContain('pandora-admin-token')
+  })
+
+  it.each(['#/login', '#/register', '#/subs'] as const)('portal with hash %s sets data-home off', (hash) => {
+    expect(run(withHint(null), 'portal', { hash }).home).toBe('off')
+  })
+
+  it('portal with invite query sets data-home off', () => {
+    expect(run(withHint(null), 'portal', { search: '?invite=ABC' }).home).toBe('off')
+  })
+
+  it('admin entry does not set data-home even with the hint and hash', () => {
+    expect(run(withHint('1'), 'admin', { hash: '#/login' }).home).toBeUndefined()
+  })
+
+  it('still hides home by the address when storage throws; theme stays light', () => {
+    const throwing = () => {
+      throw new Error('SecurityError')
+    }
+    expect(run(throwing, 'portal', { hash: '#/login' })).toMatchObject({ theme: 'light', home: 'off' })
+    expect(run(throwing, 'portal').home).toBeUndefined()
   })
 })
 

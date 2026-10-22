@@ -8,10 +8,8 @@ import { orderRowSchema } from '../billing/schemas'
 // ---------------------------------------------------------------------------
 // deleted：后台注销并匿名化（迁移 00040），邮箱换成占位值，界面显示「已注销 #<短 id>」
 const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized', 'deleted'] as const
-const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
 const SUB_STATUSES = ['active', 'expired'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
-export type RiskLevel = (typeof RISK_LEVELS)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
 
 const int = z.number().int()
@@ -30,6 +28,8 @@ const currentSubSchema = z.object({
   // 生效值：COALESCE(订阅覆盖, 套餐 max_devices, 0)，0 表示不限
   device_limit: count,
   online_devices: count,
+  // 注册试用发的那一份（P13，用户 10-21 定）
+  is_trial: z.boolean(),
 })
 
 const userRowShape = {
@@ -37,7 +37,6 @@ const userRowShape = {
   email: z.string(),
   display_name: z.string().nullable(),
   status: z.enum(USER_STATUSES),
-  risk_level: z.enum(RISK_LEVELS),
   group_name: z.string(),
   group_id: z.string().nullable(),
   created_at: time,
@@ -71,6 +70,8 @@ const subscriptionSchema = z.object({
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),
   online_devices: count,
+  // 注册试用发的那一份（P13，用户 10-21 定）
+  is_trial: z.boolean(),
 })
 export const userDetailSchema = z.object({
   ...userRowShape,
@@ -92,3 +93,48 @@ export type SubscriptionRow = z.output<typeof subscriptionSchema>
 
 // POST v1/subscriptions/{id}/traffic-reset 的回执
 export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
+
+// ---------------------------------------------------------------------------
+// GET v1/users/{id}/profile：风控画像，明文 IP 只在这里
+// ---------------------------------------------------------------------------
+const profileRisk = z.enum(['', 'low', 'mid', 'high'])
+export const profileSchema = z.object({
+  events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
+  ips: z.array(
+    z.object({
+      ip: z.string(),
+      count: count,
+      first: time,
+      last: time,
+      accounts: count,
+      geo: z.string(),
+      network_kind: z.string(),
+      risk: profileRisk,
+    }),
+  ),
+  related: z.array(z.object({ id: z.string(), email: z.string() })),
+  fetches: z.array(z.object({ ip: z.string(), ua: z.string(), family: z.string(), result: z.string(), format: z.string(), at: time })),
+  fetch_sources_7d: count,
+  registered_ip: z.string(),
+  /** 各 IP 风险里最高的一档（与风控聚类同一条规则）；空串 = 没有和别的账号共用 IP */
+  risk: profileRisk,
+})
+export type ProfileRisk = z.output<typeof profileRisk>
+type UserProfile = z.output<typeof profileSchema>
+/** 画像 IP 表里只用到时间与去重时的字段（测试夹具不必带 geo / network_kind / risk） */
+export type ProfileIpActivity = Pick<UserProfile['ips'][number], 'ip' | 'count' | 'first' | 'last' | 'accounts'>
+
+// ---------------------------------------------------------------------------
+// GET v1/users/{id}/balance-entries：后台余额流水（ledger handler 的 userBalanceEntriesResponse，无 omitempty）
+// 与用户端钱包 GET v1/me/balance 的 history 是同一个科目的同一批分录；金额是分，delta 入账为正
+// ---------------------------------------------------------------------------
+const balanceEntrySchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  delta: int,
+  balance_after: int,
+  memo: z.string(),
+  order_id: z.string().nullable(),
+  at: time,
+})
+export const balanceEntriesSchema = z.object({ entries: z.array(balanceEntrySchema), total: count })

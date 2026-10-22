@@ -13,6 +13,7 @@ import {
   reviewText,
   RISK_LABEL,
   RISK_TONE,
+  TERM_HINT,
   USER_STATUS_LABEL,
   validateDisable,
   withDisabled,
@@ -52,7 +53,13 @@ export function RiskTab() {
 
   return (
     <div className={sec.stack}>
-      <FilterTabs label="按处置状态筛选" items={items} value={view} onChange={setView} />
+      <div className={sec.toolbar}>
+        <FilterTabs label="按处置状态筛选" items={items} value={view} onChange={setView} />
+        <span className={sec.spacer} />
+        <a className={sec.traceLink} href={href('/security/trace', { view: 'accounts' })}>
+          按账号看：溯源总览 › 账号综合排行 →
+        </a>
+      </div>
       <QueryView
         query={current}
         rows={4}
@@ -145,7 +152,7 @@ function ClusterCard({ cluster: c, onMark, onDisable }: { cluster: Cluster; onMa
       <div className={css.clh}>
         <span className={css.ip}>{c.ip || 'IP 无法解密'}</span>
         <span className={css.geo}>{clusterPlace(c)}</span>
-        <Tag tone={RISK_TONE[c.risk]}>{RISK_LABEL[c.risk]}</Tag>
+        <Tag tone={RISK_TONE[c.risk]} title={TERM_HINT.clusterRisk}>{RISK_LABEL[c.risk]}</Tag>
         <span className={css.accCount}>{c.accounts} 个账号</span>
         <span className={css.sp} />
         {canMark && (
@@ -166,6 +173,9 @@ function ClusterCard({ cluster: c, onMark, onDisable }: { cluster: Cluster; onMa
           </a>
           <span className={statusClass(u.status)}>{USER_STATUS_LABEL[u.status] ?? u.status}</span>
           <span className={css.plan}>{u.active_plan ?? '无生效套餐'}</span>
+          <a className={css.link} href={href('/security/access', { view: 'login', user: u.id })}>
+            登录记录
+          </a>
         </div>
       ))}
       {c.users.length < c.accounts && <div className={css.more}>另有 {c.accounts - c.users.length} 个账号已不存在</div>}

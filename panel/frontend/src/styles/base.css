@@ -4,6 +4,15 @@
   box-sizing: border-box;
 }
 
+/* 页面本身的滚动条用系统的：Mac 上浮在内容上不占宽度；Windows 等占宽度的系统靠这里一直留位。
+   长页与短页之间切换、弹窗锁滚动时，版面都不左右跳。自定义的 ::-webkit-scrollbar 不认这个留位，
+   所以后台的细滚动条只给 body 里面的滚动容器（见下）。 */
+html {
+  scrollbar-gutter: stable;
+  /* 手机浏览器缺省给点到的东西盖一层高亮（Android Chrome 是蓝色方块）：关掉，按下反馈由各组件的 :active 给 */
+  -webkit-tap-highlight-color: transparent;
+}
+
 html,
 body {
   margin: 0;
@@ -48,13 +57,14 @@ a:hover {
   outline-offset: 2px;
 }
 
-/* 后台是长表格密集界面，滚动条收窄并跟随边框色 */
-:root[data-app='admin'] *::-webkit-scrollbar {
+/* 后台是长表格密集界面，表格等滚动容器的滚动条收窄并跟随边框色。
+   选择器限定在 body 里面：写成 :root * 会连 body 一起匹配，页面滚动条就变成 10px 实条，长短页切换时整列横移 */
+:root[data-app='admin'] body *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-:root[data-app='admin'] *::-webkit-scrollbar-thumb {
+:root[data-app='admin'] body *::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: var(--radius-pill);
   border: 3px solid transparent;

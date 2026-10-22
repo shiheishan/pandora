@@ -104,6 +104,14 @@ export function landingHref(planId: string, l: Landing, price: string | null): s
   }
 }
 
+/** 落点页怎么显示：usable 是能选的，blocked 是置灰的（带 disabled_reason）；能选的只有一个、也没有置灰项时 auto 为它（直接跳过去），否则 null（列出来让用户看） */
+export function landingChoice(options: readonly Landing[]): { auto: Landing | null; usable: Landing[]; blocked: Landing[] } {
+  const blocked = options.filter((l) => !!l.disabled_reason)
+  const usable = options.filter((l) => !l.disabled_reason)
+  const auto = usable.length === 1 && blocked.length === 0 ? usable[0]! : null
+  return { auto, usable, blocked }
+}
+
 // ---------------------------------------------------------------------------
 // 建单：四个接口各自的请求体，都带 as_of + expect（服务端重算比对，不符回 409 quote_changed）。
 // 后端 DisallowUnknownFields：可选字段不用时不传。use_balance 传这一档报价里用掉的余额。

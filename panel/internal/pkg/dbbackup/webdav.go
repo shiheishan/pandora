@@ -135,10 +135,6 @@ func (c *WebDAVClient) Probe(ctx context.Context) error {
 	return nil
 }
 
-func (c *WebDAVClient) UploadVerified(ctx context.Context, localPath, objectName string) (UploadResult, error) {
-	return c.uploadVerified(ctx, localPath, objectName, "")
-}
-
 func (c *WebDAVClient) UploadVerifiedDigest(ctx context.Context, localPath, objectName, expectedDigest string) (UploadResult, error) {
 	if len(expectedDigest) != sha256HexLength {
 		return UploadResult{}, errors.New("预期备份摘要无效")

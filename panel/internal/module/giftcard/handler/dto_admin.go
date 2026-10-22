@@ -18,17 +18,15 @@ import (
 // ---------------------------------------------------------------------------
 
 type templateDTO struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Type        string        `json:"type"`
-	Status      string        `json:"status"`
-	Rewards     rewardsDTO    `json:"rewards"`
-	Conditions  conditionsDTO `json:"conditions"`
-	Limits      limitsDTO     `json:"limits"`
-	ThemeColor  string        `json:"theme_color"`
-	CodeTotal   int64         `json:"code_total"`
-	CodeUsed    int64         `json:"code_used"`
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Type       string        `json:"type"`
+	Status     string        `json:"status"`
+	Rewards    rewardsDTO    `json:"rewards"`
+	Conditions conditionsDTO `json:"conditions"`
+	Limits     limitsDTO     `json:"limits"`
+	CodeTotal  int64         `json:"code_total"`
+	CodeUsed   int64         `json:"code_used"`
 	// PriceArchived 套餐卡的价格档已下架（后台标「价格已下架」，编辑时要重选价格）
 	PriceArchived bool      `json:"price_archived"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -38,13 +36,11 @@ func templateFrom(t service.Template, c *cents) templateDTO {
 	return templateDTO{
 		ID:            t.ID.String(),
 		Name:          t.Name,
-		Description:   t.Description,
 		Type:          t.Type,
 		Status:        t.Status,
 		Rewards:       rewardsFrom(t.Rewards, c),
 		Conditions:    conditionsFrom(t.Conditions),
 		Limits:        limitsFrom(t.Limits),
-		ThemeColor:    t.ThemeColor,
 		CodeTotal:     t.CodeTotal,
 		CodeUsed:      t.CodeUsed,
 		PriceArchived: t.PriceArchived,
@@ -62,15 +58,13 @@ type templateResponse struct {
 
 // templateRequest 是保存模板的请求体：id 空串为新建，金额是分。
 type templateRequest struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Type        string        `json:"type"`
-	Status      string        `json:"status"`
-	Rewards     rewardsDTO    `json:"rewards"`
-	Conditions  conditionsDTO `json:"conditions"`
-	Limits      limitsDTO     `json:"limits"`
-	ThemeColor  string        `json:"theme_color"`
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Type       string        `json:"type"`
+	Status     string        `json:"status"`
+	Rewards    rewardsDTO    `json:"rewards"`
+	Conditions conditionsDTO `json:"conditions"`
+	Limits     limitsDTO     `json:"limits"`
 }
 
 // input 把请求转成 service 的输入；id 类字段格式不对回 422。
@@ -87,14 +81,6 @@ func (r templateRequest) input() (service.TemplateInput, error) {
 	if err != nil {
 		return service.TemplateInput{}, err
 	}
-	allowed := make([]uuid.UUID, 0, len(r.Conditions.AllowedPlanIDs))
-	for _, raw := range r.Conditions.AllowedPlanIDs {
-		pid, err := uuid.Parse(strings.TrimSpace(raw))
-		if err != nil {
-			return service.TemplateInput{}, errs.Invalid(map[string]string{"conditions": "限定套餐的 id 格式不正确"})
-		}
-		allowed = append(allowed, pid)
-	}
 	pool := make([]service.Prize, 0, len(r.Rewards.Pool))
 	for _, p := range r.Rewards.Pool {
 		pool = append(pool, service.Prize{
@@ -103,11 +89,10 @@ func (r templateRequest) input() (service.TemplateInput, error) {
 		})
 	}
 	return service.TemplateInput{
-		ID:          id,
-		Name:        r.Name,
-		Description: r.Description,
-		Type:        r.Type,
-		Status:      r.Status,
+		ID:     id,
+		Name:   r.Name,
+		Type:   r.Type,
+		Status: r.Status,
 		Rewards: service.Rewards{
 			Balance:      money.FromCents(r.Rewards.Balance),
 			TrafficBytes: r.Rewards.TrafficBytes,
@@ -118,13 +103,10 @@ func (r templateRequest) input() (service.TemplateInput, error) {
 			Pool:         pool,
 		},
 		Conditions: service.Conditions{
-			NewUserOnly:    r.Conditions.NewUserOnly,
-			PaidUserOnly:   r.Conditions.PaidUserOnly,
-			AllowedPlanIDs: allowed,
-			RequireInvite:  r.Conditions.RequireInvite,
+			NewUserOnly:  r.Conditions.NewUserOnly,
+			PaidUserOnly: r.Conditions.PaidUserOnly,
 		},
-		Limits:     service.Limits{MaxUsePerUser: r.Limits.MaxUsePerUser, CooldownHours: r.Limits.CooldownHours},
-		ThemeColor: r.ThemeColor,
+		Limits: service.Limits{MaxUsePerUser: r.Limits.MaxUsePerUser},
 	}, nil
 }
 

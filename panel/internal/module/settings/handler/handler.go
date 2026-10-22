@@ -13,6 +13,8 @@ import (
 type Settings interface {
 	Site(ctx context.Context) (service.Site, error)
 	SetSite(ctx context.Context, u service.SiteUpdate) error
+	// SiteURLFallback 是配置的 public_base_url：主域名一栏留空时用它
+	SiteURLFallback() string
 	RegistrationPolicy(ctx context.Context) (service.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
 	Switches(ctx context.Context) ([]service.Switch, error)
@@ -24,6 +26,10 @@ type Settings interface {
 	SubscriptionExtrasSettings
 	SupportRules(ctx context.Context) (service.SupportRules, error)
 	SetSupportRules(ctx context.Context, v service.SupportRules) error
+	PurchaseLimits(ctx context.Context) (service.PurchaseLimits, error)
+	SetPurchaseLimits(ctx context.Context, v service.PurchaseLimits) error
+	Home(ctx context.Context) (service.Home, error)
+	SetHome(ctx context.Context, u service.HomeUpdate) error
 }
 
 var _ Settings = (*service.Service)(nil)
@@ -55,4 +61,8 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/settings/subscription", k.RequireAuth, k.RecentReauth, h.setSubscriptionExtras)
 	v1.GET("/settings/support", k.RequireAuth, h.getSupportRules)
 	v1.POST("/settings/support", k.RequireAuth, k.RecentReauth, h.setSupportRules)
+	v1.GET("/settings/purchase", k.RequireAuth, h.getPurchaseLimits)
+	v1.POST("/settings/purchase", k.RequireAuth, k.RecentReauth, h.setPurchaseLimits)
+	v1.GET("/settings/home", k.RequireAuth, h.getHome)
+	v1.POST("/settings/home", k.RequireAuth, k.RecentReauth, h.setHome)
 }

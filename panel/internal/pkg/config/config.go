@@ -136,9 +136,8 @@ type PasswordHash struct {
 }
 
 type RateLimit struct {
-	IPPerMin      int `mapstructure:"ip_per_min"`
-	AccountPerMin int `mapstructure:"account_per_min"`
-	AuthPerMin    int `mapstructure:"auth_per_min"`
+	IPPerMin   int `mapstructure:"ip_per_min"`
+	AuthPerMin int `mapstructure:"auth_per_min"`
 }
 
 type Secrets struct {

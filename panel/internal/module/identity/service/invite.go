@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/module/identity/model"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/pkg/crypto"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
@@ -19,6 +20,9 @@ import (
 )
 
 const inviteCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+// personalCodeSingleUse 报告个人邀请码是否用一次就失效（设置「邀请码永不失效」关闭时）；后台发的码不受影响，由调用方再看 OwnerUserID。
+func personalCodeSingleUse(cfg settingssvc.Signup) bool { return !cfg.InviteNeverExpire }
 
 // MyInvite 返回用户自己的邀请码（没有就生成一个）与邀请来的人（最多 100 个，邮箱打码）。
 func (s *Service) MyInvite(ctx context.Context, userID uuid.UUID) (Invite, []Invitee, error) {
@@ -78,7 +82,7 @@ func (s *Service) MyInvite(ctx context.Context, userID uuid.UUID) (Invite, []Inv
 	invitees := make([]Invitee, 0, len(rows))
 	for _, r := range rows {
 		invitees = append(invitees, Invitee{
-			Email:    maskEmail(r.Email),
+			Email:    MaskEmail(r.Email),
 			BoundAt:  r.BoundAt,
 			RiskFlag: r.RiskFlag,
 		})
@@ -113,8 +117,9 @@ func (s *Service) MyInviteCodes(ctx context.Context, userID uuid.UUID) (MyInvite
 		})
 	}
 	return MyInviteCodes{
-		Codes:    codes,
-		MaxCodes: cfg.InviteMaxCodes,
+		Codes:     codes,
+		MaxCodes:  cfg.InviteMaxCodes,
+		SingleUse: personalCodeSingleUse(cfg),
 	}, nil
 }
 
@@ -221,7 +226,15 @@ func newInviteCode() (string, error) {
 	return string(out), nil
 }
 
-func maskEmail(e string) string {
+// DeletedAccountLabel 是已注销账号在用户端的显示名：占位邮箱（DeletedEmail）打码后仍像个邮箱，用户看不懂。
+const DeletedAccountLabel = "已注销的账号"
+
+// MaskEmail 给用户端看的邮箱打码：保留 @ 前至多两个字符与域名（本地部分不超过两个字符时只留一个），
+// 不是邮箱回 "***"；已注销账号的占位邮箱回 DeletedAccountLabel。邀请记录、佣金来源都用这一套（commission 经它打码）。
+func MaskEmail(e string) string {
+	if reservedEmail(e) {
+		return DeletedAccountLabel
+	}
 	at := strings.IndexByte(e, '@')
 	if at <= 1 {
 		return "***"

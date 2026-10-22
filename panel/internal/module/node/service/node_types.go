@@ -20,27 +20,31 @@ import (
 
 // Server 是后台读到的一台服务器（含名下节点计数）。
 type Server struct {
-	ID              uuid.UUID
-	Name            string
-	Status          string
-	StatusReason    *string
-	RowVersion      int64
-	Region          *string
-	Hostname        *string
-	PublicIPv4      *string
-	PublicIPv6      *string
-	PrivateIPv4     *string
-	Architecture    *string
-	OSName          *string
-	AgentVersion    *string
+	ID           uuid.UUID
+	Name         string
+	Status       string
+	StatusReason *string
+	RowVersion   int64
+	Region       *string
+	Hostname     *string
+	PublicIPv4   *string
+	PublicIPv6   *string
+	PrivateIPv4  *string
+	Architecture *string
+	OSName       *string
+	AgentVersion *string
+	// BinarySHA256 是节点端自报的程序摘要（hex）；没连过为 nil
+	BinarySHA256    *string
 	LastHeartbeatAt *time.Time
 	// HeartbeatOnline：status = ready 且最近心跳在 NodeStaleAfter 之内
 	HeartbeatOnline bool
-	CPUCores        *int
-	MemoryMB        *int
-	DiskGB          *int
-	CapacityNodes   int
-	Notes           *string
+	// Enrolled：服务器有有效接入身份（HasActiveIdentity 口径：active 且没过期），节点「上线」要求它为 true
+	Enrolled      bool
+	CPUCores      *int
+	MemoryMB      *int
+	DiskGB        *int
+	CapacityNodes int
+	Notes         *string
 	// NodeCount 是名下未删除的节点数（含已退役）
 	NodeCount int
 	// ActiveNodeCount 是名下 serving_status = active 的节点数
@@ -57,6 +61,9 @@ type Server struct {
 	DiskUsedGB  *int64
 	DiskTotalGB *int64
 	MetricsAt   *time.Time
+	// Upgrade 是这台现在能不能在线升级（upgrades.go 的 upgradeBlock）；LastUpgrade 是最近一次升级任务，没有为 nil
+	Upgrade     ServerUpgradeOption
+	LastUpgrade *ServerUpgradeJob
 }
 
 // ServerFilter 是服务器列表的筛选：Status 为空不筛；Query 按名称、主机名子串（不分大小写）。
@@ -94,27 +101,11 @@ type ServerPatch struct {
 	Notes         *string
 }
 
-// ServerNode 是服务器名下的一个节点（GET /servers/:id/nodes，含已退役）。
-type ServerNode struct {
-	ID                uuid.UUID
-	Name              string
-	ServingStatus     string
-	NodeType          *string
-	DisplayName       *string
-	ServerHost        *string
-	ServerPort        *int
-	TrafficRate       decimal.Decimal
-	ConfigValidatedAt *time.Time
-	// LastHeartbeatAt 取所在服务器的心跳（心跳是服务器级的）
-	LastHeartbeatAt *time.Time
-	CreatedAt       time.Time
-}
-
 // ---------------------------------------------------------------------------
 // 节点：写接口
 // ---------------------------------------------------------------------------
 
-// AdminNode 是节点写接口（建、改、复制、迁移、上线、退役）回的节点；ProtocolConfig 已抹掉敏感值。
+// AdminNode 是节点写接口（建、改、绑定、上线、退役）回的节点；ProtocolConfig 已抹掉敏感值。
 type AdminNode struct {
 	ID                    uuid.UUID
 	NodeNo                int64
@@ -156,10 +147,11 @@ type NodeTrafficLimit struct {
 }
 
 // NodeInput 是新建节点的输入。TrafficRate 为 nil 取 1.00；PoolID 为 nil 不划池。
+// ServerID 为 nil = 暂不绑定服务器（节点先作为配置存着，上线前再绑定）；没绑服务器时端口、地址都可以先空着。
 // Tags、TrafficLimitBytes、TrafficResetDay、TrafficRateSchedule 都可不给（没有标签、不限、不自动重置、没有时段倍率）。
 type NodeInput struct {
 	Name           string
-	ServerID       uuid.UUID
+	ServerID       *uuid.UUID
 	PoolID         *uuid.UUID
 	NodeType       string
 	ServerHost     string
@@ -220,25 +212,6 @@ type NodePatch struct {
 	TrafficResetDay   OptionalInt
 	// TrafficRateSchedule 为 nil 不改，给了就整体替换（空切片 = 清空）
 	TrafficRateSchedule *[]RateRangeInput
-}
-
-// NodeCopyInput 是复制节点的输入：TargetServerID、PoolID 为 nil 沿用原节点；Name 为空取「原名-copy」；
-// SortOrder 为 nil 取原节点 +1；ServerPort 为 nil 沿用原端口。CopyRouting 时连节点私有路由与所在路由组一起复制。
-type NodeCopyInput struct {
-	RowVersion     int64
-	Name           string
-	TargetServerID *uuid.UUID
-	PoolID         *uuid.UUID
-	SortOrder      *int
-	ServerPort     *int
-	CopyRouting    bool
-}
-
-// NodeMoveInput 是把草稿节点迁到另一台服务器的输入。
-type NodeMoveInput struct {
-	RowVersion int64
-	ServerID   uuid.UUID
-	Reason     string
 }
 
 // NodeOrderItem 是排序的一项。
@@ -316,6 +289,16 @@ type ApplyFailure struct {
 	At     time.Time
 }
 
+// NodeCertState 是后台看到的节点证书状态（节点端心跳报的，迁移 00061）。
+type NodeCertState struct {
+	Identifier  *string
+	NotAfter    *time.Time
+	ErrorCode   *string
+	ErrorDetail *string
+	NextAttempt *time.Time
+	ReportedAt  time.Time
+}
+
 // NodeRow 是后台节点列表的一行。在线、流量、指标、身份序号、授权套餐按当前页批量取，不逐行查。
 type NodeRow struct {
 	ID            uuid.UUID
@@ -355,7 +338,9 @@ type NodeRow struct {
 	RuntimeReason     *string
 	RuntimeStateAt    *time.Time
 	RuntimeReasonNode *string
-	DeliveryDegraded  bool
+	// Cert 是节点端报过的入站证书状态；nil = 节点端没报过（不用证书、旧节点端或还没心跳）
+	Cert             *NodeCertState
+	DeliveryDegraded bool
 	// OnlineUsers、OnlineIPs、TrafficBytes24h 来自 NodeLiveStats；没有数据为 0
 	OnlineUsers     int
 	OnlineIPs       int
@@ -366,7 +351,7 @@ type NodeRow struct {
 	MetricsAt  *time.Time
 	// IdentitySerial 是所在服务器当前 active 身份的 seq；没有为 nil
 	IdentitySerial *int64
-	// Movable：能不能迁移到别的服务器（nodeMovableState，只看节点自己）
+	// Movable：能不能改绑 / 解绑服务器（nodeMovableState：草稿或已停用；在役要先停用，已退役不行）
 	Movable bool
 	// GrantedPlans 是绑定了节点所在池的套餐名（去重、升序），永不为 nil
 	GrantedPlans []string

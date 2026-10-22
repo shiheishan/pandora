@@ -302,6 +302,7 @@ func TestRotateAndGrace(t *testing.T) {
 	uid := uuid.Must(uuid.NewV7())
 	rec := newRec(uid, "public", now, "0")
 	rec.RTCur = hashSecret("s1")
+	rec.RTSeed = "seed-1"
 	mustCreate(t, st, rec, now)
 
 	status, _, err := st.rotate(ctx, rec.ID, uid, "public", now, 0,
@@ -332,6 +333,9 @@ func TestRotateAndGrace(t *testing.T) {
 	if rs.RTPrev != hashSecret("s1") {
 		t.Fatalf("RTPrev 应为 s1 哈希")
 	}
+	if rs.RTSeed != "seed-1" {
+		t.Fatalf("RTSeed 应原样读回，得 %q", rs.RTSeed)
+	}
 	if !rs.RTRotatedAt.Equal(now) {
 		t.Fatalf("RTRotatedAt 应为 %v，得 %v", now, rs.RTRotatedAt)
 	}
@@ -340,6 +344,10 @@ func TestRotateAndGrace(t *testing.T) {
 		refreshModeGrace, hashSecret("s1"), "")
 	if err != nil || status != rotateOK {
 		t.Fatalf("grace 10s 内应 rotateOK，status=%d err=%v", status, err)
+	}
+	// 宽限不改 refresh 状态：rt_cur、rt_prev、轮换时间都原样
+	if after, _, err := st.readRefresh(ctx, rec.ID); err != nil || after.RTCur != hashSecret("s2") || after.RTPrev != hashSecret("s1") || !after.RTRotatedAt.Equal(now) {
+		t.Fatalf("grace 后状态被改了: %+v %v", after, err)
 	}
 
 	status, _, err = st.rotate(ctx, rec.ID, uid, "public", now.Add(31*time.Second), 0,

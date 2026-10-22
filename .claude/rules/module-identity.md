@@ -14,7 +14,8 @@ paths:
 
 ## 账号枚举防护（IAM-006）
 - 注册、登录、找回密码三个入口，账号存不存在对外的状态码、正文和耗时都一样：邮箱不存在时 `dummyVerify` 付一次真实校验的代价；找回密码第 1 步对不存在、非 active、管理员的邮箱回同样的响应，但不写码不发信。
-- 口令错、用户不存在、停用、登后台的不是管理员，auth 一律回同一个 `errInvalidCredentials`。管理员登门户回中性的 `ErrStaffPortalLogin`，不带后台路径。
+- 口令错、用户不存在、登后台的不是管理员，auth 一律回同一个 `errInvalidCredentials`。管理员登门户回中性的 `ErrStaffPortalLogin`，不带后台路径。
+- 停用 / 封禁账号**口令对时**回 403 `errAccountDisabled`「账号已停用」（用户 10-21 定）：门户一律这样回；后台只对管理员名单里的人这样回，其余同口令错。前提是 identity 只在 `verifyPHC` 通过之后才回 `ErrAccountInactive`，不许把状态判断提前（否则不知道口令的人也能探出停用状态）；口令对也计一次登录失败（第 11 次 429），不建会话。快捷登录第 2 步遇停用账号同样回它；邮件链接第 2 步先比凭据纪元、停用会推进纪元，所以停用前签发的链接通常回「登录链接无效或已过期」，只有状态已改、纪元还没推进的竞态才回「账号已停用」。已知代价：拿到停用管理员正确口令的人，在后台入口从 403 / 401 能看出它是不是管理员（账号活跃时正确口令本来就看得出，增量很小），不当成泄漏处理。守卫：auth 的 `TestLoginDisabledPublic`、`TestLoginDisabledCountsAsFailure`、`TestLoginDisabledAdminAudience`、`TestQuickLoginDisabledAccount`，identity `flows_pg_test.go` 断言停用账号口令错仍是 `ErrInvalidCredentials`。
 - 找回密码第 2 步一切「对不上」（没有码、过期、次数用完、账号不可用）统一回 `errCodeInvalid`。
 
 ## 口令与 Argon2id
@@ -23,13 +24,13 @@ paths:
 - 改密：15 分钟错 5 次后一律 429；成功后门户保留当前会话、吊销其余，后台连当前会话一起吊销（`ChangePassword`）。
 
 ## 会话（Redis）
-- refresh cookie 是 `<sid>.<随机串>`，Redis 只存哈希。轮换用 Lua 原子 CAS；`refreshGrace` 内拿上一代 refresh 来只发 access 不轮换，超出宽限再用就是重放，整条会话吊销并写 `session.refresh_reuse` 审计（`refreshReused`）。
+- refresh cookie 是 `<sid>.<代数>.<随机串>`，第 g 代的随机串 = `refreshSecret`：`HMAC(InfoHMACRefresh, sid ‖ 0 ‖ rt_seed ‖ 0 ‖ g)`，`rt_seed` 是会话建立时的随机种子（存 Redis），登录是第 0 代；Redis 存种子明文与当前、上一代的哈希。不要去掉种子：sid 不保密（审计、会话列表），没有种子时只泄漏主密钥就能算出任意会话的第 0 代。读出会话后先 `refreshAuthentic` 核真伪：假值只回 401、不吊销。Logout 凭本会话任一代真值都吊销。轮换用 Lua 原子 CAS 换成第 g+1 代；`refreshGrace` 内拿上一代来不改状态，发 access 并把当前那一枚原样再发一遍（轮换响应丢了、前端超时放弃的旧请求晚到，都不会把别人手里那枚换掉）；超出宽限再用上一代、或拿出更早的任一代（被人连换了几次），都是重放，整条会话吊销并写 `session.refresh_reuse` 审计（`refreshReused`）。不要改成「宽限内发一枚新的随机值」或「对不上的真值只回 401」：前者让偷到上一枚的人把合法用户那枚挤出记录，后者让偷到当前那枚的人连换两次就把合法用户静默踢掉。守卫：`session_test.go` 的 `TestRefreshLostResponseRecovers`、`TestRefreshGraceThenRotateStillDetectsReuse`、`TestRefreshLateGraceDoesNotDisturbCurrent`、`TestRefreshDoubleRotateDetectsReuse`、`TestRefreshRandomSecretDoesNotRevoke`，`session_refresh_test.go` 的 `TestRefreshSeedBindsValue`、`TestRefreshOtherSessionValueDoesNotRevoke`、`TestLogoutWithOlderGenerationRevokes`、`TestRefreshEmptySeedNeverAuthentic`。
 - 每个用户有凭据纪元（`uepoch:`）：登录在验口令之前读纪元，建会话时纪元变了（期间改密、被停用）就不建。吊销用户会话一律经 `SessionRevoker.RevokeUser`：事务里先删 Redis 会话，Redis 失败回 `errs.Unavailable` 让业务事务回滚，提交后再扫一遍并推进纪元。
 - 后台会话有绝对寿命与空闲超时（`AdminSessionTTL`、`AdminIdleTimeout`），门户只有绝对寿命。`last_seen` 按 `lastSeenEvery` 节流写。
 - Lua 脚本会拼出不在 KEYS 里的键，只适用于单实例 Redis（部署就是单实例）；要上集群先改脚本。
 - 登录失败计数按账号跨门户与后台共用（邮箱不存在时用邮箱哈希）：先原子占名额再验口令，窗口内第 11 次起口令对也 429；成功清零，没有结论的结果退回名额（`panel/internal/module/auth/service/login.go`）。`pandora admin reset-password` 成功后调 `ClearLoginFailures`。
 - 登录失败审计记 anonymous，被撞账号只作 ResourceID；同一邮箱或同一 IP 在窗口内只记一条（`loginFailed`）。
-- 邮件链接免密登录（`panel/internal/module/auth/service/mail_link.go`，`signup.mail_link_login` 开且配好发信才可用，否则 403）：第 1 步读开关用 `SignupWithoutSecret`（不解封 secret）；令牌一次性、15 分钟、Redis 只存哈希、同一用户只留最新一条、签发时记凭据纪元（之后改密、停用、后台改邮箱、注销即失效）；第 1 步开了人机验证时先过人机验证（auth 经 `MailLinkCaptcha` 端口调 identity 的 `VerifyCaptcha`，action `mail_login`，放在限频之前），再按邮箱 15 分钟 3 次限频，邮箱存不存在回同样的响应；第 2 步与快捷登录一样建门户会话（`amr` 记 `mail_link`），管理员不能用。
+- 邮件链接免密登录（`panel/internal/module/auth/service/mail_link.go`，`signup.mail_link_login` 开且配好发信才可用，否则 403；降级开关 `notify.email`（暂停邮件投递）开着时第 1 步回 503，只看设置）：第 1 步读开关用 `SignupWithoutSecret`（不解封 secret）；链接拼在 settings 的 `SiteURL` 上（主域名），令牌不绑域名（旧域名上的 hash 路由照常能用）；令牌一次性、15 分钟、Redis 只存哈希、同一用户只留最新一条、签发时记凭据纪元（之后改密、停用、后台改邮箱、注销即失效）；第 1 步开了人机验证时先过人机验证（auth 经 `MailLinkCaptcha` 端口调 identity 的 `VerifyCaptcha`，action `mail_login`，放在限频之前），再按邮箱 15 分钟 3 次限频，邮箱存不存在回同样的响应；第 2 步与快捷登录一样建门户会话（`amr` 记 `mail_link`），管理员不能用。
 
 ## 管理员与用户管理
 - 停用、封禁用户前在同一事务里过 `AdminGuard`：是最后一个有效管理员就 409。批量停用同源账号跳过管理员（`DisableIPClusterAccounts`）。
@@ -40,7 +41,7 @@ paths:
 - 用户导出、按条件预览、群发收件人共用同一套 `BulkFilter`；导出审计写不进去就整单失败，不交出名单（`ExportUsers`）。CSV 单元格过 `CSVCell`。
 
 ## 注册与登录设置（settings 的 signup 组，2026-10-14）
-- 人机验证（reCAPTCHA v2 / v3、Turnstile）在注册第 1 步、找回密码第 1 步、邮件链接登录第 1 步校验（`captcha.go`），没开时不查；第三方校验接口连不上回 422 `fields.captcha`，不放行。服务商回的 `hostname` 必须等于 `public_base_url` 的主机名（取不到主机名时按不可用处理）；v3 的 `action` 必须与入口一致（`register`、`password_reset`、`mail_login`，前端 `getToken` 传同一个值）。注册第 1 步先做 IP 限额再调第三方（少打一次出站请求；代价是共用出口 IP 时不过人机验证的脚本也能耗光这个 IP 的注册额度，影响只限这个 IP）；找回与邮件链接第 1 步先过人机验证，再按邮箱限频（按邮箱的额度不能让没过人机验证的请求占用，否则换 IP 就能锁住别人的找回）。secret 只经 Sealer 封存，后台只回 `has_captcha_secret`。门户入口页 CSP 的放行来源在 `panel/internal/app/portal_csp.go`。
+- 人机验证（reCAPTCHA v2 / v3、Turnstile）在注册第 1 步、找回密码第 1 步、邮件链接登录第 1 步校验（`captcha.go`），没开时不查；第三方校验接口连不上回 422 `fields.captcha`，不放行。服务商回的 `hostname` 必须是 settings `SiteURLAliases` 里某个地址的主机名（当前主域名、改之前的那个、配置的 `public_base_url`：改域名期间旧域名上打开的页面也是本站；一个都取不到时按不可用处理）；v3 的 `action` 必须与入口一致（`register`、`password_reset`、`mail_login`，前端 `getToken` 传同一个值）。注册第 1 步先做 IP 限额再调第三方（少打一次出站请求；代价是共用出口 IP 时不过人机验证的脚本也能耗光这个 IP 的注册额度，影响只限这个 IP）；找回与邮件链接第 1 步先过人机验证，再按邮箱限频（按邮箱的额度不能让没过人机验证的请求占用，否则换 IP 就能锁住别人的找回）。只看设置的拒绝排在这些之前：注册关闭、要验证邮箱而邮件暂停（注册第 1 步），没配 SMTP、邮件暂停（找回第 1 步）都在 IP 限额与人机验证之前直接回，不占额度、不打第三方（site-config 本就公开这些状态）。secret 只经 Sealer 封存，后台只回 `has_captcha_secret`。门户入口页 CSP 的放行来源在 `panel/internal/app/portal_csp.go`。
 - 邮箱规则在 `signup_policy.go`：后缀白名单开时域名必须在名单里；Gmail 别名限制只管 gmail.com / googlemail.com 的 `.` 与 `+`。注册第 1 步按 IP 限额（缺省开、10 次 / 1 分钟、可关），路由上的 `reg_start` 只留全局维度。
 - 注册试用在 `CompleteRegistration` 的同一事务里调 `TrialGranter`，每人终身一次（`subscription_trials` 主键）；套餐不可用时 subscription 记日志跳过，不挡注册。
 - `signup.invite_never_expire` 关时个人邀请码用一次就失效（`ConsumeInvite(id, singleUse)`）；后台发的码不受影响。
@@ -51,8 +52,22 @@ paths:
 - referrals 只追加：后台改邀请人写 `referral_changes`（只追加），「当前邀请人」一律读视图 `effective_referrals`（`Referrer`、`ReferralCount`、`Invitees` 都已改读它）。改邀请人先锁全局邀请图（`LockReferralGraph`），沿视图往上查 100 层防环，不能设成自己或自己的下线；只影响以后订单的计佣。
 
 ## 后台改用户与注销（2026-10-14）
-- 改邮箱（要原因、撞号 409、改后未验证；同一事务里作废发往旧邮箱的找回码、吊销全部会话并推进纪元，邮件登录链接随之失效；找回第 2 步另核码对应的邮箱仍是用户现在的邮箱）、改显示名与备注（备注只在后台详情出现，审计只记字段与长度）、改邀请人、注销都在 `admin_edit.go` / `referrer.go`，各写一条审计。审计不记明文邮箱：改邮箱只记打码值（`maskEmail`）与 `auditEmailHMAC`（`InfoHMACIdentity`，前缀 `audit-email:`）。
+- 改邮箱（要原因、撞号 409、改后未验证；同一事务里作废发往旧邮箱的找回码、吊销全部会话并推进纪元，邮件登录链接随之失效；找回第 2 步另核码对应的邮箱仍是用户现在的邮箱）、改显示名与备注（备注只在后台详情出现，审计只记字段与长度）、改邀请人、注销都在 `admin_edit.go` / `referrer.go`，各写一条审计。审计不记明文邮箱：改邮箱只记打码值（`MaskEmail`）与 `auditEmailHMAC`（`InfoHMACIdentity`，前缀 `audit-email:`）。
 - 占位邮箱的域名 `deleted.invalid`（任何大小写）在注册、命令行建号、批量生成、后台改邮箱一律拒（`reservedEmail`），否则有人抢注 `DeletedEmail(某人)` 会让那个人注销时撞唯一约束。
 - 注销 `DeleteUser` 不可撤销：同一事务里锁用户 → `CommissionVoider.LockForDeletion`（拿 commission 的用户咨询锁）→ `OrderCanceller` 取消全部待付订单（order 释放资源、作废在途支付意图，原因 `account_deleted`；之后到的付款回调走迟到付款挂账，不开订阅、不计佣金）→ `AccountCloser` 停订阅 → `CommissionVoider.VoidForDeletedUser` 作废名下未打款的佣金（用户 10-14 定：冻结中、待复核的条目逐条作废；有已批准待打款的提现就拒绝注销（409），申请中的驳回；驳回后剩下的可提现佣金作废；原因都是 `account_deleted`；已打款、已转余额的不动，口径与锁序见 module-order）→ 解绑 Telegram → 吊销会话 → 作废找回码 → 匿名化（占位邮箱 `DeletedEmail`、清显示名与备注、`status='deleted'`、`deleted_at`）→ 删口令 → 停用他的邀请码 → 插件事件 `user.deleted`（只带 `user_id` 与 `deleted_at`）；审计 `user.deleted` 另记作废条目数 `voided_commission_entries`、条目金额 `voided_commission_pending`、作废的可提现 `forfeited_commission`、驳回提现数 `rejected_withdrawals` 与金额 `rejected_withdrawal_amount`（金额都是 "0.00" 形式的字符串）；订单、账本、佣金与提现记录、审计、邀请关系保留（作废只追加冲回分录、改状态）。不能注销自己与管理员。锁序与别处一致：先用户行（FOR NO KEY UPDATE），再佣金咨询锁（取消待付单会锁他的余额科目，转余额是拿着这把锁再锁余额，所以要先拿），再订单行（与付款结算「先订单、后订阅」同序），再按 id 升序锁订阅行；作废佣金要锁平台收入，放在停完订阅之后（结算先锁库存、券、订阅再锁平台收入）、改占位邮箱之前（那时用户行只是 NO KEY UPDATE，与计提插条目时外键的 KEY SHARE 相容）；改占位邮箱（唯一列）的 UPDATE 放在订阅都停完之后，此时锁才升到 FOR UPDATE，用户自己操作订阅（先锁订阅、再插 actor 指向他的事件行）不会与之互等。界面显示「已注销 #<id 前 8 位>」（`DeletedShortID`，与前端 `shortId` 同口径）。
 - 已注销账号：`SetStatus`、`AdminResetPassword`、`AssignGroup`、改邮箱、改备注、改邀请人一律 409「账号已注销」；别的模块对用户的写入口（order 下单与后台开单、ledger 后台加钱、giftcard 兑换、subscription 后台改订阅）在各自 service 里经 `IsDeleted` 判断、同码同文案 409；ledger 后台扣减不拒（注销账号只能扣减，用于线下退款后冲账）。`IsDeleted` 读时给用户行加共享锁（FOR SHARE）并持有到调用方提交，与注销互斥；调用方必须在事务里第一个调（先于锁自己的行），锁序才与注销一致。commission 对已注销账号：门户转余额、提现申请，自动转余额，后台批准提现、标记已打款、通过待复核条目一律 409「账号已注销」（无锁的 `AccountDeleted`，各自先锁住会与注销作废冲突的行再读）；后台驳回提现、作废条目照常。计提时已注销的邀请人等同比例 0（跳过、仍占那一级），读的是无锁的 `AccountDeleted`：结算事务那时已持有库存、券等行锁，不能再等用户行锁（理由见 module-order）；批量筛选不带状态时排除已注销，IP 聚类停用跳过已注销。
 - 批量封禁 `BulkBan` 复用 `BulkFilter`：至少一个条件；命中人数必须等于预览时的 `expected_total`；一次最多 `BulkBanMax`（500）人，同步执行；自己、管理员、已封禁、已注销跳过并计数；路由要 reauth 与幂等键 `user_bulk_ban`。
+
+## 溯源总览（2026-10-20）
+- 读服务在 `service/trace.go`（编排）与 `trace_merge.go`（纯函数），类型在 `trace_types.go`；两路数据：审计经 `auditOps.TraceIPs` / `TraceUsers`，拉取日志经端口 `TraceFetches`（subscription 实现，`UseTraceFetches` 注入，`MissingPorts` 会列）。两路 HMAC 盐不同，按解封后的明文（`normTraceIP`）合并，不比哈希。
+- IP 排行：两路各取头部 `TraceScanIPs`（5000），拉取一路额外带回审计头部 200 个 IP，审计一路再补拉取头部 200 个里缺的（`Limit 0` + `ExtraIPs`）；任一路独立 IP 数超过 5000 时概览的独立 IP 数是估算（`DistinctIPsApprox`）。UA 种类两路相加不去重；关联账号每路明细最多 20 个，超了 `AccountsCapped`。
+- 账号排行：缺省按关联 IP（两路 IP 合并去重）；共用 IP 只在各自一路内判断再按明文去重；按「机房命中」排时只在关联 IP 选出的候选里重排。
+- IP 只给打码串（`maskIP`：IPv4 `a.b.*.*`，IPv6 前两段加 `:*`，前端 `users/RiskTab.tsx` 的 `maskIp` 同口径）与「显示」令牌：`base64url(Seal("unix|ip", AAD "identity.trace_reveal:"+管理员 id))`，2 小时有效，换管理员解不开。`TraceReveal` 先写 `security.source_ip_viewed`（`data.view = trace`，`data.filter` 里是 `masked` 与 `ip_hash`：`traceAuditIPHash`，与审计 ip_hash 同口径）再返回明文，审计写不进去就不给明文；令牌失效（篡改、过期、别的管理员签发）回 422 `fields.token`、不写审计。用例在 `trace_reveal_test.go`（假 auditOps）与 `trace_reveal_pg_test.go`。
+- 路由 `GET /v1/trace/{ips,subscribers,accounts,reveal}` 挂在后台安全页同组，只要 `RequireAuth`；window / sort 的取值在 service 校验（422 `fields.window` / `fields.sort`）。
+
+## 后台安全读路径（`service/ops_*.go`）
+
+- 访问明细 `AccessLog`：按账号筛选时给 audit 传 `TargetActions: [auditsvc.ActionLoginFailed]`，冲着这个账号的匿名登录失败也列出；匿名登录失败的被试账号由 `accessTarget` 取（操作者为空、动作 `user.login_failed`、对象 user），放进 `TargetUserID` / `TargetUserEmail`，与操作人邮箱同一次 `Emails` 查完；别的匿名事件（如 `session.refresh_reuse`）不挂到人身上。登录失败的动作代号只有 audit service 的 `ActionLoginFailed` 一份（auth 写、identity 读都用它）。访问分类 login 含 `user.login`（及 `user.login_failed`）、`auth.quick_login`、`auth.mail_link_login`（`accessCategoryRules`，假后端 `CATEGORY_RULES` 同步），「看登录记录」才不漏快捷登录与邮件链接登录。守卫 `ops_access_test.go` 的 `TestAccessTarget`、`ops_risk_pg_test.go` 的 `TestPGAccessLog`。
+- 用户画像 `UserProfile`：每个 IP 读时 `locate` 出归属地与网络类型；近 90 天与别的账号共用（`Accounts > 1`）时按 `clusterRisk` 给 `Risk`（与风控聚类同一条规则），顶层 `Risk` 取最高一档（`higherRisk`）。`users.risk_level` 列从没有代码写，10-21 迁移 00067 删列。
+- 读访问明细、聚类列表、画像**不记** `security.source_ip_viewed`（用户 10-21 定：访问日志 5 秒轮询会把审计刷满；代价是事后查不到谁翻看过用户 IP）。只有溯源总览「显示」明文 IP 记（见上一节 `TraceReveal`）。守卫 `ops_risk_pg_test.go` 断言读画像后计数为 0。
+- 给用户端看的邮箱打码只有 `MaskEmail`（`invite.go`）一套：邀请记录与 commission 的佣金来源（`From`）都经它；已注销账号的占位邮箱（`DeletedEmail`，`reservedEmail` 判）写「已注销的账号」（`DeletedAccountLabel`），用户端不露占位邮箱、也不给别人的短 id（后台另写「已注销 #短id」）。notify 的管理员群组提醒与 report 的流量排行各有自己的后台打码，不给用户看。

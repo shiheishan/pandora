@@ -178,7 +178,7 @@ type Seed struct {
 	CSV           []CSVRow // 与 Users 同序
 }
 
-// UserRow → users（status active，risk_level normal，display_name 空）。
+// UserRow → users（status active，display_name 空）。
 type UserRow struct {
 	ID              string
 	Email           string

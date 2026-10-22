@@ -177,8 +177,8 @@ describe('流量重置', () => {
   })
 
   it('按邮箱找人只认完全相等（不分大小写），模糊命中不算', () => {
-    const rows = [{ email: 'k.liu@gmail.com' }, { email: 'k.liu@gmail.com.cn' }]
-    expect(exactEmail(rows, ' K.Liu@Gmail.com ')).toBe(rows[0])
+    const rows = [{ email: 'k.liu@example.com' }, { email: 'k.liu@example.com.test' }]
+    expect(exactEmail(rows, ' K.Liu@Example.com ')).toBe(rows[0])
     expect(exactEmail(rows, 'k.liu@gmail')).toBeUndefined()
     expect(exactEmail(rows, '')).toBeUndefined()
   })

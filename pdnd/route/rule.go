@@ -85,15 +85,6 @@ type Engine struct {
 	final string
 }
 
-// Compile 把面板下发的规则编译成引擎。
-//
-// 返回的 warnings 是「这条规则写了但不会按你以为的方式工作」——
-// 比如引用了不存在的出站，或者用了 geoip 但没有数据库。这些不该让整个
-// 节点起不来（其余规则仍然有效），但必须让人看见。
-func Compile(rules []RawRule, outbounds map[string]bool, final string, geo GeoIP) (*Engine, []string, error) {
-	return compile(rules, outbounds, final, geo, false)
-}
-
 // CompileStrict is the production/runtime variant of Compile. It rejects a
 // configuration whose final outbound, rule target, or GeoIP dependency cannot
 // actually be executed. This prevents a bad control-plane update from silently

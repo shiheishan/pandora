@@ -22,7 +22,6 @@ import (
 
 	ss2022ref "github.com/sagernet/sing-shadowsocks/shadowaead_2022"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/http2"
 
 	"github.com/aegispanel/nodeagent/core"
 )
@@ -318,15 +317,11 @@ func dialDeviceWiringHTTPConnect(port int, user core.User, target *net.TCPAddr) 
 }
 
 func openDeviceWiringNaive(env deviceWiringEnv) (io.Closer, error) {
-	raw, err := tls.Dial("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(env.port)), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http2.NextProtoTLS}}) //nolint:gosec -- ephemeral test certificate.
+	raw, err := tls.Dial("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(env.port)), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec -- ephemeral test certificate.
 	if err != nil {
 		return nil, err
 	}
-	clientConn, err := (&http2.Transport{}).NewClientConn(raw)
-	if err != nil {
-		_ = raw.Close()
-		return nil, err
-	}
+	clientConn := h2OverConn(raw)
 	pipeReader, pipeWriter := io.Pipe()
 	req, err := http.NewRequest(http.MethodConnect, "https://127.0.0.1/", pipeReader)
 	if err != nil {

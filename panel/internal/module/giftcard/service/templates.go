@@ -30,7 +30,7 @@ func (s *Service) ListTemplates(ctx context.Context) ([]Template, error) {
 }
 
 // SaveTemplate 新建（in.ID 为 nil）或修改一个模板，返回保存后的模板。卡型不能改：已经发出去的码是按原卡型生成的。
-// 套餐卡的套餐、价格档与限定套餐经 catalog 校验存在（价格档必须属于该套餐）。
+// 套餐卡的套餐与价格档经 catalog 校验存在（价格档必须属于该套餐）。
 func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template, error) {
 	p, err := adminPrincipal(ctx)
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template,
 			m := templateModel(in)
 			m.ID = uuid.Must(uuid.NewV7())
 			m.CreatedBy = &admin
-			if err := s.repo.CreateTemplate(ctx, &m, prizeModels(in.Rewards.Pool), in.Conditions.AllowedPlanIDs); err != nil {
+			if err := s.repo.CreateTemplate(ctx, &m, prizeModels(in.Rewards.Pool)); err != nil {
 				if errors.Is(err, repo.ErrDuplicate) {
 					return errTemplateNameTaken
 				}
@@ -73,7 +73,7 @@ func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template,
 			}
 			m := templateModel(in)
 			m.ID = old.ID
-			ok, err := s.repo.UpdateTemplate(ctx, &m, prizeModels(in.Rewards.Pool), in.Conditions.AllowedPlanIDs)
+			ok, err := s.repo.UpdateTemplate(ctx, &m, prizeModels(in.Rewards.Pool))
 			if err != nil {
 				if errors.Is(err, repo.ErrDuplicate) {
 					return errTemplateNameTaken
@@ -103,42 +103,30 @@ func (s *Service) SaveTemplate(ctx context.Context, in TemplateInput) (Template,
 	return out, nil
 }
 
-// checkCatalogRefs 经 catalog 校验模板引用的套餐、价格档与限定套餐都存在，价格档属于该套餐。
+// checkCatalogRefs 经 catalog 校验套餐卡引用的套餐与价格档都存在、价格档在售且属于该套餐。
 func (s *Service) checkCatalogRefs(ctx context.Context, in TemplateInput) error {
-	planIDs := append([]uuid.UUID(nil), in.Conditions.AllowedPlanIDs...)
-	if in.Type == TypePlan && in.Rewards.PlanID != nil {
-		planIDs = append(planIDs, *in.Rewards.PlanID)
+	if in.Type != TypePlan {
+		return nil
 	}
-	if len(planIDs) > 0 {
-		plans, err := s.catalog.PlansByIDs(ctx, dedupeIDs(planIDs))
-		if err != nil {
-			return err
-		}
-		if in.Type == TypePlan {
-			if _, ok := plans[*in.Rewards.PlanID]; !ok {
-				return errs.Invalid(map[string]string{"rewards": "套餐不存在"})
-			}
-		}
-		for _, id := range in.Conditions.AllowedPlanIDs {
-			if _, ok := plans[id]; !ok {
-				return errs.Invalid(map[string]string{"conditions": "限定的套餐不存在"})
-			}
-		}
+	plans, err := s.catalog.PlansByIDs(ctx, []uuid.UUID{*in.Rewards.PlanID})
+	if err != nil {
+		return err
 	}
-	if in.Type == TypePlan {
-		prices, err := s.catalog.PricesByIDs(ctx, []uuid.UUID{*in.Rewards.PriceID})
-		if err != nil {
-			return err
-		}
-		pr, ok := prices[*in.Rewards.PriceID]
-		if !ok || pr.PlanID != *in.Rewards.PlanID || pr.Status != catalogsvc.PriceActive {
-			return errs.Invalid(map[string]string{"rewards": "价格档不存在、已停售或不属于该套餐"})
-		}
+	if _, ok := plans[*in.Rewards.PlanID]; !ok {
+		return errs.Invalid(map[string]string{"rewards": "套餐不存在"})
+	}
+	prices, err := s.catalog.PricesByIDs(ctx, []uuid.UUID{*in.Rewards.PriceID})
+	if err != nil {
+		return err
+	}
+	pr, ok := prices[*in.Rewards.PriceID]
+	if !ok || pr.PlanID != *in.Rewards.PlanID || pr.Status != catalogsvc.PriceActive {
+		return errs.Invalid(map[string]string{"rewards": "价格档不存在、已停售或不属于该套餐"})
 	}
 	return nil
 }
 
-// loadTemplate 读一个模板连同奖池、限定套餐（withCounts 时带码数）；不存在回 404。
+// loadTemplate 读一个模板连同奖池（withCounts 时带码数）；不存在回 404。
 func (s *Service) loadTemplate(ctx context.Context, id uuid.UUID, withCounts bool) (Template, error) {
 	m, found, err := s.repo.TemplateByID(ctx, id, false)
 	if err != nil {
@@ -154,7 +142,7 @@ func (s *Service) loadTemplate(ctx context.Context, id uuid.UUID, withCounts boo
 	return ts[0], nil
 }
 
-// assembleTemplates 给一组模板补上奖池、限定套餐与（后台视图 withCounts 时）码数和「价格已下架」：每类一条查询。
+// assembleTemplates 给一组模板补上奖池与（后台视图 withCounts 时）码数和「价格已下架」：每类一条查询。
 func (s *Service) assembleTemplates(ctx context.Context, rows []model.Template, withCounts bool) ([]Template, error) {
 	out := make([]Template, 0, len(rows))
 	if len(rows) == 0 {
@@ -165,10 +153,6 @@ func (s *Service) assembleTemplates(ctx context.Context, rows []model.Template, 
 		ids[i] = m.ID
 	}
 	prizes, err := s.repo.PrizesByTemplates(ctx, ids)
-	if err != nil {
-		return nil, gcErr(err)
-	}
-	plans, err := s.repo.PlanIDsByTemplates(ctx, ids)
 	if err != nil {
 		return nil, gcErr(err)
 	}
@@ -183,7 +167,7 @@ func (s *Service) assembleTemplates(ctx context.Context, rows []model.Template, 
 		}
 	}
 	for _, m := range rows {
-		t := templateOf(m, prizes[m.ID], plans[m.ID])
+		t := templateOf(m, prizes[m.ID])
 		c := counts[m.ID]
 		t.CodeTotal, t.CodeUsed = c.Total, c.Used
 		t.PriceArchived = m.PriceID != nil && archived[*m.PriceID]
@@ -218,25 +202,18 @@ func (s *Service) archivedPrices(ctx context.Context, rows []model.Template) (ma
 }
 
 // templateOf 把库里的行拼成模板视图。
-func templateOf(m model.Template, prizes []model.Prize, planIDs []uuid.UUID) Template {
+func templateOf(m model.Template, prizes []model.Prize) Template {
 	t := Template{
-		ID:          m.ID,
-		Name:        m.Name,
-		Description: m.Description,
-		Type:        m.Type,
-		Status:      m.Status,
+		ID:     m.ID,
+		Name:   m.Name,
+		Type:   m.Type,
+		Status: m.Status,
 		Conditions: Conditions{
-			NewUserOnly:    m.NewUserOnly,
-			PaidUserOnly:   m.PaidUserOnly,
-			AllowedPlanIDs: planIDs,
-			RequireInvite:  m.RequireInvite,
+			NewUserOnly:  m.NewUserOnly,
+			PaidUserOnly: m.PaidUserOnly,
 		},
-		Limits:     Limits{MaxUsePerUser: m.MaxUsePerUser, CooldownHours: m.CooldownHours},
-		ThemeColor: m.ThemeColor,
-		CreatedAt:  m.CreatedAt,
-	}
-	if t.Conditions.AllowedPlanIDs == nil {
-		t.Conditions.AllowedPlanIDs = []uuid.UUID{}
+		Limits:    Limits{MaxUsePerUser: m.MaxUsePerUser},
+		CreatedAt: m.CreatedAt,
 	}
 	r := Rewards{ResetQuota: m.ResetQuota, PlanID: m.PlanID, PriceID: m.PriceID}
 	if m.BalanceAmount != nil {
@@ -270,7 +247,6 @@ func templateModel(in TemplateInput) model.Template {
 	r := in.Rewards
 	return model.Template{
 		Name:          in.Name,
-		Description:   in.Description,
 		Type:          in.Type,
 		Status:        in.Status,
 		BalanceAmount: decPtr(r.Balance),
@@ -281,10 +257,7 @@ func templateModel(in TemplateInput) model.Template {
 		PriceID:       r.PriceID,
 		NewUserOnly:   in.Conditions.NewUserOnly,
 		PaidUserOnly:  in.Conditions.PaidUserOnly,
-		RequireInvite: in.Conditions.RequireInvite,
 		MaxUsePerUser: in.Limits.MaxUsePerUser,
-		CooldownHours: in.Limits.CooldownHours,
-		ThemeColor:    in.ThemeColor,
 	}
 }
 

@@ -29,13 +29,13 @@ const BIND_TTL_MS = 10 * 60_000
 const BIND_AFTER_MS = 8_000
 const DAY_MS = 86_400_000
 
+// 与 notify/service preferenceCatalog 一致：固定 5 项，营销类只发邮件
 const CATALOG: ReadonlyArray<{ category: string; channel: string; locked: boolean }> = [
   { category: 'transactional', channel: 'email', locked: true },
   { category: 'transactional', channel: 'telegram', locked: true },
   { category: 'service', channel: 'email', locked: false },
   { category: 'service', channel: 'telegram', locked: false },
   { category: 'marketing', channel: 'email', locked: false },
-  { category: 'marketing', channel: 'telegram', locked: false },
 ]
 
 // 挂在 PortalState 上（WeakMap），切场景重建时跟着重建
@@ -74,7 +74,7 @@ function build(): AccountState {
           ],
     firstSeen: new Map(),
     telegram: { enabled: s !== 'legacy', bound: s === 'multi', username: s === 'multi' ? 'zhangwei_tg' : null, pending: null },
-    prefs: new Map([['marketing\ntelegram', false]]),
+    prefs: new Map([['marketing\nemail', false]]),
   }
 }
 

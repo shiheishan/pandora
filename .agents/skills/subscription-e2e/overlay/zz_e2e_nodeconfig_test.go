@@ -36,7 +36,7 @@ func TestE2ENodeConfig(t *testing.T) {
 	res := map[string]json.RawMessage{}
 	errs := map[string]string{}
 	for id, f := range fx {
-		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, string(f.Config), nil, nil, e2ePSK{})
+		doc, err := buildNodeConfigDoc(uuid.New(), f.Type, f.Port, "127.0.0.1", string(f.Config), nil, nil, e2ePSK{})
 		if err != nil {
 			errs[id] = err.Error()
 			continue

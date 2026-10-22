@@ -4,6 +4,7 @@ import { href, navigate } from '../../../core/router'
 import { Button, Empty, Menu, Table, Tag, type MenuEntry } from '../../../ui'
 import { Callout, Row, RowList, SectionTitle } from '../../kit'
 import { subActions, type SubActionKey } from './detail'
+import { BalanceEntries } from './BalanceEntries'
 import { DeviceLimitDialog } from './DeviceLimitDialog'
 import { BalanceForm, RotateDialog } from './dialogs'
 import { ExtendDialog } from './ExtendDialog'
@@ -77,6 +78,11 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
           <>
             {s.label ?? s.plan_name}
             <span className={css.planVer}> · v{s.plan_version}</span>
+            {s.is_trial && (
+              <Tag tone="outline" className={css.trial}>
+                试用
+              </Tag>
+            )}
           </>
         }
         meta={
@@ -217,6 +223,9 @@ export function OrdersTab({
           <BalanceForm user={d} onClose={() => onBalanceOpen(false)} onDone={() => void invalidate()} />
         )}
       </section>
+
+      {/* 按用户 id 作 key：换用户时翻页回到第一页 */}
+      <BalanceEntries key={d.id} d={d} />
 
       <section>
         <SectionTitle hint="最近 20 单">订单</SectionTitle>

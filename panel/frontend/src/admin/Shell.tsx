@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { navigate, useHashLocation } from '../core/router'
+import { navigate, parseHash, useHashLocation } from '../core/router'
 import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRuntime } from '../shell/runtime'
 import { Empty, Tabs } from '../ui'
@@ -78,13 +78,22 @@ export function Shell() {
 
   const navOpen = narrow && drawer
 
+  // 换页回到顶部（同门户外框）：切模块、切页签、进出详情都从页头看起；只改查询串（筛选）时不动。
+  // 不复位的话，往下滚过再切页签，新页签先画的短骨架会把滚动位置压下来，页头和页签栏跟着跳
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [location.path])
+
   // 2 小时无操作自动退出（后台轮询会让服务端的空闲计时一直续上，见 idle.ts）
   useEffect(() => startIdleWatch({ timeoutMs: ADMIN_IDLE_MS, onIdle: () => void signOut(runtime) }), [runtime])
 
   // 未知模块、缺省标签一律改写成规范地址，刷新与分享都落在同一处；
   // 模块认得时查询串（页面的筛选条件）跟着走，落回仪表盘时丢掉
+  // 外框是懒加载的：挂上前地址可能已经又变了（登录后紧接着跳页），这次渲染的地址已过时就不改写，
+  // 交给下一次渲染，免得拿旧地址把新地址盖掉
   useEffect(() => {
     if (location.path === route.canonical) return
+    if (parseHash(window.location.hash).path !== location.path) return
     const sameModule = location.path.split('/')[1] === route.module
     navigate(route.canonical, { replace: true, query: sameModule ? Object.fromEntries(location.query) : undefined })
   }, [location, route.canonical, route.module])

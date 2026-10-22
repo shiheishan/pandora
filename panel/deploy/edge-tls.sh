@@ -686,6 +686,12 @@ cmd_issue() {
 
 explain_fallback() {
   warn "现在用的是自签证书：https://$HOST 能打开，但浏览器会提示不安全；节点用 https 接入面板会校验证书失败。"
+  if [[ "$ACME_ENABLED" != 1 ]]; then
+    # 关着 ACME 时 issue 与续期 timer 都不联系 CA，补救得先打开它
+    warn "  补救：把 $ACME_CONF 的 ACME_ENABLED 改成 1，确认 80/tcp 从公网可达（云厂商安全组、防火墙），然后执行"
+    warn "    sudo $SCRIPT_DIR/edge-tls.sh issue"
+    return 0
+  fi
   warn "  补救：确认 80/tcp 从公网可达（云厂商安全组、防火墙），然后执行"
   warn "    sudo $SCRIPT_DIR/edge-tls.sh issue"
   warn "  不用手动：续期 timer（$RENEW_TIMER）每天两次自动重试，申请成功就无缝换上正规证书。"

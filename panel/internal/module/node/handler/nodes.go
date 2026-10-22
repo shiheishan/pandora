@@ -79,7 +79,8 @@ func (h *Handler) createNode(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	serverID, err := nodeParseRequiredID("server_id", req.ServerID)
+	// server_id 可以缺省或空串：节点先建好，之后再用 bind 绑定服务器。
+	serverID, err := nodeParseOptionalID("server_id", req.ServerID)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
@@ -173,50 +174,14 @@ func (h *Handler) patchNode(c *gin.Context) {
 	httpx.OK(c, adminNodeFrom(n))
 }
 
-func (h *Handler) copyNode(c *gin.Context) {
+// bindNode 把节点绑定（或改绑）到服务器；server_port 不给就沿用节点已有端口。
+func (h *Handler) bindNode(c *gin.Context) {
 	id, err := inventoryPathID(c)
 	if err != nil {
 		httpx.Fail(c, err)
 		return
 	}
-	var req nodeCopyRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	target, err := nodeParseOptionalID("target_server_id", req.TargetServerID)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	pool, err := nodeParseOptionalID("pool_id", req.PoolID)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	n, err := h.svc.CopyNode(c.Request.Context(), id, service.NodeCopyInput{
-		RowVersion:     req.RowVersion,
-		Name:           req.Name,
-		TargetServerID: target,
-		PoolID:         pool,
-		SortOrder:      req.SortOrder,
-		ServerPort:     req.ServerPort,
-		CopyRouting:    req.CopyRouting,
-	})
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Created(c, adminNodeFrom(n))
-}
-
-func (h *Handler) moveNode(c *gin.Context) {
-	id, err := inventoryPathID(c)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	var req nodeMoveRequest
+	var req nodeBindRequest
 	if err := httpx.BindJSON(c, &req); err != nil {
 		httpx.Fail(c, err)
 		return
@@ -226,8 +191,30 @@ func (h *Handler) moveNode(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	n, err := h.svc.MoveNode(c.Request.Context(), id, service.NodeMoveInput{
-		RowVersion: req.RowVersion, ServerID: serverID, Reason: req.Reason,
+	n, err := h.svc.BindNode(c.Request.Context(), id, service.NodeBindInput{
+		RowVersion: req.RowVersion, ServerID: serverID, ServerPort: req.ServerPort, Reason: req.Reason,
+	})
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	httpx.OK(c, adminNodeFrom(n))
+}
+
+// unbindNode 解绑节点与服务器的关系，节点回到未绑定状态。
+func (h *Handler) unbindNode(c *gin.Context) {
+	id, err := inventoryPathID(c)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	var req nodeUnbindRequest
+	if err := httpx.BindJSON(c, &req); err != nil {
+		httpx.Fail(c, err)
+		return
+	}
+	n, err := h.svc.UnbindNode(c.Request.Context(), id, service.NodeUnbindInput{
+		RowVersion: req.RowVersion, Reason: req.Reason,
 	})
 	if err != nil {
 		httpx.Fail(c, err)
@@ -338,43 +325,6 @@ func (h *Handler) deleteNode(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nodeDeletedResponse{Deleted: true})
-}
-
-// publishNodeConfig 是「强制重新下发」：只接受 scope=node 与空对象 payload。
-func (h *Handler) publishNodeConfig(c *gin.Context) {
-	var req nodePublishRequest
-	if err := httpx.BindJSON(c, &req); err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	fields := map[string]string{}
-	if strings.TrimSpace(req.Scope) != "node" {
-		fields["scope"] = "只支持 node"
-	}
-	var id uuid.UUID
-	ref := strings.TrimSpace(req.ScopeRef)
-	if ref == "" {
-		fields["scope_ref"] = "该层级必须指定对象"
-	} else if parsed, err := uuid.Parse(ref); err != nil {
-		fields["scope_ref"] = "格式不正确"
-	} else {
-		id = parsed
-	}
-	if obj, ok := nodeJSONObject(req.Payload); !ok {
-		fields["payload"] = "必须是 JSON 对象"
-	} else if len(obj) > 0 {
-		fields["payload"] = "不再支持分层配置，只能是空对象 {}"
-	}
-	if len(fields) > 0 {
-		httpx.Fail(c, errs.Invalid(fields))
-		return
-	}
-	v, err := h.svc.RepublishNode(c.Request.Context(), id)
-	if err != nil {
-		httpx.Fail(c, err)
-		return
-	}
-	httpx.Created(c, nodePublishResponse{ConfigID: id, Version: v, Scope: "node", AffectedNodes: 1})
 }
 
 // realityKeypair 生成一对 REALITY 密钥，不读请求体、不落库。

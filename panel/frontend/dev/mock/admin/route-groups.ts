@@ -48,9 +48,6 @@ export const groupRefsOfNode = (nodeId: string) => groupsOfNode(nodeId).map(grou
 /** 节点除私有出站外看得见的 tag：全局与所在各组（routing_refs.go 的 visibleOutboundTagsTx） */
 export const visibleTagsForNode = (nodeId: string): string[] => [...globalRouting.outbounds.map((o) => o.tag), ...groupsOfNode(nodeId).flatMap((g) => g.outbounds.map((o) => o.tag))]
 
-/** 带路由复制节点时，副本跟着进源节点所在的组 */
-export const copyMemberships = (from: string, to: string) => routeGroups.forEach((g) => g.members.includes(from) && g.members.push(to))
-
 /** 全租户的悬空引用（含停用规则），自定义出站按 tag 原样精确比较，标注与 Go 的 danglingRef.String 一致 */
 export function danglingRefs(nodes: readonly RoutedNode[]): Set<string> {
   const out = new Set<string>()
@@ -251,35 +248,6 @@ export function routeGroupRoutes(nodes: RoutedNode[]): Record<string, MockRoute>
         }
         bump(g)
         return { status: 200, body: { ok: true, row_version: g.row_version, affected_nodes: live(g.members) } }
-      })
-    },
-    'PUT /v1/route-groups/:id/members': async (ctx) => {
-      if (!ctx.requireReauth()) return
-      const body = await ctx.body()
-      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      await ctx.idempotent('route_group_members_update', () => {
-        const extra = unknownField(body, ['row_version', 'node_ids'])
-        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
-        const g = findGroup(ctx.params.id)
-        if (!g) return notFound()
-        const ids = normalizeIds(body.node_ids, 'node_ids')
-        if (!Array.isArray(ids)) return ids
-        if (!Number.isInteger(body.row_version) || (body.row_version as number) <= 0) return invalid({ row_version: '必须提供正整数版本号' })
-        if (body.row_version !== g.row_version) return groupConflict(g)
-        const missing = ids.filter((id) => !nodes.some((n) => n.id === id))
-        if (missing.length) return invalid({ node_ids: `节点不存在：${missing.join('、')}` })
-        const before = danglingRefs(nodes)
-        const prev = g.members
-        g.members = ids
-        const refused = newDangling(before, nodes, '移出组的节点仍有规则指向组内出站')
-        if (refused) {
-          g.members = prev
-          return refused
-        }
-        bump(g)
-        const changed = [...prev.filter((id) => !ids.includes(id)), ...ids.filter((id) => !prev.includes(id))]
-        for (const n of nodes) if (changed.includes(n.id)) n.row_version += 1
-        return { status: 200, body: { ok: true, row_version: g.row_version, affected_nodes: live(changed) } }
       })
     },
     'PUT /v1/nodes/:id/route-groups': async (ctx) => {

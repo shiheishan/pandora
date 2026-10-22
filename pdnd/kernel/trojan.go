@@ -3,7 +3,6 @@ package kernel
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
@@ -101,7 +100,7 @@ func (a *trojanAdapter) Validate(spec InboundSpec) error {
 		return fmt.Errorf("native trojan rejects unsupported security %q", security)
 	}
 	if enabled, ok := spec.Config.Raw["tls"].(bool); ok && enabled && !strings.EqualFold(security, "reality") {
-		if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
+		if err := validateInboundTLSConfig(spec.Config.Raw); err != nil {
 			return err
 		}
 	}
@@ -133,7 +132,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	a.fallback = newProbeFallback(fallbackAddr)
 	if !a.reality {
 		var tlsEnabled bool
-		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw)
+		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw, hooks.Certs)
 		_ = tlsEnabled
 		if err != nil {
 			a.mu.Unlock()
@@ -300,7 +299,6 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			}
 			return pathErr
 		}
-		h2cMode := a.tlsConfig == nil
 		if a.tlsConfig != nil {
 			grpcTLS := a.tlsConfig.Clone()
 			grpcTLS.NextProtos = []string{"h2"}
@@ -323,7 +321,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			defer a.removeActive(conn)
 			_ = a.handleConn(connCtx, conn, nil)
 		}
-		server, serveErr := serveNativeGRPC(listener, path, host, 16<<20, h2cMode, onConn)
+		server, serveErr := serveNativeGRPC(listener, path, host, 16<<20, onConn)
 		if serveErr != nil {
 			_ = listener.Close()
 			if a.cancel != nil {
@@ -666,8 +664,4 @@ func (a *trojanAdapter) removeActive(conn net.Conn) {
 func trojanPasswordProof(password string) string {
 	sum := sha256.Sum224([]byte(password))
 	return strings.ToLower(hex.EncodeToString(sum[:]))
-}
-
-func trojanProofEqual(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

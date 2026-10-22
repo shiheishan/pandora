@@ -13,7 +13,6 @@ const BILLING_INTERVALS = ['month', 'year', 'one_time'] as const
 export type PlanKind = (typeof PLAN_KINDS)[number]
 export type PlanStatus = (typeof PLAN_STATUSES)[number]
 export type Visibility = (typeof VISIBILITIES)[number]
-export type BillingInterval = (typeof BILLING_INTERVALS)[number]
 
 const int = z.number().int()
 const count = int.nonnegative()
@@ -36,7 +35,6 @@ export type PriceRow = z.output<typeof priceRowSchema>
 
 /** 流量重置：price 是每次的整数分，limit null = 不限次数；整个字段 null = 不卖重置 */
 const resetSchema = z.object({ price: count, limit: int.positive().nullable() })
-export type PlanReset = z.output<typeof resetSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/plans：列表行。prices 只有在售的（按周期从短到长）；用量三项取当前版本，
@@ -103,7 +101,6 @@ export type PlanDetail = z.output<typeof planDetailSchema>
 export const planPoolsSchema = z.object({
   pools: z.array(z.object({ id: z.string(), name: z.string(), active_nodes: count, deliverable_nodes: count, bound: z.boolean() })),
 })
-export type PlanPools = z.output<typeof planPoolsSchema>
 
 // GET v1/node-pools（节点模块）：新建套餐时还没有套餐 id，只能从这里取候选；
 // 只收这里要的字段，其余字段归节点页的 schema 管，所以查询键与节点页分开
@@ -113,4 +110,3 @@ export const poolOptionsSchema = z.object({
     .nullable()
     .transform((v) => v ?? []),
 })
-export type PoolOption = z.output<typeof poolOptionsSchema>['pools'][number]

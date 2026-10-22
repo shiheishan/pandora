@@ -200,7 +200,13 @@ func TestLandings(t *testing.T) {
 				if opts[0].(map[string]any)["mode"] != "new" {
 					t.Fatalf("第一项 %v", opts[0])
 				}
+				if opts[0].(map[string]any)["disabled_reason"] != "每人最多 1 份套餐" {
+					t.Fatalf("第一项 disabled_reason %v", opts[0])
+				}
 				s1 := opts[1].(map[string]any)
+				if _, has := s1["disabled_reason"]; has {
+					t.Fatalf("第二项不应有 disabled_reason %v", s1)
+				}
 				if s1["mode"] != "stack" || s1["subscription_id"] != subID.String() {
 					t.Fatalf("第二项 %v", s1)
 				}
@@ -213,7 +219,7 @@ func TestLandings(t *testing.T) {
 			f := &fakeSvc{landings: func(id uuid.UUID) (service.Landings, error) {
 				gotPlan = id
 				return service.Landings{Options: []service.Landing{
-					{Mode: service.LandingNew},
+					{Mode: service.LandingNew, DisabledReason: "每人最多 1 份套餐"},
 					{Mode: service.LandingStack, SubscriptionID: &subID},
 				}}, nil
 			}}

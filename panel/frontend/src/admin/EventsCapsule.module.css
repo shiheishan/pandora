@@ -136,13 +136,6 @@
   color: var(--text);
 }
 
-@media (max-width: 639px) {
-  /* 窄屏只留脉冲点和数字 */
-  .topLabel {
-    display: none;
-  }
-}
-
 /* ----- 弹层（样稿 .pop） ----- */
 
 .panel {

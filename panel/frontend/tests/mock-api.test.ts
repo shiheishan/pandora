@@ -187,7 +187,7 @@ describe('mock api · refresh cookie', () => {
     expect(res.headers.get('set-cookie')).toMatch(/pandora_rt=[^;]+;.*HttpOnly.*SameSite=Strict.*Path=\/v1\/auth/)
   })
 
-  it('refresh rotates the cookie and the old value stops working', async () => {
+  it('refresh rotates the cookie; the previous one inside the 30 s grace gets the current cookie again', async () => {
     const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
     const first = rtFrom(login)
     const ok = await refresh(first)
@@ -196,12 +196,67 @@ describe('mock api · refresh cookie', () => {
     const second = rtFrom(ok)
     expect(second).not.toBe('')
     expect(second).not.toBe(first)
-    expect((await refresh(first)).status).toBe(401)
+    // 轮换的响应丢了：浏览器还拿着 first，宽限内再来就拿回当前那一枚，之后照常能用
+    const grace = await refresh(first)
+    expect(grace.status).toBe(200)
+    expect(rtFrom(grace)).toBe(second)
     expect((await refresh(second)).status).toBe(200)
   })
 
+  it('a stolen previous cookie used in the grace and rotated on still trips the replay check', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const second = rtFrom(await refresh(first))
+    expect(rtFrom(await refresh(first))).toBe(second)
+    const third = rtFrom(await refresh(second))
+    expect((await fetch(`${base}/__mock/expire-refresh-grace`, { method: 'POST' })).status).toBe(204)
+    expect((await refresh(second)).status).toBe(401)
+    expect((await refresh(third)).status).toBe(401)
+  })
+
+  it('an older generation after two rotations is a replay even inside the grace', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const second = rtFrom(await refresh(first))
+    const third = rtFrom(await refresh(second))
+    const replay = await refresh(first)
+    expect(replay.status).toBe(401)
+    expect(replay.headers.get('set-cookie')).toMatch(/pandora_rt=;.*Max-Age=0/)
+    expect((await refresh(third)).status).toBe(401)
+  })
+
+  it('logging out with an older generation ends the whole session', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const second = rtFrom(await refresh(first))
+    const third = rtFrom(await refresh(second))
+    const out = await fetch(`${base}/v1/auth/logout`, { method: 'POST', headers: { cookie: `pandora_rt=${first}` } })
+    expect(out.status).toBe(204)
+    expect((await refresh(third)).status).toBe(401)
+  })
+
+  it('the previous cookie after the grace is a replay and kills the session', async () => {
+    const login = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.portal) })
+    const first = rtFrom(login)
+    const ok = await refresh(first)
+    const second = rtFrom(ok)
+    expect((await fetch(`${base}/__mock/expire-refresh-grace`, { method: 'POST' })).status).toBe(204)
+    const replay = await refresh(first)
+    expect(replay.status).toBe(401)
+    expect(replay.headers.get('set-cookie')).toMatch(/pandora_rt=;.*Max-Age=0/)
+    expect((await refresh(second)).status).toBe(401)
+  })
+
+  it('an unknown cookie is 401 and clears the cookie', async () => {
+    const res = await refresh('nope')
+    expect(res.status).toBe(401)
+    expect(res.headers.get('set-cookie')).toMatch(/pandora_rt=;.*Max-Age=0/)
+  })
+
   it('refresh without a cookie is 401', async () => {
-    expect((await refresh()).status).toBe(401)
+    const res = await refresh()
+    expect(res.status).toBe(401)
+    expect(res.headers.get('set-cookie')).toBeNull()
   })
 
   it('logout revokes the refresh cookie', async () => {

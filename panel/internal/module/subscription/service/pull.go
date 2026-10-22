@@ -151,7 +151,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		res.Body, res.ContentType = render.RenderExpired(format, notice)
 		res.UpdateIntervalHours = expiredUpdateIntervalHours
 		res.Expired = true
-		res.WebPageURL = renewalPageURL(d.PublicBaseURL, subID)
+		res.WebPageURL = renewalPageURL(d.siteBase(ctx), subID)
 		if err := s.allowFetch(ctx, d, cfg.FetchLimitPerHour, entry, FetchExpired); err != nil {
 			return PullResult{}, err
 		}
@@ -167,7 +167,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	if err != nil {
 		return fail(err)
 	}
-	// 后台模板与订阅附加设置走进程内快照（30 秒过期），不每次拉取都查库
+	// 订阅附加设置与订阅域名分组走进程内快照（30 秒过期），不每次拉取都查库
 	ex, err := s.extras.get(ctx, d.Extras, extrasSource{s}, now)
 	if err != nil {
 		return fail(err)
@@ -176,7 +176,7 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 	body, contentType, count := render.RenderRequest(liveRequest(liveInput{
 		Format: format, Nodes: nodes, Row: row, UA: ua, Options: d.Render, Extras: ex,
 		Types: req.Types, Filter: req.Filter, Loc: siteLocation(site.Timezone),
-		SubscribeURL: subscribeURLFor(ex, owner.UserGroupID, d.PublicBaseURL, req.Prefix, token),
+		SubscribeURL: subscribeURLFor(ex, owner.UserGroupID, d.siteBase(ctx), req.Prefix, token),
 		Now:          now,
 	}))
 	res.Body, res.ContentType = body, contentType
@@ -189,9 +189,10 @@ func (s *Service) Pull(ctx context.Context, req PullRequest) (PullResult, error)
 		return PullResult{}, err
 	}
 	// 经令牌主人所在组的订阅域名到达的成功拉取，是这个域名「能连上」的信号；别组的域名（Host 可伪造）不加分。
-	// 进程内攒批写 Redis，不多一次往返；同一凭据对同一域名每小时只记一次
+	// 按拉取者 IP 的省份与运营商同时记三级；查归属地在凭据去重通过之后才做（同一凭据对同一域名每小时一次）。
+	// 进程内攒批写 Redis，不多一次往返
 	if base, ok := ex.domains.hostBaseURL(req.Host); ok && groupHas(ex.domains.groupFor(owner.UserGroupID), base) {
-		s.scores.NoteSuccess(ctx, base, credID.String(), now)
+		s.scores.NoteSuccess(ctx, base, credID.String(), func() domainRegion { return s.regionOf(reqmeta.From(ctx).IP) }, now)
 	}
 	return res, nil
 }

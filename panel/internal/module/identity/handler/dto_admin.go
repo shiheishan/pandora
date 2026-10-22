@@ -21,7 +21,6 @@ type userRowResponse struct {
 	Email               string                 `json:"email"`
 	DisplayName         *string                `json:"display_name"`
 	Status              string                 `json:"status"`
-	RiskLevel           string                 `json:"risk_level"`
 	GroupName           string                 `json:"group_name"`
 	GroupID             *string                `json:"group_id"`
 	CreatedAt           time.Time              `json:"created_at"`
@@ -152,7 +151,6 @@ func admUserRowFrom(cc *admCents, u service.UserRow) userRowResponse {
 		Email:               u.Email,
 		DisplayName:         u.DisplayName,
 		Status:              u.Status,
-		RiskLevel:           u.RiskLevel,
 		GroupName:           u.GroupName,
 		GroupID:             gid,
 		CreatedAt:           u.CreatedAt,

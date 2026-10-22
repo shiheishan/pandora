@@ -47,15 +47,25 @@
   min-width: 0;
 }
 
+/* 成员行四格：邮箱、状态、套餐、「登录记录」 */
 .mem {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px 120px;
+  grid-template-columns: minmax(0, 1fr) 72px 120px auto;
   gap: 12px;
   align-items: center;
-  height: 38px;
+  min-height: 38px;
   padding: 0 16px;
   font-size: 13px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 手机：四格挤不下，分两行——邮箱 + 状态 / 套餐 + 登录记录 */
+@media (max-width: 639px) {
+  .mem {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    padding: 8px 16px;
+  }
 }
 
 .mem:last-of-type {

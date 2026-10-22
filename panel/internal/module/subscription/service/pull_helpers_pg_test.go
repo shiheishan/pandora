@@ -38,6 +38,9 @@ func (f *fakeDelivery) SubscriptionDelivery(context.Context) (settingssvc.Subscr
 	return settingssvc.SubscriptionDelivery{PathPrefix: f.prefix, FetchLimitPerHour: f.limit}, nil
 }
 
+// SiteURL 是测试里的主域名（与真 settings 同形：以 / 结尾）。
+func (f *fakeDelivery) SiteURL(context.Context) string { return testBaseURL + "/" }
+
 func (f *fakeDelivery) setLimit(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -130,11 +133,10 @@ func newDeliveryEnv(t *testing.T, withNodes bool) *deliveryEnv {
 		sealer: sealer,
 	}
 	e.svc.UseDelivery(Delivery{
-		Settings:      de.settings,
-		Owners:        de.owners,
-		Hasher:        keys,
-		Limiter:       ratelimit.New(rdb),
-		PublicBaseURL: testBaseURL,
+		Settings: de.settings,
+		Owners:   de.owners,
+		Hasher:   keys,
+		Limiter:  ratelimit.New(rdb),
 	})
 	if withNodes {
 		e.svc.UseNodeSource(de.nodes)

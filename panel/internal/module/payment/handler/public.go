@@ -80,5 +80,5 @@ func (h *Handler) paymentWebhook(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
-	c.Data(ack.HTTPStatus, ack.ContentType, ack.Body)
+	writeAck(c, ack)
 }

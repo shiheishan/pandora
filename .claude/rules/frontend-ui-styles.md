@@ -22,10 +22,13 @@ paths:
 - 样式一律用 CSS Modules；React 的 `style` 属性只用于真正动态的尺寸（列宽、抽屉宽度、骨架尺寸）
 - 弹层用浏览器原生能力，不自己造
   - `Modal` / `Drawer` 基于 `<dialog>.showModal()`
-  - 例外：`Select` 是自绘的 listbox（10-16 设计稿），列表 `position: fixed` 就地渲染在组件里、不 portal 到 body（在 `<dialog>` 里才留在顶层）；Esc 收起时拦住事件，不让外层弹窗跟着关
+  - 例外：`Select` 是自绘的 listbox（10-16 设计稿），列表 `position: fixed` 就地渲染在组件里、不 portal 到 body（在 `<dialog>` 里才留在顶层）；Esc 收起时拦住事件，不让外层弹窗跟着关；外层滚动即收起，列表自身 `overscroll-behavior: contain`，滚到头不把滚轮传给外层（10-21）
   - Toast 容器是 popover，每条提示都要重新推到顶层，否则会被已打开的 dialog 盖住
 - 10-16 新增的共用组件：`FilterTabs`（radiogroup + 可移动 tabindex）、`Toolbar` / `SearchField`、`Table` 的排序与表尾、`Modal` 的定宽与头体底结构；`Select` 的纯逻辑（方向键、首字母、定位）在 `ui/select-logic.ts`，配单测，组件只管摆放与事件
 - av4 新增 / 改接口的组件：`IconButton`（`label` 必填，同时是 aria-label 与 title）、`Switch` 的 `tone="danger"`、`Card` 的 `subtitle` / `footer`（头 48 高带底线、底栏带顶线，不再 `overflow: hidden`，免得裁掉菜单）、`Table` 的 `boxed` / `rowClassName`、`Menu` 条目的 `icon` 与 `kind: 'choice'`（一行小分段单选，选项是 menuitemradio，点了不收起）与 `placement="top"`；后台专用的页面级组件不进 ui，放 `admin/kit/`（见 screens-admin.md）
+- `Table` 的 `expanded`（10-21）：`{ keys, render }`，`keys` 里的行下面多一行占满整宽的细节（`.detailRow`，与所属行同底色），所属行加 `.open` 与 `aria-expanded`；配合 `onRowClick` 切换，展开集合由页面持有（审计日志在用）。
+- `Tabs`（10-21）：页签栏放不下横向滚动时，能往右滚就右边缘渐隐、能往左滚就左边缘渐隐（`data-fade-left` / `data-fade-right` + `mask-image`，ResizeObserver 与 scroll 事件更新）；选中的页签在可视区外时只横向滚页签栏（不用 `scrollIntoView`，它会连带滚整页）。
+- `PasswordInput`（10-21）：密码框右侧眼睛按钮切换明文，状态在 `usePasswordReveal`（点按钮不抢焦点、换类型后光标与选区留在原处，Tab 能到、Enter / 空格切换），不落 localStorage；Props 是 `Omit<InputProps, 'type'>`，`autoComplete` 由调用方照旧传。登录、注册、找回、改密、重新验证的密码框都用它；后台登录页保留自己的样式，只复用 `usePasswordReveal`；SMTP 口令、机器人令牌等配置框不用。
 - 页面只从 `ui/index.ts` import。`cx`、`useModalDialog`、`Field` 是内部实现，不导出
 - 颜色令牌（48 个，10-16 起默认是门户森林绿）有四处同源，增、删、改任何一个都要几处一起改：
   - `styles/tokens.css`：浅色与 `[data-theme='dark']` 两组的键必须完全相同

@@ -62,9 +62,10 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 		return IntentDraft{}, errs.Newf(errs.BadRequest, "发起支付的参数不完整")
 	}
 
-	if s.cfg.PublicBaseURL == "" {
+	site := s.siteBase(ctx)
+	if site == "" {
 		// 没有对外地址就拼不出回调与回跳地址（回跳前缀还会退化成 "/"，放过 //evil.example）
-		return IntentDraft{}, errs.Wrap(errs.Internal, errors.New("payment: 未配置 PublicBaseURL"))
+		return IntentDraft{}, errs.Wrap(errs.Internal, errors.New("payment: 没有站点地址（public_base_url）"))
 	}
 	p, ad, err := s.adapterFor(ctx, in.ProviderCode, true)
 	if err != nil {
@@ -75,7 +76,7 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 		return IntentDraft{}, err
 	}
 	if in.Amount.LessThan(p.MinAmount) {
-		return IntentDraft{}, ErrBelowMinimum
+		return IntentDraft{}, errBelowMethodMinimum(p.MinAmount)
 	}
 
 	surcharge := Surcharge(in.Amount, p.FeeFixed, p.FeePercent)
@@ -105,7 +106,7 @@ func (s *Service) BeginIntent(ctx context.Context, in CreateIntentInput) (Intent
 		Subject:    in.Title,
 		Method:     method,
 		NotifyURL:  notifyURL(base, p.Code),
-		ReturnURL:  s.returnURL(in.ReturnURL),
+		ReturnURL:  s.returnURL(ctx, site, in.ReturnURL),
 		ClientIP:   in.ClientIP,
 	}
 
@@ -347,9 +348,15 @@ func (s *Service) CloseOrderIntents(ctx context.Context, orderID uuid.UUID, to I
 	return n, err
 }
 
-func (s *Service) returnURL(supplied string) string {
-	if supplied != "" && strings.HasPrefix(supplied, s.cfg.PublicBaseURL+"/") {
-		return supplied
+// returnURL 是付完回跳的地址：门户传来的地址在本站认的某个根地址下（改主域名后旧域名上打开的门户也算）就用它，
+// 否则回当前站点的订单页。site 是当前生效的站点地址（不带末尾 /，非空）。
+func (s *Service) returnURL(ctx context.Context, site, supplied string) string {
+	if supplied != "" {
+		for _, alias := range s.settings.SiteURLAliases(ctx) {
+			if strings.HasPrefix(supplied, alias) {
+				return supplied
+			}
+		}
 	}
-	return s.cfg.PublicBaseURL + "/#orders"
+	return site + "/#orders"
 }

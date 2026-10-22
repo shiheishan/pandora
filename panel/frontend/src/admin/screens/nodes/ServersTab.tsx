@@ -1,30 +1,41 @@
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { MoreHorizontalIcon, PlusSignIcon } from '@hugeicons-pro/core-stroke-rounded'
-import { formatDateTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
-import { PageActions, StatusDot } from '../../kit'
+import { Button, Checkbox, ConfirmModal, Empty, IconButton, Modal, QueryView, Tag, useToast } from '../../../ui'
+import { BulkAction, BulkBar, PageActions, StatusDot } from '../../kit'
 import {
+  meterEmptyText,
   createServerBody,
   deleteServerNotice,
   emptyServerForm,
+  lastUpgradeLine,
   nodesByServer,
+  pruneUpgradePicks,
+  UPGRADE_BATCH_MAX,
+  upgradePickFull,
   quickToggle,
   SERVER_STATUS,
   serverDeleteBlock,
   serverMeters,
   serverNotes,
+  serverNextStep,
   serverSubtitle,
+  upgradeBlockNote,
+  upgradeConfirmBody,
+  upgradeOffer,
+  upgradeSelectable,
+  upgradeTarget,
   validateServerForm,
 } from './infra'
+import { InstallModal } from './InstallModal'
 import x from './infra.module.css'
 import css from './nodes.module.css'
 import { useFailure, useInvalidateNodes, useNodes, useServers } from './queries'
 import { serverSchema, type Server } from './schemas'
 import { Meters, serverStatusTone, ServerFields } from './ServerDetailPage'
-import { useDeleteServer, useIssueServerToken, useSetServerStatus, type InstallSecret } from './serverActions'
+import { useDeleteServer, useIssueServerToken, useSetServerStatus, useUpgradeServers, type InstallSecret } from './serverActions'
 
 export function ServersTab() {
   const servers = useServers()
@@ -32,11 +43,27 @@ export function ServersTab() {
   const [adding, setAdding] = useState(false)
   const [install, setInstall] = useState<InstallSecret | null>(null)
   const [removing, setRemoving] = useState<Server | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [confirmUpgrade, setConfirmUpgrade] = useState(false)
   const token = useIssueServerToken(setInstall)
   const status = useSetServerStatus()
+  const upgrade = useUpgradeServers(() => setPicked(new Set()))
   // 删掉的服务器，它的安装命令也没用了
   const remove = useDeleteServer((gone) => setInstall((cur) => (cur?.serverId === gone.id ? null : cur)))
   const tags = useMemo(() => nodesByServer(nodes.data?.nodes ?? []), [nodes.data])
+  const list = useMemo(() => servers.data ?? [], [servers.data])
+  const target = useMemo(() => upgradeTarget(list), [list])
+  const live = useMemo(() => pruneUpgradePicks(picked, list), [picked, list])
+  const chosen = useMemo(() => list.filter((s) => live.has(s.id)), [list, live])
+
+  const setPick = (id: string, on: boolean) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
 
   return (
     <div className={css.stack}>
@@ -45,9 +72,18 @@ export function ServersTab() {
           添加服务器
         </Button>
       </PageActions>
-      <div className={x.bar}>
-        <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
-      </div>
+      {target && live.size > 0 ? (
+        <BulkBar count={live.size} onClear={() => setPicked(new Set())}>
+          <BulkAction busy={upgrade.isPending} onClick={() => setConfirmUpgrade(true)}>
+            升级到 {target}（{live.size} 台）
+          </BulkAction>
+          {live.size >= UPGRADE_BATCH_MAX && <span>一次最多 {UPGRADE_BATCH_MAX} 台</span>}
+        </BulkBar>
+      ) : (
+        <div className={x.bar}>
+          <span>{servers.data ? `${servers.data.length} 台服务器 · 每台可承载多个协议节点` : '服务器'}</span>
+        </div>
+      )}
 
       <QueryView
         query={servers}
@@ -57,18 +93,24 @@ export function ServersTab() {
       >
         {(list) => (
           <div className={x.cards}>
-            {list.map((s) => (
-              <ServerCard
-                key={s.id}
-                server={s}
-                nodes={tags.get(s.id) ?? []}
-                busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
-                onOpen={() => navigate(`/nodes/servers/${s.id}`)}
-                onToken={() => token.mutate(s)}
-                onToggle={(t) => status.mutate({ server: s, to: t.to, done: t.done })}
-                onRemove={() => setRemoving(s)}
-              />
-            ))}
+            {list.map((s) => {
+              const canPick = target !== null && upgradeSelectable(s)
+              return (
+                <ServerCard
+                  key={s.id}
+                  server={s}
+                  nodes={tags.get(s.id) ?? []}
+                  picked={live.has(s.id)}
+                  pickFull={upgradePickFull(live, s.id)}
+                  onPick={canPick ? (on) => setPick(s.id, on) : undefined}
+                  busy={(token.isPending && token.variables?.id === s.id) || (status.isPending && status.variables?.server.id === s.id)}
+                  onOpen={() => navigate(`/nodes/servers/${s.id}`)}
+                  onToken={() => token.mutate(s)}
+                  onToggle={(t) => status.mutate({ server: s, to: t.to, done: t.done })}
+                  onRemove={() => setRemoving(s)}
+                />
+              )
+            })}
           </div>
         )}
       </QueryView>
@@ -94,6 +136,17 @@ export function ServersTab() {
         }}
         onCancel={() => setRemoving(null)}
       />
+      <ConfirmModal
+        open={confirmUpgrade && chosen.length > 0 && !!target}
+        title={`升级 ${chosen.length} 台服务器到 ${target ?? ''}？`}
+        body={target ? upgradeConfirmBody(chosen.length, target) : ''}
+        confirmLabel="开始升级"
+        onConfirm={() => {
+          setConfirmUpgrade(false)
+          upgrade.mutate(chosen)
+        }}
+        onCancel={() => setConfirmUpgrade(false)}
+      />
     </div>
   )
 }
@@ -101,6 +154,9 @@ export function ServersTab() {
 function ServerCard({
   server: s,
   nodes,
+  picked,
+  pickFull,
+  onPick,
   busy,
   onOpen,
   onToken,
@@ -109,6 +165,10 @@ function ServerCard({
 }: {
   server: Server
   nodes: readonly string[]
+  picked: boolean
+  /** 已勾满一次的上限，这张没勾的不能再勾 */
+  pickFull: boolean
+  onPick?: (on: boolean) => void
   busy: boolean
   onOpen: () => void
   onToken: () => void
@@ -120,11 +180,28 @@ function ServerCard({
   const meters = serverMeters(s)
   const allMetersNull = meters.every((m) => m.percent === null)
   const notes = serverNotes(s)
+  const nextStep = serverNextStep(s)
+  const blockNote = upgradeBlockNote(s)
+  const noteLines = blockNote ? [...notes, blockNote] : notes
+  const offer = upgradeOffer(s)
+  const upgradeLine = lastUpgradeLine(s)
   const block = serverDeleteBlock(s)
   return (
     <section className={`${x.card} ${s.status === 'retired' ? x.cardRetired : ''}`} aria-label={`服务器 ${s.name}`}>
       {/* 头：状态点包等宽名称 + 状态标签 + 右上角「…」打开详情（整头不再是按钮） */}
       <div className={x.ch}>
+        {onPick ? (
+          <span className={x.pick}>
+            <Checkbox
+              small
+              aria-label={`选择 ${s.name} 升级`}
+              checked={picked}
+              disabled={pickFull}
+              title={pickFull ? `一次最多升级 ${UPGRADE_BATCH_MAX} 台，先升完这批` : undefined}
+              onChange={(e) => onPick(e.target.checked)}
+            />
+          </span>
+        ) : null}
         <StatusDot tone={serverStatusTone(s)}>
           <span className={css.mono}>{s.name}</span>
         </StatusDot>
@@ -133,7 +210,12 @@ function ServerCard({
         <IconButton label={`${s.name} 详情`} icon={MoreHorizontalIcon} size="sm" onClick={onOpen} />
       </div>
       <div className={x.cs}>{serverSubtitle(s)}</div>
-      {allMetersNull ? <div className={css.faint}>装好 agent 后这里显示占用</div> : <Meters meters={meters} />}
+      {offer ? (
+        <div className={x.cs}>
+          <Tag tone="info">{offer}</Tag>
+        </div>
+      ) : null}
+      {allMetersNull ? <div className={css.faint}>{meterEmptyText(s)}</div> : <Meters meters={meters} />}
       <div className={x.chips}>
         {nodes.length > 0 ? (
           nodes.map((n) => <Tag key={n}>{n}</Tag>)
@@ -141,21 +223,42 @@ function ServerCard({
           <span className={css.faint}>没有在役节点</span>
         )}
       </div>
-      {notes.map((n) => (
+      {nextStep ? (
+        <div className={x.note}>{nextStep}</div>
+      ) : null}
+      {noteLines.map((n) => (
         <div key={n} className={x.note}>
           {n}
         </div>
       ))}
+      {upgradeLine ? (
+        <div className={x.note}>
+          <Tag tone={upgradeLine.tone}>{upgradeLine.label}</Tag> {upgradeLine.text}
+        </div>
+      ) : null}
       <div className={x.cf}>
-        <span className={css.mono}>
+        <span
+          className={css.mono}
+          title="在役：已上线在服务的节点数；容量：这台最多能挂几个节点（草稿、已停用的也占）"
+        >
           在役 {s.serving_node_count} / 容量 {s.capacity_nodes}
         </span>
         <span className={css.spacer} />
         {s.status !== 'retired' && (
-          <Button size="sm" variant="secondary" disabled={busy} onClick={onToken}>
+          <Button
+            size="sm"
+            variant={s.status === 'draft' && !s.enrolled ? 'primary' : 'secondary'}
+            disabled={busy}
+            onClick={onToken}
+          >
             安装令牌
           </Button>
         )}
+        {s.status === 'draft' && s.enrolled ? (
+          <Button size="sm" variant="secondary" onClick={() => navigate('/nodes/nodes', { query: { new: s.id } })}>
+            新建节点
+          </Button>
+        ) : null}
         {toggle && (
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => onToggle(toggle)}>
             {toggle.label}
@@ -166,59 +269,6 @@ function ServerCard({
         </Button>
       </div>
     </section>
-  )
-}
-
-/** 安装 agent 弹窗：一条安装命令（含一次性令牌，脚本不再另要令牌）；关掉就再也看不到 */
-function InstallModal({ secret, onClose }: { secret: InstallSecret; onClose: () => void }) {
-  const toast = useToast()
-  const [copied, setCopied] = useState(false)
-
-  const copy = () =>
-    navigator.clipboard.writeText(secret.command).then(
-      () => {
-        setCopied(true)
-        toast('安装命令已复制')
-      },
-      () => toast('浏览器不允许写剪贴板，请手动选中复制', 'danger'),
-    )
-
-  return (
-    <Modal
-      open={true}
-      onClose={onClose}
-      size={560}
-      eyebrow="安装 agent · 接入面板"
-      title={secret.title}
-      footerStart={
-        <span className={x.installFooterNotice}>
-          命令 {formatDateTime(secret.expiresAt)} 前有效，关闭后不再显示；过期或丢失可重新签发。
-        </span>
-      }
-      actions={
-        <Button size="dialog" variant="primary" onClick={onClose}>
-          完成
-        </Button>
-      }
-    >
-      <div className={x.installSteps}>
-        <div className={x.installStep}>
-          <span className={x.installNo}>1</span>
-          <div className={x.installContent}>
-            <span className={x.installStepTitle}>登录服务器，用 root 执行安装命令</span>
-            <div className={x.installBox}>
-              <code className={x.installCode}>{secret.command}</code>
-              <button type="button" className={`${x.installCopyBtn} ${copied ? x.installCopied : ''}`} onClick={() => void copy()}>
-                {copied ? '已复制 ✓' : '复制'}
-              </button>
-            </div>
-            <span className={x.installHint}>
-              脚本会下载 agent、注册为系统服务，并用命令里的一次性令牌接入面板（接入一次即作废）。接入后地区、IP、系统与规格自动回填。
-            </span>
-          </div>
-        </div>
-      </div>
-    </Modal>
   )
 }
 
@@ -259,14 +309,15 @@ function AddServer({ open, onClose, onCreated }: { open: boolean; onClose: () =>
             取消
           </Button>
           <Button size="dialog" variant="primary" busy={create.isPending} onClick={submit}>
-            添加并生成安装命令
+            添加并签发安装令牌
           </Button>
         </>
       }
     >
       <div className={css.stack}>
+        <div className={css.faint}>不用填 IP：机器接入后，地区、IP、系统与规格会自动回填。</div>
         <ServerFields form={form} errors={errors} fields={['name', 'capacity', 'notes']} disabled={create.isPending} onChange={setForm} />
-        <div className={css.faint}>地区、IP、系统与规格在机器接入后由 agent 自动回填。生成安装令牌需要重新验证身份。</div>
+        <div className={css.faint}>签发安装令牌需要重新验证身份。</div>
       </div>
     </Modal>
   )

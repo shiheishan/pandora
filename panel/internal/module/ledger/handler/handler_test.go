@@ -25,11 +25,17 @@ import (
 // fakeSvc 只实现用例用到的方法；其余走嵌入的 nil 接口，被调到会 panic。
 type fakeSvc struct {
 	Service
-	wallet     service.Wallet
-	walletErr  error
-	adjustRes  service.AdjustResult
-	adjustErr  error
-	lastAdjust service.Adjustment
+	wallet      service.Wallet
+	walletErr   error
+	adjustRes   service.AdjustResult
+	adjustErr   error
+	lastAdjust  service.Adjustment
+	entries     service.BalanceEntryPage
+	entriesErr  error
+	lastEntries struct {
+		user          uuid.UUID
+		limit, offset int
+	}
 }
 
 func (f *fakeSvc) MyWallet(context.Context) (service.Wallet, error) {
@@ -39,6 +45,13 @@ func (f *fakeSvc) MyWallet(context.Context) (service.Wallet, error) {
 func (f *fakeSvc) AdjustBalance(_ context.Context, a service.Adjustment) (service.AdjustResult, error) {
 	f.lastAdjust = a
 	return f.adjustRes, f.adjustErr
+}
+
+func (f *fakeSvc) UserBalanceEntries(_ context.Context, userID uuid.UUID, limit, offset int) (service.BalanceEntryPage, error) {
+	f.lastEntries.user = userID
+	f.lastEntries.limit = limit
+	f.lastEntries.offset = offset
+	return f.entries, f.entriesErr
 }
 
 // kitHooks 记录后台调账链路上的幂等作用域与 RecentReauth 是否执行。
@@ -138,7 +151,7 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("门户路由:\n%s", strings.Join(pub, "\n"))
 	}
 	adm := routesOf(newAdminEngine(&fakeSvc{}, nil, nil))
-	if strings.Join(adm, "\n") != "POST /v1/users/:id/balance" {
+	if strings.Join(adm, "\n") != "GET /v1/users/:id/balance-entries\nPOST /v1/users/:id/balance" {
 		t.Fatalf("后台路由:\n%s", strings.Join(adm, "\n"))
 	}
 }
@@ -276,5 +289,112 @@ func TestAdjustBalanceValidationFailedNoFields(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `"fields"`) {
 		t.Fatalf("响应含 fields: %s", w.Body)
+	}
+}
+
+func TestUserBalanceEntriesShape(t *testing.T) {
+	uid := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	orderID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	at1 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	at2 := time.Date(2026, 3, 2, 11, 0, 0, 0, time.UTC)
+	f := &fakeSvc{
+		entries: service.BalanceEntryPage{
+			Total: 2,
+			Entries: []service.BalanceEntry{
+				{
+					ID:           uuid.New(),
+					Kind:         "balance_hold",
+					Delta:        decimal.RequireFromString("-5.50"),
+					BalanceAfter: decimal.RequireFromString("4.50"),
+					Memo:         "冻结",
+					OrderID:      &orderID,
+					At:           at2,
+				},
+				{
+					ID:           uuid.New(),
+					Kind:         "balance_topup",
+					Delta:        decimal.RequireFromString("10.00"),
+					BalanceAfter: decimal.RequireFromString("10.00"),
+					At:           at1,
+				},
+			},
+		},
+	}
+	p := &authn.Principal{UserID: uuid.New(), SessionID: "s", Audience: authn.AudienceAdmin}
+	var hooks kitHooks
+	w := do(newAdminEngine(f, p, &hooks), http.MethodGet, "/v1/users/"+uid.String()+"/balance-entries", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+	if hooks.reauthCalled {
+		t.Fatal("余额流水只读，不应走 RecentReauth")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["total"] != float64(2) {
+		t.Fatalf("total %+v", got["total"])
+	}
+	entries, _ := got["entries"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("entries len %d", len(entries))
+	}
+	e0, _ := entries[0].(map[string]any)
+	if e0["delta"] != float64(-550) || e0["balance_after"] != float64(450) || e0["order_id"] != orderID.String() {
+		t.Fatalf("第一条 %+v", e0)
+	}
+	e1, _ := entries[1].(map[string]any)
+	if _, ok := e1["order_id"]; !ok {
+		t.Fatalf("第二条应有 order_id 键")
+	}
+	if e1["order_id"] != nil {
+		t.Fatalf("第二条 order_id 应为 null，得 %+v", e1["order_id"])
+	}
+	if f.lastEntries.user != uid || f.lastEntries.limit != 20 || f.lastEntries.offset != 0 {
+		t.Fatalf("lastEntries %+v", f.lastEntries)
+	}
+}
+
+func TestUserBalanceEntriesPaging(t *testing.T) {
+	uid := uuid.New()
+	f := &fakeSvc{}
+	w := do(newAdminEngine(f, nil, nil), http.MethodGet,
+		"/v1/users/"+uid.String()+"/balance-entries?limit=500&offset=40", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if f.lastEntries.limit != 100 || f.lastEntries.offset != 40 {
+		t.Fatalf("limit/offset %+v", f.lastEntries)
+	}
+	w = do(newAdminEngine(f, nil, nil), http.MethodGet,
+		"/v1/users/"+uid.String()+"/balance-entries?limit=0", "")
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d", w.Code)
+	}
+	env := parseErr(w.Body.Bytes())
+	if env.Error.Code != "validation_failed" {
+		t.Fatalf("code %q", env.Error.Code)
+	}
+}
+
+func TestUserBalanceEntriesEmpty(t *testing.T) {
+	f := &fakeSvc{entries: service.BalanceEntryPage{Entries: nil, Total: 0}}
+	uid := uuid.NewString()
+	w := do(newAdminEngine(f, nil, nil), http.MethodGet, "/v1/users/"+uid+"/balance-entries", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"entries":[]`) {
+		t.Fatalf("status %d %s", w.Code, w.Body)
+	}
+}
+
+func TestUserBalanceEntriesBadID(t *testing.T) {
+	w := do(newAdminEngine(&fakeSvc{}, nil, nil), http.MethodGet,
+		"/v1/users/not-a-uuid/balance-entries", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d", w.Code)
+	}
+	env := parseErr(w.Body.Bytes())
+	if env.Error.Code != "not_found" {
+		t.Fatalf("code %q", env.Error.Code)
 	}
 }

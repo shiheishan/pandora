@@ -142,58 +142,6 @@ func ECHConfigFromList(list []byte) ([]byte, error) {
 	return out, nil
 }
 
-// ECHPublicNameFromList 从 ECHConfigList 解析 public_name。
-func ECHPublicNameFromList(list []byte) (string, error) {
-	cfg, err := ECHConfigFromList(list)
-	if err != nil {
-		return "", err
-	}
-	contents := cfg[4:]
-	if len(contents) < 1+2+2+2+2+8+1+1 {
-		return "", errors.New("ECHConfig 内容过短")
-	}
-	off := 0
-	off++    // config_id
-	off += 2 // kem_id
-	pkLen := int(binary.BigEndian.Uint16(contents[off : off+2]))
-	off += 2
-	if off+pkLen > len(contents) {
-		return "", errors.New("ECHConfig 公钥长度无效")
-	}
-	off += pkLen
-	if off+2 > len(contents) {
-		return "", errors.New("ECHConfig cipher_suites 长度缺失")
-	}
-	csLen := int(binary.BigEndian.Uint16(contents[off : off+2]))
-	off += 2
-	if off+csLen > len(contents) {
-		return "", errors.New("ECHConfig cipher_suites 内容无效")
-	}
-	off += csLen
-	if off+1 > len(contents) {
-		return "", errors.New("ECHConfig max_name_length 缺失")
-	}
-	off++ // max_name_length
-	if off+1 > len(contents) {
-		return "", errors.New("ECHConfig public_name 长度缺失")
-	}
-	nameLen := int(contents[off])
-	off++
-	if off+nameLen > len(contents) {
-		return "", errors.New("ECHConfig public_name 内容无效")
-	}
-	name := string(contents[off : off+nameLen])
-	off += nameLen
-	if off+2 > len(contents) {
-		return "", errors.New("ECHConfig extensions 长度缺失")
-	}
-	extLen := int(binary.BigEndian.Uint16(contents[off : off+2]))
-	if off+2+extLen != len(contents) {
-		return "", errors.New("ECHConfig extensions 长度与实际不符")
-	}
-	return name, nil
-}
-
 // ECHConfigPEM 将 ECHConfigList 编码为与 Xboard 相同的 PEM 块。
 func ECHConfigPEM(list []byte) string {
 	encoded := base64.StdEncoding.EncodeToString(list)
@@ -241,7 +189,8 @@ func ECHUnsupportedReason(nodeType string, kernel map[string]any) string {
 		return ""
 	case "anytls":
 		cert, _ := kernel["cert_path"].(string)
-		if strings.TrimSpace(cert) == "" {
+		mode, _ := kernel["cert_mode"].(string)
+		if strings.TrimSpace(cert) == "" && !strings.EqualFold(strings.TrimSpace(mode), CertModeACME) {
 			return "只有开启 TLS 的节点能用 ECH"
 		}
 		return ""

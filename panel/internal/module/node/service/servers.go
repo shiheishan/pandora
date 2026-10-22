@@ -98,15 +98,33 @@ func (s *Service) ListServers(ctx context.Context, f ServerFilter) ([]Server, er
 	if err != nil {
 		return nil, err
 	}
+	opts, jobs, err := s.ServerUpgradeViews(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	seqs, err := s.repo.ActiveIdentitySeqs(ctx, ids, s.identityNow())
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	for _, r := range rows {
 		srv := serverFromModel(r, counts[r.ID], now)
+		_, srv.Enrolled = seqs[r.ID]
 		if m, ok := metrics[r.ID]; ok {
 			applyServerMetrics(&srv, m)
 		}
+		applyServerUpgrade(&srv, opts, jobs)
 		out = append(out, srv)
 	}
 	return out, nil
+}
+
+// applyServerUpgrade 把 ServerUpgradeViews 的结果填进 Server。
+func applyServerUpgrade(srv *Server, opts map[uuid.UUID]ServerUpgradeOption, jobs map[uuid.UUID]ServerUpgradeJob) {
+	srv.Upgrade = opts[srv.ID]
+	if j, ok := jobs[srv.ID]; ok {
+		srv.LastUpgrade = &j
+	}
 }
 
 // GetServer 读一台未删除的服务器；没有回 404。
@@ -123,13 +141,21 @@ func (s *Service) GetServer(ctx context.Context, id uuid.UUID) (Server, error) {
 		return Server{}, err
 	}
 	srv := serverFromModel(m, counts[id], s.now())
+	if srv.Enrolled, err = s.repo.HasActiveIdentity(ctx, id, s.identityNow()); err != nil {
+		return Server{}, err
+	}
 	metrics, err := s.serverMetricsByID(ctx, []uuid.UUID{id})
 	if err != nil {
 		return Server{}, err
 	}
-	if m, ok := metrics[id]; ok {
-		applyServerMetrics(&srv, m)
+	if mt, ok := metrics[id]; ok {
+		applyServerMetrics(&srv, mt)
 	}
+	opts, jobs, err := s.ServerUpgradeViews(ctx, []model.Server{m})
+	if err != nil {
+		return Server{}, err
+	}
+	applyServerUpgrade(&srv, opts, jobs)
 	return srv, nil
 }
 
@@ -270,7 +296,7 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 				return err
 			}
 			if !has {
-				return &errs.Error{Code: errs.Conflict, Message: "服务器没有在役节点，不能进入 ready；先在节点上用「上线」",
+				return &errs.Error{Code: errs.Conflict, Message: serverNoActiveNodeMsg,
 					Fields: map[string]string{"nodes": "requires_valid_active_node"}}
 			}
 		}
@@ -308,7 +334,7 @@ func (s *Service) SetServerStatus(ctx context.Context, id uuid.UUID, rowVersion 
 	return s.GetServer(ctx, id)
 }
 
-// DeleteServer 软删一台草稿或已退役的服务器：名下未退役的节点一并退役，全部节点从这台服务器上摘下。
+// DeleteServer 软删一台草稿或已退役的服务器：名下在役节点退役，草稿与已停用的解绑留作配置，全部节点从这台服务器上摘下。
 // 删除时在同一事务里吊销身份、作废未用令牌，提交后让会话层发 Tombstone 断流。
 func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int64) error {
 	if rowVersion <= 0 {
@@ -323,7 +349,7 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 			return &errs.Error{Code: errs.Conflict, Message: "服务器仍在服务，请先在「状态」里退役",
 				Fields: map[string]string{"status": m.Status}}
 		}
-		silenced, nodeIDs, err := s.repo.RetireServerNodes(ctx, id)
+		silenced, unbound, nodeIDs, err := s.repo.DetachServerNodes(ctx, id)
 		if err != nil {
 			return serverWriteErr(err)
 		}
@@ -341,7 +367,7 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 			return err
 		}
 		if err := s.serverAudit(ctx, "server.delete", id, map[string]any{
-			"status": m.Status, "silenced_nodes": silenced,
+			"status": m.Status, "silenced_nodes": silenced, "unbound_nodes": unbound,
 			"revoked_identity_ids": identityIDStrings(revoked),
 			"voided_tokens":        voided,
 		}); err != nil {
@@ -351,38 +377,6 @@ func (s *Service) DeleteServer(ctx context.Context, id uuid.UUID, rowVersion int
 		s.MarkConfigChanged(ctx)
 		return nil
 	})
-}
-
-// ListServerNodes 列出服务器名下未删除的节点（含已退役）；心跳取服务器的。
-func (s *Service) ListServerNodes(ctx context.Context, id uuid.UUID) ([]ServerNode, error) {
-	srv, found, err := s.repo.ServerByID(ctx, id, false)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, errs.New(errs.NotFound)
-	}
-	rows, err := s.repo.ListServerNodes(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]ServerNode, 0, len(rows))
-	for _, n := range rows {
-		out = append(out, ServerNode{
-			ID:                n.ID,
-			Name:              n.Name,
-			ServingStatus:     n.ServingStatus,
-			NodeType:          n.NodeType,
-			DisplayName:       n.DisplayName,
-			ServerHost:        n.ServerHost,
-			ServerPort:        n.ServerPort,
-			TrafficRate:       n.TrafficRate,
-			ConfigValidatedAt: n.ConfigValidatedAt,
-			LastHeartbeatAt:   srv.LastHeartbeatAt,
-			CreatedAt:         n.CreatedAt,
-		})
-	}
-	return out, nil
 }
 
 // lockServerForNodes 锁服务器行（FOR UPDATE）并检查能不能再放一个节点：不存在 422、已退役 409、容量满 409。

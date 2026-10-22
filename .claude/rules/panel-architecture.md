@@ -15,7 +15,9 @@ paths:
 - 几条通用规则：`handler-no-db`（handler、task、grpc 不碰 gorm、`internal/pkg/db`、`internal/pkg/tx`）、`service-no-gorm`（service 不碰 gorm 与 `internal/pkg/db`，事务只经 `internal/pkg/tx`）、`model-plain`、`pure-packages`（`render`、`protocol` 不依赖任何模块与库）、`pkg-no-business`（`internal/pkg` 不依赖模块与 app）、`httpx-no-db`（中间件不碰库）。
 - 每个模块一条 `module-<名>-boundary`：不许 import 别的模块的 repo、model、handler、task、grpc、provider，模块之间只调 service（测试可以用别的模块的 repo 装真 service、用支付 provider 造验签回调）；`module-<名>-entry`：本模块的 handler、task、grpc 也不许 import 本模块的 repo 与 model。
 - 技术栈规则：`stack-conventions` 禁 chi、pgxpool；`stack-no-stdlog` 禁生产代码用 `log`、`log/slog`（日志用 zap；测试里 pebble 之类要 `*log.Logger` 的夹具可用）；`stack-no-database-sql` 禁生产代码用 `database/sql`（`internal/app/migrate.go`、`internal/pkg/testkit`、`db/migrations` 例外，测试不管）；`stack-no-pgx` 禁 `github.com/jackc/pgx`（含 pgconn，测试同样适用；只有 `internal/pkg/db`、`testkit`、`migrate.go`、`db/migrations/migrations_test.go` 例外）。
-- lint 命令：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（本机加 `GOTOOLCHAIN=go1.26.9`）。
+- 写响应由 forbidigo 钉住（同一份生成器模板，`analyze-types: true` 按类型匹配 `gin.Context` / `gin.ResponseWriter` 的方法，`smtp.Client.Data` 之类同名方法不误报）：handler 只经 `httpx.OK` / `Created` / `Accepted` / `NoContent` / `Fail` 写，不用 `gin.H`。非 JSON 出口的白名单在模板的 `exclusions.rules`（按文件路径）；加新的非 JSON 出口时把写响应的几行抽到同包单独文件，在生成器里加一条路径再重新生成，不用 `//nolint`。清单见 `panel-http.md`。
+- lint 命令：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（本机加 `GOTOOLCHAIN=go1.26.10`）。
+- 死代码：CI lint job 在仓库根跑 `bash .github/scripts/deadcode.sh panel ./cmd/pandora ./tools/...`（golang.org/x/tools 的 deadcode，不带 `-test`）：从 main 出发到不了的函数都报，只剩测试在调的也算。给测试用的辅助函数写在 `_test.go`；误报（编译期断言、防御性的 `String` / `GoString` 脱敏）写进 `panel/.deadcode-ignore` 并注明理由，模式不写行号，失效的模式脚本也判红。
 
 ## 模块与表属主
 - 每张表只有一个属主模块（表见 `docs/architecture.md` 4.1）。要别的模块的数据，调属主 service 的批量读方法，一条 SQL，不逐行查。
@@ -34,3 +36,4 @@ paths:
 - 约束类的进库：NOT NULL、CHECK、UNIQUE、外键、追加写触发器 `deny_mutation` / `deny_delete`、账本配平 `assert_ledger_balanced`。业务状态机与编排在 Go。
 - 运行时只以 `pandora_app` 连库（`panel/deploy/configure-app-role.sql` 收窄），不要为了绕开触发器换特权连接。没有 RLS、没有多租户。
 - 前后端接口以代码为准：改接口形状时同步改 handler 的 DTO 与前端对应的 zod schema，没有单独的契约文档。
+- 进程内快照的失效同样走注入：settings 的 `UseSiteChangeListener`（appearance 清入口页快照）、`UseSubscriptionExtrasListener`（subscription 清拉取快照）、`UseHomeChangeListener`（app 层 `portal_home.go` 清门户首页快照；home 组、注册方式（`SetRegistration`）与注册总闸 `auth.registration`（`SetSwitch`，值变了才调）提交后调，套餐变动只靠 30 秒 TTL，站点名走 appearance 的快照、不重复失效）、`UseSiteURLChangeListener`（主域名改了以后 notify 重新注册 Telegram webhook；settings 自己的主域名快照在同一个提交后钩子里先失效），写路径在 `tx.AfterCommit` 里同步调用；serve 单实例、后台写都在 serve 里，不加 Redis 频道。新加「依赖设置的进程内快照」时照这条接，不让它只靠 TTL。

@@ -99,16 +99,16 @@ function seed(
 }
 
 const rows: Row[] = [
-  seed(4821, '香港节点晚高峰丢包严重', 'wu.qing@163.com', '标准版', 'technical', 'high', 'open', 18, [
+  seed(4821, '香港节点晚高峰丢包严重', 'wu.qing@example.org', '标准版', 'technical', 'high', 'open', 18, [
     msg('user', null, '每天 9 点到 11 点，HK-HKG-01 丢包大概 15%，看视频卡顿。换了 JP 节点正常。', 18),
   ]),
-  seed(4820, '订阅链接在 Clash 中导入失败', 'tomato@sina.com', '家庭版', 'technical', 'normal', 'open', 62, [msg('user', null, 'Clash Verge 提示「解析失败」，截图附上。', 62)], {
+  seed(4820, '订阅链接在 Clash 中导入失败', 'tomato@example.test', '家庭版', 'technical', 'normal', 'open', 62, [msg('user', null, 'Clash Verge 提示「解析失败」，截图附上。', 62)], {
     assigned_to: STAFF[0].id,
   }),
   seed(
     4818,
     '支付宝付款后订单仍显示待支付',
-    'lin.xiao@foxmail.com',
+    'lin.xiao@mail.example.test',
     '标准版',
     'billing',
     'urgent',
@@ -126,7 +126,7 @@ const rows: Row[] = [
   seed(
     4815,
     '想把套餐从标准版升级到专业版',
-    'grace.h@icloud.com',
+    'grace.h@mail.example.org',
     '专业版',
     'subscription',
     'low',
@@ -135,11 +135,11 @@ const rows: Row[] = [
     [msg('user', null, '剩余天数可以折算吗？', 300), msg('agent', '周敏', '可以，按剩余价值折算后补差价。需要我帮您操作吗？', 270)],
     { assigned_to: STAFF[0].id },
   ),
-  seed(4812, '账号被盗，登录记录里有陌生 IP', 'sec.check@outlook.com', null, 'account', 'high', 'open', 7 * 60, [msg('user', null, '昨晚收到异地登录提醒，我已经改了密码。', 7 * 60)]),
+  seed(4812, '账号被盗，登录记录里有陌生 IP', 'sec.check@mail.example.com', null, 'account', 'high', 'open', 7 * 60, [msg('user', null, '昨晚收到异地登录提醒，我已经改了密码。', 7 * 60)]),
   seed(
     4809,
     '设备数超限无法登录',
-    'k.liu@proton.me',
+    'k.liu@mail.example.net',
     '家庭版',
     'account',
     'normal',
@@ -152,7 +152,7 @@ const rows: Row[] = [
     ],
     { resolved_at: at(25 * 60) },
   ),
-  seed(4801, '误提交，已自己解决', 'mira@gmail.com', '标准版', 'general', 'low', 'closed', 50 * 60, [msg('user', null, '不好意思，已经可以用了。', 50 * 60), msg('system', null, '用户撤回了工单', 49 * 60)], {
+  seed(4801, '误提交，已自己解决', 'mira@example.com', '标准版', 'general', 'low', 'closed', 50 * 60, [msg('user', null, '不好意思，已经可以用了。', 50 * 60), msg('system', null, '用户撤回了工单', 49 * 60)], {
     closed_reason: 'withdrawn',
   }),
   // support:auto_close：客服回复后用户 24 小时没动静，系统自动关闭
@@ -281,28 +281,39 @@ function envelope(code: string, message: string, fields?: Record<string, string>
 /** 全部工单 id（实时事件模拟取真实行用，见 events.ts） */
 export const ticketIds = () => rows.map((r) => r.id)
 
+/** 看起来刚建的工单：还没人接手（open）里最新的 3 张，实时事件的 INSERT 只从这里挑（见 events.ts） */
+export const freshTicketIds = () =>
+  rows
+    .filter((r) => r.status === 'open')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 3)
+    .map((r) => r.id)
+
 const notFound: MockResult = { status: 404, body: envelope('not_found', '工单不存在') }
 const touch = (t: Row) => {
   t.updated_at = new Date().toISOString()
 }
 
-const supportSettings = { wait_for_reply: false, auto_close_enabled: false, auto_close_hours: 24 }
+const supportSettings = { wait_for_reply: false, auto_close_enabled: false, auto_close_hours: 24, max_open_tickets: 5 }
 
 async function saveSupportSettings(ctx: MockContext): Promise<MockResult> {
   const body = await ctx.body()
   if (!body) return { status: 400, body: envelope('bad_request', '请求体不是合法的 JSON') }
-  const unknown = Object.keys(body).filter((k) => !['wait_for_reply', 'auto_close_enabled', 'auto_close_hours'].includes(k))
+  const unknown = Object.keys(body).filter((k) => !['wait_for_reply', 'auto_close_enabled', 'auto_close_hours', 'max_open_tickets'].includes(k))
   if (unknown.length) return { status: 400, body: envelope('bad_request', `未知字段：${unknown.join(', ')}`) }
   const fields: Record<string, string> = {}
   if (typeof body.wait_for_reply !== 'boolean') fields.wait_for_reply = '必填'
   if (typeof body.auto_close_enabled !== 'boolean') fields.auto_close_enabled = '必填'
   if (typeof body.auto_close_hours !== 'number' || !Number.isInteger(body.auto_close_hours)) fields.auto_close_hours = '必填'
   else if (body.auto_close_hours < 1 || body.auto_close_hours > 720) fields.auto_close_hours = '自动关闭时长要在 1 到 720 小时之间'
+  if (typeof body.max_open_tickets !== 'number' || !Number.isInteger(body.max_open_tickets)) fields.max_open_tickets = '必填'
+  else if (body.max_open_tickets < 1 || body.max_open_tickets > 50) fields.max_open_tickets = '同时打开的工单上限要在 1 到 50 之间'
   if (Object.keys(fields).length) return { status: 422, body: envelope('validation_failed', '请求参数校验未通过', fields) }
   Object.assign(supportSettings, {
     wait_for_reply: body.wait_for_reply === true,
     auto_close_enabled: body.auto_close_enabled === true,
     auto_close_hours: body.auto_close_hours as number,
+    max_open_tickets: body.max_open_tickets as number,
   })
   return { status: 200, body: { ...supportSettings } }
 }

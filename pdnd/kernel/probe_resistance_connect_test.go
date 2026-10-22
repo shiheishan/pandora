@@ -15,8 +15,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/net/http2"
 )
 
 const (
@@ -121,7 +119,7 @@ func TestNaiveConnectProbeGetsFallbackSiteResponse(t *testing.T) {
 	addr, _ := startProbeInbound(t, "naive", map[string]any{"fallback": site.addr}, nil)
 
 	// h2：CONNECT 流上紧跟一条走私请求。
-	tr := &http2.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec -- 测试证书。
+	tr := h2TLSTestTransport()
 	defer tr.CloseIdleConnections()
 	req, _ := http.NewRequest(http.MethodConnect, "https://"+addr, io.NopCloser(strings.NewReader(connectProbeSmuggled)))
 	req.Host = "www.example.com:443"

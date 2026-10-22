@@ -6,7 +6,7 @@ import { placementBlocked, redeemViews, selectedView, simpleRedeem } from './mod
 
 // 兑换卡（原型 S5a / S5b、redeemOptions）：选项与默认值来自服务端，这里只验写字与「没默认就置灰」
 const card = (over: Partial<GiftCard>): GiftCard =>
-  giftCardSchema.parse({ id: 'c', name: '卡', description: '', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, theme_color: '', created_at: '2026-10-01T00:00:00Z', placement: null, ...over })
+  giftCardSchema.parse({ id: 'c', name: '卡', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, created_at: '2026-10-01T00:00:00Z', placement: null, ...over })
 const MINE = sub({ id: 'a', label: '我的', current_period_end: '2026-10-30T12:00:00Z' })
 const MOM = sub({ id: 'b', label: '妈妈的 iPad', plan_id: 'basic', plan_name: '基础版', current_period_end: '2026-10-12T12:00:00Z' })
 const naming2 = makeNaming([MINE, MOM], undefined)
@@ -16,7 +16,7 @@ const NOW = new Date('2026-10-07T12:00:00')
 describe('兑换卡', () => {
   it('preview 的 placement 照 Go：选项字段 omitempty、placement 本身必回（纯余额卡为 null）', () => {
     expect(card({}).placement).toBeNull()
-    const raw = { id: 'c', name: '卡', description: '', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, theme_color: '', created_at: '' }
+    const raw = { id: 'c', name: '卡', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, created_at: '' }
     expect(giftCardSchema.safeParse(raw).success).toBe(false)
     expect(giftCardSchema.safeParse({ ...raw, placement: { question: 'q', options: [{ key: 'new', kind: 'new' }], default_key: '' } }).success).toBe(true)
   })

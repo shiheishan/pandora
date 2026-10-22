@@ -198,6 +198,9 @@ server {
     error_log /var/log/nginx/pandora-error.log crit;
 
     limit_conn pandora_conn 64;
+    # 限速与连接数超限回 429，与主域名同口径（JSON 错误页只在主域名）
+    limit_req_status 429;
+    limit_conn_status 429;
 
     gzip on;
     gzip_types text/css text/javascript application/javascript application/json text/yaml text/plain image/svg+xml;

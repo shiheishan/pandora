@@ -139,6 +139,61 @@ func (ConfigPhase) EnumDescriptor() ([]byte, []int) {
 	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{1}
 }
 
+type UpgradePhase int32
+
+const (
+	UpgradePhase_UPGRADE_PHASE_UNSPECIFIED UpgradePhase = 0
+	// 新二进制已下载、核对过摘要与签名、放进暂存区，已请 root 侧助手替换。
+	UpgradePhase_UPGRADE_PHASE_STAGED UpgradePhase = 1
+	// 没动现有安装就失败了（下载、摘要、签名、序号、架构不对，或助手没装）。
+	UpgradePhase_UPGRADE_PHASE_FAILED UpgradePhase = 2
+	// 换上了新版，但新进程在确认时限内没连上面板，已装回旧版。
+	UpgradePhase_UPGRADE_PHASE_ROLLED_BACK UpgradePhase = 3
+)
+
+// Enum value maps for UpgradePhase.
+var (
+	UpgradePhase_name = map[int32]string{
+		0: "UPGRADE_PHASE_UNSPECIFIED",
+		1: "UPGRADE_PHASE_STAGED",
+		2: "UPGRADE_PHASE_FAILED",
+		3: "UPGRADE_PHASE_ROLLED_BACK",
+	}
+	UpgradePhase_value = map[string]int32{
+		"UPGRADE_PHASE_UNSPECIFIED": 0,
+		"UPGRADE_PHASE_STAGED":      1,
+		"UPGRADE_PHASE_FAILED":      2,
+		"UPGRADE_PHASE_ROLLED_BACK": 3,
+	}
+)
+
+func (x UpgradePhase) Enum() *UpgradePhase {
+	p := new(UpgradePhase)
+	*p = x
+	return p
+}
+
+func (x UpgradePhase) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UpgradePhase) Descriptor() protoreflect.EnumDescriptor {
+	return file_pandora_node_v1_node_proto_enumTypes[2].Descriptor()
+}
+
+func (UpgradePhase) Type() protoreflect.EnumType {
+	return &file_pandora_node_v1_node_proto_enumTypes[2]
+}
+
+func (x UpgradePhase) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UpgradePhase.Descriptor instead.
+func (UpgradePhase) EnumDescriptor() ([]byte, []int) {
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{2}
+}
+
 type EnrollRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 一次性接入令牌（安装命令里给的明文，面板只存哈希）。
@@ -379,6 +434,7 @@ type SessionRequest struct {
 	//	*SessionRequest_ConfigAck
 	//	*SessionRequest_UsersAck
 	//	*SessionRequest_Renew
+	//	*SessionRequest_UpgradeReport
 	Body          isSessionRequest_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -491,6 +547,15 @@ func (x *SessionRequest) GetRenew() *RenewRequest {
 	return nil
 }
 
+func (x *SessionRequest) GetUpgradeReport() *UpgradeReport {
+	if x != nil {
+		if x, ok := x.Body.(*SessionRequest_UpgradeReport); ok {
+			return x.UpgradeReport
+		}
+	}
+	return nil
+}
+
 type isSessionRequest_Body interface {
 	isSessionRequest_Body()
 }
@@ -523,6 +588,10 @@ type SessionRequest_Renew struct {
 	Renew *RenewRequest `protobuf:"bytes,16,opt,name=renew,proto3,oneof"`
 }
 
+type SessionRequest_UpgradeReport struct {
+	UpgradeReport *UpgradeReport `protobuf:"bytes,17,opt,name=upgrade_report,json=upgradeReport,proto3,oneof"`
+}
+
 func (*SessionRequest_Hello) isSessionRequest_Body() {}
 
 func (*SessionRequest_Heartbeat) isSessionRequest_Body() {}
@@ -537,6 +606,8 @@ func (*SessionRequest_UsersAck) isSessionRequest_Body() {}
 
 func (*SessionRequest_Renew) isSessionRequest_Body() {}
 
+func (*SessionRequest_UpgradeReport) isSessionRequest_Body() {}
+
 // Hello 是流上的第一条消息。面板按它报告的已应用版本对齐：相同的不发，不同的发全量。
 type Hello struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
@@ -549,7 +620,12 @@ type Hello struct {
 	// 各节点已应用的配置（按节点）。
 	AppliedConfigs []*AppliedConfig `protobuf:"bytes,5,rep,name=applied_configs,json=appliedConfigs,proto3" json:"applied_configs,omitempty"`
 	// 各节点内核里已是哪一版名单。
-	AppliedUsers  []*AppliedUsers `protobuf:"bytes,6,rep,name=applied_users,json=appliedUsers,proto3" json:"applied_users,omitempty"`
+	AppliedUsers []*AppliedUsers `protobuf:"bytes,6,rep,name=applied_users,json=appliedUsers,proto3" json:"applied_users,omitempty"`
+	// 节点二进制的发版序号（签名发布清单里的 serial；dev 构建为 0）。面板按它判断目标版本是不是更新。
+	BuildSerial uint64 `protobuf:"varint,7,opt,name=build_serial,json=buildSerial,proto3" json:"build_serial,omitempty"`
+	// 上一次升级的结局（root 侧助手写在本机的结果文件里，重启或回退后由新进程带上）；没有就不填。
+	// 面板对账幂等：任务已结束的忽略。节点在带着它的 Hello 拿到 Welcome 之后删掉结果文件。
+	LastUpgrade   *UpgradeReport `protobuf:"bytes,8,opt,name=last_upgrade,json=lastUpgrade,proto3" json:"last_upgrade,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -622,6 +698,20 @@ func (x *Hello) GetAppliedConfigs() []*AppliedConfig {
 func (x *Hello) GetAppliedUsers() []*AppliedUsers {
 	if x != nil {
 		return x.AppliedUsers
+	}
+	return nil
+}
+
+func (x *Hello) GetBuildSerial() uint64 {
+	if x != nil {
+		return x.BuildSerial
+	}
+	return 0
+}
+
+func (x *Hello) GetLastUpgrade() *UpgradeReport {
+	if x != nil {
+		return x.LastUpgrade
 	}
 	return nil
 }
@@ -936,7 +1026,10 @@ type NodeRuntime struct {
 	// 降级原因码（如 port_in_use、start_failed、config_rejected），running 时为空。
 	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	// 端口被同机另一个节点占用时，占用者的 node_id。
-	ReasonNodeId  string `protobuf:"bytes,4,opt,name=reason_node_id,json=reasonNodeId,proto3" json:"reason_node_id,omitempty"`
+	ReasonNodeId string `protobuf:"bytes,4,opt,name=reason_node_id,json=reasonNodeId,proto3" json:"reason_node_id,omitempty"`
+	// 入站证书的状态：自动申请（acme）的节点每拍都带；手填证书（file）的只带 not_after_unix。
+	// 不用证书的协议不带。
+	Cert          *CertStatus `protobuf:"bytes,5,opt,name=cert,proto3" json:"cert,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -999,6 +1092,95 @@ func (x *NodeRuntime) GetReasonNodeId() string {
 	return ""
 }
 
+func (x *NodeRuntime) GetCert() *CertStatus {
+	if x != nil {
+		return x.Cert
+	}
+	return nil
+}
+
+// CertStatus 是一个节点入站证书的状态（节点端能力 cert_acme_v1）。
+type CertStatus struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 证书的标识符（域名或 IP，与配置文档的 cert_identifier 相同）；file 模式为空。
+	Identifier string `protobuf:"bytes,1,opt,name=identifier,proto3" json:"identifier,omitempty"`
+	// 当前证书的到期时间（Unix 秒）；0 = 还没有证书。
+	NotAfterUnix int64 `protobuf:"varint,2,opt,name=not_after_unix,json=notAfterUnix,proto3" json:"not_after_unix,omitempty"`
+	// 最近一次申请或续期失败的原因码（如 challenge_port_busy、validation_failed）；成功后清空。
+	ErrorCode string `protobuf:"bytes,3,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	// 失败详情（CA 回的 problem detail，至多 1024 字节、可打印 ASCII）。
+	ErrorDetail string `protobuf:"bytes,4,opt,name=error_detail,json=errorDetail,proto3" json:"error_detail,omitempty"`
+	// 下一次申请或续期的计划时间（Unix 秒）；0 = 没有计划。
+	NextAttemptUnix int64 `protobuf:"varint,5,opt,name=next_attempt_unix,json=nextAttemptUnix,proto3" json:"next_attempt_unix,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CertStatus) Reset() {
+	*x = CertStatus{}
+	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertStatus) ProtoMessage() {}
+
+func (x *CertStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertStatus.ProtoReflect.Descriptor instead.
+func (*CertStatus) Descriptor() ([]byte, []int) {
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *CertStatus) GetIdentifier() string {
+	if x != nil {
+		return x.Identifier
+	}
+	return ""
+}
+
+func (x *CertStatus) GetNotAfterUnix() int64 {
+	if x != nil {
+		return x.NotAfterUnix
+	}
+	return 0
+}
+
+func (x *CertStatus) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *CertStatus) GetErrorDetail() string {
+	if x != nil {
+		return x.ErrorDetail
+	}
+	return ""
+}
+
+func (x *CertStatus) GetNextAttemptUnix() int64 {
+	if x != nil {
+		return x.NextAttemptUnix
+	}
+	return 0
+}
+
 // TrafficReport 是一个统计周期的流量增量。面板在 UNIQUE(server, report_id) 下落库，
 // 提交后回 TrafficAck；同一 report_id 内容不同就报错。节点收到 ack 之前保留这一批，重连后按原 id 重发。
 type TrafficReport struct {
@@ -1012,7 +1194,7 @@ type TrafficReport struct {
 
 func (x *TrafficReport) Reset() {
 	*x = TrafficReport{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1024,7 +1206,7 @@ func (x *TrafficReport) String() string {
 func (*TrafficReport) ProtoMessage() {}
 
 func (x *TrafficReport) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[10]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1037,7 +1219,7 @@ func (x *TrafficReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficReport.ProtoReflect.Descriptor instead.
 func (*TrafficReport) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{10}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TrafficReport) GetReportId() string {
@@ -1067,7 +1249,7 @@ type TrafficEntry struct {
 
 func (x *TrafficEntry) Reset() {
 	*x = TrafficEntry{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1079,7 +1261,7 @@ func (x *TrafficEntry) String() string {
 func (*TrafficEntry) ProtoMessage() {}
 
 func (x *TrafficEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[11]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1092,7 +1274,7 @@ func (x *TrafficEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficEntry.ProtoReflect.Descriptor instead.
 func (*TrafficEntry) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{11}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TrafficEntry) GetNodeId() string {
@@ -1134,7 +1316,7 @@ type OnlineIPs struct {
 
 func (x *OnlineIPs) Reset() {
 	*x = OnlineIPs{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1146,7 +1328,7 @@ func (x *OnlineIPs) String() string {
 func (*OnlineIPs) ProtoMessage() {}
 
 func (x *OnlineIPs) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[12]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1159,7 +1341,7 @@ func (x *OnlineIPs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnlineIPs.ProtoReflect.Descriptor instead.
 func (*OnlineIPs) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{12}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *OnlineIPs) GetEntries() []*OnlineEntry {
@@ -1180,7 +1362,7 @@ type OnlineEntry struct {
 
 func (x *OnlineEntry) Reset() {
 	*x = OnlineEntry{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1192,7 +1374,7 @@ func (x *OnlineEntry) String() string {
 func (*OnlineEntry) ProtoMessage() {}
 
 func (x *OnlineEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[13]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1205,7 +1387,7 @@ func (x *OnlineEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnlineEntry.ProtoReflect.Descriptor instead.
 func (*OnlineEntry) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{13}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OnlineEntry) GetNodeId() string {
@@ -1245,7 +1427,7 @@ type ConfigAck struct {
 
 func (x *ConfigAck) Reset() {
 	*x = ConfigAck{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1257,7 +1439,7 @@ func (x *ConfigAck) String() string {
 func (*ConfigAck) ProtoMessage() {}
 
 func (x *ConfigAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[14]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1270,7 +1452,7 @@ func (x *ConfigAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigAck.ProtoReflect.Descriptor instead.
 func (*ConfigAck) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{14}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ConfigAck) GetNodeId() string {
@@ -1321,7 +1503,7 @@ type UsersAck struct {
 
 func (x *UsersAck) Reset() {
 	*x = UsersAck{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1333,7 +1515,7 @@ func (x *UsersAck) String() string {
 func (*UsersAck) ProtoMessage() {}
 
 func (x *UsersAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[15]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1346,7 +1528,7 @@ func (x *UsersAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsersAck.ProtoReflect.Descriptor instead.
 func (*UsersAck) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{15}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *UsersAck) GetNodeId() string {
@@ -1377,6 +1559,78 @@ func (x *UsersAck) GetReasonCode() string {
 	return ""
 }
 
+// UpgradeReport 是升级任务的进度与结局（节点 → 面板）。成功不靠它：面板看新 Hello 的 binary_sha256 等于目标即成功。
+type UpgradeReport struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 面板下发的任务 id（Upgrade.job_id 原样带回）。
+	JobId string       `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Phase UpgradePhase `protobuf:"varint,2,opt,name=phase,proto3,enum=pandora.node.v1.UpgradePhase" json:"phase,omitempty"`
+	// 原因码（下载失败、验签失败、序号不更新、健康确认超时等），失败与回退时必填，至多 64 字节。
+	ReasonCode string `protobuf:"bytes,3,opt,name=reason_code,json=reasonCode,proto3" json:"reason_code,omitempty"`
+	// 详情，至多 1KB，面板截断。不带 URL 与路径以外的敏感值。
+	Detail        string `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpgradeReport) Reset() {
+	*x = UpgradeReport{}
+	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpgradeReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpgradeReport) ProtoMessage() {}
+
+func (x *UpgradeReport) ProtoReflect() protoreflect.Message {
+	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpgradeReport.ProtoReflect.Descriptor instead.
+func (*UpgradeReport) Descriptor() ([]byte, []int) {
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *UpgradeReport) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *UpgradeReport) GetPhase() UpgradePhase {
+	if x != nil {
+		return x.Phase
+	}
+	return UpgradePhase_UPGRADE_PHASE_UNSPECIFIED
+}
+
+func (x *UpgradeReport) GetReasonCode() string {
+	if x != nil {
+		return x.ReasonCode
+	}
+	return ""
+}
+
+func (x *UpgradeReport) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
 // RenewRequest 是会话内续期：证书剩余不到 10 天时，节点生成新私钥发来 CSR。
 type RenewRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1387,7 +1641,7 @@ type RenewRequest struct {
 
 func (x *RenewRequest) Reset() {
 	*x = RenewRequest{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1399,7 +1653,7 @@ func (x *RenewRequest) String() string {
 func (*RenewRequest) ProtoMessage() {}
 
 func (x *RenewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[16]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1412,7 +1666,7 @@ func (x *RenewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewRequest.ProtoReflect.Descriptor instead.
 func (*RenewRequest) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{16}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RenewRequest) GetCsrDer() []byte {
@@ -1442,7 +1696,7 @@ type SessionResponse struct {
 
 func (x *SessionResponse) Reset() {
 	*x = SessionResponse{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1454,7 +1708,7 @@ func (x *SessionResponse) String() string {
 func (*SessionResponse) ProtoMessage() {}
 
 func (x *SessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[17]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1467,7 +1721,7 @@ func (x *SessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionResponse.ProtoReflect.Descriptor instead.
 func (*SessionResponse) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{17}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SessionResponse) GetSeq() uint64 {
@@ -1610,7 +1864,7 @@ type Welcome struct {
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1622,7 +1876,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[18]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1635,7 +1889,7 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{18}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Welcome) GetSessionId() string {
@@ -1685,7 +1939,7 @@ type ServerConfig struct {
 
 func (x *ServerConfig) Reset() {
 	*x = ServerConfig{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1697,7 +1951,7 @@ func (x *ServerConfig) String() string {
 func (*ServerConfig) ProtoMessage() {}
 
 func (x *ServerConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[19]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1710,7 +1964,7 @@ func (x *ServerConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerConfig.ProtoReflect.Descriptor instead.
 func (*ServerConfig) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{19}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ServerConfig) GetReleaseId() string {
@@ -1745,7 +1999,7 @@ type NodeConfig struct {
 
 func (x *NodeConfig) Reset() {
 	*x = NodeConfig{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1757,7 +2011,7 @@ func (x *NodeConfig) String() string {
 func (*NodeConfig) ProtoMessage() {}
 
 func (x *NodeConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[20]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1770,7 +2024,7 @@ func (x *NodeConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeConfig.ProtoReflect.Descriptor instead.
 func (*NodeConfig) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{20}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *NodeConfig) GetNodeId() string {
@@ -1816,7 +2070,7 @@ type UsersFull struct {
 
 func (x *UsersFull) Reset() {
 	*x = UsersFull{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1828,7 +2082,7 @@ func (x *UsersFull) String() string {
 func (*UsersFull) ProtoMessage() {}
 
 func (x *UsersFull) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[21]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1841,7 +2095,7 @@ func (x *UsersFull) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsersFull.ProtoReflect.Descriptor instead.
 func (*UsersFull) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{21}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *UsersFull) GetNodeId() string {
@@ -1894,7 +2148,7 @@ type UsersDelta struct {
 
 func (x *UsersDelta) Reset() {
 	*x = UsersDelta{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1906,7 +2160,7 @@ func (x *UsersDelta) String() string {
 func (*UsersDelta) ProtoMessage() {}
 
 func (x *UsersDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[22]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1919,7 +2173,7 @@ func (x *UsersDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsersDelta.ProtoReflect.Descriptor instead.
 func (*UsersDelta) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{22}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *UsersDelta) GetNodeId() string {
@@ -1973,7 +2227,7 @@ type User struct {
 
 func (x *User) Reset() {
 	*x = User{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1985,7 +2239,7 @@ func (x *User) String() string {
 func (*User) ProtoMessage() {}
 
 func (x *User) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[23]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1998,7 +2252,7 @@ func (x *User) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use User.ProtoReflect.Descriptor instead.
 func (*User) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{23}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *User) GetUid() int64 {
@@ -2039,7 +2293,7 @@ type TrafficAck struct {
 
 func (x *TrafficAck) Reset() {
 	*x = TrafficAck{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2051,7 +2305,7 @@ func (x *TrafficAck) String() string {
 func (*TrafficAck) ProtoMessage() {}
 
 func (x *TrafficAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[24]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2064,7 +2318,7 @@ func (x *TrafficAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficAck.ProtoReflect.Descriptor instead.
 func (*TrafficAck) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{24}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TrafficAck) GetReportId() string {
@@ -2085,7 +2339,7 @@ type Certificate struct {
 
 func (x *Certificate) Reset() {
 	*x = Certificate{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2097,7 +2351,7 @@ func (x *Certificate) String() string {
 func (*Certificate) ProtoMessage() {}
 
 func (x *Certificate) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[25]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2110,7 +2364,7 @@ func (x *Certificate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Certificate.ProtoReflect.Descriptor instead.
 func (*Certificate) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{25}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Certificate) GetCertChainPem() []byte {
@@ -2133,6 +2387,7 @@ type Command struct {
 	//
 	//	*Command_Reconnect
 	//	*Command_Tombstone
+	//	*Command_Upgrade
 	Kind          isCommand_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2140,7 +2395,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2152,7 +2407,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[26]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2165,7 +2420,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{26}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Command) GetKind() isCommand_Kind {
@@ -2193,6 +2448,15 @@ func (x *Command) GetTombstone() *Tombstone {
 	return nil
 }
 
+func (x *Command) GetUpgrade() *Upgrade {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_Upgrade); ok {
+			return x.Upgrade
+		}
+	}
+	return nil
+}
+
 type isCommand_Kind interface {
 	isCommand_Kind()
 }
@@ -2205,9 +2469,15 @@ type Command_Tombstone struct {
 	Tombstone *Tombstone `protobuf:"bytes,2,opt,name=tombstone,proto3,oneof"`
 }
 
+type Command_Upgrade struct {
+	Upgrade *Upgrade `protobuf:"bytes,3,opt,name=upgrade,proto3,oneof"`
+}
+
 func (*Command_Reconnect) isCommand_Kind() {}
 
 func (*Command_Tombstone) isCommand_Kind() {}
+
+func (*Command_Upgrade) isCommand_Kind() {}
 
 // Reconnect 让节点在 in_ms 加上 [0, jitter_ms) 的随机延迟后重连（面板重启前错峰）。
 type Reconnect struct {
@@ -2220,7 +2490,7 @@ type Reconnect struct {
 
 func (x *Reconnect) Reset() {
 	*x = Reconnect{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2232,7 +2502,7 @@ func (x *Reconnect) String() string {
 func (*Reconnect) ProtoMessage() {}
 
 func (x *Reconnect) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[27]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2245,7 +2515,7 @@ func (x *Reconnect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Reconnect.ProtoReflect.Descriptor instead.
 func (*Reconnect) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{27}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Reconnect) GetInMs() uint32 {
@@ -2262,6 +2532,89 @@ func (x *Reconnect) GetJitterMs() uint32 {
 	return 0
 }
 
+// Upgrade 让节点升级到签名发布清单里的那一版。只发给 Welcome.features 里有 "upgrade_v1" 的节点。
+// URL 与摘要都来自面板，不可信：节点与 root 侧助手各自用内置公钥验 manifest 的签名，二进制摘要以 manifest 为准，
+// manifest 的 serial 不大于本机二进制的 build_serial 就拒绝（防降级与重放）。
+type Upgrade struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 面板的任务 id（UUID），回报时原样带回。
+	JobId string `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// 签名发布清单的原字节（pdnd-manifest.json）与它的签名文件原字节（pdnd-manifest.json.sig）。
+	Manifest  []byte `protobuf:"bytes,2,opt,name=manifest,proto3" json:"manifest,omitempty"`
+	Signature []byte `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	// 本机架构的二进制下载地址（https，面板托管）。
+	BinaryUrl string `protobuf:"bytes,4,opt,name=binary_url,json=binaryUrl,proto3" json:"binary_url,omitempty"`
+	// 新进程要在这么多秒内连上面板（拿到 Welcome），否则助手装回旧版。
+	ConfirmWithinSec uint32 `protobuf:"varint,5,opt,name=confirm_within_sec,json=confirmWithinSec,proto3" json:"confirm_within_sec,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Upgrade) Reset() {
+	*x = Upgrade{}
+	mi := &file_pandora_node_v1_node_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Upgrade) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Upgrade) ProtoMessage() {}
+
+func (x *Upgrade) ProtoReflect() protoreflect.Message {
+	mi := &file_pandora_node_v1_node_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Upgrade.ProtoReflect.Descriptor instead.
+func (*Upgrade) Descriptor() ([]byte, []int) {
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *Upgrade) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *Upgrade) GetManifest() []byte {
+	if x != nil {
+		return x.Manifest
+	}
+	return nil
+}
+
+func (x *Upgrade) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+func (x *Upgrade) GetBinaryUrl() string {
+	if x != nil {
+		return x.BinaryUrl
+	}
+	return ""
+}
+
+func (x *Upgrade) GetConfirmWithinSec() uint32 {
+	if x != nil {
+		return x.ConfirmWithinSec
+	}
+	return 0
+}
+
 // Tombstone 表示这台服务器的身份已吊销或服务器已删除：节点停止重连，继续用磁盘缓存服务，
 // 要在后台生成新令牌重新接入。
 type Tombstone struct {
@@ -2273,7 +2626,7 @@ type Tombstone struct {
 
 func (x *Tombstone) Reset() {
 	*x = Tombstone{}
-	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2285,7 +2638,7 @@ func (x *Tombstone) String() string {
 func (*Tombstone) ProtoMessage() {}
 
 func (x *Tombstone) ProtoReflect() protoreflect.Message {
-	mi := &file_pandora_node_v1_node_proto_msgTypes[28]
+	mi := &file_pandora_node_v1_node_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2298,7 +2651,7 @@ func (x *Tombstone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tombstone.ProtoReflect.Descriptor instead.
 func (*Tombstone) Descriptor() ([]byte, []int) {
-	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{28}
+	return file_pandora_node_v1_node_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Tombstone) GetReason() string {
@@ -2331,7 +2684,7 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\tcpu_cores\x18\x04 \x01(\rR\bcpuCores\x12!\n" +
 	"\fmemory_bytes\x18\x05 \x01(\x04R\vmemoryBytes\x12\x1d\n" +
 	"\n" +
-	"disk_bytes\x18\x06 \x01(\x04R\tdiskBytes\"\xb6\x03\n" +
+	"disk_bytes\x18\x06 \x01(\x04R\tdiskBytes\"\xff\x03\n" +
 	"\x0eSessionRequest\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12.\n" +
 	"\x05hello\x18\n" +
@@ -2342,15 +2695,18 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"config_ack\x18\x0e \x01(\v2\x1a.pandora.node.v1.ConfigAckH\x00R\tconfigAck\x128\n" +
 	"\tusers_ack\x18\x0f \x01(\v2\x19.pandora.node.v1.UsersAckH\x00R\busersAck\x125\n" +
-	"\x05renew\x18\x10 \x01(\v2\x1d.pandora.node.v1.RenewRequestH\x00R\x05renewB\x06\n" +
-	"\x04body\"\xa9\x02\n" +
+	"\x05renew\x18\x10 \x01(\v2\x1d.pandora.node.v1.RenewRequestH\x00R\x05renew\x12G\n" +
+	"\x0eupgrade_report\x18\x11 \x01(\v2\x1e.pandora.node.v1.UpgradeReportH\x00R\rupgradeReportB\x06\n" +
+	"\x04body\"\x8f\x03\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12#\n" +
 	"\rbinary_sha256\x18\x02 \x01(\tR\fbinarySha256\x12\x1a\n" +
 	"\bfeatures\x18\x03 \x03(\tR\bfeatures\x12-\n" +
 	"\x04host\x18\x04 \x01(\v2\x19.pandora.node.v1.HostInfoR\x04host\x12G\n" +
 	"\x0fapplied_configs\x18\x05 \x03(\v2\x1e.pandora.node.v1.AppliedConfigR\x0eappliedConfigs\x12B\n" +
-	"\rapplied_users\x18\x06 \x03(\v2\x1d.pandora.node.v1.AppliedUsersR\fappliedUsers\"O\n" +
+	"\rapplied_users\x18\x06 \x03(\v2\x1d.pandora.node.v1.AppliedUsersR\fappliedUsers\x12!\n" +
+	"\fbuild_serial\x18\a \x01(\x04R\vbuildSerial\x12A\n" +
+	"\flast_upgrade\x18\b \x01(\v2\x1e.pandora.node.v1.UpgradeReportR\vlastUpgrade\"O\n" +
 	"\rAppliedConfig\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12%\n" +
 	"\x0econtent_sha256\x18\x02 \x01(\tR\rcontentSha256\"A\n" +
@@ -2377,12 +2733,23 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\ttcp_conns\x18\v \x01(\rR\btcpConns\x12\x1d\n" +
 	"\n" +
 	"uptime_sec\x18\f \x01(\x04R\tuptimeSec\x12\x18\n" +
-	"\apartial\x18\r \x01(\bR\apartial\"\x9c\x01\n" +
+	"\apartial\x18\r \x01(\bR\apartial\"\xcd\x01\n" +
 	"\vNodeRuntime\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x126\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x1e.pandora.node.v1.RuntimeStatusR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12$\n" +
-	"\x0ereason_node_id\x18\x04 \x01(\tR\freasonNodeId\"e\n" +
+	"\x0ereason_node_id\x18\x04 \x01(\tR\freasonNodeId\x12/\n" +
+	"\x04cert\x18\x05 \x01(\v2\x1b.pandora.node.v1.CertStatusR\x04cert\"\xc0\x01\n" +
+	"\n" +
+	"CertStatus\x12\x1e\n" +
+	"\n" +
+	"identifier\x18\x01 \x01(\tR\n" +
+	"identifier\x12$\n" +
+	"\x0enot_after_unix\x18\x02 \x01(\x03R\fnotAfterUnix\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x03 \x01(\tR\terrorCode\x12!\n" +
+	"\ferror_detail\x18\x04 \x01(\tR\verrorDetail\x12*\n" +
+	"\x11next_attempt_unix\x18\x05 \x01(\x03R\x0fnextAttemptUnix\"e\n" +
 	"\rTrafficReport\x12\x1b\n" +
 	"\treport_id\x18\x01 \x01(\tR\breportId\x127\n" +
 	"\aentries\x18\x02 \x03(\v2\x1d.pandora.node.v1.TrafficEntryR\aentries\"m\n" +
@@ -2409,7 +2776,13 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x0e\n" +
 	"\x02ok\x18\x03 \x01(\bR\x02ok\x12\x1f\n" +
 	"\vreason_code\x18\x04 \x01(\tR\n" +
-	"reasonCode\"'\n" +
+	"reasonCode\"\x94\x01\n" +
+	"\rUpgradeReport\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x123\n" +
+	"\x05phase\x18\x02 \x01(\x0e2\x1d.pandora.node.v1.UpgradePhaseR\x05phase\x12\x1f\n" +
+	"\vreason_code\x18\x03 \x01(\tR\n" +
+	"reasonCode\x12\x16\n" +
+	"\x06detail\x18\x04 \x01(\tR\x06detail\"'\n" +
 	"\fRenewRequest\x12\x17\n" +
 	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"\xcf\x03\n" +
 	"\x0fSessionResponse\x12\x10\n" +
@@ -2470,14 +2843,22 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\treport_id\x18\x01 \x01(\tR\breportId\"W\n" +
 	"\vCertificate\x12$\n" +
 	"\x0ecert_chain_pem\x18\x01 \x01(\fR\fcertChainPem\x12\"\n" +
-	"\rca_bundle_pem\x18\x02 \x01(\fR\vcaBundlePem\"\x89\x01\n" +
+	"\rca_bundle_pem\x18\x02 \x01(\fR\vcaBundlePem\"\xbf\x01\n" +
 	"\aCommand\x12:\n" +
 	"\treconnect\x18\x01 \x01(\v2\x1a.pandora.node.v1.ReconnectH\x00R\treconnect\x12:\n" +
-	"\ttombstone\x18\x02 \x01(\v2\x1a.pandora.node.v1.TombstoneH\x00R\ttombstoneB\x06\n" +
+	"\ttombstone\x18\x02 \x01(\v2\x1a.pandora.node.v1.TombstoneH\x00R\ttombstone\x124\n" +
+	"\aupgrade\x18\x03 \x01(\v2\x18.pandora.node.v1.UpgradeH\x00R\aupgradeB\x06\n" +
 	"\x04kind\"=\n" +
 	"\tReconnect\x12\x13\n" +
 	"\x05in_ms\x18\x01 \x01(\rR\x04inMs\x12\x1b\n" +
-	"\tjitter_ms\x18\x02 \x01(\rR\bjitterMs\"#\n" +
+	"\tjitter_ms\x18\x02 \x01(\rR\bjitterMs\"\xa7\x01\n" +
+	"\aUpgrade\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
+	"\bmanifest\x18\x02 \x01(\fR\bmanifest\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\x12\x1d\n" +
+	"\n" +
+	"binary_url\x18\x04 \x01(\tR\tbinaryUrl\x12,\n" +
+	"\x12confirm_within_sec\x18\x05 \x01(\rR\x10confirmWithinSec\"#\n" +
 	"\tTombstone\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason*\x81\x01\n" +
 	"\rRuntimeStatus\x12\x1e\n" +
@@ -2489,7 +2870,12 @@ const file_pandora_node_v1_node_proto_rawDesc = "" +
 	"\x18CONFIG_PHASE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CONFIG_PHASE_SWITCHED\x10\x01\x12\x1e\n" +
 	"\x1aCONFIG_PHASE_HEALTH_PASSED\x10\x02\x12\x17\n" +
-	"\x13CONFIG_PHASE_FAILED\x10\x032^\n" +
+	"\x13CONFIG_PHASE_FAILED\x10\x03*\x80\x01\n" +
+	"\fUpgradePhase\x12\x1d\n" +
+	"\x19UPGRADE_PHASE_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14UPGRADE_PHASE_STAGED\x10\x01\x12\x18\n" +
+	"\x14UPGRADE_PHASE_FAILED\x10\x02\x12\x1d\n" +
+	"\x19UPGRADE_PHASE_ROLLED_BACK\x10\x032^\n" +
 	"\x11EnrollmentService\x12I\n" +
 	"\x06Enroll\x12\x1e.pandora.node.v1.EnrollRequest\x1a\x1f.pandora.node.v1.EnrollResponse2b\n" +
 	"\x0eControlService\x12P\n" +
@@ -2507,80 +2893,89 @@ func file_pandora_node_v1_node_proto_rawDescGZIP() []byte {
 	return file_pandora_node_v1_node_proto_rawDescData
 }
 
-var file_pandora_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_pandora_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_pandora_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_pandora_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_pandora_node_v1_node_proto_goTypes = []any{
 	(RuntimeStatus)(0),      // 0: pandora.node.v1.RuntimeStatus
 	(ConfigPhase)(0),        // 1: pandora.node.v1.ConfigPhase
-	(*EnrollRequest)(nil),   // 2: pandora.node.v1.EnrollRequest
-	(*EnrollResponse)(nil),  // 3: pandora.node.v1.EnrollResponse
-	(*HostInfo)(nil),        // 4: pandora.node.v1.HostInfo
-	(*SessionRequest)(nil),  // 5: pandora.node.v1.SessionRequest
-	(*Hello)(nil),           // 6: pandora.node.v1.Hello
-	(*AppliedConfig)(nil),   // 7: pandora.node.v1.AppliedConfig
-	(*AppliedUsers)(nil),    // 8: pandora.node.v1.AppliedUsers
-	(*Heartbeat)(nil),       // 9: pandora.node.v1.Heartbeat
-	(*HostMetrics)(nil),     // 10: pandora.node.v1.HostMetrics
-	(*NodeRuntime)(nil),     // 11: pandora.node.v1.NodeRuntime
-	(*TrafficReport)(nil),   // 12: pandora.node.v1.TrafficReport
-	(*TrafficEntry)(nil),    // 13: pandora.node.v1.TrafficEntry
-	(*OnlineIPs)(nil),       // 14: pandora.node.v1.OnlineIPs
-	(*OnlineEntry)(nil),     // 15: pandora.node.v1.OnlineEntry
-	(*ConfigAck)(nil),       // 16: pandora.node.v1.ConfigAck
-	(*UsersAck)(nil),        // 17: pandora.node.v1.UsersAck
-	(*RenewRequest)(nil),    // 18: pandora.node.v1.RenewRequest
-	(*SessionResponse)(nil), // 19: pandora.node.v1.SessionResponse
-	(*Welcome)(nil),         // 20: pandora.node.v1.Welcome
-	(*ServerConfig)(nil),    // 21: pandora.node.v1.ServerConfig
-	(*NodeConfig)(nil),      // 22: pandora.node.v1.NodeConfig
-	(*UsersFull)(nil),       // 23: pandora.node.v1.UsersFull
-	(*UsersDelta)(nil),      // 24: pandora.node.v1.UsersDelta
-	(*User)(nil),            // 25: pandora.node.v1.User
-	(*TrafficAck)(nil),      // 26: pandora.node.v1.TrafficAck
-	(*Certificate)(nil),     // 27: pandora.node.v1.Certificate
-	(*Command)(nil),         // 28: pandora.node.v1.Command
-	(*Reconnect)(nil),       // 29: pandora.node.v1.Reconnect
-	(*Tombstone)(nil),       // 30: pandora.node.v1.Tombstone
+	(UpgradePhase)(0),       // 2: pandora.node.v1.UpgradePhase
+	(*EnrollRequest)(nil),   // 3: pandora.node.v1.EnrollRequest
+	(*EnrollResponse)(nil),  // 4: pandora.node.v1.EnrollResponse
+	(*HostInfo)(nil),        // 5: pandora.node.v1.HostInfo
+	(*SessionRequest)(nil),  // 6: pandora.node.v1.SessionRequest
+	(*Hello)(nil),           // 7: pandora.node.v1.Hello
+	(*AppliedConfig)(nil),   // 8: pandora.node.v1.AppliedConfig
+	(*AppliedUsers)(nil),    // 9: pandora.node.v1.AppliedUsers
+	(*Heartbeat)(nil),       // 10: pandora.node.v1.Heartbeat
+	(*HostMetrics)(nil),     // 11: pandora.node.v1.HostMetrics
+	(*NodeRuntime)(nil),     // 12: pandora.node.v1.NodeRuntime
+	(*CertStatus)(nil),      // 13: pandora.node.v1.CertStatus
+	(*TrafficReport)(nil),   // 14: pandora.node.v1.TrafficReport
+	(*TrafficEntry)(nil),    // 15: pandora.node.v1.TrafficEntry
+	(*OnlineIPs)(nil),       // 16: pandora.node.v1.OnlineIPs
+	(*OnlineEntry)(nil),     // 17: pandora.node.v1.OnlineEntry
+	(*ConfigAck)(nil),       // 18: pandora.node.v1.ConfigAck
+	(*UsersAck)(nil),        // 19: pandora.node.v1.UsersAck
+	(*UpgradeReport)(nil),   // 20: pandora.node.v1.UpgradeReport
+	(*RenewRequest)(nil),    // 21: pandora.node.v1.RenewRequest
+	(*SessionResponse)(nil), // 22: pandora.node.v1.SessionResponse
+	(*Welcome)(nil),         // 23: pandora.node.v1.Welcome
+	(*ServerConfig)(nil),    // 24: pandora.node.v1.ServerConfig
+	(*NodeConfig)(nil),      // 25: pandora.node.v1.NodeConfig
+	(*UsersFull)(nil),       // 26: pandora.node.v1.UsersFull
+	(*UsersDelta)(nil),      // 27: pandora.node.v1.UsersDelta
+	(*User)(nil),            // 28: pandora.node.v1.User
+	(*TrafficAck)(nil),      // 29: pandora.node.v1.TrafficAck
+	(*Certificate)(nil),     // 30: pandora.node.v1.Certificate
+	(*Command)(nil),         // 31: pandora.node.v1.Command
+	(*Reconnect)(nil),       // 32: pandora.node.v1.Reconnect
+	(*Upgrade)(nil),         // 33: pandora.node.v1.Upgrade
+	(*Tombstone)(nil),       // 34: pandora.node.v1.Tombstone
 }
 var file_pandora_node_v1_node_proto_depIdxs = []int32{
-	4,  // 0: pandora.node.v1.EnrollRequest.host:type_name -> pandora.node.v1.HostInfo
-	6,  // 1: pandora.node.v1.SessionRequest.hello:type_name -> pandora.node.v1.Hello
-	9,  // 2: pandora.node.v1.SessionRequest.heartbeat:type_name -> pandora.node.v1.Heartbeat
-	12, // 3: pandora.node.v1.SessionRequest.traffic:type_name -> pandora.node.v1.TrafficReport
-	14, // 4: pandora.node.v1.SessionRequest.online:type_name -> pandora.node.v1.OnlineIPs
-	16, // 5: pandora.node.v1.SessionRequest.config_ack:type_name -> pandora.node.v1.ConfigAck
-	17, // 6: pandora.node.v1.SessionRequest.users_ack:type_name -> pandora.node.v1.UsersAck
-	18, // 7: pandora.node.v1.SessionRequest.renew:type_name -> pandora.node.v1.RenewRequest
-	4,  // 8: pandora.node.v1.Hello.host:type_name -> pandora.node.v1.HostInfo
-	7,  // 9: pandora.node.v1.Hello.applied_configs:type_name -> pandora.node.v1.AppliedConfig
-	8,  // 10: pandora.node.v1.Hello.applied_users:type_name -> pandora.node.v1.AppliedUsers
-	10, // 11: pandora.node.v1.Heartbeat.metrics:type_name -> pandora.node.v1.HostMetrics
-	11, // 12: pandora.node.v1.Heartbeat.nodes:type_name -> pandora.node.v1.NodeRuntime
-	0,  // 13: pandora.node.v1.NodeRuntime.status:type_name -> pandora.node.v1.RuntimeStatus
-	13, // 14: pandora.node.v1.TrafficReport.entries:type_name -> pandora.node.v1.TrafficEntry
-	15, // 15: pandora.node.v1.OnlineIPs.entries:type_name -> pandora.node.v1.OnlineEntry
-	1,  // 16: pandora.node.v1.ConfigAck.phase:type_name -> pandora.node.v1.ConfigPhase
-	20, // 17: pandora.node.v1.SessionResponse.welcome:type_name -> pandora.node.v1.Welcome
-	21, // 18: pandora.node.v1.SessionResponse.config:type_name -> pandora.node.v1.ServerConfig
-	23, // 19: pandora.node.v1.SessionResponse.users_full:type_name -> pandora.node.v1.UsersFull
-	24, // 20: pandora.node.v1.SessionResponse.users_delta:type_name -> pandora.node.v1.UsersDelta
-	26, // 21: pandora.node.v1.SessionResponse.traffic_ack:type_name -> pandora.node.v1.TrafficAck
-	27, // 22: pandora.node.v1.SessionResponse.certificate:type_name -> pandora.node.v1.Certificate
-	28, // 23: pandora.node.v1.SessionResponse.command:type_name -> pandora.node.v1.Command
-	22, // 24: pandora.node.v1.ServerConfig.nodes:type_name -> pandora.node.v1.NodeConfig
-	25, // 25: pandora.node.v1.UsersFull.users:type_name -> pandora.node.v1.User
-	25, // 26: pandora.node.v1.UsersDelta.upserted:type_name -> pandora.node.v1.User
-	29, // 27: pandora.node.v1.Command.reconnect:type_name -> pandora.node.v1.Reconnect
-	30, // 28: pandora.node.v1.Command.tombstone:type_name -> pandora.node.v1.Tombstone
-	2,  // 29: pandora.node.v1.EnrollmentService.Enroll:input_type -> pandora.node.v1.EnrollRequest
-	5,  // 30: pandora.node.v1.ControlService.Session:input_type -> pandora.node.v1.SessionRequest
-	3,  // 31: pandora.node.v1.EnrollmentService.Enroll:output_type -> pandora.node.v1.EnrollResponse
-	19, // 32: pandora.node.v1.ControlService.Session:output_type -> pandora.node.v1.SessionResponse
-	31, // [31:33] is the sub-list for method output_type
-	29, // [29:31] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	5,  // 0: pandora.node.v1.EnrollRequest.host:type_name -> pandora.node.v1.HostInfo
+	7,  // 1: pandora.node.v1.SessionRequest.hello:type_name -> pandora.node.v1.Hello
+	10, // 2: pandora.node.v1.SessionRequest.heartbeat:type_name -> pandora.node.v1.Heartbeat
+	14, // 3: pandora.node.v1.SessionRequest.traffic:type_name -> pandora.node.v1.TrafficReport
+	16, // 4: pandora.node.v1.SessionRequest.online:type_name -> pandora.node.v1.OnlineIPs
+	18, // 5: pandora.node.v1.SessionRequest.config_ack:type_name -> pandora.node.v1.ConfigAck
+	19, // 6: pandora.node.v1.SessionRequest.users_ack:type_name -> pandora.node.v1.UsersAck
+	21, // 7: pandora.node.v1.SessionRequest.renew:type_name -> pandora.node.v1.RenewRequest
+	20, // 8: pandora.node.v1.SessionRequest.upgrade_report:type_name -> pandora.node.v1.UpgradeReport
+	5,  // 9: pandora.node.v1.Hello.host:type_name -> pandora.node.v1.HostInfo
+	8,  // 10: pandora.node.v1.Hello.applied_configs:type_name -> pandora.node.v1.AppliedConfig
+	9,  // 11: pandora.node.v1.Hello.applied_users:type_name -> pandora.node.v1.AppliedUsers
+	20, // 12: pandora.node.v1.Hello.last_upgrade:type_name -> pandora.node.v1.UpgradeReport
+	11, // 13: pandora.node.v1.Heartbeat.metrics:type_name -> pandora.node.v1.HostMetrics
+	12, // 14: pandora.node.v1.Heartbeat.nodes:type_name -> pandora.node.v1.NodeRuntime
+	0,  // 15: pandora.node.v1.NodeRuntime.status:type_name -> pandora.node.v1.RuntimeStatus
+	13, // 16: pandora.node.v1.NodeRuntime.cert:type_name -> pandora.node.v1.CertStatus
+	15, // 17: pandora.node.v1.TrafficReport.entries:type_name -> pandora.node.v1.TrafficEntry
+	17, // 18: pandora.node.v1.OnlineIPs.entries:type_name -> pandora.node.v1.OnlineEntry
+	1,  // 19: pandora.node.v1.ConfigAck.phase:type_name -> pandora.node.v1.ConfigPhase
+	2,  // 20: pandora.node.v1.UpgradeReport.phase:type_name -> pandora.node.v1.UpgradePhase
+	23, // 21: pandora.node.v1.SessionResponse.welcome:type_name -> pandora.node.v1.Welcome
+	24, // 22: pandora.node.v1.SessionResponse.config:type_name -> pandora.node.v1.ServerConfig
+	26, // 23: pandora.node.v1.SessionResponse.users_full:type_name -> pandora.node.v1.UsersFull
+	27, // 24: pandora.node.v1.SessionResponse.users_delta:type_name -> pandora.node.v1.UsersDelta
+	29, // 25: pandora.node.v1.SessionResponse.traffic_ack:type_name -> pandora.node.v1.TrafficAck
+	30, // 26: pandora.node.v1.SessionResponse.certificate:type_name -> pandora.node.v1.Certificate
+	31, // 27: pandora.node.v1.SessionResponse.command:type_name -> pandora.node.v1.Command
+	25, // 28: pandora.node.v1.ServerConfig.nodes:type_name -> pandora.node.v1.NodeConfig
+	28, // 29: pandora.node.v1.UsersFull.users:type_name -> pandora.node.v1.User
+	28, // 30: pandora.node.v1.UsersDelta.upserted:type_name -> pandora.node.v1.User
+	32, // 31: pandora.node.v1.Command.reconnect:type_name -> pandora.node.v1.Reconnect
+	34, // 32: pandora.node.v1.Command.tombstone:type_name -> pandora.node.v1.Tombstone
+	33, // 33: pandora.node.v1.Command.upgrade:type_name -> pandora.node.v1.Upgrade
+	3,  // 34: pandora.node.v1.EnrollmentService.Enroll:input_type -> pandora.node.v1.EnrollRequest
+	6,  // 35: pandora.node.v1.ControlService.Session:input_type -> pandora.node.v1.SessionRequest
+	4,  // 36: pandora.node.v1.EnrollmentService.Enroll:output_type -> pandora.node.v1.EnrollResponse
+	22, // 37: pandora.node.v1.ControlService.Session:output_type -> pandora.node.v1.SessionResponse
+	36, // [36:38] is the sub-list for method output_type
+	34, // [34:36] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_pandora_node_v1_node_proto_init() }
@@ -2596,8 +2991,9 @@ func file_pandora_node_v1_node_proto_init() {
 		(*SessionRequest_ConfigAck)(nil),
 		(*SessionRequest_UsersAck)(nil),
 		(*SessionRequest_Renew)(nil),
+		(*SessionRequest_UpgradeReport)(nil),
 	}
-	file_pandora_node_v1_node_proto_msgTypes[17].OneofWrappers = []any{
+	file_pandora_node_v1_node_proto_msgTypes[19].OneofWrappers = []any{
 		(*SessionResponse_Welcome)(nil),
 		(*SessionResponse_Config)(nil),
 		(*SessionResponse_UsersFull)(nil),
@@ -2606,17 +3002,18 @@ func file_pandora_node_v1_node_proto_init() {
 		(*SessionResponse_Certificate)(nil),
 		(*SessionResponse_Command)(nil),
 	}
-	file_pandora_node_v1_node_proto_msgTypes[26].OneofWrappers = []any{
+	file_pandora_node_v1_node_proto_msgTypes[28].OneofWrappers = []any{
 		(*Command_Reconnect)(nil),
 		(*Command_Tombstone)(nil),
+		(*Command_Upgrade)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pandora_node_v1_node_proto_rawDesc), len(file_pandora_node_v1_node_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   29,
+			NumEnums:      3,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

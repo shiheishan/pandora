@@ -1,15 +1,15 @@
-import { relativeTime } from '../../../core/format'
-import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
+import { formatCount, relativeTime } from '../../../core/format'
+import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServerStatus, ServingStatus } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
 // ---------------------------------------------------------------------------
 // 状态：设计只有「在线 / 离线 / 已停用 / 已退役」，后端是 serving_status + stale（契约映射）
 // ---------------------------------------------------------------------------
-export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired'
+export type NodeFilter = 'all' | 'online' | 'offline' | 'disabled' | 'retired' | 'cert'
 
 interface NodeState {
-  filter: Exclude<NodeFilter, 'all'>
+  filter: Exclude<NodeFilter, 'all' | 'cert'>
   label: string
   tone: Tone
   /** 状态旁的小字：草稿 */
@@ -30,15 +30,53 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
 }
 
 /**
+ * 「在线」一格的显示。online_users 是节点在设备识别窗口内（缺省 5 分钟）见过的用户数，节点离线后会在窗口过后降到 0：
+ * 在线节点照常显示人数（0 显示「—」）；离线节点人数还大于 0 时 value「—」、note「离线前 N 人在线」，降到 0 后不再提示
+ */
+export function onlineUsersView(n: Pick<NodeRow, 'serving_status' | 'stale' | 'online_users'>): { value: string; note: string | null } {
+  const state = nodeState(n)
+  const count = n.online_users ?? 0
+  if (state.filter === 'offline') {
+    if (count > 0) {
+      return { value: '—', note: `离线前 ${formatCount(count)} 人在线` }
+    }
+    return { value: '—', note: null }
+  }
+  return {
+    value: count > 0 ? formatCount(count) : '—',
+    note: null,
+  }
+}
+
+/**
+ * 证书要处理：在役、报过证书状态，且申请失败（error_code 非空）或快到期 / 已过期（IP 证书 2 天内、其余 14 天内）。
+ * 与 Go node/repo 的 CertAttentionBaseCond / CertFailingCond / CertExpiringCond 同口径
+ */
+export function certAttention(n: Pick<NodeRow, 'serving_status' | 'cert'>, now: number): boolean {
+  if (n.serving_status !== 'active' || !n.cert) return false
+  if (n.cert.error_code) return true
+  if (!n.cert.not_after) return false
+  const notAfterMs = new Date(n.cert.not_after).getTime()
+  const id = n.cert.identifier ?? ''
+  const isIP = id !== '' && (/^[0-9.]+$/.test(id) || id.includes(':'))
+  const deadline = now + (isIP ? 2 : 14) * 86400_000
+  return notAfterMs < deadline
+}
+
+/**
  * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
  * （GET v1/nodes 的 state 与 q、tag，node/repo 的 nodeListFilterSQL 与这里同一映射、同一组字段）。
  * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
  */
-export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string, tag = ''): NodeRow[] {
+export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string, tag = '', now = Date.now()): NodeRow[] {
   const q = query.trim().toLowerCase()
   return rows.filter((n) => {
-    const state = nodeState(n).filter
-    if (filter === 'all' ? state === 'retired' : state !== filter) return false
+    if (filter === 'cert') {
+      if (!certAttention(n, now)) return false
+    } else {
+      const state = nodeState(n).filter
+      if (filter === 'all' ? state === 'retired' : state !== filter) return false
+    }
     if (tag && !n.tags.includes(tag)) return false
     if (!q) return true
     const hay = [n.name, n.display_name, n.server_name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
@@ -95,6 +133,7 @@ export const NODE_LINE_FIELDS = [
   'traffic',
   'relay_count',
   'ech_enabled',
+  'cert',
 ] as const satisfies ReadonlyArray<keyof NodeRow>
 export type NodeLineData = Pick<NodeRow, (typeof NODE_LINE_FIELDS)[number]>
 
@@ -152,6 +191,13 @@ export const REGIONS: ReadonlyArray<readonly [string, string]> = [
   ['RU', 'RU · 俄罗斯'],
 ]
 
+/** REGIONS 里按两位代码找中文地区名（REGIONS 的名称形如「HK · 香港」，取「·」后半），认不出显示原代码 */
+export function regionLabel(code: string | null): string {
+  if (!code) return '—'
+  const label = REGIONS.find(([c]) => c === code)?.[1]
+  return label ? (label.split(' · ')[1] ?? label) : code
+}
+
 /** 协议卡片右侧小字：单 UDP 传输标 UDP，否则 TCP */
 export const protocolKind = (s: ProtocolSchema) => (s.enums?.network?.length === 1 && s.enums.network[0] === 'udp' ? 'UDP' : 'TCP')
 
@@ -160,13 +206,92 @@ export const protocolKind = (s: ProtocolSchema) => (s.enums?.network?.length ===
  */
 export const canActivate = (n: Pick<NodeRow, 'serving_status'>) => n.serving_status === 'draft'
 
+/** 下拉「暂不绑定」的说明：新建向导的服务器下拉与提示同一句 */
+export const UNBOUND_HINT = '暂不绑定：节点先作为配置存着，不占端口、不下发；要上线时在详情「身份与操作」里绑定服务器'
+
+/** 上线按钮置灰的原因：没绑服务器时返回提示，能上线（就状态而言）时返回 null */
+export function activateBlock(n: Pick<NodeRow, 'server_id'>): string | null {
+  return n.server_id == null ? '先在「身份与操作」里绑定服务器再上线' : null
+}
+
+/** 绑定 / 改绑 / 解绑置灰的原因；能操作时返回 null。退役单独说，其余只看后端给的 movable */
+export function bindBlock(n: Pick<NodeRow, 'serving_status' | 'movable'>): string | null {
+  if (n.serving_status === 'retired') return '节点已退役'
+  if (!n.movable) return '节点在役，先停用再改绑 / 解绑'
+  return null
+}
+
+/** 服务器下拉里能不能选：与后端 lockServerForNodes 一致，新建、绑定、复制都只拒已退役（容量满由后端 409 标到表单） */
+export const serverAcceptsNodes = (s: { status: ServerStatus }) => s.status !== 'retired'
+
+type PickServer = { id: string; name: string; region: string | null; node_count: number; capacity_nodes: number; status: ServerStatus; enrolled: boolean }
+
+/**
+ * 绑定弹窗与新建向导的服务器下拉：按地区排、地区写在前面（客服找「大阪」，不认 jp-osa-edge-1，10-21 测试员要滚到底才找到），
+ * 括号里写「已有几个节点 / 最多几个」；没接入的标「（未接入）」，已退役的置灰
+ */
+export function serverPickOptions(servers: readonly PickServer[]): { value: string; label: string; disabled: boolean }[] {
+  const key = (s: PickServer) => s.region?.trim() || s.name
+  return [...servers]
+    .sort((a, b) => key(a).localeCompare(key(b), 'zh-CN') || a.name.localeCompare(b.name))
+    .map((s) => {
+      const region = s.region?.trim()
+      const base = `${region ? `${region} · ` : ''}${s.name}（${s.node_count}/${s.capacity_nodes} 个节点）`
+      const unenrolled = !s.enrolled && s.status !== 'retired'
+      return { value: s.id, label: unenrolled ? `${base}（未接入）` : base, disabled: !serverAcceptsNodes(s) }
+    })
+}
+
+/** 绑定弹窗的校验：服务器必选，端口 1–65535 必填 */
+export function validateBind(serverId: string, port: string): Record<string, string> {
+  const e: Record<string, string> = {}
+  if (!serverId) e.server_id = '选择要绑定的服务器'
+  const p = Number(port)
+  if (!Number.isInteger(p) || p < 1 || p > 65535) e.server_port = '1–65535'
+  return e
+}
+
+/** 端口缺省的候选：常见的 HTTPS 端口在前，都被占了再往后找 */
+const PORT_CANDIDATES = [443, 8443, 2053, 2083, 2087, 2096, 10443]
+
+/**
+ * 给某台服务器挑一个没被占的端口当缺省值（绑定弹窗、新建向导用）：同一台上别的节点（不论 TCP / UDP）用过的都跳过，
+ * 后端按 L4 判冲突更宽，这里保守些；候选都被占时从 20000 往上找。只是缺省值，占用以后端 409 为准
+ */
+export function freePort(serverId: string, nodes: readonly Pick<NodeRow, 'id' | 'server_id' | 'server_port'>[], selfId?: string): number {
+  const used = new Set(usedPorts(serverId, nodes, selfId))
+  const hit = PORT_CANDIDATES.find((p) => !used.has(p))
+  if (hit != null) return hit
+  let p = 20000
+  while (used.has(p)) p++
+  return p
+}
+
+/** 这台服务器上别的节点已用的端口（升序去重），端口框的说明用 */
+export function usedPorts(serverId: string, nodes: readonly Pick<NodeRow, 'id' | 'server_id' | 'server_port'>[], selfId?: string): number[] {
+  const ports = nodes.flatMap((n) => (n.server_id === serverId && n.id !== selfId && n.server_port != null ? [n.server_port] : []))
+  return [...new Set(ports)].sort((a, b) => a - b)
+}
+
+/** 端口框说明：选了服务器就列出这台已用的端口（最多 6 个） */
+export function portHint(ports: readonly number[]): string {
+  if (ports.length === 0) return '同一台服务器上端口先到先得；这台还没有别的节点占端口'
+  const shown = ports.slice(0, 6).join('、')
+  return `同一台服务器上端口先到先得；这台已用 ${shown}${ports.length > 6 ? ` 等 ${ports.length} 个` : ''}，缺省已避开`
+}
+
+/** POST v1/nodes/:id/bind 的请求体 */
+export function bindBody(n: Pick<NodeRow, 'row_version'>, serverId: string, port: string): { row_version: number; server_id: string; server_port: number } {
+  return { row_version: n.row_version, server_id: serverId, server_port: Number(port) }
+}
+
 /**
  * R113 上线响应的 warnings → 带下一步的提示（Toast 用普通语气，不是错误）。首次搭建时池还没绑套餐是正常流程：
  * 先上线节点，再去套餐页发布绑了这个池的版本。只认 node/service 上线（nodeNoPoolWarning）与未绑套餐的两条提示原文，其余原样接在后面
  */
 export function activationHint(warning: string): string {
   if (warning === '所在节点池没有绑定任何套餐，暂时不服务任何用户') return '已上线。所在节点池还没绑定套餐，暂时不服务用户——下一步到「套餐」页，在套餐版本里选上这个节点池并发布。'
-  if (warning === '未划入节点池，不服务任何用户') return '已上线。节点还没划入节点池，不服务任何用户——下一步在「协议参数」里给它选一个资源池。'
+  if (warning === '未划入节点池，不服务任何用户') return '已上线。节点还没划入节点池，不服务任何用户——下一步在「设置」页签的「访问」里点「编辑」选一个节点池。'
   return `已上线。${warning}`
 }
 
@@ -181,9 +306,9 @@ const EDGES: Readonly<Record<ServingStatus, readonly ServingStatus[]>> = {
 }
 export const canTransition = (from: ServingStatus, to: ServingStatus) => EDGES[from].includes(to)
 
-/** 批量启用 / 停用：整批有一条非法后端就整批 409，所以只提交能转的，其余计数告诉管理员 */
+/** 批量启用 / 停用：整批有一条非法后端就整批 409，所以只提交能转的（启用还要已绑服务器），其余计数告诉管理员 */
 export function batchPlan(rows: readonly NodeRow[], to: 'active' | 'disabled'): { items: Array<{ id: string; row_version: number }>; skipped: number } {
-  const ok = rows.filter((n) => n.serving_status !== to && canTransition(n.serving_status, to))
+  const ok = rows.filter((n) => n.serving_status !== to && canTransition(n.serving_status, to) && (to !== 'active' || n.server_id != null))
   return { items: ok.map((n) => ({ id: n.id, row_version: n.row_version })), skipped: rows.length - ok.length }
 }
 
@@ -308,6 +433,8 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
     else if (f.kind === 'boolean') out[f.path] = v === true || v === 'true' ? 'true' : v === false || v === 'false' ? 'false' : ''
     else if (f.kind === 'json' || (typeof v === 'object' && v !== null)) out[f.path] = JSON.stringify(v, null, 2)
     else out[f.path] = String(v)
+    // 旧节点没有 cert_mode，后端按 file 处理；留空会让手填路径被 show_if 藏起来且必填拦保存
+    if (f.path === 'cert_mode' && (v === undefined || v === null)) out[f.path] = 'file'
   }
   return out
 }
@@ -393,6 +520,27 @@ export function mapProtocolErrors(fields: readonly ProtocolField[], errors: Read
 export const realityEnabled = (nodeType: string, values: FormValues) => (nodeType === 'vless' || nodeType === 'trojan') && values.tls === '2'
 export const REALITY_KEYS = { private_key: 'reality_settings.private_key', public_key: 'reality_settings.public_key', short_id: 'reality_settings.short_id' } as const
 
+/**
+ * 「生成密钥对」的结果写回表单：私钥、公钥总是换新；short_id 已填（去掉首尾空白非空）就保留管理员填的，空着才用生成的。
+ * keptShortId 为 true 表示保留了原值（提示里要说）。
+ */
+export function withRealityKeypair(values: FormValues, k: { private_key: string; public_key: string; short_id: string }): { values: FormValues; keptShortId: boolean } {
+  const keptShortId = Boolean(values[REALITY_KEYS.short_id]?.trim())
+  return {
+    values: {
+      ...values,
+      [REALITY_KEYS.private_key]: k.private_key,
+      [REALITY_KEYS.public_key]: k.public_key,
+      [REALITY_KEYS.short_id]: keptShortId ? (values[REALITY_KEYS.short_id] ?? '') : k.short_id,
+    },
+    keptShortId,
+  }
+}
+
+/** 生成密钥对后的提示：保留了 short_id 时写明 */
+export const realityKeypairToast = (keptShortId: boolean) =>
+  keptShortId ? '已生成 REALITY 密钥对，short_id 保留你填的值；私钥保存后不再回显' : '已生成 REALITY 密钥对，私钥保存后不再回显'
+
 /** VLESS 的 Vision 流控：只有 REALITY + tcp 能用（后端 validateVLESSFlow） */
 export const VISION_FLOW = 'xtls-rprx-vision'
 const visionEligible = (nodeType: string, v: FormValues) => nodeType === 'vless' && v.tls === '2' && (v.network || 'tcp') === 'tcp'
@@ -439,8 +587,8 @@ export interface BasicForm {
   country: string
 }
 
-/** 资源池必填的说明：下拉的提示与校验文案同一句 */
-export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点不服务任何用户'
+/** 节点池必填的说明：下拉的提示与校验文案同一句 */
+export const NO_POOL_HINT = '选择节点池：不在任何节点池里的节点不服务任何用户'
 
 export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '443', rate: '1', country: '' })
 
@@ -461,17 +609,22 @@ export function basicFromRow(n: NodeDetail): BasicForm {
   }
 }
 
-export function validateBasic(b: BasicForm, creating: boolean): Record<string, string> {
+/** live = 节点在役，地址必填 */
+export function validateBasic(b: BasicForm, creating: boolean, live = false): Record<string, string> {
   const e: Record<string, string> = {}
   if (!b.name.trim()) e.name = '必填'
   else if ([...b.name.trim()].length > 120) e.name = '不超过 120 字'
-  if (creating && !b.serverId) e.server_id = '选择承载的服务器'
   // 新建必须选节点池（R104）；编辑时节点池在详情『访问』里单独改，协议表单不再校验它
   if (creating && !b.poolId) e.pool_id = NO_POOL_HINT
   if (creating && !b.nodeType) e.node_type = '选择协议'
-  if (!b.host.trim()) e.server_host = '必填'
-  const port = Number(b.port)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) e.server_port = '1–65535'
+  if (live && !b.host.trim()) e.server_host = '必填：在役节点要有对外地址'
+  const portTrim = b.port.trim()
+  if (portTrim === '') {
+    if (b.serverId) e.server_port = '选了服务器就要填端口（1–65535）'
+  } else {
+    const port = Number(portTrim)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) e.server_port = '1–65535'
+  }
   const rate = Number(b.rate)
   if (!(rate > 0)) e.traffic_rate = '倍率必须大于 0'
   if (creating && !b.country.trim()) e.country_code = '请选择地区'
@@ -482,12 +635,12 @@ export function validateBasic(b: BasicForm, creating: boolean): Record<string, s
 export function createBody(b: BasicForm, config: Record<string, unknown>): Record<string, unknown> {
   return {
     name: b.name.trim(),
-    server_id: b.serverId,
     node_type: b.nodeType,
     server_host: b.host.trim(),
-    server_port: Number(b.port),
     protocol_config: config,
     traffic_rate: Number(b.rate),
+    ...(b.serverId ? { server_id: b.serverId } : {}),
+    ...(b.port.trim() ? { server_port: Number(b.port) } : {}),
     ...(b.poolId ? { pool_id: b.poolId } : {}),
     ...(b.displayName.trim() ? { display_name: b.displayName.trim() } : {}),
     ...(b.country.trim() ? { country_code: b.country.trim().toUpperCase() } : {}),
@@ -506,7 +659,7 @@ export function patchBody(row: NodeDetail, b: BasicForm, protocol: { changed: bo
   if (b.poolId !== before.poolId) body.pool_id = b.poolId || null
   if (b.nodeType !== before.nodeType) body.node_type = b.nodeType
   if (b.host.trim() !== before.host) body.server_host = b.host.trim()
-  if (b.port !== before.port) body.server_port = Number(b.port)
+  if (b.port.trim() !== '' && b.port !== before.port) body.server_port = Number(b.port)
   if (Number(b.rate) !== row.traffic_rate) body.traffic_rate = Number(b.rate)
   if (b.country.trim().toUpperCase() !== before.country) body.country_code = b.country.trim() ? b.country.trim().toUpperCase() : null
   if (protocol.changed || b.nodeType !== before.nodeType) body.protocol_config = protocol.config
@@ -754,7 +907,9 @@ export const sourceTone = (s: RoutingSource): Tone => (s.scope === 'node' ? 'inf
 // ---------------------------------------------------------------------------
 // 带宽：近 24 小时按整点分桶，每桶取 (rx+tx)×8/1e6 的均值（Mbps）
 // ---------------------------------------------------------------------------
-export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new Date()): Array<{ hour: number; mbps: number | null }> {
+export type BandwidthBucket = { start: number; mbps: number | null }
+
+export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new Date()): BandwidthBucket[] {
   const end = new Date(now)
   end.setMinutes(0, 0, 0)
   const start = end.getTime() - 23 * 3600_000
@@ -766,22 +921,75 @@ export function bandwidthBuckets(points: readonly MetricPoint[], now: Date = new
     sums[i]!.total += ((p.rx_speed + p.tx_speed) * 8) / 1e6
     sums[i]!.n += 1
   }
-  return sums.map((s, i) => ({ hour: new Date(start + i * 3600_000).getHours(), mbps: s.n ? Number((s.total / s.n).toFixed(1)) : null }))
+  return sums.map((s, i) => ({ start: start + i * 3600_000, mbps: s.n ? Number((s.total / s.n).toFixed(1)) : null }))
 }
 
-/** 带宽曲线标题里的峰值：最大的非空桶；全空或最大值为 0 时返回 null */
-export function bandwidthPeak(buckets: ReadonlyArray<{ hour: number; mbps: number | null }>): { mbps: number; hour: number } | null {
-  let best: { mbps: number; hour: number } | null = null
+/** 带宽曲线标题里的峰值：最大的非空桶；全空或最大值 ≤ 0 时返回 null；并列取更早的 */
+export function bandwidthPeak(buckets: readonly BandwidthBucket[]): { mbps: number; start: number } | null {
+  let best: { mbps: number; start: number } | null = null
   for (const b of buckets) {
     if (b.mbps === null || b.mbps <= 0) continue
-    if (!best || b.mbps > best.mbps || (b.mbps === best.mbps && b.hour < best.hour)) best = { mbps: b.mbps, hour: b.hour }
+    if (!best || b.mbps > best.mbps || (b.mbps === best.mbps && b.start < best.start)) best = { mbps: b.mbps, start: b.start }
   }
   return best
 }
 
+/** 桶开始时刻的日子说法：与 now 同一本地日「今天」，前一天「昨天」，更早「M月D日」（模块内用，不导出） */
+function dayWord(start: number, now: Date): string {
+  const s = new Date(start)
+  const sY = s.getFullYear()
+  const sM = s.getMonth()
+  const sD = s.getDate()
+
+  const nY = now.getFullYear()
+  const nM = now.getMonth()
+  const nD = now.getDate()
+
+  if (sY === nY && sM === nM && sD === nD) return '今天'
+
+  const y = new Date(now)
+  y.setDate(y.getDate() - 1)
+  if (sY === y.getFullYear() && sM === y.getMonth() && sD === y.getDate()) return '昨天'
+
+  return `${sM + 1}月${sD}日`
+}
+
+/** 悬停读数：「昨天 23:00–24:00」「今天 14:00–15:00」（结束整点为 0 点时写 24:00） */
+export function bucketRangeLabel(start: number, now: Date): string {
+  const s = new Date(start)
+  const hStart = s.getHours()
+  const hStartStr = String(hStart).padStart(2, '0')
+  const hEndStr = hStart === 23 ? '24:00' : `${String(hStart + 1).padStart(2, '0')}:00`
+  const day = dayWord(start, now)
+  return `${day} ${hStartStr}:00–${hEndStr}`
+}
+
+/** 标题峰值：「峰值 393.1 Mbps · 昨天 23:00」；没有峰值回 null */
+export function bandwidthPeakLabel(peak: { mbps: number; start: number } | null, now: Date): string | null {
+  if (!peak) return null
+  const s = new Date(peak.start)
+  const hStr = `${String(s.getHours()).padStart(2, '0')}:00`
+  const day = dayWord(peak.start, now)
+  return `峰值 ${peak.mbps} Mbps · ${day} ${hStr}`
+}
+
+/** x 轴刻度：第 0、6、12、18、23 桶的开始整点「HH:00」，带桶序号（定位用） */
+export function bandwidthAxis(buckets: readonly BandwidthBucket[]): Array<{ index: number; label: string }> {
+  const indices = [0, 6, 12, 18, 23]
+  const axis: Array<{ index: number; label: string }> = []
+  for (const index of indices) {
+    const b = buckets[index]
+    if (b) {
+      const h = new Date(b.start).getHours()
+      axis.push({ index, label: `${String(h).padStart(2, '0')}:00` })
+    }
+  }
+  return axis
+}
+
 /** 地址查询串 f 的取值 → 状态筛选；认不出的一律 'all' */
 export function parseNodeFilter(raw: string | null): NodeFilter {
-  if (raw === 'online' || raw === 'offline' || raw === 'disabled' || raw === 'retired') return raw
+  if (raw === 'online' || raw === 'offline' || raw === 'disabled' || raw === 'retired' || raw === 'cert') return raw
   return 'all'
 }
 

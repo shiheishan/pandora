@@ -658,6 +658,11 @@ def run_round(rnd, ctx):
                 mine = [x for x in prof["ips"] if x["ip"] == ip]
                 check(bool(mine) and mine[0]["accounts"] == len(ms),
                       f"{c['id']} 单用户画像里 {ip} 的同 IP 账号数 = {len(ms)}")
+                # 画像按同一条 clusterRisk 给每个共用 IP 定风险，用户详情的「风险等级」取最高一档
+                check(bool(mine) and cl is not None and mine[0]["risk"] == cl["risk"]
+                      and prof.get("risk") in ("low", "mid", "high"),
+                      f"{c['id']} 单用户画像里 {ip} 的风险与聚类一致",
+                      f"画像 {mine[0].get('risk') if mine else None} / 顶层 {prof.get('risk')} / 聚类 {None if cl is None else cl['risk']}")
             per_ip[ip] = dict(accounts=len(ms) if cl else 1, risk=cl["risk"] if cl else None,
                               listed=cl is not None, reg_here=reg_here,
                               key=cl["key"] if cl else None)

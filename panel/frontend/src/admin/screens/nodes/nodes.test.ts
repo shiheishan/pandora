@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { NODE_PROTOCOL_SCHEMAS } from '../../../../dev/mock/admin/node-schemas'
 import {
+  activateBlock,
+  activationHint,
+  bandwidthAxis,
   bandwidthBuckets,
   bandwidthPeak,
+  bandwidthPeakLabel,
   basicFromRow,
   batchPlan,
+  bindBlock,
+  bindBody,
+  bucketRangeLabel,
   canTransition,
+  certAttention,
+  serverAcceptsNodes,
   createBody,
   emptyBasic,
   filterNodes,
@@ -15,6 +24,7 @@ import {
   moveItem,
   nodeCounts,
   nodeState,
+  onlineUsersView,
   orderItems,
   parseNodeFilter,
   patchBody,
@@ -25,8 +35,11 @@ import {
   enumOptions,
   fieldVisible,
   protocolDefaults,
+  type ProtocolField,
   BASIC_STEP_KEYS,
   realityEnabled,
+  realityKeypairToast,
+  withRealityKeypair,
   VISION_FLOW,
   withProtocolDefaults,
   clearableSecret,
@@ -40,6 +53,11 @@ import {
   toFormValues,
   toProtocolConfig,
   validateBasic,
+  validateBind,
+  freePort,
+  portHint,
+  serverPickOptions,
+  usedPorts,
   NO_POOL_HINT,
   NODE_LINE_FIELDS,
   sameNodeLine,
@@ -114,7 +132,8 @@ describe('schemas', () => {
     expect(SCHEMAS).toHaveLength(13)
     expect(SCHEMAS.filter(isStable)).toHaveLength(13)
     expect(SCHEMAS.some((s) => s.status === 'legacy-read-compatible' || s.node_type === 'v2ray' || s.node_type === 'hysteria')).toBe(false)
-    expect(schemaOf('socks').required).toEqual([])
+    // Go 的 nil required 归一成 []（mieru 没有必填项）
+    expect(schemaOf('mieru').required).toEqual([])
     expect(row().granted_plans).toEqual([])
     // 标签与时段倍率：Go 的 nil 切片按 null 来也归一成 []
     expect(row().tags).toEqual([])
@@ -184,6 +203,12 @@ describe('status transitions', () => {
     const rows = [row({ id: 'a', serving_status: 'disabled' }), row({ id: 'b', serving_status: 'active' }), row({ id: 'c', serving_status: 'retired' })]
     expect(batchPlan(rows, 'active')).toEqual({ items: [{ id: 'a', row_version: 5 }], skipped: 2 })
     expect(batchPlan(rows, 'disabled')).toEqual({ items: [{ id: 'b', row_version: 5 }], skipped: 2 })
+  })
+
+  it('batch enable skips disabled nodes that have no server (backend would 409 the whole batch)', () => {
+    const rows = [row({ id: 'a', serving_status: 'disabled' }), row({ id: 'u', serving_status: 'disabled', server_id: null })]
+    expect(batchPlan(rows, 'active')).toEqual({ items: [{ id: 'a', row_version: 5 }], skipped: 1 })
+    expect(batchPlan([row({ id: 'u', serving_status: 'active', server_id: null })], 'disabled').items).toHaveLength(1)
   })
 })
 
@@ -319,6 +344,25 @@ describe('protocol form', () => {
     expect(protocolNotices('vless', { tls: '0', network: 'ws' })[0]).toContain('需要套 CDN 或 TLS')
   })
 
+  it('toFormValues defaults missing cert_mode to file for legacy configs', () => {
+    const fields: ProtocolField[] = [
+      {
+        path: 'cert_mode',
+        kind: 'enum',
+        options: ['acme', 'file'],
+        required: true,
+        sensitive: false,
+        label: '证书模式',
+        advanced: false,
+        showIf: null,
+        defaultValue: 'acme',
+        optionLabels: {},
+      },
+    ]
+    expect(toFormValues(fields, { cert_path: '/etc/pandora-native/certs/a/fullchain.pem' }).cert_mode).toBe('file')
+    expect(toFormValues(fields, { cert_mode: 'acme' }).cert_mode).toBe('acme')
+  })
+
   it('maps protocol_config.* 422 keys onto form fields', () => {
     const fields = protocolFields(schemaOf('vless'))
     const out = mapProtocolErrors(fields, { 'protocol_config.tls': 'x', 'protocol_config.private_key': 'y', name: 'z' })
@@ -346,10 +390,10 @@ describe('basic info and PATCH', () => {
     expect(validateBasic(filled, true)).toEqual({})
   })
 
-  it('uses new error copy for name, host and port', () => {
-    const e = validateBasic({ ...filled, name: '', host: '', port: '70000' }, true)
+  it('uses new error copy for name and port', () => {
+    const e = validateBasic({ ...filled, name: '', port: '70000' }, true)
     expect(e.name).toBe('必填')
-    expect(e.server_host).toBe('必填')
+    expect(e.server_host).toBeUndefined()
     expect(e.server_port).toBe('1–65535')
   })
 
@@ -364,7 +408,85 @@ describe('basic info and PATCH', () => {
 
   it('creates with only filled optionals, uppercasing the country', () => {
     const body = createBody({ ...filled, poolId: 'p1', port: '8388', rate: '1.5', country: 'hk' }, { cipher: 'aes-256-gcm' })
-    expect(body).toMatchObject({ name: 'A', server_port: 8388, country_code: 'HK', pool_id: 'p1' })
+    expect(body).toMatchObject({ name: 'A', server_id: 's', server_port: 8388, country_code: 'HK', pool_id: 'p1' })
+  })
+
+  it('validateBasic: unbound create allows empty server, port and host', () => {
+    const base = { ...filled, serverId: '', port: '', host: '' }
+    const e = validateBasic(base, true)
+    expect(e.server_id).toBeUndefined()
+    expect(e.server_port).toBeUndefined()
+    expect(e.server_host).toBeUndefined()
+    expect(validateBasic({ ...base, serverId: 's1', port: '' }, true).server_port).toBe('选了服务器就要填端口（1–65535）')
+    expect(validateBasic({ ...filled, host: '' }, false, true).server_host).toBe('必填：在役节点要有对外地址')
+  })
+
+  it('createBody omits server_id and server_port when empty', () => {
+    const body = createBody({ ...filled, serverId: '', port: '', host: '' }, {})
+    expect(body).not.toHaveProperty('server_id')
+    expect(body).not.toHaveProperty('server_port')
+  })
+
+  it('patchBody omits server_port when port cleared', () => {
+    const n = row()
+    const b = { ...basicFromRow(n), port: '' }
+    const body = patchBody(n, b, { changed: false, config: {} })
+    expect(body).not.toHaveProperty('server_port')
+  })
+
+  it('activateBlock and bindBlock', () => {
+    expect(activateBlock({ server_id: null })).toBe('先在「身份与操作」里绑定服务器再上线')
+    expect(activateBlock({ server_id: 's1' })).toBeNull()
+    expect(bindBlock({ serving_status: 'draft', movable: true })).toBeNull()
+    expect(bindBlock({ serving_status: 'disabled', movable: true })).toBeNull()
+    expect(bindBlock({ serving_status: 'active', movable: false })).toBe('节点在役，先停用再改绑 / 解绑')
+    expect(bindBlock({ serving_status: 'retired', movable: false })).toBe('节点已退役')
+  })
+
+  it('serverAcceptsNodes 与后端 lockServerForNodes 一致：只拒已退役', () => {
+    for (const status of ['draft', 'ready', 'draining', 'maintenance'] as const) expect(serverAcceptsNodes({ status })).toBe(true)
+    expect(serverAcceptsNodes({ status: 'retired' })).toBe(false)
+  })
+
+  it('validateBind and bindBody', () => {
+    expect(validateBind('', '443')).toEqual({ server_id: '选择要绑定的服务器' })
+    expect(validateBind('s1', 'x').server_port).toBe('1–65535')
+    expect(bindBody({ row_version: 3 }, 's1', '443')).toEqual({ row_version: 3, server_id: 's1', server_port: 443 })
+  })
+
+  it('freePort skips ports taken on the same server', () => {
+    const n = (id: string, server_id: string | null, server_port: number | null) => ({ id, server_id, server_port })
+    expect(freePort('s1', [])).toBe(443)
+    expect(freePort('s1', [n('a', 's1', 443), n('b', 's2', 8443)])).toBe(8443)
+    expect(freePort('s1', [n('a', 's1', 443)], 'a')).toBe(443)
+    expect(freePort('s1', [443, 8443, 2053, 2083, 2087, 2096, 10443, 20000].map((p, i) => n(String(i), 's1', p)))).toBe(20001)
+  })
+
+  it('usedPorts and portHint list ports taken on the chosen server', () => {
+    const n = (id: string, server_id: string | null, server_port: number | null) => ({ id, server_id, server_port })
+    const nodes = [n('a', 's1', 8389), n('b', 's1', 8388), n('c', 's1', 8388), n('d', 's2', 443), n('e', 's1', null)]
+    expect(usedPorts('s1', nodes)).toEqual([8388, 8389])
+    expect(usedPorts('s1', nodes, 'a')).toEqual([8388])
+    expect(portHint([])).toBe('同一台服务器上端口先到先得；这台还没有别的节点占端口')
+    expect(portHint([8388, 8389])).toBe('同一台服务器上端口先到先得；这台已用 8388、8389，缺省已避开')
+    expect(portHint([1, 2, 3, 4, 5, 6, 7])).toBe('同一台服务器上端口先到先得；这台已用 1、2、3、4、5、6 等 7 个，缺省已避开')
+  })
+
+  it('serverPickOptions sorts by region and puts the region first', () => {
+    const s = (id: string, name: string, region: string | null, extra: Partial<{ enrolled: boolean; status: 'ready' | 'draft' | 'retired' }> = {}) => ({
+      id,
+      name,
+      region,
+      node_count: 2,
+      capacity_nodes: 16,
+      status: extra.status ?? ('ready' as const),
+      enrolled: extra.enrolled ?? true,
+    })
+    const opts = serverPickOptions([s('1', 'jp-tyo-edge-2', '东京'), s('2', 'jp-osa-edge-1', '大阪'), s('3', 'zz-new', null, { enrolled: false, status: 'draft' }), s('4', 'old', '香港', { status: 'retired' })])
+    expect(opts.map((o) => o.value)).toEqual(['2', '1', '4', '3'])
+    expect(opts[0]).toEqual({ value: '2', label: '大阪 · jp-osa-edge-1（2/16 个节点）', disabled: false })
+    expect(opts[2]!.disabled).toBe(true)
+    expect(opts[3]!.label).toBe('zz-new（2/16 个节点）（未接入）')
   })
 
   it('sends only changed fields and leaves protocol_config out unless the protocol changed', () => {
@@ -455,27 +577,176 @@ describe('routing rows', () => {
 })
 
 describe('bandwidth', () => {
-  it('averages (rx+tx)*8/1e6 per hour over the last 24 hours', () => {
-    const now = new Date('2026-09-24T10:30:00')
+  it('averages (rx+tx)*8/1e6 per hour over the last 24 hours returning start timestamps', () => {
+    const now = new Date(2026, 8, 24, 10, 30)
     const at = (h: number, m: number) => new Date(2026, 8, 24, h, m).toISOString()
     const p = (iso: string, rx: number, tx: number) => ({ at: iso, cpu_percent: 0, mem_percent: 0, load1: 0, rx_speed: rx, tx_speed: tx, tcp_conns: 0 })
     const b = bandwidthBuckets([p(at(10, 5), 1e6, 0), p(at(10, 20), 3e6, 0), p(at(9, 0), 125000, 0), p(at(8, 0), 0, 0)], now)
     expect(b).toHaveLength(24)
-    expect(b[23]).toEqual({ hour: 10, mbps: 16 })
-    expect(b[22]).toEqual({ hour: 9, mbps: 1 })
+    expect(b[23]).toEqual({ start: new Date(2026, 8, 24, 10, 0).getTime(), mbps: 16 })
+    expect(b[22]).toEqual({ start: new Date(2026, 8, 24, 9, 0).getTime(), mbps: 1 })
     expect(b[0]!.mbps).toBeNull()
+    expect(b[0]!.start).toBe(new Date(2026, 8, 23, 11, 0).getTime())
   })
 
-  it('bandwidthPeak picks max mbps and earliest hour on tie', () => {
-    expect(bandwidthPeak([{ hour: 1, mbps: null }, { hour: 2, mbps: null }])).toBeNull()
-    expect(bandwidthPeak([{ hour: 3, mbps: 0 }])).toBeNull()
-    expect(bandwidthPeak([{ hour: 5, mbps: 2 }, { hour: 8, mbps: 10 }, { hour: 3, mbps: 10 }])).toEqual({ mbps: 10, hour: 3 })
+  it('bandwidthPeak picks max mbps and earliest start timestamp on tie', () => {
+    expect(bandwidthPeak([{ start: 1000, mbps: null }, { start: 2000, mbps: null }])).toBeNull()
+    expect(bandwidthPeak([{ start: 3000, mbps: 0 }])).toBeNull()
+    expect(bandwidthPeak([{ start: 5000, mbps: 2 }, { start: 8000, mbps: 10 }, { start: 3000, mbps: 10 }])).toEqual({ mbps: 10, start: 3000 })
+  })
+
+  it('bucketRangeLabel formats today, yesterday, and 24:00 ending correctly', () => {
+    const now = new Date(2026, 9, 21, 15, 30)
+    // 今天 14:00–15:00
+    const todayStart = new Date(2026, 9, 21, 14, 0).getTime()
+    expect(bucketRangeLabel(todayStart, now)).toBe('今天 14:00–15:00')
+    // 昨天 10:00–11:00
+    const yesterdayStart = new Date(2026, 9, 20, 10, 0).getTime()
+    expect(bucketRangeLabel(yesterdayStart, now)).toBe('昨天 10:00–11:00')
+    // 24:00 结束整点（昨天 23:00–24:00）
+    const yesterday23 = new Date(2026, 9, 20, 23, 0).getTime()
+    expect(bucketRangeLabel(yesterday23, now)).toBe('昨天 23:00–24:00')
+    // 更早日期 M月D日
+    const olderStart = new Date(2026, 9, 15, 8, 0).getTime()
+    expect(bucketRangeLabel(olderStart, now)).toBe('10月15日 08:00–09:00')
+  })
+
+  it('bandwidthPeakLabel formats peak string with day and hour or returns null', () => {
+    const now = new Date(2026, 9, 21, 15, 30)
+    const peak = { mbps: 393.1, start: new Date(2026, 9, 20, 23, 0).getTime() }
+    expect(bandwidthPeakLabel(peak, now)).toBe('峰值 393.1 Mbps · 昨天 23:00')
+    expect(bandwidthPeakLabel(null, now)).toBeNull()
+  })
+
+  it('bandwidthAxis returns 5 ticks at indices 0, 6, 12, 18, 23 with HH:00 labels', () => {
+    const now = new Date(2026, 9, 21, 14, 30)
+    const buckets = bandwidthBuckets([], now)
+    const axis = bandwidthAxis(buckets)
+    expect(axis).toHaveLength(5)
+    expect(axis.map((a) => a.index)).toEqual([0, 6, 12, 18, 23])
+    expect(axis[4]!.label).toBe('14:00')
+    expect(axis[3]!.label).toBe('09:00')
+    expect(axis[2]!.label).toBe('03:00')
+    expect(axis[1]!.label).toBe('21:00')
+    expect(axis[0]!.label).toBe('15:00')
+  })
+})
+
+describe('onlineUsersView', () => {
+  it('formats online node with users or dash when 0', () => {
+    expect(onlineUsersView({ serving_status: 'active', stale: false, online_users: 12 })).toEqual({ value: '12', note: null })
+    expect(onlineUsersView({ serving_status: 'active', stale: false, online_users: 0 })).toEqual({ value: '—', note: null })
+  })
+
+  it('formats offline node with previous online users note or null note when 0', () => {
+    expect(onlineUsersView({ serving_status: 'active', stale: true, online_users: 8 })).toEqual({ value: '—', note: '离线前 8 人在线' })
+    expect(onlineUsersView({ serving_status: 'active', stale: true, online_users: 0 })).toEqual({ value: '—', note: null })
+  })
+
+  it('formats disabled node without offline note', () => {
+    expect(onlineUsersView({ serving_status: 'disabled', stale: false, online_users: 5 })).toEqual({ value: '5', note: null })
+    expect(onlineUsersView({ serving_status: 'disabled', stale: false, online_users: 0 })).toEqual({ value: '—', note: null })
+  })
+})
+
+describe('certAttention', () => {
+  const now = new Date(2026, 9, 21, 12, 0).getTime()
+
+  it('identifies failing certificate on active node', () => {
+    const n = {
+      serving_status: 'active' as const,
+      cert: {
+        mode: 'acme' as const,
+        identifier: 'test.example.com',
+        identifier_kind: 'domain' as const,
+        not_after: new Date(now + 30 * 86400_000).toISOString(),
+        error_code: 'acme_dns_failed',
+        error_detail: 'timeout',
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    }
+    expect(certAttention(n, now)).toBe(true)
+  })
+
+  it('identifies IP cert expiring in 1 day (deadline 2 days)', () => {
+    const n = {
+      serving_status: 'active' as const,
+      cert: {
+        mode: 'acme' as const,
+        identifier: '1.2.3.4',
+        identifier_kind: 'ip' as const,
+        not_after: new Date(now + 1 * 86400_000).toISOString(),
+        error_code: null,
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    }
+    expect(certAttention(n, now)).toBe(true)
+  })
+
+  it('identifies domain cert expiring in 10 days (deadline 14 days)', () => {
+    const n = {
+      serving_status: 'active' as const,
+      cert: {
+        mode: 'acme' as const,
+        identifier: 'sub.example.com',
+        identifier_kind: 'domain' as const,
+        not_after: new Date(now + 10 * 86400_000).toISOString(),
+        error_code: null,
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    }
+    expect(certAttention(n, now)).toBe(true)
+  })
+
+  it('does not flag domain cert expiring in 30 days', () => {
+    const n = {
+      serving_status: 'active' as const,
+      cert: {
+        mode: 'acme' as const,
+        identifier: 'sub.example.com',
+        identifier_kind: 'domain' as const,
+        not_after: new Date(now + 30 * 86400_000).toISOString(),
+        error_code: null,
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    }
+    expect(certAttention(n, now)).toBe(false)
+  })
+
+  it('ignores draft, disabled, or missing cert nodes even with failing/expiring status', () => {
+    const draft = {
+      serving_status: 'draft' as const,
+      cert: {
+        mode: 'acme' as const,
+        identifier: '1.2.3.4',
+        identifier_kind: 'ip' as const,
+        not_after: new Date(now + 1 * 86400_000).toISOString(),
+        error_code: 'failed',
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    }
+    expect(certAttention(draft, now)).toBe(false)
+
+    const disabled = { ...draft, serving_status: 'disabled' as const }
+    expect(certAttention(disabled, now)).toBe(false)
+
+    expect(certAttention({ serving_status: 'active', cert: null }, now)).toBe(false)
   })
 })
 
 describe('parseNodeFilter and nodeCounts', () => {
   it('parseNodeFilter maps known values and defaults to all', () => {
     expect(parseNodeFilter('online')).toBe('online')
+    expect(parseNodeFilter('cert')).toBe('cert')
     expect(parseNodeFilter(null)).toBe('all')
     expect(parseNodeFilter('x')).toBe('all')
   })
@@ -488,6 +759,28 @@ describe('parseNodeFilter and nodeCounts', () => {
       row({ id: 'n4', serving_status: 'disabled', stale: false }),
     ]
     expect(nodeCounts(rows)).toEqual({ total: 3, online: 1 })
+  })
+})
+
+describe('activationHint and NO_POOL_HINT', () => {
+  it('returns updated hint when node is not assigned to a pool', () => {
+    expect(activationHint('未划入节点池，不服务任何用户')).toBe(
+      '已上线。节点还没划入节点池，不服务任何用户——下一步在「设置」页签的「访问」里点「编辑」选一个节点池。',
+    )
+  })
+
+  it('keeps pool not bound to plans hint intact', () => {
+    expect(activationHint('所在节点池没有绑定任何套餐，暂时不服务任何用户')).toBe(
+      '已上线。所在节点池还没绑定套餐，暂时不服务用户——下一步到「套餐」页，在套餐版本里选上这个节点池并发布。',
+    )
+  })
+
+  it('appends other warnings after 已上线。', () => {
+    expect(activationHint('其他警告')).toBe('已上线。其他警告')
+  })
+
+  it('NO_POOL_HINT matches standard node pool wording', () => {
+    expect(NO_POOL_HINT).toBe('选择节点池：不在任何节点池里的节点不服务任何用户')
   })
 })
 
@@ -545,6 +838,75 @@ describe('filterNodes with tag and tagOptions', () => {
     expect(filterNodes([n1, n2, n3], 'all', '', 'VIP')).toEqual([n2])
     expect(filterNodes([n1, n2, n3], 'all', '', 'direct')).toEqual([n2])
     expect(filterNodes([n1, n2, n3], 'all', '', 'other')).toEqual([])
+  })
+
+  it('filters nodes with cert filter using certAttention', () => {
+    const now = new Date(2026, 9, 21, 12, 0).getTime()
+    const nFailing = row({
+      id: 'c1',
+      name: 'Failing Node',
+      serving_status: 'active',
+      cert: {
+        mode: 'acme',
+        identifier: 'a.com',
+        identifier_kind: 'domain',
+        not_after: null,
+        error_code: 'err',
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    })
+    const nExpiring = row({
+      id: 'c2',
+      name: 'Expiring Node',
+      serving_status: 'active',
+      cert: {
+        mode: 'acme',
+        identifier: '1.1.1.1',
+        identifier_kind: 'ip',
+        not_after: new Date(now + 86400_000).toISOString(),
+        error_code: null,
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    })
+    const nHealthy = row({
+      id: 'c3',
+      name: 'Healthy Node',
+      serving_status: 'active',
+      cert: {
+        mode: 'acme',
+        identifier: 'ok.com',
+        identifier_kind: 'domain',
+        not_after: new Date(now + 30 * 86400_000).toISOString(),
+        error_code: null,
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    })
+    const nDisabled = row({
+      id: 'c4',
+      name: 'Disabled Node',
+      serving_status: 'disabled',
+      cert: {
+        mode: 'acme',
+        identifier: 'a.com',
+        identifier_kind: 'domain',
+        not_after: null,
+        error_code: 'err',
+        error_detail: null,
+        next_attempt_at: null,
+        reported_at: '2026-09-01T00:00:00Z',
+      },
+    })
+
+    const rows = [nFailing, nExpiring, nHealthy, nDisabled]
+    expect(filterNodes(rows, 'cert', '', '', now)).toEqual([nFailing, nExpiring])
+    // Still filters by search query
+    expect(filterNodes(rows, 'cert', 'expiring', '', now)).toEqual([nExpiring])
   })
 
   it('search query does not match tags', () => {
@@ -607,3 +969,22 @@ describe('sameNodeLine with new fields', () => {
   })
 })
 
+
+describe('withRealityKeypair', () => {
+  const k = { private_key: 'GEN-PRIV', public_key: 'GEN-PUB', short_id: 'ab12' }
+
+  it('keeps a short_id the admin already typed and still replaces both keys', () => {
+    const { values, keptShortId } = withRealityKeypair({ tls: '2', 'reality_settings.short_id': '0123abcd', 'reality_settings.private_key': 'OLD' }, k)
+    expect(keptShortId).toBe(true)
+    expect(values).toMatchObject({ tls: '2', 'reality_settings.private_key': 'GEN-PRIV', 'reality_settings.public_key': 'GEN-PUB', 'reality_settings.short_id': '0123abcd' })
+    expect(realityKeypairToast(keptShortId)).toContain('short_id 保留你填的值')
+  })
+
+  it('fills short_id only when it is empty or blank', () => {
+    expect(withRealityKeypair({ tls: '2' }, k).values['reality_settings.short_id']).toBe('ab12')
+    const blank = withRealityKeypair({ 'reality_settings.short_id': '  ' }, k)
+    expect(blank.keptShortId).toBe(false)
+    expect(blank.values['reality_settings.short_id']).toBe('ab12')
+    expect(realityKeypairToast(false)).toBe('已生成 REALITY 密钥对，私钥保存后不再回显')
+  })
+})

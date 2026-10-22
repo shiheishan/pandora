@@ -30,7 +30,11 @@ type fakeSettings struct {
 	setSiteErr      error
 
 	supportRules service.SupportRules
+	fallback     string
+	signup       service.Signup
 }
+
+func (f *fakeSettings) SiteURLFallback() string { return f.fallback }
 
 func (f *fakeSettings) Site(ctx context.Context) (service.Site, error) {
 	return f.site, nil
@@ -46,6 +50,18 @@ func (f *fakeSettings) SetSite(ctx context.Context, u service.SiteUpdate) error 
 	}
 	if u.Timezone != nil {
 		v.Timezone = *u.Timezone
+	}
+	if u.SEOKeywords != nil {
+		v.SEOKeywords = *u.SEOKeywords
+	}
+	if u.SEODescription != nil {
+		v.SEODescription = *u.SEODescription
+	}
+	if u.AllowIndexing != nil {
+		v.AllowIndexing = *u.AllowIndexing
+	}
+	if u.URL != nil {
+		v.URL = *u.URL
 	}
 	f.setSiteVal = v
 	f.site = v
@@ -95,7 +111,11 @@ func (f *fakeSettings) SetSupportRules(ctx context.Context, v service.SupportRul
 }
 
 func (f *fakeSettings) SignupWithoutSecret(ctx context.Context) (service.Signup, error) {
-	return service.Signup{EmailSuffixes: []string{}}, nil
+	s := f.signup
+	if s.EmailSuffixes == nil {
+		s.EmailSuffixes = []string{}
+	}
+	return s, nil
 }
 
 func (f *fakeSettings) SetSignup(ctx context.Context, u service.SignupUpdate) error {
@@ -188,6 +208,75 @@ func TestSiteConfig(t *testing.T) {
 	}
 }
 
+func TestSiteConfigMailPaused(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeSettings{
+		policy: service.Registration{
+			Mode:              service.RegistrationOpen,
+			EmailVerification: true,
+		},
+		mailOK:  true,
+		enabled: map[string]bool{service.SwitchNotifyEmail: false},
+	}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors())
+	h.RegisterPublic(e.Group("/v1"), testKit(h))
+
+	rec := do(e, http.MethodGet, "/v1/site-config", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["password_reset"] != false {
+		t.Fatalf("password_reset %v", m["password_reset"])
+	}
+	if m["email_verification"] != true {
+		t.Fatalf("email_verification %v", m["email_verification"])
+	}
+}
+
+func TestSignupConfigMailPaused(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeSettings{
+		mailOK:  true,
+		signup:  service.Signup{MailLinkLogin: true},
+		enabled: map[string]bool{service.SwitchNotifyEmail: true},
+	}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors())
+	h.RegisterPublic(e.Group("/v1"), testKit(h))
+
+	rec := do(e, http.MethodGet, "/v1/signup-config", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var on map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &on); err != nil {
+		t.Fatal(err)
+	}
+	if on["mail_link_login"] != true {
+		t.Fatalf("mail on: %v", on["mail_link_login"])
+	}
+
+	fake.enabled = map[string]bool{service.SwitchNotifyEmail: false}
+	rec = do(e, http.MethodGet, "/v1/signup-config", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var off map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &off); err != nil {
+		t.Fatal(err)
+	}
+	if off["mail_link_login"] != false {
+		t.Fatalf("mail paused: %v", off["mail_link_login"])
+	}
+}
+
 func TestGetSiteRequiresAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeSettings{site: service.Site{Name: "N", Timezone: "Asia/Shanghai"}}
@@ -261,13 +350,44 @@ func TestSetSite(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "bad_request" {
 		t.Fatalf("status %d code %s", rec.Code, errCode(t, rec))
 	}
+
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"seo_keywords":"加速, 节点","allow_indexing":true}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seo post status %d body %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil {
+		t.Fatal(err)
+	}
+	if sr.SEOKeywords != "加速, 节点" || !sr.AllowIndexing || sr.Name != "夜海加速" {
+		t.Fatalf("seo response %+v", sr)
+	}
+
+	// 主域名：原样交给 service，回显存的值与安装时的地址
+	fake.fallback = "https://panel.example.test"
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"url":"https://new.example.test"}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("url post status %d body %s", rec.Code, rec.Body.String())
+	}
+	if fake.setSiteVal.URL != "https://new.example.test" || fake.setSiteVal.Name != "夜海加速" {
+		t.Fatalf("setSite url %+v", fake.setSiteVal)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &sr); err != nil || sr.URL != "https://new.example.test" || sr.URLFallback != "https://panel.example.test" {
+		t.Fatalf("url response %s", rec.Body.String())
+	}
+
+	// 连通核对不过：service 的字段错误原样回 422
+	fake.setSiteErr = errs.Invalid(map[string]string{"url": "这个地址打不开本面板"})
+	rec = do(e, http.MethodPost, "/v1/settings/site", `{"url":"https://typo.example.test"}`, hdrs)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "这个地址打不开本面板") {
+		t.Fatalf("url 422 status %d body %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestListSwitchesJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeSettings{
 		switches: []service.Switch{
-			{Code: "a", Enabled: true, Essential: false, Reason: nil},
+			{Code: "a", Enabled: true, Reason: nil},
 		},
 	}
 	h := New(fake)
@@ -278,6 +398,9 @@ func TestListSwitchesJSON(t *testing.T) {
 	rec := do(e, http.MethodGet, "/v1/switches", "", map[string]string{"X-Test-Auth": "1"})
 	if !strings.Contains(rec.Body.String(), `"reason":null`) {
 		t.Fatalf("body %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "essential") {
+		t.Fatalf("response must not contain essential: %s", rec.Body.String())
 	}
 
 	fake.switches = nil
@@ -422,7 +545,7 @@ func TestSupportRules(t *testing.T) {
 		"X-Test-Reauth": "1",
 	}
 
-	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48}`, hdrs)
+	rec := do(e, http.MethodPost, "/v1/settings/support", `{"wait_for_reply":true,"auto_close_enabled":true,"auto_close_hours":48,"max_open_tickets":8}`, hdrs)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("post status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -435,7 +558,7 @@ func TestSupportRules(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 {
+	if !out.WaitForReply || !out.AutoClose || out.AutoCloseHours != 48 || out.MaxOpenTickets != 8 {
 		t.Fatalf("rules %+v", out)
 	}
 

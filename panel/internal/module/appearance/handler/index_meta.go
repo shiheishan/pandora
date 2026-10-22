@@ -9,6 +9,8 @@ import (
 	"github.com/aegispanel/aegis/internal/pkg/webapp"
 )
 
+const robotsNoIndex = "noindex, nofollow"
+
 // Page 区分两个入口页：标题写法不同。
 type Page int
 
@@ -31,7 +33,9 @@ const defaultIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 
 var DefaultIcon = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(defaultIconSVG))
 
 // IndexMeta 把外观快照转成入口页 <head> 的改写内容，供装配处传给 webapp.WithIndexMeta。
-// 站点名取系统设置，描述用主题标语（没有就用站点名），图标用主题 Logo（没有就用内置默认图标）。
+// 图标恒用内置 DefaultIcon（主题 Logo 10-21 删了）。
+// 门户：描述 = SEO 描述（空则标语，再空站点名）；keywords 取 SEO 关键词；收录关时 robots noindex,nofollow；canonical 与 Open Graph 用 SiteURL。
+// 后台：描述照旧（标语或站点名）；恒 noindex,nofollow；不写 keywords、canonical，不开 Open Graph。
 func IndexMeta(src PageMetaSource, page Page) func(ctx context.Context) webapp.IndexMeta {
 	return func(ctx context.Context) webapp.IndexMeta {
 		m := src.PageMeta(ctx)
@@ -44,19 +48,40 @@ func IndexMeta(src PageMetaSource, page Page) func(ctx context.Context) webapp.I
 		if page == PageAdmin {
 			title = site + " 控制台"
 		}
+
 		desc := strings.TrimSpace(m.Tagline)
 		if desc == "" {
 			desc = site
 		}
-		icon := m.Logo
-		if !strings.HasPrefix(icon, "data:image/") {
-			icon = DefaultIcon
+		keywords := ""
+		url := ""
+		robots := ""
+		og := false
+
+		if page == PagePortal {
+			seoDesc := strings.TrimSpace(m.SEODescription)
+			if seoDesc != "" {
+				desc = seoDesc
+			}
+			keywords = strings.TrimSpace(m.SEOKeywords)
+			url = m.SiteURL
+			if !m.AllowIndexing {
+				robots = robotsNoIndex
+			}
+			og = true
+		} else {
+			robots = robotsNoIndex
 		}
+
 		return webapp.IndexMeta{
 			Title:       title,
 			Description: desc,
 			AppName:     site,
-			Icon:        icon,
+			Icon:        DefaultIcon,
+			Keywords:    keywords,
+			Robots:      robots,
+			URL:         url,
+			OpenGraph:   og,
 		}
 	}
 }

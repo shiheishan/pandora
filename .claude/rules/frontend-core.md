@@ -14,12 +14,24 @@ paths:
   - 没有守卫测试，靠约定维持
 - core 不持有单例：`TokenStore`、`ApiClient`、`QueryClient` 由各入口经 `shell/runtime.tsx` 的 `createAppRuntime` 各建一份
   - 两个网关的令牌互不通用；后台还要另外注入 reauth 对话框
-- 两个入口同源（后台只是一个反代前缀），所以令牌的 localStorage 键必须按入口区分（`core/token.ts` 的 `tokenStorageKey`）
-  - 守卫：`token.test.ts` 的 "keeps admin and portal tokens apart on the shared origin"
-  - 只存 access_token（15 分钟）；refresh 值在 HttpOnly cookie（Path=/v1/auth），前端碰不到
-- 401 的处理只在 `api.ts` 一处：先单飞调 `v1/auth/refresh`（`navigator.locks` 跨标签页互斥，拿到锁先看令牌是否已被别的标签页换掉），成功就重放原请求一次；refresh 被拒才掉线，refresh 的 503/断网原样抛出、不清令牌
+- 访问令牌只在内存（`core/token.ts` 的 `TokenStore`，10-20 起）：两个入口同源（后台只是一个反代前缀），门户上任何一处 XSS（插槽、人机验证第三方脚本）都能读 localStorage，令牌不许写进任何存储
+  - 守卫：`token.test.ts` 的 "never writes the token to storage"
+  - refresh 值在 HttpOnly cookie（门户 `pandora_rt`、后台 `pandora_admin_rt`，Path=/v1/auth，SameSite=Strict），前端碰不到
+  - localStorage 只存不含秘密的登录标志 `pandora-<app>-session` = `"1"`（`sessionHintKey`，按入口区分，守卫 "keeps admin and portal hints apart on the shared origin"）：`set` 时写、`clear` 时删；存储不可用时只记在内存。`core/theme-boot.js` 首帧前读它决定藏不藏门户首页，两边 `main.tsx` 读它决定要不要预取外框
+- 跨标签页：`BroadcastChannel('pandora-<app>-auth')`，消息只有 `{type:'signed-in'}` / `{type:'signed-out'}`，绝不广播令牌；没有 BroadcastChannel 时退回监听登录标志键的 storage 事件
+  - 广播集中在 TokenStore：`set` 从无到有广播 signed-in、`clear` 从有到无广播 signed-out；登录各页、改密、退出、401 掉线都不另写广播
+  - 收到 signed-out：本页清令牌（走 runtime 清查询缓存的路径），不回广播；收到 signed-in 且本页没有令牌：本页自己调一次 refresh 换自己的 access
+- 登录状态四种（`shell/session.ts` 的 `createSessionTracker`，`shell/runtime.tsx` 的 `useSession()`）：`unknown`（开机恢复中）/ `signed-in` / `signed-out` / `unavailable`
+  - 开机：有登录标志才调一次 `api.refreshSession()`（单飞、`navigator.locks`）；没有标志直接 signed-out，不调 refresh（匿名访客不耗限速）。refresh 被拒（4xx）删标志、signed-out；429、5xx、断网是 `unavailable`：一句话 + 重试（`shell/SessionGate.tsx` 的 `SessionPending`），不当成未登录、不删标志
+  - `unknown` 时两边入口画加载占位（与外框加载同一个空白占位），不闪登录页、不闪首页；门户「退出后停在空地址就跳登录页」只在 signed-in → signed-out 时触发，unknown → signed-out 不算
+  - 门户地址带快捷 / 邮件登录令牌时 `createAppRuntime('portal', { restoreSession: false })`：不开机恢复旧会话，免得旧会话的 refresh 与这次登录赛跑、最后令牌与 cookie 不是同一个人
+  - 守卫：`shell/session.test.ts`；浏览器用例 `tests/browser/portal-session.spec.ts`（S1：登录后刷新仍是登录态）
+- 401 的处理只在 `api.ts` 一处：先单飞调 `v1/auth/refresh`（`navigator.locks` 跨标签页互斥；拿到锁先看本页令牌是否已被本页别的请求换掉——令牌只在内存，看不到别的标签页的），成功就重放原请求一次；refresh 被拒（429 以外的 4xx）才掉线，refresh 的 429/5xx/断网（`network_error`）原样抛出、不清令牌
+  - 两个标签页先后拿同一枚 cookie 去 refresh、或轮换的响应没送到，由服务端 30 秒宽限兜住（上一代 cookie 30 秒内还能换 access，并拿回当前那一枚 cookie；超过 30 秒再用判为重放、吊销整条会话），假后端同口径
+  - 一次 refresh（含排队等 `navigator.locks`）限时 15 秒（`refreshTimeoutMs`），超时按 `network_error` 抛：开机进「暂时连不上 + 重试」，不会因别的标签页卡住而一直空白
+  - 跨标签页广播（BroadcastChannel）与登录标志只是提示：同源脚本能伪造广播、占锁，所以收到 signed-in 也要自己 refresh 拿令牌，不能据此认定已登录
   - 口令校验接口（`passwordCheck`）也先刷新再重放：重放仍 401 才是口令错，交给表单，不登出
-  - 只有 refresh 与 logout 带 cookie（`withCookies`），其余请求 `credentials: 'omit'`；logout 同时 `auth: false`，只凭 cookie 吊销，access 过期也能登出
+  - 会 Set-Cookie 或凭 cookie 的接口带 `withCookies`（same-origin）：登录（后台、门户）、快捷登录、邮件链接登录、refresh、logout；其余请求 `credentials: 'omit'`。omit 模式下浏览器连响应里的 Set-Cookie 也丢掉，登录不带 cookie 等于 15 分钟后必掉线（10-20 修，守卫 `portal/login-cookies.test.ts`）；logout 同时 `auth: false`，只凭 cookie 吊销，access 过期也能登出
   - 守卫：`api.test.ts` 的 "access token refresh on 401"
 - 幂等键约定（契约 1.5）只有 `core/intent.ts` 这一份，后台的 `admin/actions.ts` 与门户的 `screens/common/intent.ts` 都是原样转出
   - 一次用户意图一把键，按意图的 JSON 指纹决定：双击、断网或 5xx 后重试、reauth 重放都复用同一把键
@@ -40,4 +52,4 @@ paths:
 - 每个入口只开一条 SSE（后台在 `admin/EventsCapsule.tsx`，门户在 `portal/Shell.tsx`，都用 `useRealtime`）
   - 页面要随事件刷新，就在查询的 `meta.topics` 里声明，由 `createRealtimeInvalidator` 失效，不另开连接
 - `core/query.ts` 的 `REALTIME_TOPICS` 要与 Go 对齐：`panel/internal/pkg/realtime/realtime.go` 的 `Topic*` 常量（含 `ticket.updated`、`switches.changed`）。Go 新增 topic 时这里同步加，守卫是 `realtime` 包的 `TestRealtimeTopicsMatchFrontend`
-- 令牌清空（退出、任一请求 401、其它标签页退出）时，`createAppRuntime` 会清空查询缓存，下一个登录的人看不到上一个人的数据。不要绕开 runtime 自建 `QueryClient`
+- 令牌清空（退出、任一请求 401、其它标签页广播退出）时，`createAppRuntime` 会清空查询缓存，下一个登录的人看不到上一个人的数据。不要绕开 runtime 自建 `QueryClient`

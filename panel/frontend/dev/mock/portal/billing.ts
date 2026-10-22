@@ -41,7 +41,7 @@ export async function readStrict(ctx: AnonContext, allowed: readonly string[]): 
 // ---------------------------------------------------------------------------
 // 优惠码
 // ---------------------------------------------------------------------------
-/** 返回折扣（分）；码为空时 0；不可用时抛 BillingError（契约 coupons/preview 的错误列表） */
+/** 返回折扣（分）；码为空时 0；不可用时抛 BillingError（与 Go 报价接口 v1/me/checkout/quote 对优惠码的拒绝一致） */
 export function couponCheck(code: unknown, subtotal: number, priceId: string | null): number {
   if (typeof code !== 'string' || code.trim() === '') return 0
   const c = COUPONS[code.trim().toUpperCase()]
@@ -164,6 +164,7 @@ export function renewSub(sub: SubFixture, price: CatalogPrice, now: number) {
     const end = addInterval(now, price)
     const fresh = makeSub({ planId: sub.plan_id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: 30, online: 0, sources: 0 })
     Object.assign(sub, { status: 'active', current_period_start: new Date(now).toISOString(), current_period_end: new Date(end).toISOString(), days: fresh.days, resetAt: fresh.resetAt })
+    delete sub.oldUsage
   }
   sub.price_id = price.id
   sub.amount = price.unit_amount
@@ -212,6 +213,7 @@ export function fulfill(state: PortalState, order: OrderFixture, via?: { provide
       else sub.limitBytes += plan.trafficBytes
       sub.current_period_end = stackPeriodEnd(sub, price, now)
       sub.status = 'active'
+      delete sub.oldUsage
       order.subscription_id = sub.id
     }
   }
@@ -242,6 +244,7 @@ export function swapPlan(sub: SubFixture, plan: CatalogPlan, price: CatalogPrice
     days: fresh.days,
     resetAt: fresh.resetAt,
   })
+  delete sub.oldUsage
 }
 
 /** 余额变动一律记流水（契约门户-05 history 的 kind 取值） */

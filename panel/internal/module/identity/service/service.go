@@ -34,6 +34,9 @@ type settingsReader interface {
 	RegistrationPolicy(ctx context.Context) (settingssvc.Registration, error)
 	MailConfigured(ctx context.Context) (bool, error)
 	Signup(ctx context.Context) (settingssvc.Signup, error)
+	SwitchEnabled(ctx context.Context, code string) (bool, error)
+	// SiteURLAliases 是本站认的全部根地址：人机验证核对令牌来源的主机名用它
+	SiteURLAliases(ctx context.Context) []string
 }
 
 // txRunner 是 *tx.Manager 的事务入口。
@@ -86,6 +89,9 @@ type Service struct {
 	groupUsage OpsGroupUsage
 
 	geo *geoip.Resolver
+
+	// 溯源总览（trace.go）：拉取这一路由 subscription 实现，装配时注入。
+	traceFetches TraceFetches
 }
 
 // New 构造 identity service。keys 用于验证码、收件目标与限流键的 HMAC；rdb 存改密失败计数；
@@ -104,7 +110,7 @@ func New(r *repo.Repo, txm *tx.Manager, settings *settingssvc.Service, audit *au
 		hasher:   newPasswordHasher(cfg.Auth.PasswordHash),
 		devMode:  !cfg.IsProduction(),
 		now:      time.Now,
-		captcha:  newCaptchaVerifier(cfg.PublicBaseURL),
+		captcha:  newCaptchaVerifier(settings.SiteURLAliases),
 	}
 }
 
@@ -193,8 +199,8 @@ func (s *Service) writeSelfAudit(ctx context.Context, userID uuid.UUID, e audits
 var (
 	// ErrInvalidCredentials 是邮箱不存在或口令不对。
 	ErrInvalidCredentials = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
-	// ErrAccountInactive 是账号已停用或封禁：对外与 ErrInvalidCredentials 完全相同（IAM-006），
-	// 单独一个变量只为让 auth 在失败审计里区分原因。
+	// ErrAccountInactive 是账号已停用或封禁，只在口令校验通过之后返回：auth 据此在口令正确时明确提示
+	// 「账号已停用」（用户 10-21 定），所以必须先验口令、再看状态，不许把状态判断提前（否则不知道口令的人也能探出状态）。
 	ErrAccountInactive = errs.Newf(errs.Unauthorized, "邮箱或密码不正确")
 	// ErrWrongCurrentPassword 是改密时当前口令不对。
 	ErrWrongCurrentPassword = errs.Newf(errs.Unauthorized, "当前密码不正确")
@@ -204,6 +210,10 @@ var (
 	ErrPasswordResetUnavailable = errs.Newf(errs.Forbidden, "找回密码当前不可用，请联系客服")
 	// ErrPasswordHashBusy 是排队等口令哈希名额超时。
 	ErrPasswordHashBusy = errs.Newf(errs.Unavailable, "口令校验繁忙，请稍后重试")
+	// ErrRegistrationMailPaused 是开了邮箱验证、但降级开关 notify.email 停用（后台「暂停邮件投递」打开）时的注册第 1 步：验证码发不出去，直接拒，不写码。
+	ErrRegistrationMailPaused = errs.Newf(errs.Unavailable, "邮件发送暂停，暂时无法注册，请稍后再试")
+	// ErrPasswordResetMailPaused 是 notify.email 停用时的找回密码第 1 步；停用前已发出的验证码第 2 步照常可用。
+	ErrPasswordResetMailPaused = errs.Newf(errs.Unavailable, "邮件发送暂停，暂时无法找回密码，请稍后再试")
 )
 
 // errCodeInvalid 是找回密码第 2 步一切「对不上」的统一回应：没有验证码、过期、次数用完、账号不可用。
@@ -236,10 +246,20 @@ func (s *Service) MissingPorts() []string {
 		{"OrderCanceller", s.cancelOrders != nil},
 		{"CommissionVoider", s.voidCommission != nil},
 		{"TelegramUnbinder", s.tgUnbind != nil},
+		{"TraceFetches", s.traceFetches != nil},
 	} {
 		if !p.ok {
 			out = append(out, p.name)
 		}
 	}
 	return out
+}
+
+// mailPaused 报告降级开关 notify.email 是否停用（后台「暂停邮件投递」打开）：停用时派发不认领邮件，验证码发不出去。
+func (s *Service) mailPaused(ctx context.Context) (bool, error) {
+	on, err := s.settings.SwitchEnabled(ctx, settingssvc.SwitchNotifyEmail)
+	if err != nil {
+		return false, err
+	}
+	return !on, nil
 }

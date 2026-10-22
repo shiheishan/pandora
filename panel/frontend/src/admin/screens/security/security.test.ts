@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
-  accessDetail,
+  accessAccount,
+  accessFromQuery,
+  accessIpText,
   accessOutcomeLabel,
   accessQuery,
+  accessToQuery,
   accessTone,
+  accessUser,
+  accessUserFilterLabel,
+  ACTION_NAMES,
+  actionLabel,
   actorLabel,
+  auditFromQuery,
   auditQuery,
+  auditToQuery,
   authLabel,
   clockTime,
   clusterPlace,
@@ -16,10 +25,9 @@ import {
   EMPTY_AUDIT_FILTER,
   exportQuery,
   hasAuditFilter,
-  ipLabel,
-  isAccessError,
   isMarkedNormal,
   objectLabel,
+  reasonLabel,
   reviewState,
   reviewText,
   SWITCH_META,
@@ -74,11 +82,14 @@ describe('audit log', () => {
   it('labels actors, objects and auth context the way the contract maps them', () => {
     expect(actorLabel({ actor_email: 'a@example.test', actor_kind: 'admin' })).toBe('a@example.test')
     expect(actorLabel({ actor_email: null, actor_kind: 'system' })).toBe('系统')
-    expect(actorLabel({ actor_email: null, actor_kind: 'node' })).toBe('节点代理')
-    expect(actorLabel({ actor_email: null, actor_kind: 'agent' })).toBe('客服')
+    expect(actorLabel({ actor_email: null, actor_kind: 'anonymous' })).toBe('匿名')
     expect(objectLabel({ resource_label: 'PD2609-1', resource_type: 'order', resource_id: 'x' })).toBe('PD2609-1')
-    expect(objectLabel({ resource_label: null, resource_type: 'withdrawal', resource_id: '0192abcd-ef00-7000-8000-000000000000' })).toBe('withdrawal · 0192abcd')
-    expect(objectLabel({ resource_label: null, resource_type: 'feature_switch', resource_id: null })).toBe('feature_switch')
+    expect(objectLabel({ resource_label: null, resource_type: 'plan_version', resource_id: '9c0e1a2b-4444-4444-8888-000000000000' })).toBe('套餐版本 · 9c0e1a2b')
+    expect(objectLabel({ resource_label: null, resource_type: 'withdrawal', resource_id: '0192abcd-ef00-7000-8000-000000000000' })).toBe('提现 · 0192abcd')
+    expect(objectLabel({ resource_label: null, resource_type: 'feature_switch', resource_id: null })).toBe('降级开关')
+    expect(objectLabel({ resource_label: null, resource_type: 'foo_bar', resource_id: '12345678-abcd' })).toBe('foo_bar · 12345678')
+    expect(objectLabel({ resource_label: null, resource_type: 'foo_bar', resource_id: null })).toBe('foo_bar')
+    expect(objectLabel({ resource_label: null, resource_type: null, resource_id: '12345678-abcd' })).toBe('12345678')
     expect(objectLabel({ resource_label: null, resource_type: null, resource_id: null })).toBe('—')
     expect(authLabel('reauth')).toEqual({ label: '二次认证', strong: true })
     expect(authLabel('session').label).toBe('会话')
@@ -92,11 +103,73 @@ describe('audit log', () => {
     expect(clockTime('garbage', now)).toBe('garbage')
   })
 
-  it('accepts legacy rows and the node actor, rejects unknown outcomes', () => {
-    const row = { id: '1', occurred_at: '2026-09-01T00:00:00Z', actor_kind: 'node', actor_email: null, action: 'node.enroll', resource_type: null, resource_id: null, api_domain: 'node', outcome: 'success', reason: null, resource_label: null, auth_context: null, source_ip: null }
+  it('rejects legacy node, agent and plugin actors, accepts anonymous and rejects unknown outcomes', () => {
+    const row = { id: '1', occurred_at: '2026-09-01T00:00:00Z', actor_kind: 'anonymous', actor_email: null, action: 'node.enroll', resource_type: null, resource_id: null, api_domain: 'node', outcome: 'success', reason: null, resource_label: null, auth_context: null, source_ip: null, data: {} }
     expect(auditResponse.safeParse({ events: [row], total: 1 }).success).toBe(true)
+    expect(auditResponse.safeParse({ events: [{ ...row, actor_kind: 'node' }], total: 1 }).success).toBe(false)
+    expect(auditResponse.safeParse({ events: [{ ...row, actor_kind: 'agent' }], total: 1 }).success).toBe(false)
+    expect(auditResponse.safeParse({ events: [{ ...row, actor_kind: 'plugin' }], total: 1 }).success).toBe(false)
     expect(auditResponse.safeParse({ events: [{ ...row, outcome: 'error' }], total: 1 }).success).toBe(false)
     expect(auditResponse.safeParse({ events: [{ ...row, auth_context: 'password' }], total: 1 }).success).toBe(false)
+  })
+
+  it('covers action names dictionary completely and strictly ordered', () => {
+    const codes = ACTION_NAMES.map(([code]) => code)
+    expect(new Set(codes).size).toBe(codes.length)
+    expect(codes).toEqual([...codes].sort())
+    for (const [code, name] of ACTION_NAMES) {
+      expect(code).toMatch(/^[a-z_]+(\.[a-z_]+)+$/)
+      expect(name.trim()).not.toBe('')
+      expect(name.trim()).not.toBe(code)
+      expect(name).not.toContain('.')
+    }
+    expect(actionLabel('user.login_failed')).toBe('登录失败')
+    expect(actionLabel('plan_version.publish')).toBe('发布套餐版本')
+    expect(actionLabel('x.unknown')).toBe('x.unknown')
+    for (const requiredCode of [
+      'user.login',
+      'user.login_failed',
+      'plan_version.publish',
+      'plan.usage_update',
+      'balance.adjusted',
+      'security.source_ip_viewed',
+      'subscription.fetch',
+    ]) {
+      expect(codes).toContain(requiredCode)
+    }
+  })
+
+  it('translates reason code to Chinese text and passes through others', () => {
+    expect(reasonLabel('invalid_credentials')).toBe('口令错误或账号不存在')
+    expect(reasonLabel('account_inactive')).toBe('账号已停用或未激活')
+    expect(reasonLabel('not_admin')).toBe('不是管理员却登后台')
+    expect(reasonLabel('staff_portal_blocked')).toBe('后台账号登用户端被拒')
+    expect(reasonLabel('custom reason')).toBe('custom reason')
+    expect(reasonLabel(null)).toBeNull()
+  })
+
+  it('converts audit query to and from URLSearchParams', () => {
+    const parsed = auditFromQuery(new URLSearchParams('q=k.liu&action=plan&actor=bogus&outcome=failure&o=50'))
+    expect(parsed).toEqual({
+      filter: { q: 'k.liu', action: 'plan', actor: '', outcome: 'failure' },
+      offset: 50,
+    })
+    expect(auditFromQuery(new URLSearchParams('o=-3')).offset).toBe(0)
+    expect(auditFromQuery(new URLSearchParams('o=abc')).offset).toBe(0)
+    expect(auditToQuery(EMPTY_AUDIT_FILTER, 0)).toEqual({
+      q: undefined,
+      action: undefined,
+      actor: undefined,
+      outcome: undefined,
+      o: undefined,
+    })
+    const f = { q: 'k.liu', action: 'plan', actor: 'admin' as const, outcome: 'failure' as const }
+    const q = auditToQuery(f, 50)
+    const sp = new URLSearchParams()
+    for (const [k, v] of Object.entries(q)) {
+      if (v !== undefined) sp.set(k, String(v))
+    }
+    expect(auditFromQuery(sp)).toEqual({ filter: f, offset: 50 })
   })
 })
 
@@ -108,10 +181,6 @@ describe('access log', () => {
   })
 
   it('treats ok and success as fine and names subscription fetch results', () => {
-    expect(isAccessError({ outcome: 'ok' })).toBe(false)
-    expect(isAccessError({ outcome: 'success' })).toBe(false)
-    expect(isAccessError({})).toBe(false)
-    expect(isAccessError({ outcome: 'not_found' })).toBe(true)
     expect(accessTone({ outcome: 'ok' })).toBe('ok')
     expect(accessTone({ outcome: 'success' })).toBe('ok')
     expect(accessTone({ outcome: 'rate_limited' })).toBe('warn')
@@ -119,22 +188,93 @@ describe('access log', () => {
     expect(accessTone({ outcome: 'failure' })).toBe('bad')
     expect(accessTone({})).toBe('none')
     expect(accessOutcomeLabel({ outcome: 'failure' })).toBe('失败')
-    expect(accessOutcomeLabel({ outcome: 'rate_limited' })).toBe('限流')
+    expect(accessOutcomeLabel({ outcome: 'rate_limited' })).toBe('被限流')
+    expect(accessOutcomeLabel({ outcome: 'error' })).toBe('失败')
+    expect(accessOutcomeLabel({ outcome: 'revoked' })).toBe('revoked')
     expect(accessOutcomeLabel({ outcome: 'weird' })).toBe('weird')
     expect(accessOutcomeLabel({})).toBe('—')
-    expect(ipLabel({ ip: '10.0.0.1', geo: '内网地址' })).toBe('10.0.0.1 · 内网地址')
-    expect(ipLabel({})).toBe('—')
   })
 
-  it('puts the account in the row: email, short id or anonymous, then the action', () => {
-    expect(accessDetail({ user_email: 'a@example.test', action: 'auth.login' })).toBe('a@example.test · auth.login')
-    expect(accessDetail({ user_id: '0123456789abcdef' })).toBe('用户 01234567')
-    expect(accessDetail({ action: 'auth.login' })).toBe('匿名 · auth.login')
+  it('puts the account in the row: email, short id, anonymous trial login or anonymous', () => {
+    expect(accessUser({ user_email: 'a@example.test', user_id: 'u1' })).toBe('a@example.test')
+    expect(accessAccount({ user_email: 'a@example.test', user_id: 'u1' })).toEqual({ prefix: '', label: 'a@example.test', userId: 'u1' })
+    expect(accessUser({ user_id: '0123456789abcdef' })).toBe('用户 01234567')
+    expect(accessAccount({ user_id: '0123456789abcdef' })).toEqual({ prefix: '', label: '用户 01234567', userId: '0123456789abcdef' })
+    expect(accessUser({ target_user_email: 'k.liu@example.com', target_user_id: 't1' })).toBe('匿名 · 试登 k.liu@example.com')
+    expect(accessAccount({ target_user_email: 'k.liu@example.com', target_user_id: 't1' })).toEqual({
+      prefix: '匿名 · 试登 ',
+      label: 'k.liu@example.com',
+      userId: 't1',
+    })
+    expect(accessUser({ target_user_id: 'abcdef0123456789' })).toBe('匿名 · 试登 用户 abcdef01')
+    expect(accessUser({})).toBe('匿名')
+    expect(accessAccount({})).toEqual({ prefix: '', label: '匿名', userId: null })
   })
 
-  it('accepts omitempty rows and rejects unknown categories', () => {
+  it('formats IP cell text and title with geo and network kind', () => {
+    expect(accessIpText({ ip: '203.0.113.48', geo: '日本 东京 Vultr', network_kind: 'datacenter' })).toEqual({
+      ip: '203.0.113.48',
+      geo: '日本 东京 Vultr',
+      title: '203.0.113.48 · 日本 东京 Vultr · 机房',
+    })
+    expect(accessIpText({ ip: '10.0.0.1', geo: '', network_kind: '' })).toEqual({ ip: '10.0.0.1', geo: '', title: '10.0.0.1' })
+    expect(accessIpText({ geo: '中国 浙江 电信', network_kind: 'residential' })).toEqual({ ip: '—', geo: '', title: '—' })
+  })
+
+  it('resolves user filter UUID to email from page items', () => {
+    const uuid = '0192abcd-ef00-7000-8000-000000000000'
+    const items = [
+      { category: 'login' as const, occurred_at: '2026-09-25T00:00:00Z', user_id: uuid, user_email: 'a@example.test' },
+      {
+        category: 'login' as const,
+        occurred_at: '2026-09-26T00:00:00Z',
+        target_user_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        target_user_email: 'target@example.test',
+      },
+    ]
+    expect(accessUserFilterLabel(uuid, items)).toBe('a@example.test')
+    expect(accessUserFilterLabel('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', items)).toBe('target@example.test')
+    expect(accessUserFilterLabel(uuid, [])).toBeNull()
+    expect(accessUserFilterLabel('k.liu', items)).toBeNull()
+  })
+
+  it('accepts omitempty rows, target user fields and rejects unknown categories', () => {
     expect(accessResponse.safeParse({ items: [{ category: 'subscribe', occurred_at: '2026-09-25T00:00:00Z' }] }).success).toBe(true)
+    expect(
+      accessResponse.safeParse({
+        items: [
+          {
+            category: 'login',
+            occurred_at: '2026-09-25T00:00:00Z',
+            target_user_id: '0192abcd-ef00-7000-8000-000000000000',
+            target_user_email: 'k.liu@example.com',
+          },
+        ],
+      }).success,
+    ).toBe(true)
     expect(accessResponse.safeParse({ items: [{ category: 'http', occurred_at: '2026-09-25T00:00:00Z' }] }).success).toBe(false)
+  })
+
+  it('converts access query to and from URLSearchParams', () => {
+    const uuid = '0192abcd-ef00-7000-8000-000000000000'
+    expect(accessFromQuery(new URLSearchParams(`view=login&user=${uuid}&o=10`))).toEqual({
+      filter: { view: 'login', ip: '', user: uuid },
+      offset: 10,
+    })
+    expect(accessFromQuery(new URLSearchParams('view=nope')).filter.view).toBe('all')
+    expect(accessToQuery({ view: 'all', ip: '', user: '' }, 0)).toEqual({
+      view: undefined,
+      ip: undefined,
+      user: undefined,
+      o: undefined,
+    })
+    const f = { view: 'subscribe' as const, ip: '192.0.2.1', user: 'k.liu' }
+    const q = accessToQuery(f, 25)
+    const sp = new URLSearchParams()
+    for (const [k, v] of Object.entries(q)) {
+      if (v !== undefined) sp.set(k, String(v))
+    }
+    expect(accessFromQuery(sp)).toEqual({ filter: f, offset: 25 })
   })
 })
 
@@ -210,31 +350,30 @@ describe('risk clusters', () => {
 })
 
 describe('degradation switches', () => {
-  const row = (code: string, enabled = true, essential = false, reason: string | null = null): SwitchRow => ({ code, enabled, essential, reason })
+  const row = (code: string, enabled = true, reason: string | null = null): SwitchRow => ({ code, enabled, reason })
 
   it('flips the polarity: enabled=false means the pause is on', () => {
-    const [reg] = switchViews([row('auth.registration', false, false, '机器注册潮')])
-    expect(reg).toMatchObject({ kind: 'toggle', title: '暂停新用户注册', degraded: true, status: '已开启', tone: 'danger', reason: '机器注册潮' })
+    const [reg] = switchViews([row('auth.registration', false, '机器注册潮')])
+    expect(reg).toMatchObject({ kind: 'toggle', title: '暂停新用户注册', degraded: true, status: '已开启', reason: '机器注册潮' })
     const [checkout] = switchViews([row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
-    expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭', tone: 'muted' })
+    expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭' })
   })
 
-  it('locks essentials and orders them last', () => {
-    const views = switchViews([row('auth.login', true, true), row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
-    expect(views.map((v) => v.code)).toEqual(['auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'admin.writes', 'notify.email', 'auth.login'])
-    expect(views.at(-1)).toMatchObject({ kind: 'essential', status: '始终开启', degraded: false })
+  it('orders switches by the dictionary order', () => {
+    const views = switchViews([row('notify.email'), row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes')])
+    expect(views.map((v) => v.code)).toEqual(['auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'admin.writes', 'notify.email'])
     expect(views.find((v) => v.code === 'notify.email')!.note).toContain('注册')
   })
 
   it('lists missing rows by their R58 default: new switches open, registration paused', () => {
-    const views = switchViews([row('auth.login', true, true)])
+    const views = switchViews([])
     const missing = Object.fromEntries(views.filter((v) => v.kind === 'missing').map((v) => [v.code, v.degraded]))
     expect(missing).toEqual({ 'auth.registration': true, 'billing.checkout': false, 'marketing.giftcard.redeem': false, 'admin.writes': false, 'notify.email': false })
   })
 
   it('drops the three unwired switches from the dictionary (R102)', () => {
     for (const code of ['ops.bulk_export', 'ops.reports', 'node.autoscale']) expect(SWITCH_META[code]).toBeUndefined()
-    expect(Object.keys(SWITCH_META)).toHaveLength(8)
+    expect(Object.keys(SWITCH_META)).toHaveLength(5)
   })
 
   it('keeps unknown codes toggleable with the backend polarity', () => {

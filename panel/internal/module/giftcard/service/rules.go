@@ -21,20 +21,16 @@ import (
 
 // 模板与生码的上下限（与迁移 00015 的 CHECK 一致）。
 const (
-	maxNameRunes        = 120
-	maxDescriptionRunes = 2000
-	maxThemeColorRunes  = 32
-	maxPrizeLabelRunes  = 100
-	maxPrizes           = 50
-	minPrizes           = 2
-	maxPrizeWeight      = 1000000
-	maxExpireDays       = 3650
-	maxTrafficBytes     = int64(1) << 50
-	maxUsePerUser       = 10000
-	maxCooldownHours    = 87600
-	maxAllowedPlans     = 100
-	maxGenerateCount    = 5000
-	maxPrefixLen        = 8
+	maxNameRunes       = 120
+	maxPrizeLabelRunes = 100
+	maxPrizes          = 50
+	minPrizes          = 2
+	maxPrizeWeight     = 1000000
+	maxExpireDays      = 3650
+	maxTrafficBytes    = int64(1) << 50
+	maxUsePerUser      = 10000
+	maxGenerateCount   = 5000
+	maxPrefixLen       = 8
 	// generateSampleSize 是生码响应里给出的明文样例张数，够核对格式与前缀
 	generateSampleSize = 4
 	// codeRandomLen 是卡密随机段的长度；码 = 前缀 + 随机段
@@ -68,16 +64,6 @@ func normalizeTemplate(in TemplateInput) (TemplateInput, error) {
 		fields["name"] = "名称必填，不超过 120 字"
 	}
 	in.Name = name
-	desc, ok := validateText(in.Description, 0, maxDescriptionRunes)
-	if !ok {
-		fields["description"] = "说明不超过 2000 字"
-	}
-	in.Description = desc
-	color, ok := validateText(in.ThemeColor, 0, maxThemeColorRunes)
-	if !ok {
-		fields["theme_color"] = "主题色不超过 32 个字符"
-	}
-	in.ThemeColor = color
 	if in.Status == "" {
 		in.Status = TemplateActive
 	}
@@ -93,16 +79,11 @@ func normalizeTemplate(in TemplateInput) (TemplateInput, error) {
 			fields["rewards"] = msg
 		}
 	}
-	if in.Limits.MaxUsePerUser < 0 || in.Limits.MaxUsePerUser > maxUsePerUser ||
-		in.Limits.CooldownHours < 0 || in.Limits.CooldownHours > maxCooldownHours {
-		fields["limits"] = "每人次数在 0 到 10000 之间，冷却在 0 到 87600 小时之间"
+	if in.Limits.MaxUsePerUser < 0 || in.Limits.MaxUsePerUser > maxUsePerUser {
+		fields["limits"] = "每人限兑次数在 0 到 10000 之间"
 	}
 	if in.Conditions.NewUserOnly && in.Conditions.PaidUserOnly {
 		fields["conditions"] = "「仅新用户」和「仅付费用户」互斥，同时勾选等于谁都不能兑"
-	}
-	in.Conditions.AllowedPlanIDs = dedupeIDs(in.Conditions.AllowedPlanIDs)
-	if len(in.Conditions.AllowedPlanIDs) > maxAllowedPlans {
-		fields["conditions"] = "限定套餐最多 100 个"
 	}
 	if len(fields) > 0 {
 		return in, errs.Invalid(fields)

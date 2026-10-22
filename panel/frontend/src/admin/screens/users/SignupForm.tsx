@@ -114,14 +114,14 @@ function SignupSettingsForm({ saved, section }: { saved: SignupSettings; section
   if (section === 'security') {
     return (
       <div className={styles.stack}>
-        <SectionTitle variant="group" hint="注册和找回密码的第 1 步先过验证">
+        <SectionTitle variant="group" hint="注册、找回密码、邮件登录的第 1 步先过验证">
           人机验证
         </SectionTitle>
         <Card flush>
           <SettingRow
             icon={Robot01Icon}
             title="开启人机验证"
-            description="关闭时注册和找回密码不做验证"
+            description="关闭时注册、找回密码、邮件登录都不做验证"
             checked={captchaOn}
             disabled={disabled}
             onChange={(on) => {
@@ -335,7 +335,7 @@ function SignupSettingsForm({ saved, section }: { saved: SignupSettings; section
           <div className={styles.swr}>
             <div className={styles.swrText}>
               <span className={styles.swrTitle} id={inviteNeverId}>邀请码永不失效</span>
-              <span className={styles.swrDesc}>关闭后个人邀请码用一次就失效（后台发的码不受影响）</span>
+              <span className={styles.swrDesc}>关闭后每个个人邀请码只能邀请 1 人，有人用它注册后就失效，用户可以再生成新的；用户端邀请页会写明这一点。后台发的码不受影响</span>
             </div>
             <Switch
               checked={form.invite_never_expire}

@@ -157,6 +157,8 @@ type UserProfile struct {
 	Fetches        []FetchRecord
 	FetchSources7d int
 	RegisteredIP   string
+	// Risk 各 IP 风险里最高的一档；没有共用 IP 为空串
+	Risk string
 }
 
 // ProfileEvent 是画像里的一条行为（本人作为操作者的审计）。
@@ -177,6 +179,12 @@ type ProfileIP struct {
 	First    time.Time
 	Last     time.Time
 	Accounts int
+	// Geo 读时按 IP 库现算，同访问日志
+	Geo string
+	// NetworkKind 读时按 IP 库现算，同访问日志
+	NetworkKind string
+	// Risk 近 90 天和别的账号共用这个 IP 时按 clusterRisk 定的 high / mid / low，与风控聚类同一条规则；没共用为空串
+	Risk string
 }
 
 // FetchQuery 是访问明细里订阅拉取的筛选。
@@ -219,16 +227,18 @@ type AccessLogQuery struct {
 
 // AccessItem 是访问明细的一行（审计与订阅拉取两路归并）。
 type AccessItem struct {
-	Category    string
-	Action      string
-	UserID      *uuid.UUID
-	UserEmail   string
-	IP          string
-	Geo         string
-	NetworkKind string
-	UserAgent   string
-	Outcome     string
-	At          time.Time
+	Category        string
+	Action          string
+	UserID          *uuid.UUID
+	UserEmail       string
+	TargetUserID    *uuid.UUID
+	TargetUserEmail string
+	IP              string
+	Geo             string
+	NetworkKind     string
+	UserAgent       string
+	Outcome         string
+	At              time.Time
 }
 
 // IPCluster 是一个同源 IP 聚类（近 90 天同一来源 IP 关联到多个用户账号）。
@@ -332,6 +342,9 @@ type auditOps interface {
 	MarkClusterNormal(ctx context.Context, key, note string) (time.Time, error)
 	MarkClusterDisabled(ctx context.Context, key, note string) (uuid.UUID, error)
 	RecordSourceIPView(ctx context.Context, view string, userID *uuid.UUID, filter map[string]any) error
+	// 溯源总览的两个聚合读（audit/service/trace_reads.go）
+	TraceIPs(ctx context.Context, q auditsvc.TraceIPQuery) (auditsvc.TraceIPSet, error)
+	TraceUsers(ctx context.Context, q auditsvc.TraceUserQuery) ([]auditsvc.TraceUser, error)
 }
 
 var _ auditOps = (*auditsvc.Service)(nil)

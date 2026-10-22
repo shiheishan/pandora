@@ -6,6 +6,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,6 +68,11 @@ func (h *Handler) Middleware(scope string) gin.HandlerFunc {
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, bodyReader, service.MaxBodyBytes))
 		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				httpx.Fail(c, errs.New(errs.PayloadTooLarge))
+				return
+			}
 			httpx.Fail(c, errs.Newf(errs.BadRequest, "读取请求体失败"))
 			return
 		}

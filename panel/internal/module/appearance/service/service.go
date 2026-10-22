@@ -2,8 +2,8 @@
 // 以及门户一次取齐的外观数据。别的模块只调本包。
 //
 // 主题与插槽都会渲染进门户、被所有访客看到，所以写入一律走白名单：令牌只收设计稿的 CSS 变量（tokens.go），
-// 品牌只收标语与 data: 形式的 Logo（站点名只认系统设置 site.name），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
-// 门户读取时再按同一套白名单过滤一次，库里被手工改过的行也出不去。
+// 品牌只收标语（站点名只认系统设置 site.name），插槽 HTML 经 SanitizeHTML 净化后才落库（sanitize.go）。
+// 门户读取时再按同一套白名单过滤一次（插槽再过一次 SanitizeHTML，结果按原文备忘在进程内），库里被手工改过的行也出不去。
 package service
 
 import (
@@ -30,9 +30,10 @@ type auditWriter interface {
 	Write(ctx context.Context, e auditsvc.Event) error
 }
 
-// SiteSettings 是 settings service 的只读面：插槽的更新时间按站点时区显示，站点名也从这里取（PageMeta）。*settingsvc.Service 直接满足。
+// SiteSettings 是 settings service 的只读面：插槽的更新时间按站点时区显示，站点名也从这里取（PageMeta），站点对外根地址也从这里取（入口页 canonical）。*settingsvc.Service 直接满足。
 type SiteSettings interface {
 	Site(ctx context.Context) (settingsvc.Site, error)
+	SiteURL(ctx context.Context) string
 }
 
 // Service 是 appearance 模块对外的业务入口。
@@ -45,6 +46,8 @@ type Service struct {
 	// meta 是 PageMeta 的进程内缓存；metaGen 是它的失效代号，保存或激活主题后加一。
 	meta    pageMetaCache
 	metaGen atomic.Uint64
+	// slots 是门户读插槽时再净化的备忘（slot_memo.go），保存插槽提交后清空。
+	slots slotMemo
 	// now 是测试用的时钟，nil 表示 time.Now。
 	now func() time.Time
 }
@@ -113,15 +116,13 @@ type PublicAppearance struct {
 
 // SlotCatalog 是插槽位的说明。
 //
-// 放在代码里而不是库里：这些位置对应前端模板里的挂载点，两者必须同步改（迁移里的 CHECK 也是这七个）。
+// 放在代码里而不是库里：这些位置对应前端模板里的挂载点，两者必须同步改（迁移里的 CHECK 也是这五个，最新一次改在 00062）。
 var SlotCatalog = []struct{ Key, Label, Where string }{
 	{"portal.login.notice", "登录页提示", "登录框上方，未登录访客可见"},
 	{"portal.home.banner", "我的套餐横幅", "我的套餐页最顶部，通栏"},
 	{"portal.home.aside", "我的套餐附加卡片", "我的套餐页内容下方"},
-	{"portal.sidebar.extra", "侧栏附加内容", "侧栏导航下方、账号信息上方"},
-	{"portal.subscribe.notice", "订阅页说明", "「我的订阅」页顶部"},
+	{"portal.subscribe.notice", "我的套餐说明", "「我的套餐」页顶部，横幅下方"},
 	{"portal.plans.notice", "选购页说明", "「选购套餐」页顶部，适合放退换与发票说明"},
-	{"portal.footer", "页脚", "所有页面底部"},
 }
 
 // MaxSlotBytes 是净化后插槽内容的上限（与表上的 CHECK 一致）。

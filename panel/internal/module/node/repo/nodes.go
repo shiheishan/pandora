@@ -156,10 +156,16 @@ func (r *Repo) UpdateNodeSpec(ctx context.Context, id uuid.UUID, expected int64,
 	return res.RowsAffected == 1, nil
 }
 
-// MoveNodeServer 把节点挂到另一台服务器。
-func (r *Repo) MoveNodeServer(ctx context.Context, id uuid.UUID, expected int64, serverID uuid.UUID) (bool, error) {
-	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET server_id = ?, row_version = row_version + 1, updated_at = now()
-		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`, serverID, id, expected)
+// SetNodeServer 改节点所在服务器（serverID 为 nil 即解绑）与端口、L4：port 与 l4 同空同有（nodes_listen_shape）。
+// 上一台服务器报的运行状态与配置回执随之清空，免得新服务器上报之前把旧的当成新的。
+func (r *Repo) SetNodeServer(ctx context.Context, id uuid.UUID, expected int64, serverID *uuid.UUID, port *int, l4 *string) (bool, error) {
+	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET server_id = ?, server_port = ?, listen_l4 = ?,
+		runtime_status = NULL, runtime_reason = NULL, runtime_reason_node_id = NULL, runtime_state_at = NULL,
+		cert_identifier = NULL, cert_not_after = NULL, cert_error_code = NULL, cert_error_detail = NULL, cert_next_attempt_at = NULL, cert_state_at = NULL,
+		applied_config_sha256 = NULL, applied_config_at = NULL,
+		apply_failed_sha256 = NULL, apply_failed_reason = NULL, apply_failed_detail = NULL, apply_failed_at = NULL,
+		row_version = row_version + 1, updated_at = now()
+		WHERE id = ? AND row_version = ? AND deleted_at IS NULL`, serverID, port, l4, id, expected)
 	if res.Error != nil {
 		return false, inventoryErr(res.Error)
 	}
@@ -188,26 +194,6 @@ func (r *Repo) SetNodeServing(ctx context.Context, id uuid.UUID, from string, ex
 		return false, inventoryErr(res.Error)
 	}
 	return res.RowsAffected == 1, nil
-}
-
-// nodeVersionRow 是 RETURNING row_version 的一行。
-type nodeVersionRow struct {
-	RowVersion int64 `gorm:"column:row_version"`
-}
-
-// BumpNodeVersion 把未退役、未删除节点的 row_version 加一（强制重新下发），返回新版本；没有这一行时 ok 为 false。
-func (r *Repo) BumpNodeVersion(ctx context.Context, id uuid.UUID) (int64, bool, error) {
-	var rows []nodeVersionRow
-	err := r.d.Conn(ctx).Raw(`UPDATE nodes SET row_version = row_version + 1, updated_at = now()
-		WHERE id = ? AND deleted_at IS NULL AND serving_status <> 'retired'
-		RETURNING row_version`, id).Scan(&rows).Error
-	if err != nil {
-		return 0, false, err
-	}
-	if len(rows) == 0 {
-		return 0, false, nil
-	}
-	return rows[0].RowVersion, true, nil
 }
 
 // SoftDeleteNode 软删一个已退役的节点（nodes_deleted_shape 要求删掉的必须是 retired）。
@@ -262,27 +248,12 @@ func (r *Repo) CountLiveNodesOnServer(ctx context.Context, serverID uuid.UUID) (
 	return c.N, err
 }
 
-// ListServerNodes 列出服务器名下未删除的节点（含已退役），按 sort_order, name, id。
-func (r *Repo) ListServerNodes(ctx context.Context, serverID uuid.UUID) ([]model.Node, error) {
-	var out []model.Node
-	err := r.d.Conn(ctx).Raw("SELECT "+nodeColumns+` FROM nodes n
-		WHERE n.server_id = ? AND n.deleted_at IS NULL
-		ORDER BY n.sort_order, n.name, n.id`, serverID).Scan(&out).Error
-	if err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = []model.Node{}
-	}
-	return out, nil
-}
-
 // nodePoolStatusRow 是只取池状态的一行。
 type nodePoolStatusRow struct {
 	Status string `gorm:"column:status"`
 }
 
-// LockPoolForNode 以 FOR SHARE 锁住节点要划入的池并返回它的状态（建、改、复制节点时用）。
+// LockPoolForNode 以 FOR SHARE 锁住节点要划入的池并返回它的状态（建、改节点时用）。
 func (r *Repo) LockPoolForNode(ctx context.Context, poolID uuid.UUID) (string, bool, error) {
 	var rows []nodePoolStatusRow
 	err := r.d.Conn(ctx).Raw(`SELECT status FROM node_pools WHERE id = ? FOR SHARE`, poolID).Scan(&rows).Error

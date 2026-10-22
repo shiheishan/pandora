@@ -24,10 +24,28 @@ import {
   serverMeters,
   serverNodeLines,
   serverNotes,
+  serverLink,
+  serverNextStep,
   serverSubtitle,
+  wizardServerHint,
+  nodeCreatedToast,
+  upgradeBlockNote,
+  upgradeConfirmBody,
+  upgradeOffer,
+  upgradeReasonText,
+  upgradeResultToast,
+  upgradeTarget,
+  lastUpgradeDetail,
+  lastUpgradeLine,
+  pruneUpgradePicks,
+  UPGRADE_BATCH_MAX,
+  upgradePickFull,
+  UPGRADE_REASON_TEXT,
+  UPGRADE_STATUS,
   validateServerForm,
+  meterEmptyText,
 } from './infra'
-import { nodeRowSchema, poolsResponse, serverSchema, serversResponse, type NodeRow, type Server } from './schemas'
+import { nodeRowSchema, poolsResponse, serverSchema, serversResponse, UPGRADE_STATUSES, type NodeRow, type Server } from './schemas'
 
 // Go 的 node/handler serverResponse 原样形状：指针字段全是 null
 const server = (over: Partial<Record<string, unknown>> = {}): Server =>
@@ -47,6 +65,7 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     agent_version: 'core r53',
     last_heartbeat_at: '2026-09-24T10:00:00Z',
     heartbeat_online: true,
+    enrolled: true,
     cpu_cores: 4,
     memory_mb: 4096,
     disk_gb: 80,
@@ -64,6 +83,9 @@ const server = (over: Partial<Record<string, unknown>> = {}): Server =>
     disk_used_gb: null,
     disk_total_gb: null,
     metrics_at: '2026-09-24T10:00:00Z',
+    binary_sha256: null,
+    upgrade: { available: false, target_version: null, reason: 'not_connected' },
+    last_upgrade: null,
     ...over,
   })
 
@@ -138,9 +160,9 @@ describe('server status', () => {
     expect(quickToggle('ready')).toMatchObject({ to: 'draining', label: '标记维护' })
     expect(quickToggle('draining')).toMatchObject({ to: 'ready', label: '恢复服务' })
     expect(quickToggle('maintenance')).toMatchObject({ to: 'ready' })
-    expect(quickToggle('draft')).toMatchObject({ to: 'ready', label: '投入服务' })
+    expect(quickToggle('draft')).toBeNull()
     expect(quickToggle('retired')).toBeNull()
-    for (const from of ['ready', 'draining', 'maintenance', 'draft'] as const) expect(nextServerStatuses(from)).toContain(quickToggle(from)!.to)
+    for (const from of ['ready', 'draining', 'maintenance'] as const) expect(nextServerStatuses(from)).toContain(quickToggle(from)!.to)
   })
 
   it('状态边表与后端 serverStatusTransitions 逐边一致', () => {
@@ -155,7 +177,7 @@ describe('server status', () => {
     expect(canDeleteServer(server({ status: 'draft' }))).toBe(true)
     expect(canDeleteServer(server({ status: 'retired' }))).toBe(true)
     expect(canDeleteServer(server({ status: 'maintenance' }))).toBe(false)
-    expect(deleteServerNotice(server({ node_count: 3 }))).toContain('名下 3 个节点会一起下线')
+    expect(deleteServerNotice(server({ node_count: 3 }))).toContain('名下 3 个节点里，在役的退役；草稿和已停用的解除绑定')
     expect(deleteServerNotice(server({ node_count: 0 }))).toContain('名下没有节点')
   })
 
@@ -175,7 +197,7 @@ describe('server status', () => {
       },
       now,
     )
-    expect(notes).toEqual(['原因：磁盘告警', '心跳 5 分钟前，可能已断开', '2 个在役节点从未心跳（多半没装 agent）'])
+    expect(notes).toEqual(['原因：磁盘告警', '心跳 5 分钟前，可能已断开', '这台服务器从未上报心跳，名下 2 个在役节点不会下发（多半还没装节点端）'])
     expect(serverNotes({ status: 'ready', status_reason: null, heartbeat_online: false, last_heartbeat_at: null, never_seen_node_count: 0 }, now)).toEqual([
       '还没有收到心跳',
     ])
@@ -184,6 +206,78 @@ describe('server status', () => {
       's1',
     )
     expect(lines.map((n) => n.id)).toEqual(['a'])
+  })
+
+  it('serverNextStep for draft servers', () => {
+    const now = new Date('2026-09-24T10:05:00Z')
+    expect(serverNextStep(server({ status: 'ready' }), now)).toBeNull()
+    expect(serverNextStep(server({ status: 'draft', enrolled: false }), now)).toBe('还没接入：签发安装令牌，在机器上用 root 执行')
+    // 草稿的 heartbeat_online 恒为 false（后端只对 ready 算），按心跳时间判
+    expect(
+      serverNextStep(server({ status: 'draft', enrolled: true, heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:04:30Z' }), now),
+    ).toBe('已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务')
+    expect(serverNextStep(server({ status: 'draft', enrolled: true, last_heartbeat_at: null }), now)).toBe('已接入，但节点端还没连上面板：先在机器上检查节点端服务')
+    expect(
+      serverNextStep(
+        server({ status: 'draft', enrolled: true, heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }),
+        now,
+      ),
+    ).toBe(
+      '已接入，但节点端没连着面板（心跳 5 分钟前）：先在机器上检查节点端服务，再新建或绑定节点并上线',
+    )
+  })
+})
+
+describe('new-node hints by server link', () => {
+  const now = new Date('2026-09-24T10:05:00Z')
+
+  it('serverLink covers unknown, enrollment, heartbeat and draft timing', () => {
+    expect(serverLink(undefined, now)).toBe('unknown')
+    expect(serverLink(server({ enrolled: false }), now)).toBe('unenrolled')
+    expect(serverLink(server({ enrolled: true, last_heartbeat_at: null }), now)).toBe('never')
+    expect(serverLink(server({ status: 'ready', heartbeat_online: true }), now)).toBe('online')
+    expect(serverLink(server({ status: 'ready', heartbeat_online: false }), now)).toBe('offline')
+    expect(
+      serverLink(server({ status: 'draft', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:04:30Z' }), now),
+    ).toBe('online')
+    expect(
+      serverLink(server({ status: 'draft', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }), now),
+    ).toBe('offline')
+  })
+
+  it('wizardServerHint matches each link', () => {
+    expect(wizardServerHint(undefined, now)).toBe('创建后在节点详情右上角点「上线」')
+    expect(wizardServerHint(server({ enrolled: false }), now)).toBe(
+      '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线',
+    )
+    expect(wizardServerHint(server({ enrolled: true, last_heartbeat_at: null }), now)).toBe(
+      '已接入，但节点端还没连上面板：先在机器上检查节点端服务，再上线',
+    )
+    expect(
+      wizardServerHint(server({ status: 'ready', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }), now),
+    ).toBe('已接入，但节点端没连着面板（心跳 5 分钟前）：先在机器上检查节点端服务，再上线')
+    expect(
+      wizardServerHint(server({ status: 'draft', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:04:30Z' }), now),
+    ).toBe('已接入：创建后可以直接在节点详情右上角点「上线」，这台服务器随之投入服务')
+    expect(wizardServerHint(server({ status: 'ready', heartbeat_online: true }), now)).toBe(
+      '已接入：创建后可以直接在节点详情右上角点「上线」',
+    )
+  })
+
+  it('nodeCreatedToast matches bound and link cases', () => {
+    expect(nodeCreatedToast(false, undefined, now)).toBe(
+      '节点已创建为草稿，还没绑服务器：要上线时在详情「身份与操作」里绑定服务器',
+    )
+    expect(nodeCreatedToast(true, undefined, now)).toBe('节点已创建为草稿：在节点详情右上角点「上线」')
+    expect(nodeCreatedToast(true, server({ enrolled: false }), now)).toBe(
+      '节点已创建为草稿。所在服务器还没接入：到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线',
+    )
+    expect(
+      nodeCreatedToast(true, server({ status: 'ready', heartbeat_online: false, last_heartbeat_at: '2026-09-24T10:00:00Z' }), now),
+    ).toBe('节点已创建为草稿。所在服务器已接入，但节点端没连着面板：先在机器上检查节点端服务，再上线')
+    expect(nodeCreatedToast(true, server({ status: 'ready', heartbeat_online: true }), now)).toBe(
+      '节点已创建为草稿，所在服务器已接入：可以直接在节点详情右上角点「上线」',
+    )
   })
 })
 
@@ -264,5 +358,172 @@ describe('pools', () => {
     expect(patchPoolBody(pool, poolFormFrom(pool))).toBeNull()
     expect(patchPoolBody(pool, { ...poolFormFrom(pool), region: '', status: 'draining', code: 'x' })).toEqual({ status: 'draining' })
     expect(patchPoolBody(pool, { ...poolFormFrom(pool), name: '亚太精选' })).toEqual({ name: '亚太精选' })
+  })
+})
+
+describe('占用说明', () => {
+  it('meterEmptyText 已接入时不再叫人去装 agent', () => {
+    expect(meterEmptyText({ enrolled: false })).toBe('装好 agent 后这里显示占用')
+    expect(meterEmptyText({ enrolled: true })).toBe('还没收到占用数据：agent 每分钟上报一次，稍后再看')
+  })
+})
+
+describe('在线升级', () => {
+  const EXPECTED_REASON_CODES = [
+    'apply_failed',
+    'arch_unsupported',
+    'binary_mismatch',
+    'busy',
+    'confirm_timeout',
+    'download_failed',
+    'in_progress',
+    'manifest_invalid',
+    'manifest_missing',
+    'no_upgrade_support',
+    'not_connected',
+    'not_found',
+    'not_ready',
+    'rollback_failed',
+    'serial_not_newer',
+    'sha256_mismatch',
+    'signature_invalid',
+    'signature_missing',
+    'unknown',
+    'up_to_date',
+  ]
+
+  it('upgradeReasonText maps every code and edge cases', () => {
+    for (const [code, text] of Object.entries(UPGRADE_REASON_TEXT)) expect(upgradeReasonText(code)).toBe(text)
+    expect(Object.keys(UPGRADE_REASON_TEXT).sort()).toEqual(EXPECTED_REASON_CODES)
+    expect(upgradeReasonText('confirm_timeout')).toBe('新版本没能连上面板，已自动装回旧版')
+    expect(upgradeReasonText('no_upgrade_support')).toBe('节点端版本太旧或没装升级助手，重装一次后才能在线升级')
+    expect(upgradeReasonText('signature_missing')).toBe('面板上没有有效的发布清单签名')
+    expect(upgradeReasonText('rollback_failed')).toBe('装回旧版失败，需要登录服务器处理')
+    expect(upgradeReasonText(null)).toBe('节点端没有给出原因')
+    expect(upgradeReasonText('')).toBe('节点端没有给出原因')
+    expect(upgradeReasonText('weird')).toBe('原因码 weird')
+  })
+
+  it('UPGRADE_STATUS covers every status', () => {
+    for (const st of UPGRADE_STATUSES) expect(UPGRADE_STATUS[st].label).toBeTruthy()
+    expect(UPGRADE_STATUS.sent).toEqual({ label: '升级中', tone: 'info' })
+    expect(UPGRADE_STATUS.staged).toEqual({ label: '升级中', tone: 'info' })
+  })
+
+  it('upgradeOffer and upgradeBlockNote', () => {
+    expect(upgradeOffer({ upgrade: { available: true, target_version: 'v2026.10.21', reason: null } })).toBe('可升级到 v2026.10.21')
+    expect(upgradeBlockNote({ upgrade: { available: true, target_version: 'v2026.10.21', reason: null } })).toBeNull()
+    expect(upgradeOffer({ upgrade: { available: false, target_version: null, reason: 'signature_missing' } })).toBeNull()
+    expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'signature_missing' } })).toBe(
+      '不能在线升级：面板上没有有效的发布清单签名',
+    )
+    expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'not_connected' } })).toBeNull()
+    expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'up_to_date' } })).toBeNull()
+    expect(upgradeBlockNote({ upgrade: { available: false, target_version: null, reason: 'no_upgrade_support' } })).toBe(
+      '不能在线升级：节点端版本太旧或没装升级助手，重装一次后才能在线升级',
+    )
+  })
+
+  it('upgradeTarget picks first available version', () => {
+    const list = [
+      { upgrade: { available: false, target_version: null, reason: 'up_to_date' } },
+      { upgrade: { available: true, target_version: 'v2026.10.21', reason: null } },
+      { upgrade: { available: true, target_version: 'v2026.10.22', reason: null } },
+    ]
+    expect(upgradeTarget(list)).toBe('v2026.10.21')
+    expect(upgradeTarget([list[0]!])).toBeNull()
+  })
+
+  it('caps one upgrade batch at the Go limit of 50', () => {
+    expect(UPGRADE_BATCH_MAX).toBe(50)
+    const full = new Set(Array.from({ length: 50 }, (_, i) => `s${i}`))
+    expect(upgradePickFull(full, 'other')).toBe(true)
+    expect(upgradePickFull(full, 's3')).toBe(false)
+    full.delete('s0')
+    expect(upgradePickFull(full, 'other')).toBe(false)
+  })
+
+  it('pruneUpgradePicks drops missing and non-upgradeable', () => {
+    const list = [
+      { id: 'a', upgrade: { available: true, target_version: 'v2026.10.21', reason: null } },
+      { id: 'b', upgrade: { available: false, target_version: null, reason: 'up_to_date' } },
+    ]
+    expect([...pruneUpgradePicks(new Set(['a', 'b', 'c']), list)].sort()).toEqual(['a'])
+  })
+
+  it('lastUpgradeLine and lastUpgradeDetail', () => {
+    const now = new Date('2026-10-21T12:00:00Z')
+    const rolled = {
+      last_upgrade: { status: 'rolled_back' as const, target_version: 'v2026.10.21', reason_code: 'confirm_timeout', updated_at: '2026-10-21T11:00:00Z' },
+    }
+    expect(lastUpgradeLine(rolled, now)).toEqual({
+      label: '已装回旧版',
+      tone: 'warn',
+      text: '升级到 v2026.10.21没成功：新版本没能连上面板，已自动装回旧版',
+    })
+    const okOld = {
+      last_upgrade: { status: 'succeeded' as const, target_version: 'v2026.10.21', reason_code: null, updated_at: '2026-10-19T11:00:00Z' },
+    }
+    expect(lastUpgradeLine(okOld, now)).toBeNull()
+    const okRecent = {
+      last_upgrade: { status: 'succeeded' as const, target_version: 'v2026.10.21', reason_code: null, updated_at: '2026-10-21T11:00:00Z' },
+    }
+    expect(lastUpgradeLine(okRecent, now)).toEqual({ label: '已升级', tone: 'ok', text: '已升级到 v2026.10.21' })
+    expect(lastUpgradeDetail(okOld)).toEqual({ label: '已升级', tone: 'ok', text: '已升级到 v2026.10.21' })
+    const timed = {
+      last_upgrade: { status: 'timed_out' as const, target_version: 'v2026.10.21', reason_code: null, updated_at: '2026-10-21T11:00:00Z' },
+    }
+    expect(lastUpgradeLine(timed, now)?.text).toBe('升级到 v2026.10.21超时：十几分钟内没有结果，请查看节点端日志')
+    const staged = {
+      last_upgrade: { status: 'staged' as const, target_version: 'v2026.10.21', reason_code: null, updated_at: '2026-10-21T11:00:00Z' },
+    }
+    expect(lastUpgradeLine(staged, now)).toEqual({ label: '升级中', tone: 'info', text: '正在升级到 v2026.10.21' })
+  })
+
+  it('upgradeConfirmBody', () => {
+    expect(upgradeConfirmBody(2, 'v2026.10.21')).toContain('会重启这 2 台服务器上的全部节点')
+    expect(upgradeConfirmBody(2, 'v2026.10.21')).toContain('目标版本 v2026.10.21。')
+  })
+
+  it('upgradeResultToast', () => {
+    const names = new Map([['s1', 'hk-1'], ['s2', 'hk-2'], ['s3', 'hk-3'], ['s4', 'hk-4']])
+    expect(upgradeResultToast({ target_version: 'v2026.10.21', results: [{ server_id: 's1', ok: true, reason: null }] }, names)).toEqual({
+      text: '已向 1 台服务器下发升级到 v2026.10.21',
+      tone: 'ok',
+    })
+    expect(
+      upgradeResultToast(
+        { target_version: 'v2026.10.21', results: [{ server_id: 's1', ok: false, reason: 'busy' }] },
+        names,
+      ),
+    ).toEqual({ text: '没有发起升级：hk-1（这台已有一次升级在进行）', tone: 'danger' })
+    expect(
+      upgradeResultToast(
+        {
+          target_version: 'v2026.10.21',
+          results: [
+            { server_id: 's1', ok: true, reason: null },
+            { server_id: 's2', ok: false, reason: 'not_ready' },
+          ],
+        },
+        names,
+      ),
+    ).toEqual({ text: '已向 1 台下发升级，1 台没有发起：hk-2（服务器不在服务中）', tone: 'ok' })
+    const many = [
+      { server_id: 's1', ok: false, reason: 'busy' },
+      { server_id: 's2', ok: false, reason: 'busy' },
+      { server_id: 's3', ok: false, reason: 'busy' },
+      { server_id: 's4', ok: false, reason: 'busy' },
+    ]
+    expect(upgradeResultToast({ target_version: 'v2026.10.21', results: many }, names).text).toContain('等 4 台')
+  })
+
+  it('serverSchema rejects unknown last_upgrade.status', () => {
+    expect(
+      serverSchema.safeParse({
+        ...server(),
+        last_upgrade: { status: 'unknown', target_version: 'v2026.10.21', reason_code: null, updated_at: '2026-10-21T00:00:00Z' },
+      }).success,
+    ).toBe(false)
   })
 })

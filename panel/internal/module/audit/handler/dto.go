@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -41,6 +42,8 @@ type auditEventResponse struct {
 	ResourceLabel *string   `json:"resource_label"`
 	AuthContext   *string   `json:"auth_context"`
 	SourceIP      *string   `json:"source_ip"`
+	// Data 是事件详情（库里 data 原样，写入方约定不放秘密），后台展开一行时显示
+	Data json.RawMessage `json:"data"`
 }
 
 // listAuditResponse 是审计列表的 JSON 形状。
@@ -64,6 +67,10 @@ func toAuditEvent(r service.Row) auditEventResponse {
 		ResourceLabel: r.ResourceLabel,
 		AuthContext:   r.AuthContext,
 		SourceIP:      r.SourceIP,
+		Data:          r.Data,
+	}
+	if len(out.Data) == 0 {
+		out.Data = json.RawMessage("{}")
 	}
 	if r.ResourceID != nil {
 		s := r.ResourceID.String()

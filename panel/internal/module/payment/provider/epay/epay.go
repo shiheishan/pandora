@@ -24,9 +24,9 @@ import (
 	"strings"
 
 	"github.com/aegispanel/aegis/internal/module/payment/provider"
-	"github.com/aegispanel/aegis/internal/module/payment/provider/safehttp"
 	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/money"
+	"github.com/aegispanel/aegis/internal/pkg/safehttp"
 )
 
 const (
@@ -339,7 +339,7 @@ func sanitizeSubject(s string) string {
 	s = strings.NewReplacer("&", "＆", "=", "＝", "\n", " ", "\r", " ").Replace(s)
 	s = strings.TrimSpace(s)
 	if s == "" {
-		s = "订阅服务"
+		s = "订单付款"
 	}
 	r := []rune(s)
 	if len(r) > 64 {

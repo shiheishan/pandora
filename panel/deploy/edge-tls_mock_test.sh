@@ -231,6 +231,8 @@ rc=0; PANDORA_ACME=0 PANDORA_CONFIG_FILE="$T/ip.yaml" bash "$EDGE" setup "$T/ip.
 [ "$rc" = 3 ] || fail "PANDORA_ACME=0 should exit 3, got $rc"
 refute -q -e '^lego --path' -e '^certbot' "$T/calls.log"
 grep -qx 'ACME_ENABLED=0' "$T/tls/acme.env" || fail 'opt-out not remembered'
+# 关着 ACME 时补救提示要先让人打开它，不能只叫执行 issue（issue 也不联系 CA，提示会绕圈）
+grep -q 'ACME_ENABLED 改成 1' "$T/out" || fail 'disabled-ACME hint should say how to enable it'
 reset_calls
 [ "$(rc_of renew "$T/ip.env")" = 0 ] || fail 'renew with ACME disabled should succeed quietly'
 refute -q -e '^lego --path' -e '^certbot' "$T/calls.log"

@@ -8,9 +8,9 @@ import { useBalance } from '../../queries'
 import { useApi } from '../../../shell/runtime'
 import { Skeleton, useToast } from '../../../ui'
 import { Btn, cx, Icon, Num, Sheet } from '../../kit'
-import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
+import { methodKey, usePaymentMethods, belowMethodMinimum, usableMethods, type PaymentMethod } from './catalog'
 import { detectDevice } from './clients'
-import { feeLine, surchargeNote } from './fee'
+import { feeLine, minLine, surchargeNote } from './fee'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
 import { archivedRefundText, isPlanArchivedRefund, orderTitle, PAID_STATUSES, rebuyQuery, useCancelOrder, useOrder, type OrderDetail } from './orders'
@@ -72,7 +72,18 @@ const TITLES: Record<PayState['phase'], string> = { redirect: '付款', done: '�
  * 结账与充值借它 forget() 记下的待支付单，下次同样的请求重新下单。
  * 409 conflict 会先刷新订单，只有确认不是待付才调；payment_in_progress 从不调。
  */
-export function PaymentModal({ state: given, onClose, onUnpayable }: { state: PayState | null; onClose: () => void; onUnpayable?: () => void }) {
+/** onOtherMethod：调用方自己选付款方式时（如充值弹层），付款面板里「换个付款方式」回到调用方 */
+export function PaymentModal({
+  state: given,
+  onClose,
+  onUnpayable,
+  onOtherMethod,
+}: {
+  state: PayState | null
+  onClose: () => void
+  onUnpayable?: () => void
+  onOtherMethod?: () => void
+}) {
   // choose 态选定后在弹窗内部转成 redirect；换了订单或关掉就作废
   const [picked, setPicked] = useState<{ orderId: string; method: PaymentMethod } | null>(null)
   const state: PayState | null =
@@ -101,7 +112,7 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
             returnUrl={payReturnUrl(state.orderId)}
             onPaid={() => setPaidHere(state.orderId)}
             onUnpayable={onUnpayable}
-            onOtherMethod={picked ? () => setPicked(null) : undefined}
+            onOtherMethod={picked ? () => setPicked(null) : onOtherMethod}
             onLater={() => {
               close()
               navigate('/orders')
@@ -120,14 +131,16 @@ const stateOrder = (s: PayState) => s.orderId
 // 付款方式单选（样稿 .pays / .pay）
 // ---------------------------------------------------------------------------
 
-/** 选中的付款方式：按 key 找，找不到（还没选、列表变了）取第一个；没有方式时为 null */
-export function pickMethod(list: readonly PaymentMethod[] | undefined, key: string): PaymentMethod | null {
+/** 选中的付款方式：先筛出付得了这笔应付的方式；按 key 在可用列表里找，找不到取第一个；没有可用方式时为 null */
+export function pickMethod(list: readonly PaymentMethod[] | undefined, key: string, amount?: number): PaymentMethod | null {
   if (!list || list.length === 0) return null
+  const usable = usableMethods(list, amount)
+  if (usable.length === 0) return null
   if (key) {
-    const hit = list.find((m) => methodKey(m) === key)
+    const hit = usable.find((m) => methodKey(m) === key)
     if (hit) return hit
   }
-  return list[0] ?? null
+  return usable[0] ?? null
 }
 
 interface MethodsQuery {
@@ -165,32 +178,39 @@ export function PayMethodPicker({
   selected,
   onSelect,
   label = '支付方式',
+  /** 这单应付（分，不含手续费），给了就把低于最低额的方式置灰 */
+  amount,
 }: {
   methods: MethodsQuery
   selected: PaymentMethod | null
   onSelect: (m: PaymentMethod) => void
   label?: string
+  amount?: number
 }) {
   const labelId = useId()
   const list = methods.data ?? []
   const selectedKey = selected ? methodKey(selected) : ''
 
   const onRadiogroupKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (list.length === 0) return
+    const usable = usableMethods(list, amount)
+    if (usable.length === 0) return
     const vertical = e.key === 'ArrowDown' || e.key === 'ArrowUp'
     const horizontal = e.key === 'ArrowRight' || e.key === 'ArrowLeft'
     if (!vertical && !horizontal) return
     e.preventDefault()
-    const idx = list.findIndex((m) => methodKey(m) === selectedKey)
+    const idx = usable.findIndex((m) => methodKey(m) === selectedKey)
     const cur = idx >= 0 ? idx : 0
     const next =
-      e.key === 'ArrowDown' || e.key === 'ArrowRight' ? (cur + 1) % list.length : (cur - 1 + list.length) % list.length
-    const m = list[next]
+      e.key === 'ArrowDown' || e.key === 'ArrowRight' ? (cur + 1) % usable.length : (cur - 1 + usable.length) % usable.length
+    const m = usable[next]
     if (!m) return
     onSelect(m)
-    const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')
-    buttons[next]?.focus()
+    const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]:not([disabled])')
+    const focusIdx = usable.findIndex((u) => methodKey(u) === methodKey(m))
+    buttons[focusIdx]?.focus()
   }
+
+  const firstUsableIdx = list.findIndex((m) => !belowMethodMinimum(m, amount))
 
   return (
     <div className={css.picker}>
@@ -209,18 +229,21 @@ export function PayMethodPicker({
       ) : (
         <div className={css.pays} role="radiogroup" aria-labelledby={labelId} onKeyDown={onRadiogroupKeyDown}>
           {list.map((m, i) => {
-            const on = selected !== null && methodKey(m) === methodKey(selected)
-            const line = feeLine(m)
-            const tab = on || (selected === null && i === 0) ? 0 : -1
+            const off = belowMethodMinimum(m, amount)
+            const on = !off && selected !== null && methodKey(m) === methodKey(selected)
+            const line = off ? minLine(m) : feeLine(m)
+            const tab = on || (selected === null && i === firstUsableIdx) ? 0 : -1
             return (
               <button
                 key={methodKey(m)}
                 type="button"
                 role="radio"
                 aria-checked={on}
+                aria-disabled={off ? 'true' : undefined}
+                disabled={off}
                 tabIndex={tab}
-                className={cx(css.pay, on && css.payOn)}
-                onClick={() => onSelect(m)}
+                className={cx(css.pay, on && css.payOn, off && css.payOff)}
+                onClick={() => !off && onSelect(m)}
               >
                 <MethodMark method={m.method} />
                 <span className={css.pt}>
@@ -244,7 +267,8 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
   const methods = usePaymentMethods(state.amount)
   const order = useOrder(state.orderId)
   const [key, setKey] = useState('')
-  const method = pickMethod(methods.data, key)
+  const method = pickMethod(methods.data, key, state.amount)
+  const noUsable = methods.data !== undefined && methods.data.length > 0 && usableMethods(methods.data, state.amount).length === 0
   return (
     <div className={css.sheetBody}>
       <div className={css.ps}>
@@ -256,7 +280,10 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
         </span>
         <Num className={css.psAmt}>{formatMoney(state.amount)}</Num>
       </div>
-      <PayMethodPicker methods={methods} selected={method} onSelect={(m) => setKey(methodKey(m))} />
+      <PayMethodPicker methods={methods} selected={method} amount={state.amount} onSelect={(m) => setKey(methodKey(m))} />
+      {noUsable && (
+        <p className={css.hint}>这张单的金额低于现在所有付款方式的最低额，在线付不了；可以取消这张单，再重新下单。</p>
+      )}
       <Btn tone="hot" full disabled={!method} onClick={() => method && onPick(method)}>
         去支付 <Num>{formatMoney(method?.total ?? state.amount)}</Num>
       </Btn>
@@ -411,6 +438,7 @@ export function PayPanel({ orderId, amount, method, returnUrl, onPaid, onUnpayab
   const redirect = pay.data?.http_method === 'GET' ? pay.data.redirect_url : null
   const unsupported = pay.data?.http_method === 'POST'
   const inProgressWaiting = pay.isError && isApiError(pay.error, 'payment_in_progress') && attempts < PAY_IN_PROGRESS_MAX_RETRIES
+  // below_method_minimum：换一种付款方式才能付，不给重试，靠「换个付款方式」；final 为真时不显示「重试」按钮，错误区走 payErrorText 显示后端原话
   const final =
     isApiError(pay.error) &&
     pay.error.status >= 400 &&

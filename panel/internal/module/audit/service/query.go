@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"strings"
 	"time"
@@ -38,6 +39,8 @@ type Row struct {
 	ResourceLabel *string
 	AuthContext   *string
 	SourceIP      *string
+	// Data 是事件的整份 data（JSON 对象原文）；只有列表带，导出为空
+	Data json.RawMessage
 }
 
 // ExportMax 是单次 CSV 导出行数上限。
@@ -174,7 +177,7 @@ func (s *Service) query(ctx context.Context, f Filter) (repo.Query, error) {
 			if err != nil {
 				return repo.Query{}, err
 			}
-			q.TextActorIDs = ids
+			q.TextUserIDs = ids
 		}
 	}
 	return q, nil
@@ -238,6 +241,7 @@ func (s *Service) enrich(ctx context.Context, recs []repo.Record) ([]Row, error)
 			Outcome:      r.Outcome,
 			Reason:       r.Reason,
 			AuthContext:  r.AuthContext,
+			Data:         r.Data,
 		}
 		if r.ActorID != nil {
 			if em, ok := emails[*r.ActorID]; ok && em != "" {

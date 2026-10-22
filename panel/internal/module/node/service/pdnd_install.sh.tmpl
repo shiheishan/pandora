@@ -20,6 +20,7 @@ UNIT_DIR="${PANDORA_UNIT_DIR:-/etc/systemd/system}"
 STATE_DIR="/var/lib/pandora-native"
 IDENTITY_DIR="${STATE_DIR}/identity"
 SERVICE="pandora-native"
+UPGRADE_UNIT="pandora-native-upgrade"
 PANEL_ADDR="" CA_SHA256="" TOKEN="" ORIGIN="" CURL_PROTO="" ARCH="" ARTIFACT=""
 TMP="" ENROLLED=0 DONE=0
 
@@ -299,6 +300,8 @@ pandora_write_unit() {
 Description=Pandora NativeCore node agent
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -338,6 +341,60 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# 写入节点在线升级触发器（path 单元）与 root 侧升级助手服务（service 单元）。
+# path 单元监听请求与残留进行态；service 单元执行 upgrade-apply 进行验签、替换与回退。
+# 助手单元写死 /usr/local/bin/pandora-native，不跟 PANDORA_INSTALL_DIR：助手代码只认这个路径（不在这里就不声明 upgrade_v1），
+# heredoc 加引号、不做展开，与发布包 pdnd/release/pandora-native-upgrade.service 逐字一致。
+pandora_write_upgrade_units() {
+  cat >"$1" <<PATHUNIT
+[Unit]
+Description=Pandora NativeCore upgrade trigger
+
+[Path]
+PathExists=/var/lib/pandora-native/upgrade/request
+PathExists=/var/lib/pandora-native-upgrade/applying
+Unit=pandora-native-upgrade.service
+
+[Install]
+WantedBy=multi-user.target
+PATHUNIT
+
+  cat >"$2" <<'HELPERUNIT'
+[Unit]
+Description=Pandora NativeCore upgrade helper
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/sh -c 'if [ -e /var/lib/pandora-native-upgrade/applying ] && [ -x /usr/local/bin/pandora-native.prev ]; then exec /usr/local/bin/pandora-native.prev upgrade-apply; fi; exec /usr/local/bin/pandora-native upgrade-apply'
+TimeoutStartSec=600
+UMask=0077
+StateDirectory=pandora-native-upgrade
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/usr/local/bin -/var/lib/pandora-native
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+PrivateNetwork=true
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+HELPERUNIT
+}
+
 pandora_prepare_files() {
   install -d -o root -g pandora -m 0750 "$CONFIG_DIR"
   mkdir -p "$UNIT_DIR"
@@ -347,6 +404,8 @@ pandora_prepare_files() {
   chmod 0640 "${CONFIG_DIR}/config.json.new"
   pandora_write_unit "${UNIT_DIR}/${SERVICE}.service.new"
   chmod 0644 "${UNIT_DIR}/${SERVICE}.service.new"
+  pandora_write_upgrade_units "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service.new"
+  chmod 0644 "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service.new"
 }
 
 pandora_validate() {
@@ -355,16 +414,32 @@ pandora_validate() {
   runuser -u pandora -- "${INSTALL_DIR}/${SERVICE}.new" validate-install --config "${CONFIG_DIR}/config.json.new" --unit "${UNIT_DIR}/${SERVICE}.service.new" --identity-dir "$IDENTITY_DIR"
 }
 
+# 重装时清掉进行中的在线升级：否则助手续做时看到「当前摘要不是目标」会把 .prev 装回来，盖掉这次装上的版本。
+# 暂存目录归 pandora，按惯例以 pandora 身份删（root 不在 pandora 可写的目录里动文件）；result 留着照常上报。
+pandora_reset_upgrade() {
+  systemctl stop "${UPGRADE_UNIT}.path" "${UPGRADE_UNIT}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "${UPGRADE_UNIT}.path" "${UPGRADE_UNIT}.service" >/dev/null 2>&1 || true
+  rm -rf /var/lib/pandora-native-upgrade
+  if [[ -d "${STATE_DIR}/upgrade" ]]; then
+    runuser -u pandora -- rm -f "${STATE_DIR}/upgrade/request" "${STATE_DIR}/upgrade/next" "${STATE_DIR}/upgrade/next.tmp" \
+      "${STATE_DIR}/upgrade/manifest.json" "${STATE_DIR}/upgrade/manifest.json.sig" \
+      "${STATE_DIR}/upgrade/applying" "${STATE_DIR}/upgrade/healthy" || true
+  fi
+}
+
 # 全部校验通过后才 mv 换上；此前任一步失败，机器上原有的二进制、配置、unit 均未改动。
 pandora_commit_files() {
   mv -f "${INSTALL_DIR}/${SERVICE}.new" "${INSTALL_DIR}/${SERVICE}"
   mv -f "${CONFIG_DIR}/config.json.new" "${CONFIG_DIR}/config.json"
   mv -f "${UNIT_DIR}/${SERVICE}.service.new" "${UNIT_DIR}/${SERVICE}.service"
+  mv -f "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.path"
+  mv -f "${UNIT_DIR}/${UPGRADE_UNIT}.service.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service"
 }
 
 pandora_start() {
   systemctl daemon-reload
   systemctl enable "$SERVICE" >/dev/null
+  systemctl enable --now "${UPGRADE_UNIT}.path" >/dev/null
   systemctl restart "$SERVICE"
   local i=0
   while (( i < 15 )); do
@@ -385,7 +460,7 @@ pandora_cleanup() {
   local rc=$?
   trap - EXIT
   [[ -n "$TMP" ]] && rm -rf "$TMP"
-  rm -f "${INSTALL_DIR}/${SERVICE}.new" "${CONFIG_DIR}/config.json.new" "${UNIT_DIR}/${SERVICE}.service.new"
+  rm -f "${INSTALL_DIR}/${SERVICE}.new" "${CONFIG_DIR}/config.json.new" "${UNIT_DIR}/${SERVICE}.service.new" "${UNIT_DIR}/${UPGRADE_UNIT}.path.new" "${UNIT_DIR}/${UPGRADE_UNIT}.service.new"
   if [[ $rc -ne 0 && $DONE -ne 1 ]]; then
     if [[ $ENROLLED -eq 1 ]]; then
       echo "已接入面板，但安装没有完成：处理上面的错误后，在后台重新签发令牌再跑安装命令" >&2
@@ -417,6 +492,7 @@ main() {
   pandora_enroll
   pandora_prepare_files
   pandora_validate
+  pandora_reset_upgrade
   pandora_commit_files
   say "调整系统参数（conntrack、监听队列、端口范围、收发缓冲）"
   pandora_tune_sysctl || echo "==> 系统参数调整失败，不影响安装，可稍后手动处理" >&2

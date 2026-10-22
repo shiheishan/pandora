@@ -53,6 +53,55 @@ SELECT n.id, coalesce(nullif(n.display_name, ''), n.name) AS name,
 	return out, nil
 }
 
+// CertAttentionRow 是证书要处理的节点样例查询的一行（含窗口聚合的总数与分项数）。
+type CertAttentionRow struct {
+	ID       uuid.UUID `gorm:"column:id"`
+	Name     string    `gorm:"column:name"`
+	Total    int64     `gorm:"column:total"`
+	Failing  int64     `gorm:"column:failing_total"`
+	Expiring int64     `gorm:"column:expiring_total"`
+}
+
+// CertAttentionBaseCond 是「证书要看」的候选节点（节点别名 n）：未删除、在役、报过证书状态。
+const CertAttentionBaseCond = `n.deleted_at IS NULL AND n.serving_status = 'active' AND n.cert_state_at IS NOT NULL`
+
+// CertFailingCond 判定申请或续期失败（节点别名 n）。
+const CertFailingCond = `n.cert_error_code IS NOT NULL`
+
+// CertExpiringCond 判定证书快到期或已过期（节点别名 n）；两个占位符依次是 IP 证书门槛（?::timestamptz）、域名证书门槛（?::timestamptz）。
+const CertExpiringCond = `n.cert_not_after IS NOT NULL AND n.cert_not_after < CASE
+            WHEN n.cert_identifier ~ '^[0-9.]+$' OR strpos(n.cert_identifier, ':') > 0
+            THEN ?::timestamptz
+            ELSE ?::timestamptz
+          END`
+
+// CertAttentionNodes 一条 SQL 取证书要处理的节点样例（口径见 service.CertAttentionNodes）。
+func (r *Repo) CertAttentionNodes(ctx context.Context, ipDeadline, domainDeadline time.Time, limit int) ([]CertAttentionRow, error) {
+	var out []CertAttentionRow
+	err := r.d.Conn(ctx).Raw(`
+WITH cand AS (
+  SELECT n.id,
+         coalesce(nullif(n.display_name, ''), n.name) AS name,
+         n.cert_not_after,
+         (`+CertFailingCond+`) AS failing,
+         (`+CertExpiringCond+`) AS expiring
+    FROM nodes n
+   WHERE `+CertAttentionBaseCond+`
+)
+SELECT id, name,
+       count(*) OVER () AS total,
+       count(*) FILTER (WHERE failing) OVER () AS failing_total,
+       count(*) FILTER (WHERE expiring) OVER () AS expiring_total
+  FROM cand
+ WHERE failing OR expiring
+ ORDER BY cert_not_after ASC NULLS FIRST, id
+ LIMIT ?`, ipDeadline, domainDeadline, limit).Scan(&out).Error
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ServedNodeAppliedRow 是在 ServedOnServerCond 上的节点及其已应用配置摘要。
 type ServedNodeAppliedRow struct {
 	NodeID        uuid.UUID `gorm:"column:node_id"`

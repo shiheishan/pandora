@@ -4,6 +4,14 @@ paths:
   - "pdnd/panel/**"
   - "pdnd/release/acceptancepanel/**"
   - "pdnd/main.go"
+  - "pdnd/acme_config.go"
+  - "pdnd/certs/**"
+  - "pdnd/upgrade_cmd.go"
+  - "pdnd/upgrade/**"
+  - "pdnd/release/signmanifest/**"
+  - "pdnd/release/pandora-native*.service"
+  - "pdnd/release/pandora-native-upgrade.path"
+  - "panel/internal/module/node/service/pdnd_install.sh.tmpl"
   - "proto/pandora/node/**"
 ---
 
@@ -66,14 +74,57 @@ paths:
 - 落盘缓存（`<cache_dir>/nodes/`）：`server.json` 记身份与节点顺序，每节点 `config.json`（原字节 base64 + 摘要）与 `users.json`，
   0600 / 0700。读回时核对摘要，换了身份的缓存整个丢弃。冷启动先装缓存再连面板，心跳报 `serving_cached_config` 直到 Welcome。
 
+## 在线升级（pdnd/upgrade、upgrade_cmd.go、node/upgrade.go）
+
+两块共用的规格（文件格式、原因码、路径、能力名）以 `docs/architecture.md` 11.6 为准；面板侧在 `panel/internal/module/node/`。
+
+- 信任根是二进制里 `go:embed` 的 `upgrade/keys/*.pub`：面板给的清单、签名、地址都只当搬运工。节点进程与 root 助手各验一遍（`upgrade.Check`：验签 → 解析 → 本机架构 → serial），
+  助手用的是**已安装的 root 属主二进制自己的**公钥与 buildSerial。`keys/` 里没有 `.pub` = 一切升级 `signature_invalid`。
+- `main.buildSerial` 由 `panel/deploy/build-release.sh` 以 `-X` 注入（提交时间）；缺省 `"0"` 是 dev 构建，不声明能力、助手也拒绝。
+  `upgrade_v1` 只在四项都满足时声明（`upgradeEnv.upgradeUnsupported`）：serial > 0、内置公钥非空、二进制就是 `/usr/local/bin/pandora-native`、装了 `/etc/systemd/system/pandora-native-upgrade.path`。
+- 节点进程（`upgrade.Agent`）只写 `/var/lib/pandora-native/upgrade/`：下载只走 https（`upgrade.allow_http` 只给验收），不跟随降到 http 的跳转，5 分钟、128 MiB；
+  日志与回报里的地址去掉查询串。`next.tmp` 核过摘要才 rename，`request` 最后写；任一步失败不留半截。`request` 或 `applying` 已在 = `busy`。
+- root 助手（`upgrade-apply`，`upgrade.Helper`）：单元平时跑装着的二进制，工作区有 `applying`（被打断要续做）且 `.prev` 可执行时改跑 `.prev`——续做时装着的是还没确认的新版，它一启动就崩的话回退跑不起来（10-21 真机测出）。所以续做与回退的逻辑以旧版为准：新版里对续做、回退的修复要到再下一次升级才生效。不收参数，路径全用固定值，不信 request 里的任何路径。暂存目录一律经 `os.Root`；每个文件 Lstat 只认普通文件、大小上限、
+  `O_NOFOLLOW|O_NONBLOCK` 打开后 `SameFile` 核对、链接数必须为 1（防硬链接），先拷进 root 0700 工作区 `/var/lib/pandora-native-upgrade/` 再验，验过的那份才装。
+  工作区 `applying` 记 installing / installed / rolling_back，被打断后按当前二进制摘要续做；只补一次确认窗口（`Resumed`），回退不来回循环；记录最后删。
+  重启前必须写成暂存 `applying` 并删掉旧 `healthy`（`prepareMarker`）：写不了就不重启、直接装回 `.prev`，结局 `apply_failed`（否则新进程写不出 healthy、面板却在新 Hello 上记成功、随后必然回退）。删不掉暂存 `request` 时报错退出，免得 path 单元空转。
+  节点安装器重跑时先停助手、清掉工作区与暂存件（`pandora_reset_upgrade`，`result` 留着），免得续做把 `.prev` 装回来盖掉新装的版本。
+- 编排（`node/upgrade.go`）：只有本条流 Welcome 协商到 `upgrade_v1` 才接指令；暂存在 goroutine 里跑，结局经 `upgradeDone` 回主循环，主循环仍单 goroutine 无锁。
+  同时只许一次。Welcome 时写 `healthy`（`applying` 的目标摘要等于自己的 binary_sha256 才写）；Hello 带上的 `last_upgrade` 内容一致才删结果文件；内务节拍把结果报出去后删。
+  成功不写结果文件：面板看新 Hello 的 binary_sha256。`LastUpgrade()` 在会话 goroutine 里调，只读文件。
+- systemd：`pandora-native-upgrade.path` 监视 `request` 与工作区 `applying`（后者让助手被打断后开机续做）；助手单元 oneshot、`TimeoutStartSec=600`，加固后只能写 `/usr/local/bin`、暂存目录与自己的工作区，只有 AF_UNIX、能力只剩 CAP_DAC_OVERRIDE、PrivateNetwork：助手要读写新路径、联网、chown 或用别的能力时，同时改发布包单元与安装器 HELPERUNIT，并上真机验证（单元测试不跑 systemd，挡不住 EPERM / EROFS）。助手单元写死 `/usr/local/bin/pandora-native`，不跟 `PANDORA_INSTALL_DIR`。
+  主单元 `StartLimitIntervalSec=300` / `StartLimitBurst=10`，助手重启前先 `reset-failed`。三个单元由安装器内联生成，`TestInstallScriptUpgradeUnitsMatchPackaged` 逐行对照 `pdnd/release/`。
+- 测试不需要 root 与 systemd：Agent / Helper 的根目录、二进制路径、`ServiceManager`、时钟、睡眠都可注入。
+
 ## 心跳与运行状态
 
 - 心跳带 `HostMetrics`（整数口径：CPU 万分比、负载 ×100、字节）与每个节点的 `NodeRuntime`：
   RUNNING；DEGRADED（新配置装不上、旧配置在服务：`config_apply_failed` 或内核原因；靠缓存服务：`serving_cached_config`）；
-  DOWN（入站没起来：`not_started` 或内核原因）。
+  DOWN（入站没起来：`not_started` 或内核原因）。证书：`cert_pending`（acme 证书还没到：没在服务就 DOWN，旧配置在服务就 DEGRADED）、
+  `cert_expired`（DEGRADED：在服务的证书过期了，继续服务、只如实上报，用户 10-20 定）。
+- `NodeRuntime.cert`（`CertStatus`）：acme 节点报证书管理器的状态（标识符、到期、最近失败的原因码与详情、下次尝试），
+  因 cert_pending 装不上时报新配置的标识符；file 节点只报装上时从 `cert_path` 读出的到期时间；不用证书的不带。
 - 内核端口冲突原因 `port_in_use:<端口>/<tcp|udp>:<占用者节点 id 或 other>` 上报时拆成 `reason=port_in_use:<端口>/<L4>`
   与 `reason_node_id`（同一台服务器的节点才写得出 id：入站归属按服务器身份哈希登记）。
 - 在线地址按 (节点, uid) 上报，设备键口径由内核保证（IPv4 按地址、IPv6 按 /64，`core.DeviceKey`）；一条消息至多 5000 条。
+
+## 自动申请入站证书（pdnd/certs、node/certs.go、acme_config.go）
+
+产品规则与用户文档见 `docs/node-certificates.md` 第 1 节；排障见 `panel/deploy/RUNBOOK.md` 11.5。
+
+- `certs.Manager` 用 lego v5 向 Let's Encrypt 申请（HTTP-01，本机 80 端口；IP 标识符带 `shortlived` 档，续期带 ARI 的 replaces），单 goroutine `Run` 逐件办：
+  申请 / 续期 > 7 天闲置回收 > 每 6 小时查 ARI。失败退避 15 分钟起翻倍到 4 小时（±10%），`rate_limited` 按 Retry-After，80 被占每 5 分钟。
+  原因码表在 `certs/reason.go`，面板前端 `runtime.ts` 的 `certReasonText` 与 RUNBOOK 11.5 跟着它改。
+- 落盘 `<cache_dir>/acme/`（目录 0700、文件 0600，原子写）：`account.json` 与 `certs/<规整后的标识符>/`（`meta.json` 与 `bundle.pem`；私钥在前、证书链在后合成一个文件一次 rename，续期中途被杀不留不配对的一对）。账户无邮箱、注册即同意订户协议。
+  回收在锁内复核「仍闲置满 7 天」再删；注册账户期间被 `Purge`（gen 变了）就不挂回账户、删掉写回的 account.json。
+  读盘的证书冷启动即可用；`Certificate` 只做原子读（写时复制的 map），内核握手路径上不加锁。
+- 编排（`node/certs.go`）：每次 ServerConfig（与冷启动的缓存）先把全部 acme 标识符整体交给 `Want`，不论这次能不能装上；
+  装之前 `certPrecheck`：证书没到返回 `*core.CertPendingError`、不碰内核，走坏版本台账（日志只打 Info「等证书申请下来再装入站」，首次申请必经、不算故障；申请失败由 Manager 打 Warn）；`Updates()` 一到，因这个标识符 cert_pending 的节点立刻重装。
+  `Want` 的集合 = 本次下发的标识符 ∪ 正在服务的旧版本的标识符（换标识符时新证书没到前旧证书不被回收），装上新版本后再同步一次。冷启动缓存装不上也记进坏版本台账，证书一到即装、不等面板。
+  在服务的证书过期报 DEGRADED `cert_expired`。Tombstone 时 `Purge` 删掉账户与全部证书。node 包只认 `CertManager` 接口，不 import `certs` 与 `kernel`。
+- 装配（`main.go`）：内核 `SetCertSource` 与 `node.Options.Certs` 在冷启动之前就位；Manager 建不起来只记错，手填证书的节点照常服务。
+  config.json 的 `acme` 段（`directory_url` 只收 https、`http_port`、`ca_file`）只给验收与测试，生产不写。Hello 声明 `cert_acme_v1`。
+- 测试：`certs/` 用进程内 pebble + 假 DNS（`testca_test.go`），不联网；`node/certs_test.go` 用 fake 管理器。
 
 ## 节点配置文档（NodeConfig.config_json）里节点端读取的键
 
@@ -88,6 +139,8 @@ paths:
 | `outbounds` | 数组，可选 | 每项 `tag`、`type`（字符串，必填）、`settings`（对象，可选，按出站类型解析）。 |
 | `routes` | 数组，可选 | 每项 `outbound`（必填，引用 outbounds 的 tag）、`matcher`（对象，可选）。 |
 | `final` | 字符串，可选 | 没命中规则时走的出站。outbounds / routes / final 都不给 = 没配分流（直出）；给了空的 = 清空已有规则。 |
+| `cert_mode` | 字符串，可选 | `acme`（节点端自动申请）/ `file`（缺省）。只对带证书的协议有意义（见下「TLS 证书」）。 |
+| `cert_identifier` | 字符串，acme 时必填 | 证书名字：SNI，没有就用节点地址（面板 `config_docs.go` 写入，协议配置里夹带的会被删掉）。 |
 | `ech_keys` | 数组，可选，≤8 项 | ECH 服务端密钥（迁移 00045）：每项 `config`（base64，单个 ECHConfig，版本 0xfe0d）、`private_key`（base64，32 字节 X25519）、`send_as_retry`（布尔，只有当前钥为 true）。面板只给能用 Go 标准库 TLS 的入站下发（vless/vmess/trojan 普通 TLS、AnyTLS、naive 等，不含 REALITY 与 QUIC 类）；节点端在 `loadInboundTLSConfig` 与 AnyTLS 的 TLS 配置上装 `EncryptedClientHelloKeys`，开了即只收 TLS 1.3（`kernel/inbound_tls_ech.go`）。轮换后旧钥在过渡期内仍下发，供拿着旧订阅的客户端解密。 |
 
 共用块（`kernel/`）：
@@ -101,7 +154,9 @@ paths:
     xhttp-h3 不走 REALITY 时要 cert_path、key_path。
   - mkcp：`kcp_settings` 对象（`mtu`、`tti`、`uplink_capacity`、`downlink_capacity`、`congestion`、`read_buffer_size`、
     `write_buffer_size`、`seed`、`header.type`、`mask` / `mask_password`，或 mask 数组每项的 `type` 与 `settings.password`）。
-- TLS：`tls`（布尔）为真时要 `cert_path`、`key_path`（节点机上的文件路径）。
+- TLS 证书：`cert_mode` 为 `acme` 时要 `cert_identifier`（面板算好的证书名字，域名或 IP，已规整），不许带 `cert_path` / `key_path`；
+  否则（`file` 或缺省）`tls`（布尔）为真时要 `cert_path`、`key_path`（节点机上的文件路径）。检查与取证书在 `kernel/inbound_cert.go`，规整口径
+  `core.NormalizeCertIdentifier` 与面板 `protocol.NormalizeCertIdentifier` 必须一致。vless / vmess 的 acme 由面板不开放（普通 TLS 未开放，xhttp-h3 只手填）；内核 `checkInboundCertificate` 本身接受，口径以面板 schema 为准。
 - `security`：vless 是 none / reality（TLS 用 `tls` 键）；trojan 是 tls / reality；vmess 里是加密方式。
 - REALITY（`security: reality`）：`dest`、`server_names`、`private_key`、`short_ids`、`max_time_diff`、`xver`。
 - 探测回落 `fallback`：`"host:port"` 字符串（trojan、anytls、naive）。

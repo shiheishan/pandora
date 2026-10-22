@@ -64,7 +64,7 @@ func TestGoGuardedConnRecoversAndRunsDefers(t *testing.T) {
 	goGuardedConn(server, func() {
 		defer wg.Done()
 		var m map[string]int
-		m["boom"]++ // nil map 写入
+		m["boom"]++ //nolint:staticcheck // 故意写 nil map，触发运行时 panic，测兜底
 	})
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
@@ -81,3 +81,6 @@ func TestGoGuardedConnRecoversAndRunsDefers(t *testing.T) {
 		t.Fatalf("兜住的 panic 计数 = %d，期望 1", got)
 	}
 }
+
+// ConnHandlerPanics 返回进程启动以来被兜住的连接处理 panic 次数。
+func ConnHandlerPanics() int64 { return connHandlerPanics.Load() }

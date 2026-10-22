@@ -1,5 +1,4 @@
 import type { MockContext, MockModule } from '../types.ts'
-import { readStrict } from './billing.ts'
 import { gate, scenario } from './fixtures.ts'
 
 interface Article {
@@ -10,11 +9,9 @@ interface Article {
   title: string
   summary: string
   body: string
-  target_platforms: string[]
   daysAgo: number
 }
 
-const PLATFORMS = new Set(['web', 'windows', 'macos', 'linux', 'android', 'ios'])
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 const ARTICLES: readonly Article[] = [
@@ -26,7 +23,6 @@ const ARTICLES: readonly Article[] = [
     title: '三分钟完成首次连接',
     summary: '复制链接或一键添加，测速后选择节点。',
     body: '在「我的套餐」页面复制链接，或直接点击对应 App 的一键添加按钮。\n\n## 选择节点\n打开 App 后先测速，选择延迟最低的节点。\n倍率大于 1 的节点会按倍率计流量。\n\n## 遇到问题\n若连接失败，请先更新链接，再尝试切换协议不同的节点。',
-    target_platforms: [],
     daysAgo: 3,
   },
   {
@@ -37,7 +33,6 @@ const ARTICLES: readonly Article[] = [
     title: 'Clash Verge Rev（Windows / macOS）',
     summary: '',
     body: '配置 → 新建 → 类型选择 Remote，粘贴链接。\n\n## 常见问题\n提示解析失败：请确认复制的是完整的链接，或使用「一键添加」。',
-    target_platforms: ['windows', 'macos'],
     daysAgo: 22,
   },
   {
@@ -48,7 +43,6 @@ const ARTICLES: readonly Article[] = [
     title: 'Shadowrocket（iOS）',
     summary: '',
     body: '点击右上角 ＋，类型选择 Subscribe，粘贴链接。',
-    target_platforms: ['ios'],
     daysAgo: 41,
   },
   {
@@ -59,7 +53,6 @@ const ARTICLES: readonly Article[] = [
     title: 'Hiddify（Android）',
     summary: '',
     body: '打开 Hiddify，点击「新建配置 → 从剪贴板添加」。',
-    target_platforms: ['android'],
     daysAgo: 9,
   },
   {
@@ -70,7 +63,6 @@ const ARTICLES: readonly Article[] = [
     title: '如何使用礼品卡',
     summary: '',
     body: '在「钱包」页输入卡码，先查询内容再确认兑换。余额卡直接入账，流量卡加到当前套餐本期的流量上，套餐卡立即延长你的套餐。',
-    target_platforms: [],
     daysAgo: 56,
   },
   {
@@ -81,10 +73,9 @@ const ARTICLES: readonly Article[] = [
     title: '同时在线设备数是怎么算的',
     summary: '按近 24 小时拉取链接的来源计算。',
     body: '',
-    target_platforms: [],
     daysAgo: 70,
   },
-  { slug: 'terms', kind: 'legal', category: '条款', version: 4, title: '服务条款', summary: '', body: '（法律文本不进帮助中心）', target_platforms: [], daysAgo: 100 },
+  { slug: 'terms', kind: 'legal', category: '条款', version: 4, title: '服务条款', summary: '', body: '（法律文本不进帮助中心）', daysAgo: 100 },
 ]
 
 function publishedAt(a: Article): string {
@@ -100,33 +91,20 @@ function view(a: Article, withBody: boolean) {
     title: a.title,
     ...(a.summary ? { summary: a.summary } : {}),
     ...(withBody && a.body ? { body: a.body } : {}),
-    locale: 'zh-CN',
-    target_platforms: a.target_platforms,
     published_at: publishedAt(a),
   }
 }
 
-/** 可见性参数校验与过滤，照 content/service portal.go 的 visible 判定；非法参数写好 422 并返回 null */
+/** 可见性参数校验与过滤，照 content/service portal.go 的 visible 判定（只看 kind）；非法参数写好 422 并返回 null */
 function visibleArticles(ctx: MockContext): Article[] | null {
   const kind = ctx.query.get('kind') ?? ''
   if (kind && !['page', 'kb_article', 'tutorial', 'legal'].includes(kind)) {
     ctx.fail(422, 'validation_failed', '请求参数校验未通过', { kind: '无效的内容类型' })
     return null
   }
-  const platform = (ctx.query.get('platform') ?? '').trim().toLowerCase()
-  if (platform && platform !== 'any' && !PLATFORMS.has(platform)) {
-    ctx.fail(422, 'validation_failed', '请求参数校验未通过', { platform: '无效的平台' })
-    return null
-  }
-  const locale = ctx.query.get('locale')?.trim() || 'zh-CN'
-  if (scenario() === 'empty' || locale !== 'zh-CN') return []
-  return ARTICLES.filter(
-    (a) => (!kind || a.kind === kind) && (platform === 'any' || a.target_platforms.length === 0 || (platform !== '' && a.target_platforms.includes(platform))),
-  )
+  if (scenario() === 'empty') return []
+  return ARTICLES.filter((a) => !kind || a.kind === kind)
 }
-
-// 反馈：按用户、文章、版本 upsert（content_page_feedback 主键）
-const feedback = new Map<string, boolean>()
 
 export const help: MockModule = {
   routes: {
@@ -149,20 +127,6 @@ export const help: MockModule = {
       const found = SLUG.test(slug) ? list.find((a) => a.slug === slug) : undefined
       if (!found) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       ctx.send(200, { page: view(found, true) })
-    },
-    'POST /v1/content/pages/:slug/feedback': async (ctx) => {
-      const body = await readStrict(ctx, ['helpful', 'version'])
-      if (!body) return
-      if (typeof body.helpful !== 'boolean') return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { helpful: '必填' })
-      const list = visibleArticles(ctx)
-      if (!list) return
-      const slug = ctx.params.slug!.trim().toLowerCase()
-      const found = SLUG.test(slug) ? list.find((a) => a.slug === slug) : undefined
-      if (!found) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
-      // 假后端只留当前版本；旧版本在后端仍收反馈（修订 R43），这里不模拟版本历史
-      if (body.version !== found.version) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { version: '文章版本不存在' })
-      feedback.set(`${ctx.user.userId}\n${found.slug}\n${found.version}`, body.helpful)
-      ctx.send(200, { ok: true })
     },
   },
 }

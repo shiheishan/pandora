@@ -1,0 +1,374 @@
+/* 服务端首页片段（panel/internal/pkg/webapp/home.go）的全局样式；
+ * 片段由服务端输出，拿不到 CSS Modules 的哈希类名，故使用全局类、统一 ph- 前缀，仅在门户入口加载；
+ * 颜色只用主题变量，深色模式与后台切换的主题自动生效。 */
+
+html[data-home='off'] #ph-home {
+  display: none;
+}
+
+.ph {
+  min-height: 100vh;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.ph-top,
+.ph-main,
+.ph-foot {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+
+@media (max-width: 959px) {
+  .ph-top,
+  .ph-main,
+  .ph-foot {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* 页头 */
+.ph-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 20px;
+  padding-bottom: 20px;
+}
+
+.ph-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.ph-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 主区 hero */
+.ph-hero {
+  padding-top: 72px;
+  padding-bottom: 48px;
+}
+
+@media (max-width: 959px) {
+  .ph-hero {
+    padding-top: 40px;
+    padding-bottom: 32px;
+  }
+}
+
+.ph-title {
+  font-family: var(--font-display);
+  font-size: 52px;
+  line-height: 1.1;
+  margin: 0 0 12px;
+}
+
+@media (max-width: 959px) {
+  .ph-title {
+    font-size: 36px;
+  }
+}
+
+.ph-tagline {
+  font-size: 20px;
+  color: var(--text-2);
+  margin: 0;
+}
+
+@media (max-width: 959px) {
+  .ph-tagline {
+    font-size: 17px;
+  }
+}
+
+.ph-intro {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text-2);
+  max-width: 640px;
+  margin: 0;
+}
+
+.ph-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+/* 首屏按钮下的一行说明：仅凭邀请码注册、注册已关闭（home.go 按注册方式出） */
+.ph-cta-note {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+/* 按钮 */
+.ph-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 50px;
+  padding: 0 22px;
+  border-radius: 14px;
+  background: var(--button-primary-bg);
+  color: var(--on-brand);
+  border: 1px solid var(--button-primary-border);
+  box-shadow: var(--button-primary-shadow);
+  font-size: 15.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ph-btn:hover {
+  filter: var(--button-hover-filter);
+}
+
+.ph-btn:active {
+  transform: var(--button-press);
+}
+
+.ph-btn-sm {
+  height: 38px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+
+.ph-btn-soft {
+  background: var(--surface);
+  color: var(--text);
+  /* 描边在 --button-secondary-shadow 里（同 kit/Btn 的 soft） */
+  border-color: transparent;
+  box-shadow: var(--button-secondary-shadow);
+}
+
+.ph-btn-soft:hover {
+  color: var(--text);
+}
+
+.ph-btn-block {
+  display: flex;
+  width: 100%;
+}
+
+/* 链接 */
+.ph-link {
+  color: var(--text-2);
+  font-size: 14.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.ph-link:hover {
+  color: var(--text);
+}
+
+.ph a:focus-visible,
+.ph summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 分节 */
+.ph-section {
+  margin: 0 0 56px;
+}
+
+.ph-h2 {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 800;
+  margin: 0 0 18px;
+}
+
+@media (max-width: 959px) {
+  .ph-h2 {
+    font-size: 22px;
+  }
+}
+
+/* 套餐 */
+.ph-plans {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 639px) {
+  .ph-plans {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ph-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 22px;
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 10px 30px -18px color-mix(in srgb, var(--shade) 30%, transparent);
+}
+
+.ph-plan-rec .ph-card {
+  box-shadow:
+    0 0 0 2px var(--brand-line),
+    0 10px 30px -18px color-mix(in srgb, var(--shade) 30%, transparent);
+}
+
+.ph-plan-meta {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.ph-kind {
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.ph-badge {
+  font-size: 12px;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.ph-plan-name {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 900;
+  margin: 4px 0 0;
+}
+
+.ph-desc,
+.ph-usage {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.ph-price {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  margin: 6px 0 0;
+}
+
+.ph-price-note {
+  font-size: 13px;
+  color: var(--text-3);
+  margin: 0;
+}
+
+.ph-card .ph-btn-block {
+  margin-top: auto;
+}
+
+/* 按钮贴卡片底；它上面那一项多留一点距离 */
+.ph-card > :nth-last-child(2) {
+  margin-bottom: 8px;
+}
+
+/* 常见问题 */
+.ph-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.ph-qa {
+  background: var(--surface);
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.ph-q {
+  cursor: pointer;
+  padding: 16px 18px;
+  font-size: 15.5px;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ph-q::-webkit-details-marker {
+  display: none;
+}
+
+.ph-q::after {
+  content: '+';
+  color: var(--text-3);
+  flex: none;
+}
+
+.ph-qa[open] .ph-q::after {
+  content: '−';
+}
+
+.ph-a {
+  padding: 0 18px 16px;
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.ph-a p {
+  margin: 0 0 8px;
+}
+
+.ph-a p:last-child {
+  margin-bottom: 0;
+}
+
+/* 页脚 */
+.ph-foot {
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+  padding-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.ph-foot p {
+  margin: 0;
+}
+
+.ph-foot-links {
+  display: flex;
+  gap: 16px;
+}

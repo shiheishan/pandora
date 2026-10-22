@@ -4,30 +4,38 @@ import { createApiClient, isApiError, noContent, type ApiClient } from '../core/
 import { createQueryClient, createRealtimeInvalidator } from '../core/query'
 import { openEventStream, type SseEvent } from '../core/sse'
 import { createTokenStore, type AppName, type TokenStore } from '../core/token'
-import { ToastProvider } from '../ui'
+import { ToastProvider } from '../ui/Toast'
+import { createSessionTracker, type SessionState, type SessionTracker } from './session'
 
 // ---------------------------------------------------------------------------
 // 每个入口一份运行时：两个网关的令牌互不通用，后台还要注入 reauth 对话框，
 // 所以 core 不持有单例，由入口在 main.tsx 里建好传进来。
-// 令牌被清空（退出、任一请求 401、另一个标签页退出）时一并清掉查询缓存，
-// 下一个登录的人看不到上一个人的数据。
+// 访问令牌只在内存；刷新页面后由 session.ts 凭 HttpOnly refresh cookie 恢复。
+// 令牌被清空（退出、任一请求 401、其它标签页退出）时一并清掉查询缓存，
+// 下一个登录的人看不到上一个人的数据；跨标签页退出由 TokenStore 广播。
 // ---------------------------------------------------------------------------
 export interface AppRuntime {
   app: AppName
   tokens: TokenStore
   api: ApiClient
   queryClient: QueryClient
+  session: SessionTracker
 }
 
-export function createAppRuntime(app: AppName, options: { requestReauth?: () => Promise<boolean> } = {}): AppRuntime {
+export function createAppRuntime(
+  app: AppName,
+  options: { requestReauth?: () => Promise<boolean>; restoreSession?: boolean } = {},
+): AppRuntime {
   const tokens = createTokenStore(app)
   const queryClient = createQueryClient()
   const refreshLockName = app === 'portal' ? 'pandora-portal-refresh' : 'pandora-admin-refresh'
   const api = createApiClient({ tokens, requestReauth: options.requestReauth, refreshLockName })
+  // 先挂清缓存，再建会话状态：令牌被清时缓存先清掉，界面再跟着换页
   tokens.subscribe(() => {
     if (tokens.get() === null) queryClient.clear()
   })
-  return { app, tokens, api, queryClient }
+  const session = createSessionTracker({ tokens, refresh: () => api.refreshSession(), restore: options.restoreSession })
+  return { app, tokens, api, queryClient, session }
 }
 
 const RuntimeContext = createContext<AppRuntime | null>(null)
@@ -50,14 +58,17 @@ export function useRuntime(): AppRuntime {
 
 export const useApi = (): ApiClient => useRuntime().api
 
-/** 有令牌即视为已登录；令牌失效由第一个 401 清掉，界面随之回到登录页。 */
-export function useSignedIn(): boolean {
-  const { tokens } = useRuntime()
-  return useSyncExternalStore(tokens.subscribe, () => tokens.get() !== null, () => false)
+/** 登录状态（unknown / signed-in / signed-out / unavailable），见 session.ts。 */
+export function useSession(): SessionState {
+  const { session } = useRuntime()
+  return useSyncExternalStore(session.subscribe, session.get, () => 'unknown')
 }
 
+export type { SessionState } from './session'
+
 /** 退出：先凭 refresh cookie 请求后端吊销当前会话（失败也不拦），再清本地令牌。
- *  不带 Bearer：access 过期时也能登出，不会先触发一轮刷新。 */
+ *  不带 Bearer：access 过期时也能登出，不会先触发一轮刷新。
+ *  清令牌时 TokenStore 会通知其它标签页一起退出。 */
 export async function signOut(runtime: AppRuntime): Promise<void> {
   try {
     await runtime.api.post('v1/auth/logout', noContent, { auth: false, withCookies: true })

@@ -90,7 +90,7 @@ func (f *fakeSvc) UserDetail(_ context.Context, id uuid.UUID) (service.UserDetai
 	current := sub
 	return service.UserDetail{
 		UserRow: service.UserRow{
-			ID: id, Email: "u@example.test", Status: "active", RiskLevel: "normal",
+			ID: id, Email: "u@example.test", Status: "active",
 			GroupName: "默认",
 			Balance:   decimal.RequireFromString("1.00"), SubscriptionCount: 1,
 			Current: &current,
@@ -172,6 +172,7 @@ func TestRoutes(t *testing.T) {
 	wantAdm := []string{
 		"DELETE /v1/user-groups/:id",
 		"GET /v1/access-log", "GET /v1/ip-clusters",
+		"GET /v1/trace/accounts", "GET /v1/trace/ips", "GET /v1/trace/reveal", "GET /v1/trace/subscribers",
 		"GET /v1/user-groups", "GET /v1/users", "GET /v1/users/:id", "GET /v1/users/:id/profile",
 		"GET /v1/users/bulk/export", "GET /v1/users/bulk/generate/jobs",
 		"GET /v1/users/bulk/generate/jobs/:id", "GET /v1/users/bulk/generate/jobs/:id/result",
@@ -334,12 +335,12 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	}
 	f := &fakeSvc{rows: []service.UserRow{
 		{
-			ID: withCurrent, Email: "with@example.test", Status: "active", RiskLevel: "normal",
+			ID: withCurrent, Email: "with@example.test", Status: "active",
 			GroupName: "g", Balance: decimal.RequireFromString("9.99"),
 			SubscriptionCount: 1, Current: curSub,
 		},
 		{
-			ID: noCurrent, Email: "none@example.test", Status: "active", RiskLevel: "normal",
+			ID: noCurrent, Email: "none@example.test", Status: "active",
 			GroupName: "g", Balance: decimal.Zero,
 			SubscriptionCount: 0, Current: nil,
 		},
@@ -356,7 +357,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 		t.Fatalf("users len %d", len(users))
 	}
 	rowKeys := []string{
-		"id", "email", "display_name", "status", "risk_level", "group_name", "group_id",
+		"id", "email", "display_name", "status", "group_name", "group_id",
 		"created_at", "last_login_at", "subscription_count", "active_plan", "balance", "current_subscription",
 	}
 	for i, u := range users {
@@ -367,7 +368,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 			if cs == nil {
 				t.Fatal("current_subscription 应有对象")
 			}
-			assertKeys(t, cs, "id", "plan_name", "status", "current_period_end", "traffic", "device_limit", "online_devices")
+			assertKeys(t, cs, "id", "plan_name", "status", "current_period_end", "traffic", "device_limit", "online_devices", "is_trial")
 			tr, _ := cs["traffic"].(map[string]any)
 			assertKeys(t, tr, "limit", "consumed")
 			if m["balance"] != float64(999) {
@@ -402,7 +403,7 @@ func TestAdminUserJSONKeys(t *testing.T) {
 	assertKeys(t, s0,
 		"id", "label", "plan_name", "plan_version", "status", "current_period_start", "current_period_end",
 		"amount", "quotas", "device_limit_override", "plan_max_devices",
-		"online_devices",
+		"online_devices", "is_trial",
 	)
 	if s0["amount"] != float64(1234) {
 		t.Fatalf("subscription amount %v", s0["amount"])

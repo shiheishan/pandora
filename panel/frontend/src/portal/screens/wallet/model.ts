@@ -29,8 +29,8 @@ const LEDGER: Readonly<Record<string, string>> = {
   balance_adjusted: '人工调整',
   commission_to_balance: '佣金转入',
   gift_card_balance: '礼品卡',
-  late_payment_applied: '挂账转入',
-  late_payment_suspense: '挂账转入',
+  late_payment_applied: '待处理到账转入',
+  late_payment_suspense: '待处理到账转入',
 }
 export const ledgerLabel = (kind: string): string | null => LEDGER[kind] ?? null
 
@@ -130,9 +130,8 @@ export function giftFace(card: GiftCard): string {
   return parts.length ? parts.join(' + ') : card.name
 }
 
-/** 卡面小字：优先后台写的说明，缺省按类型给固定文案 */
+/** 卡面小字：按卡型给固定文案 */
 export function giftNote(card: GiftCard): string {
-  if (card.description.trim()) return card.description
   if (card.type === 'plan') return ''
   if (card.type === 'mystery') return '兑换时随机抽取其中一项'
   if (card.rewards.traffic_bytes) return '送的流量：按时间的套餐只在本期有效，一次性套餐加到总流量上'

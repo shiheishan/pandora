@@ -170,7 +170,7 @@ func TestLoadInboundTLSConfigRegressionWithoutECH(t *testing.T) {
 		"tls":       true,
 		"cert_path": certPath,
 		"key_path":  keyPath,
-	})
+	}, nil)
 	if err != nil || !ok {
 		t.Fatalf("loadInboundTLSConfig failed: ok=%v, err=%v", ok, err)
 	}
@@ -200,7 +200,7 @@ func TestInboundTLSECHEndToEndHandshake(t *testing.T) {
 		},
 	}
 
-	serverCfg, ok, err := loadInboundTLSConfig(raw)
+	serverCfg, ok, err := loadInboundTLSConfig(raw, nil)
 	if err != nil || !ok {
 		t.Fatalf("loadInboundTLSConfig: ok=%v, err=%v", ok, err)
 	}

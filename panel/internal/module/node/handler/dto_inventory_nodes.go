@@ -5,6 +5,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"strings"
 	"time"
 
@@ -75,18 +76,16 @@ type nodePatchRequest struct {
 	TrafficRateSchedule *[]nodeRateRangeRequest `json:"traffic_rate_schedule"`
 }
 
-type nodeCopyRequest struct {
-	RowVersion     int64  `json:"row_version"`
-	Name           string `json:"name"`
-	TargetServerID string `json:"target_server_id"`
-	PoolID         string `json:"pool_id"`
-	CopyRouting    bool   `json:"copy_routing"`
-	SortOrder      *int   `json:"sort_order"`
-	ServerPort     *int   `json:"server_port"`
+// nodeBindRequest 是绑定 / 改绑服务器的请求体：server_port 不给就沿用节点已有端口。
+type nodeBindRequest struct {
+	ServerID   string `json:"server_id"`
+	ServerPort *int   `json:"server_port"`
+	RowVersion int64  `json:"row_version"`
+	Reason     string `json:"reason"`
 }
 
-type nodeMoveRequest struct {
-	ServerID   string `json:"server_id"`
+// nodeUnbindRequest 是解绑服务器的请求体。
+type nodeUnbindRequest struct {
 	RowVersion int64  `json:"row_version"`
 	Reason     string `json:"reason"`
 }
@@ -124,12 +123,6 @@ type nodeRetireRequest struct {
 type nodeDeleteRequest struct {
 	RowVersion int64  `json:"row_version"`
 	Reason     string `json:"reason"`
-}
-
-type nodePublishRequest struct {
-	Scope    string          `json:"scope"`
-	ScopeRef string          `json:"scope_ref"`
-	Payload  json.RawMessage `json:"payload"`
 }
 
 // nodeParseOptionalID 解析请求体里可空的 uuid 字段：空串返回 nil，格式不对回 422。
@@ -184,6 +177,18 @@ type nodeApplyFailureResponse struct {
 	At     time.Time `json:"at"`
 }
 
+// nodeCertResponse 是节点入站证书状态。mode：有标识符即自动申请（acme），否则手填（file）。
+type nodeCertResponse struct {
+	Mode           string     `json:"mode"`
+	Identifier     *string    `json:"identifier"`
+	IdentifierKind *string    `json:"identifier_kind"` // "ip" / "domain"；没有标识符为 null
+	NotAfter       *time.Time `json:"not_after"`
+	ErrorCode      *string    `json:"error_code"`
+	ErrorDetail    *string    `json:"error_detail"`
+	NextAttemptAt  *time.Time `json:"next_attempt_at"`
+	ReportedAt     time.Time  `json:"reported_at"`
+}
+
 // nodeRowResponse 是后台节点列表的一行（nodeRowSchema）。没有健康分与配置代数：配置是否生效看
 // effective_state（按配置文档 SHA-256 比）。
 type nodeRowResponse struct {
@@ -228,6 +233,7 @@ type nodeRowResponse struct {
 	RuntimeReason       *string                   `json:"runtime_reason"`
 	RuntimeStateAt      *time.Time                `json:"runtime_state_at"`
 	RuntimeReasonNode   *string                   `json:"runtime_reason_node"`
+	Cert                *nodeCertResponse         `json:"cert"`
 	DeliveryDegraded    bool                      `json:"delivery_degraded"`
 	Tags                []string                  `json:"tags"`
 	Traffic             nodeTrafficLimitResponse  `json:"traffic"`
@@ -331,15 +337,37 @@ type nodeRealityKeypairResponse struct {
 	Hint       string `json:"hint"`
 }
 
-type nodePublishResponse struct {
-	ConfigID      uuid.UUID `json:"config_id"`
-	Version       int64     `json:"version"`
-	Scope         string    `json:"scope"`
-	AffectedNodes int       `json:"affected_nodes"`
-}
-
 type nodeDeletedResponse struct {
 	Deleted bool `json:"deleted"`
+}
+
+// nodeCertFrom 把 service 的证书状态转成响应 DTO。
+func nodeCertFrom(c *service.NodeCertState) *nodeCertResponse {
+	if c == nil {
+		return nil
+	}
+	mode := "file"
+	var kind *string
+	if c.Identifier != nil && *c.Identifier != "" {
+		mode = "acme"
+		if net.ParseIP(*c.Identifier) != nil {
+			k := "ip"
+			kind = &k
+		} else {
+			k := "domain"
+			kind = &k
+		}
+	}
+	return &nodeCertResponse{
+		Mode:           mode,
+		Identifier:     c.Identifier,
+		IdentifierKind: kind,
+		NotAfter:       c.NotAfter,
+		ErrorCode:      c.ErrorCode,
+		ErrorDetail:    c.ErrorDetail,
+		NextAttemptAt:  c.NextAttempt,
+		ReportedAt:     c.ReportedAt,
+	}
 }
 
 // nodeRowFrom 把 service 的列表行转成响应。
@@ -401,6 +429,7 @@ func nodeRowFrom(r service.NodeRow) nodeRowResponse {
 	if f := r.LastApplyFailure; f != nil {
 		out.LastApplyFailure = &nodeApplyFailureResponse{Phase: f.Phase, Detail: f.Detail, At: f.At}
 	}
+	out.Cert = nodeCertFrom(r.Cert)
 	return out
 }
 

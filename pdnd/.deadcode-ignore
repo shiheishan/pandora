@@ -1,0 +1,7 @@
+# deadcode 的误报与不处理的目录（.github/scripts/deadcode.sh 读）。每行一个 ERE，匹配
+# 「<文件>:<行>:<列>: unreachable func: <名字>」；# 开头是注释，每条上面写理由，模式里不写行号。
+
+# fork 来的第三方代码保持上游的文件划分与 API，便于对照、合上游（.claude/rules/pdnd-forks.md）：
+# 本仓库没用到的上游函数不删
+^internal/(reality|realityquic)/
+^internal/nativewire/(shadowtls|anytls|hysteria2|tuic)/

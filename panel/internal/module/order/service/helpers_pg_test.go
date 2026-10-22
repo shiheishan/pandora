@@ -134,19 +134,6 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 	return missing, nil
 }
 
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
-	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
-	if p, ok := authn.From(ctx); ok {
-		uid := p.UserID
-		req.UserID = &uid
-	}
-	o, err := a.c.Offer(ctx, priceID, req)
-	if err != nil {
-		return decimal.Zero, errs.New(errs.NotFound)
-	}
-	return o.Price.UnitAmount, nil
-}
-
 // env 只经闭包取连接：service 包的测试不 import pkg/db（depguard）。
 type env struct {
 	svc      *Service
@@ -211,8 +198,9 @@ func setupEnv(t *testing.T, commit bool) (*env, context.Context) {
 	promoSvc.UseUsers(users)
 	promoSvc.UseCatalog(promoCatalog{c: catalogSvc})
 	subSvc := subsvc.New(subrepo.New(d), txm, auditSvc, settings, catalogSvc, users, sealer)
+	// 站点地址（主域名缺省值）经 settings 读
+	settings.UseSiteURLConfig("https://panel.example.test", true)
 	paymentSvc := paymentsvc.New(paymentrepo.New(d), txm, ledgerSvc, nil, settings, auditSvc, sealer, paymentsvc.Config{
-		PublicBaseURL:     "https://panel.example.test",
 		AllowPrivateHosts: true,
 	})
 	idemSvc := idemsvc.New(idemrepo.New(d), txm)

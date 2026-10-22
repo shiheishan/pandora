@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	idemsvc "github.com/aegispanel/aegis/internal/module/idempotency/service"
+	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/support/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
 	"github.com/aegispanel/aegis/internal/pkg/pluginevents"
@@ -52,12 +53,21 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Ticket, error) {
 		if err := s.repo.LockUserTickets(ctx, uid); err != nil {
 			return err
 		}
+		// 在锁之后读工单规则，管理员刚改的上限对下一张建单立刻生效。
+		rules, err := s.rules(ctx)
+		if err != nil {
+			return err
+		}
+		limit := rules.MaxOpenTickets
+		if limit < 1 {
+			limit = settingssvc.DefaultSupportMaxOpenTickets
+		}
 		open, err := s.repo.CountOpenTickets(ctx, uid)
 		if err != nil {
 			return err
 		}
-		if open >= MaxOpenTickets {
-			return ErrTooManyOpen
+		if open >= int64(limit) {
+			return errTooManyOpen(open)
 		}
 
 		t := &model.Ticket{

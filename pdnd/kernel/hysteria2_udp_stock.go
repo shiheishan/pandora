@@ -100,13 +100,6 @@ func (s *hy2Stock[T]) trim(before int64) {
 	s.items = s.items[:rest]
 }
 
-// size 返回当前存货数（测试用）。
-func (s *hy2Stock[T]) size() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.items)
-}
-
 // hy2StockJanitor 每 hy2StockJanitorTick 回收一次各存货表里闲置超过各自时长的缓冲；
 // 第一次借缓冲时才起，进程内只有一个。
 var hy2StockJanitor hy2Janitor
@@ -220,9 +213,6 @@ func (l *hy2WarmLimit) release(share *hy2BatchShare) {
 		panic(errHy2BatchShareReleased)
 	}
 }
-
-// inUse 返回当前占着的热态名额数。
-func (l *hy2WarmLimit) inUse() int { return len(l.slots) }
 
 // hy2BatchShare 是一个用户当前占着的批量名额与热态名额数。
 type hy2BatchShare struct {

@@ -1,4 +1,4 @@
-import type { Key, KeyboardEvent, ReactNode } from 'react'
+import { Fragment, type Key, type KeyboardEvent, type ReactNode } from 'react'
 import { Checkbox } from './Checkbox'
 import { cx } from './cx'
 
@@ -58,6 +58,11 @@ export interface TableProps<T> {
   boxed?: boolean
   /** 给某一行加 className（如「当前选中」「已归档置灰」）；返回 undefined 不加 */
   rowClassName?: (row: T) => string | undefined
+  /** 展开行：`keys` 里的行下面多一行占满整宽的细节（配合 `onRowClick` 切换）；行上带 aria-expanded */
+  expanded?: {
+    keys: ReadonlySet<Key>
+    render: (row: T) => ReactNode
+  }
 }
 
 export function Table<T>({
@@ -75,6 +80,7 @@ export function Table<T>({
   stickyHeader,
   boxed,
   rowClassName,
+  expanded,
 }: TableProps<T>) {
   const keys = rows.map(rowKey)
   const picked = selection ? keys.filter((k) => selection.selected.has(k)).length : 0
@@ -181,25 +187,33 @@ export function Table<T>({
               rows.map((row, i) => {
                 const key = keys[i]!
                 const isPicked = selection?.selected.has(key) ?? false
+                const isOpen = expanded?.keys.has(key) ?? false
                 return (
-                  <tr
-                    key={key}
-                    className={cn(isPicked && css.picked, onRowClick && css.clickable, rowClassName?.(row))}
-                    onClick={onRowClick ? () => onRowClick(row) : undefined}
-                    tabIndex={onRowClick ? 0 : undefined}
-                    onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}
-                  >
-                    {selection && (
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <Checkbox small aria-label="选择此行" checked={isPicked} onChange={() => toggle(key)} />
-                      </td>
+                  <Fragment key={key}>
+                    <tr
+                      className={cn(isPicked && css.picked, onRowClick && css.clickable, isOpen && css.open, rowClassName?.(row))}
+                      onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      tabIndex={onRowClick ? 0 : undefined}
+                      aria-expanded={expanded ? isOpen : undefined}
+                      onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}
+                    >
+                      {selection && (
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <Checkbox small aria-label="选择此行" checked={isPicked} onChange={() => toggle(key)} />
+                        </td>
+                      )}
+                      {columns.map((c) => (
+                        <td key={c.key} className={cn(c.align === 'right' && css.right, c.mono && 'mono', c.hideOnMobile && css.hideMobile)}>
+                          {c.render(row)}
+                        </td>
+                      ))}
+                    </tr>
+                    {isOpen && (
+                      <tr className={css.detailRow}>
+                        <td colSpan={span}>{expanded?.render(row)}</td>
+                      </tr>
                     )}
-                    {columns.map((c) => (
-                      <td key={c.key} className={cn(c.align === 'right' && css.right, c.mono && 'mono', c.hideOnMobile && css.hideMobile)}>
-                        {c.render(row)}
-                      </td>
-                    ))}
-                  </tr>
+                  </Fragment>
                 )
               })}
           </tbody>

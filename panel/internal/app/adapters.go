@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	authsvc "github.com/aegispanel/aegis/internal/module/auth/service"
@@ -27,7 +26,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// promoCatalog 把 catalog 的下单快照适配成 promo 要的 CatalogReader。
+// promoCatalog 把 catalog 的套餐批量读取适配成 promo 要的 CatalogReader。
 type promoCatalog struct{ c *catalogsvc.Service }
 
 var _ promosvc.CatalogReader = promoCatalog{}
@@ -45,29 +44,6 @@ func (a promoCatalog) MissingPlans(ctx context.Context, ids []uuid.UUID) ([]uuid
 		}
 	}
 	return missing, nil
-}
-
-// PriceSubtotal 按「新购」取在售价格的金额，一次 catalog 查询；价格须属于 planID，按当前登录用户判断可见性；买不到一律回 NotFound（券试算用）。
-func (a promoCatalog) PriceSubtotal(ctx context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
-	req := catalogsvc.OfferRequest{Use: catalogsvc.UseNew, PlanID: &planID}
-	if p, ok := authn.From(ctx); ok {
-		uid := p.UserID
-		req.UserID = &uid
-	}
-	o, err := a.c.Offer(ctx, priceID, req)
-	if err != nil {
-		return decimal.Zero, asNotFound(err)
-	}
-	return o.Price.UnitAmount, nil
-}
-
-// asNotFound 把 catalog 的业务拒绝（不在售、未发布、下架等）统一成 NotFound，内部错误原样返回。
-func asNotFound(err error) error {
-	var e *errs.Error
-	if errors.As(err, &e) && e.Code != errs.Internal {
-		return errs.New(errs.NotFound)
-	}
-	return err
 }
 
 // opsOrderAdapter 把 order 的订单统计适配成 identity 要的 OpsOrders。
@@ -238,6 +214,31 @@ var (
 	_ supportsvc.Orders        = supportOrders{}
 	_ supportsvc.PlanNames     = supportPlans{}
 	_ supportsvc.ReplyNotifier = supportReplyNotifier{}
+)
+
+// subLinkNotifier 让 subscription 在后台换链接的事务里经 notify 给属主写「链接已更换」（模板 subscription.link_rotated）。
+type subLinkNotifier struct{ n *notifysvc.Service }
+
+// LinkRotatedByAdmin 在调用方事务里写通知。
+func (a subLinkNotifier) LinkRotatedByAdmin(ctx context.Context, n subsvc.LinkRotatedNotice) error {
+	return a.n.NotifyLinkRotated(ctx, notifysvc.LinkRotatedNotice{
+		UserID: n.UserID, SubscriptionID: n.SubscriptionID, PlanID: n.PlanID, Label: n.Label, RotatedAt: n.RotatedAt,
+	})
+}
+
+// orderPendingNotifier 让 order 在后台开待付单的事务里经 notify 给用户写「有一张待付款订单」（模板 order.pending_created）。
+type orderPendingNotifier struct{ n *notifysvc.Service }
+
+// ManualPendingCreated 在调用方事务里写通知。
+func (a orderPendingNotifier) ManualPendingCreated(ctx context.Context, n ordersvc.PendingNotice) error {
+	return a.n.NotifyOrderPending(ctx, notifysvc.PendingOrderNotice{
+		UserID: n.UserID, OrderID: n.OrderID, PlanID: n.PlanID, OrderNo: n.OrderNo, Amount: n.Amount, ExpiresAt: n.ExpiresAt,
+	})
+}
+
+var (
+	_ subsvc.LinkNotifier      = subLinkNotifier{}
+	_ ordersvc.PendingNotifier = orderPendingNotifier{}
 )
 
 // reportRedis 让 report 的系统状态页探测 Redis 是否可达。

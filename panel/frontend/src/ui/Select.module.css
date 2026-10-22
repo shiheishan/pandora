@@ -40,6 +40,8 @@
   gap: 1px;
   padding: 4px;
   overflow-y: auto;
+  /* 列表滚到头时滚轮不传给外层（弹窗内容一滚，列表就收起，再点原位置会落到遮罩上关掉弹窗） */
+  overscroll-behavior: contain;
   border: 1px solid var(--popover-border);
   border-radius: var(--radius-control);
   background: var(--surface);

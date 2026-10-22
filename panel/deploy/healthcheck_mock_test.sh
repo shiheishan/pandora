@@ -281,7 +281,8 @@ knob schedulers err;          expect_alert 'scheduler heartbeat unreadable' '读
 # 磁盘与备份
 knob df.use 91;               expect_alert 'disk full' '/ 已用 91%'
 knob bkdir.fail;              expect_alert 'backup dir unreadable' '读不出备份目录'
-knob bk.age_s 180000;         expect_alert 'stale backup' '最新备份已经是 50 小时前的'
+# 50.5 小时：healthcheck 先取 date 再取 stat，两次跨秒时整 50 小时会被除成 49（10-21 CI 偶发），留半小时余量
+knob bk.age_s 181800;         expect_alert 'stale backup' '最新备份已经是 50 小时前的'
 knob bk.size 512;             expect_alert 'tiny backup' '最新备份只有 512 字节，疑似空文件'
 mv "$MF/backups/pandora-postgres-20261010T000000Z.dump.age" "$MF/backup.keep"
 expect_alert 'no backup at all' "备份目录 $MF/backups 里没有任何备份"

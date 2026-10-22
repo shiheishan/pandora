@@ -1,6 +1,6 @@
 package service
 
-// 节点生命周期的 PG 测试：批量改状态、上线、退役、删除、迁移、强制重新下发与纪元通知。
+// 节点生命周期的 PG 测试：批量改状态、上线、退役、删除、迁移与纪元通知。
 
 import (
 	"context"
@@ -270,63 +270,6 @@ func TestDeleteNode(t *testing.T) {
 	}
 }
 
-func TestMoveNode(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	a := e.server(t, ctx, "move-a")
-	b := e.server(t, ctx, "move-b")
-	n := e.ssNode(t, ctx, a.ID, "n", 21012)
-
-	// 同服务器：不改
-	same, err := e.svc.MoveNode(ctx, n.ID, NodeMoveInput{RowVersion: n.RowVersion, ServerID: a.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if same.RowVersion != n.RowVersion {
-		t.Fatalf("同服务器迁移不应改版本：%d", same.RowVersion)
-	}
-
-	moved, err := e.svc.MoveNode(ctx, n.ID, NodeMoveInput{RowVersion: n.RowVersion, ServerID: b.ID, Reason: "换机"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if moved.ServerID == nil || *moved.ServerID != b.ID {
-		t.Fatalf("server_id 没变：%v", moved.ServerID)
-	}
-
-	// 服务过的草稿不能迁移
-	served := e.ssNode(t, ctx, a.ID, "served", 21013)
-	if err := e.exec(ctx, `UPDATE nodes SET applied_config_sha256 = repeat('a', 64), applied_config_at = now() WHERE id = ?`, served.ID); err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.MoveNode(ctx, served.ID, NodeMoveInput{RowVersion: served.RowVersion, ServerID: b.ID})
-	_ = invWantCode(t, err, errs.Conflict)
-
-	// 在役节点不能迁移
-	_, active := invActiveNode(t, e, ctx, "move-c", "active", 21014)
-	_, err = e.svc.MoveNode(ctx, active.ID, NodeMoveInput{RowVersion: active.RowVersion, ServerID: b.ID})
-	_ = invWantCode(t, err, errs.Conflict)
-}
-
-func TestRepublishNode(t *testing.T) {
-	e, ctx := newInvEnv(t)
-	srv := e.server(t, ctx, "pub-a")
-	n := e.ssNode(t, ctx, srv.ID, "n", 21015)
-	v, err := e.svc.RepublishNode(ctx, n.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v != n.RowVersion+1 {
-		t.Fatalf("版本 %d，期望 %d", v, n.RowVersion+1)
-	}
-	if _, err := e.svc.RetireNode(ctx, n.ID, v, ""); err != nil {
-		t.Fatal(err)
-	}
-	_, err = e.svc.RepublishNode(ctx, n.ID)
-	_ = invWantCode(t, err, errs.Conflict)
-	_, err = e.svc.RepublishNode(ctx, uuid.New())
-	_ = invWantCode(t, err, errs.NotFound)
-}
-
 func TestNodeLifecycleEpochs(t *testing.T) {
 	e, ctx := newInvEnvCommitted(t)
 	srv := e.server(t, ctx, "epoch-a")
@@ -341,7 +284,7 @@ func TestNodeLifecycleEpochs(t *testing.T) {
 		t.Fatal("失败的调用不应推进纪元")
 	}
 
-	got, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
+	_, err = e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,12 +292,36 @@ func TestNodeLifecycleEpochs(t *testing.T) {
 		t.Fatalf("上线后纪元应各 +1：users %d→%d config %d→%d",
 			users, e.epoch(t, UsersEpochKey), config, e.epoch(t, ConfigEpochKey))
 	}
+}
 
-	config = e.epoch(t, ConfigEpochKey)
-	if _, err := e.svc.RepublishNode(ctx, got.ID); err != nil {
-		t.Fatal(err)
+// 上线成功但所在池没被在用套餐绑定：带「池没绑套餐」提示（与列表下发说明同一口径）；池绑了套餐不提示。
+func TestActivateNodePoolUnboundWarningPG(t *testing.T) {
+	e, cat, ctx := newInvListEnv(t)
+	srv := e.server(t, ctx, "act-pu")
+	e.enroll(t, ctx, srv.ID)
+	activate := func(name string, port int, pool uuid.UUID) AdminNode {
+		t.Helper()
+		n := e.ssNode(t, ctx, srv.ID, name, port)
+		n, err := e.svc.PatchNode(ctx, n.ID, NodePatch{RowVersion: n.RowVersion, PoolID: OptionalUUID{Set: true, Value: &pool}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := e.svc.ActivateNode(ctx, n.ID, n.RowVersion)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
 	}
-	if e.epoch(t, ConfigEpochKey) != config+1 {
-		t.Fatal("强制重新下发应推进配置纪元")
+
+	unbound := e.pool(t, ctx, "active")
+	cat.unbound[unbound] = true
+	got := activate("pu", 21031, unbound)
+	if len(got.Warnings) != 1 || got.Warnings[0] != nodePoolUnboundWarning {
+		t.Fatalf("池没绑套餐应提示：%v", got.Warnings)
+	}
+
+	bound := e.pool(t, ctx, "active")
+	if got := activate("pb", 21032, bound); len(got.Warnings) != 0 {
+		t.Fatalf("池绑了套餐不应提示：%v", got.Warnings)
 	}
 }

@@ -621,5 +621,9 @@ func (c *serverConn) RemoteAddr() net.Addr {
 
 func (c *serverConn) Close() error {
 	c.Stream.CancelRead(0)
-	return c.Stream.Close()
+	err := c.Stream.Close()
+	// 上游 7db04f8d：quic-go 的 Stream.Close 解不开被流控卡住的 Write，过去的写截止可以；
+	// 已缓冲的数据与 FIN 不受影响。
+	c.Stream.SetWriteDeadline(time.Now())
+	return err
 }

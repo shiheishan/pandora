@@ -2,7 +2,7 @@ package service
 
 // 建流对齐合批（session_align.go）的单测：一批只读一次、单条流取消或超时不连累同批、批失败整批失败、同批去重、
 // 同一批里先取配置序号再取名单序号。涉及并发，要用 -race 跑：
-//   GOTOOLCHAIN=go1.26.9 go test -race -count=3 -run 'TestAlign' ./internal/module/node/service/
+//   GOTOOLCHAIN=go1.26.10 go test -race -count=3 -run 'TestAlign' ./internal/module/node/service/
 
 import (
 	"context"

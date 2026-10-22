@@ -123,6 +123,7 @@ type commissionEntryResponse struct {
 	Level        int       `json:"level"`
 	SharePercent int       `json:"share_percent"`
 	Status       string    `json:"status"`
+	UnderReview  bool      `json:"under_review"`
 	FrozenUntil  time.Time `json:"frozen_until"`
 	CreatedAt    time.Time `json:"created_at"`
 	OrderNo      string    `json:"order_no"`
@@ -136,6 +137,7 @@ type myWithdrawalResponse struct {
 	Status       string     `json:"status"`
 	Method       string     `json:"method"`
 	RejectReason string     `json:"reject_reason"`
+	TxHash       string     `json:"tx_hash"` // 仅 USDT 已打款时非空
 	RequestedAt  time.Time  `json:"requested_at"`
 	CompletedAt  *time.Time `json:"completed_at"`
 }
@@ -285,6 +287,7 @@ func entryFrom(e service.EntryView) (commissionEntryResponse, error) {
 		Level:        e.Level,
 		SharePercent: e.SharePercent,
 		Status:       e.Status,
+		UnderReview:  e.UnderReview,
 		FrozenUntil:  e.FrozenUntil,
 		CreatedAt:    e.CreatedAt,
 		OrderNo:      e.OrderNo,
@@ -303,6 +306,7 @@ func myWithdrawalFrom(w service.WithdrawalView) (myWithdrawalResponse, error) {
 		Status:       w.Status,
 		Method:       w.Method,
 		RejectReason: w.RejectReason,
+		TxHash:       w.TxHash,
 		RequestedAt:  w.RequestedAt,
 		CompletedAt:  w.CompletedAt,
 	}, nil

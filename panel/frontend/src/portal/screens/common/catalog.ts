@@ -5,7 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { planSchema, type Plan, type PlanKind, type Price } from './catalog-schema'
 
 // GET v1/plans 的形状在 catalog-schema.ts（纯 zod，测试也用），这里转出
-export { PLAN_KINDS, type Plan, type PlanKind, type Price } from './catalog-schema'
+export { type Plan, type PlanKind, type Price } from './catalog-schema'
 
 export const plansSchema = z.object({ plans: z.array(planSchema) })
 
@@ -31,7 +31,8 @@ export function usePlans() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/payment-methods：只有人民币，没有币种字段；fee / total 只在带了 amount 时回（Go omitempty）
+// GET v1/payment-methods：只有人民币，没有币种字段；fee / total 只在带了 amount 时回（Go omitempty）；
+// min_amount 恒在：渠道最低付款额（分），订单应付（不含手续费）低于它这个方式付不了
 // ---------------------------------------------------------------------------
 export const paymentMethodSchema = z.object({
   provider: z.string(),
@@ -41,10 +42,18 @@ export const paymentMethodSchema = z.object({
   fee_percent: z.string(),
   fee: z.number().int().nonnegative().optional(),
   total: z.number().int().nonnegative().optional(),
+  min_amount: z.number().int().nonnegative(),
 })
 export type PaymentMethod = z.output<typeof paymentMethodSchema>
 
 export const methodKey = (m: Pick<PaymentMethod, 'provider' | 'method'>) => `${m.provider}:${m.method}`
+
+/** 这个方式付不了这笔钱：应付（分，不含手续费）低于它的最低额。应付未知或为 0 时不算付不了 */
+export const belowMethodMinimum = (m: Pick<PaymentMethod, 'min_amount'>, amount: number | undefined): boolean =>
+  amount !== undefined && amount > 0 && amount < m.min_amount
+/** 付得了这笔钱的方式（顺序不变） */
+export const usableMethods = <T extends Pick<PaymentMethod, 'min_amount'>>(list: readonly T[], amount: number | undefined): T[] =>
+  list.filter((m) => !belowMethodMinimum(m, amount))
 
 export function usePaymentMethods(amount?: number) {
   const api = useApi()
@@ -77,33 +86,22 @@ export function periodOf(p: { billing_interval: string; interval_count: number }
   return `${i}:${n}`
 }
 
-// [档名, 价签后缀里的单位, 折合月数, 「买多久」]
-const NAMED: Readonly<Record<string, [string, string, number, string]>> = {
-  '1m': ['月付', '月', 1, '1 个月'],
-  '3m': ['季付', '季', 3, '3 个月'],
-  '6m': ['半年付', '半年', 6, '半年'],
-  '12m': ['年付', '年', 12, '1 年'],
-}
-
-/** 「月付 / 季付 / 半年付 / 年付 / 一次性」 */
-export function periodName(key: PeriodKey): string {
-  if (key === 'once') return '一次性'
-  return NAMED[key]?.[0] ?? key
+// [价签后缀里的单位, 折合月数]
+const NAMED: Readonly<Record<string, [string, number]>> = {
+  '1m': ['月', 1],
+  '3m': ['季', 3],
+  '6m': ['半年', 6],
+  '12m': ['年', 12],
 }
 
 /** 价签后缀「/ 月」「/ 季」「/ 半年」「/ 年」；一次性没有后缀 */
 export function periodUnit(key: PeriodKey): string {
   const named = NAMED[key]
-  return named ? `/ ${named[1]}` : ''
-}
-
-/** 「买多久」：1 个月 / 3 个月 / 半年 / 1 年；一次性为空串 */
-export function periodSpan(key: PeriodKey): string {
-  return NAMED[key]?.[3] ?? ''
+  return named ? `/ ${named[0]}` : ''
 }
 
 /** 该档折合几个月；一次性与非常规组合为 null */
-export const periodMonths = (key: PeriodKey): number | null => NAMED[key]?.[2] ?? null
+export const periodMonths = (key: PeriodKey): number | null => NAMED[key]?.[1] ?? null
 
 /** 价格档按时长排：1 个月、3 个月、半年、1 年，一次性与其余排后 */
 export const sortPrices = <P extends { billing_interval: string; interval_count: number; unit_amount: number }>(prices: readonly P[]): P[] =>
@@ -118,21 +116,6 @@ export function headlinePrice(plan: Pick<Plan, 'prices'>): Price | null {
   return priceFor(plan, '1m') ?? sortPrices(plan.prices)[0] ?? null
 }
 
-/** 卡片副文案：月付「按月付费」，多月档「折合 ¥Y / 月」；一次性为空串 */
-export function monthlyNote(price: Price): string {
-  const months = periodMonths(periodOf(price))
-  if (months === 1) return '按月付费'
-  if (!months) return ''
-  return `折合 ${formatMoney(Math.round(price.unit_amount / months))} / 月`
-}
-
-/** 相对「月付 × 月数」省了多少（分）；没有月付价或不省时为 0 */
-export function savingAmount(plan: Pick<Plan, 'prices'>, price: Price): number {
-  const months = periodMonths(periodOf(price))
-  const monthly = priceFor(plan, '1m')
-  if (!months || months === 1 || !monthly) return 0
-  return Math.max(0, monthly.unit_amount * months - price.unit_amount)
-}
 
 // ---------------------------------------------------------------------------
 // 套餐事实的说法（选购页卡片、换套餐、确认页共用）。「周期」「订阅」是用户端禁用词：

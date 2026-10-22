@@ -198,3 +198,76 @@ func TestHelloWithAppliedVersionsSkipsResend(t *testing.T) {
 		t.Fatalf("hellos_with_applied_config = %d", s.HellosWithAppliedConfig)
 	}
 }
+
+// 在线升级往返：节点在 Hello 里声明 upgrade_v1 并自报 build_serial，面板在 Welcome 里回 upgrade_v1、
+// 下发一次 Upgrade（原样带清单、签名与地址），节点回 UpgradeReport，面板记下 phase 与原因码；重连不重发。
+func TestUpgradeRoundTrip(t *testing.T) {
+	job := &upgradeJob{manifest: []byte(`{"schema":1}`), signature: []byte(`{"key_id":"x"}`), url: "https://dl.example.test/pandora-native"}
+	p, err := newFakePanel(options{
+		serverName: "127.0.0.1", nodePort: 18443, token: testToken,
+		statePath: filepath.Join(t.TempDir(), "state.json"), upgrade: job,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = p.serve(lis) }()
+	t.Cleanup(func() { _ = lis.Close() })
+	addr := lis.Addr().String()
+
+	id, err := enroll(t, p, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := func() ([]*nodev1.AppliedConfig, []*nodev1.AppliedUsers) {
+		return []*nodev1.AppliedConfig{{NodeId: p.nodeID, ContentSha256: p.configSHA}},
+			[]*nodev1.AppliedUsers{{NodeId: p.nodeID, Version: usersVersion}}
+	}
+	sess, err := nodepanel.NewSession(nodepanel.SessionOptions{
+		Address: addr, Identity: id, AgentVersion: "test", Applied: applied,
+		BuildSerial: 7, Features: []string{nodepanel.FeatureUsersDelta, nodepanel.FeatureUpgrade},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = sess.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	w := nextEvent(t, sess, nodepanel.EventWelcome).Welcome
+	if !slices.Contains(w.GetFeatures(), nodepanel.FeatureUpgrade) {
+		t.Fatalf("Welcome.features = %v，应含 upgrade_v1", w.GetFeatures())
+	}
+	u := nextEvent(t, sess, nodepanel.EventUpgrade).Upgrade
+	if u.GetJobId() != p.upgradeID || string(u.GetManifest()) != string(job.manifest) ||
+		string(u.GetSignature()) != string(job.signature) || u.GetBinaryUrl() != job.url || u.GetConfirmWithinSec() == 0 {
+		t.Fatalf("Upgrade 指令不对：%+v", u)
+	}
+	if !sess.SendUpgradeReport(&nodev1.UpgradeReport{JobId: u.GetJobId(),
+		Phase: nodev1.UpgradePhase_UPGRADE_PHASE_FAILED, ReasonCode: "signature_invalid"}) {
+		t.Fatal("升级回报没发出去")
+	}
+	s := waitState(t, p, "升级回报", func(s State) bool { return len(s.UpgradeReports) >= 1 })
+	if !slices.Equal(s.UpgradeReports, []string{"UPGRADE_PHASE_FAILED:signature_invalid"}) || s.HelloBuildSerial != 7 || s.UpgradesSent != 1 {
+		t.Fatalf("状态不对：%+v", s)
+	}
+	if p.takeUpgrade() {
+		t.Fatal("同一进程不应再发第二次 Upgrade")
+	}
+}
+
+// snapshot 返回状态的一份拷贝（测试用）。
+func (p *fakePanel) snapshot() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.state
+	s.ConfigPhases = append([]string(nil), s.ConfigPhases...)
+	s.LastRuntime = append([]string(nil), s.LastRuntime...)
+	s.UpgradeReports = append([]string(nil), s.UpgradeReports...)
+	return s
+}

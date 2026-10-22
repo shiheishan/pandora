@@ -1,26 +1,37 @@
 package service
 
-// 节点的批量改状态、上线、退役、删除与强制重新下发。
+// 节点的批量改状态、上线、退役与删除。
 
 import (
 	"context"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/module/node/model"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	plog "github.com/aegispanel/aegis/internal/pkg/log"
 	"github.com/aegispanel/aegis/internal/pkg/realtime"
 )
 
 // nodeStatusBatchMax 是一次批量改状态最多的节点数。
 const nodeStatusBatchMax = 100
 
-// nodeNoPoolWarning 是上线后不服务任何人的提示。
-const nodeNoPoolWarning = "未划入节点池，不服务任何用户"
+// nodeNoPoolWarning、nodePoolUnboundWarning 是上线成功但不服务任何人的提示（前端 activationHint 按原文配下一步）。
+const (
+	nodeNoPoolWarning      = "未划入节点池，不服务任何用户"
+	nodePoolUnboundWarning = "所在节点池没有绑定任何套餐，暂时不服务任何用户"
+)
+
+// serverNoActiveNodeMsg 是服务器没有在役节点却要进 ready 时的提示：服务器随节点「上线」自动投入服务。
+const serverNoActiveNodeMsg = "服务器还没有在役节点，不能投入服务：先新建节点或把节点绑到这台，再在节点上用「上线」（上线时这台会自动投入服务）"
 
 // serverNotEnrolledMsg 是上线时服务器还没有有效接入身份的提示。
-const serverNotEnrolledMsg = "服务器还没接入（先在服务器页生成安装命令完成接入）"
+const serverNotEnrolledMsg = "服务器还没接入：先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令"
+
+// nodeUnboundActivateMsg 是没绑服务器的节点上线 / 启用时的提示。
+const nodeUnboundActivateMsg = "节点还没有绑定服务器，先在节点详情「身份与操作」里绑定服务器再上线"
 
 // BatchNodeStatus 批量改服务状态：先全部核对、再写；整批有一条不合法就整批失败。转 active 时要求所在服务器有有效接入身份。
 func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error {
@@ -63,6 +74,10 @@ func (s *Service) BatchNodeStatus(ctx context.Context, in NodeStatusBatch) error
 			}
 			if to != NodeActive {
 				continue
+			}
+			if n.ServerID == nil {
+				return &errs.Error{Code: errs.Conflict, Message: nodeUnboundActivateMsg,
+					Fields: map[string]string{"server_id": nodeUnboundActivateMsg, "id": n.ID.String()}}
 			}
 			ready := false
 			if nodeProtocolReady(n) && n.ServerID != nil {
@@ -132,7 +147,7 @@ func (s *Service) nodeLockForWrite(ctx context.Context, id uuid.UUID, rowVersion
 	return n, nil
 }
 
-// ActivateNode 上线一个草稿或停用的节点；所在服务器未就绪时一并转 ready。已在役则什么都不改（幂等）。要求所在服务器有有效接入身份。
+// ActivateNode 上线一个草稿或停用的节点；所在服务器未就绪时一并转 ready。已在役则什么都不改（幂等）。要求所在服务器有有效接入身份。没绑服务器的回 409 server_id。
 func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int64) (AdminNode, error) {
 	if rowVersion <= 0 {
 		return AdminNode{}, inventoryInvalid("row_version", nodeRowVersionHint)
@@ -155,11 +170,12 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 		case n.ServingStatus == NodeRetired:
 			return inventoryConflict("节点已退役，不能上线")
 		case !CanNodeTransition(n.ServingStatus, NodeActive):
-			return inventoryConflict("节点处于 " + n.ServingStatus + "，不能上线")
-		case !nodeProtocolReady(n):
-			return inventoryConflict("节点的协议配置还没就绪（协议类型、地址、端口），先保存协议再上线")
+			return inventoryConflict("节点处于「" + statusLabel(nodeStatusLabels, n.ServingStatus) + "」，不能上线")
 		case n.ServerID == nil:
-			return inventoryConflict("节点没有绑定服务器，不能上线")
+			return &errs.Error{Code: errs.Conflict, Message: nodeUnboundActivateMsg,
+				Fields: map[string]string{"server_id": nodeUnboundActivateMsg}}
+		case !nodeProtocolReady(n):
+			return inventoryConflict("节点的协议配置还没就绪（协议类型、对外地址、端口），补齐后再上线")
 		}
 		// 锁序：节点行 → 服务器行
 		srv, found, err := s.lockServerRow(ctx, *n.ServerID)
@@ -179,7 +195,7 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 		}
 		readied := srv.Status != ServerReady
 		if readied && !CanServerTransition(srv.Status, ServerReady) {
-			return inventoryConflict("节点所在的服务器处于 " + srv.Status + "，不能进入 ready，先处理服务器状态再上线")
+			return inventoryConflict("节点所在的服务器处于「" + statusLabel(serverStatusLabels, srv.Status) + "」，不能投入服务：把节点换绑到其他服务器后再上线")
 		}
 		ok, err := s.repo.SetNodeServing(ctx, id, n.ServingStatus, rowVersion, NodeActive)
 		if err != nil {
@@ -216,11 +232,28 @@ func (s *Service) ActivateNode(ctx context.Context, id uuid.UUID, rowVersion int
 	if err != nil {
 		return AdminNode{}, err
 	}
-	out.Warnings = nil
-	if out.PoolID == nil {
-		out.Warnings = []string{nodeNoPoolWarning}
-	}
+	out.Warnings = s.activationWarnings(ctx, out.PoolID)
 	return out, nil
+}
+
+// activationWarnings 是上线成功后「不服务任何人」的提示：没划池，或所在池没被在用套餐绑定（与列表下发说明同一口径）。
+// 上线已经提交，读池套餐失败只记警告、不提示，不把成功的上线报成失败；没装配 catalog 时不查池套餐。
+func (s *Service) activationWarnings(ctx context.Context, poolID *uuid.UUID) []string {
+	if poolID == nil {
+		return []string{nodeNoPoolWarning}
+	}
+	if s.catalog == nil || s.inUse == nil {
+		return nil
+	}
+	plans, err := s.poolLivePlans(ctx, []uuid.UUID{*poolID})
+	if err != nil {
+		plog.From(ctx).Warn("上线后读节点池套餐失败，不出提示", zap.Error(err))
+		return nil
+	}
+	if len(plans[*poolID]) == 0 {
+		return []string{nodePoolUnboundWarning}
+	}
+	return nil
 }
 
 // RetireNode 退役一个节点（不可逆）：同机端口随之释放。
@@ -241,7 +274,7 @@ func (s *Service) RetireNode(ctx context.Context, id uuid.UUID, rowVersion int64
 			return inventoryConflict("节点已经退役")
 		}
 		if !CanNodeTransition(n.ServingStatus, NodeRetired) {
-			return inventoryConflict("节点处于 " + n.ServingStatus + "，不能退役")
+			return inventoryConflict("节点处于「" + statusLabel(nodeStatusLabels, n.ServingStatus) + "」，不能退役")
 		}
 		ok, err := s.repo.SetNodeServing(ctx, id, n.ServingStatus, rowVersion, NodeRetired)
 		if err != nil {
@@ -309,36 +342,4 @@ func (s *Service) DeleteNode(ctx context.Context, id uuid.UUID, rowVersion int64
 			"name": n.Name, "serving_status_before": n.ServingStatus, "reason": reason,
 		})
 	})
-}
-
-// RepublishNode 强制重新下发一个节点的配置：版本加一并推进配置纪元，返回新版本。
-func (s *Service) RepublishNode(ctx context.Context, id uuid.UUID) (int64, error) {
-	var version int64
-	err := s.tx.Do(ctx, func(ctx context.Context) error {
-		n, found, err := s.repo.NodeByID(ctx, id, true)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return errs.New(errs.NotFound)
-		}
-		if n.ServingStatus == NodeRetired {
-			return inventoryConflict("节点已退役，没有可下发的配置")
-		}
-		v, ok, err := s.repo.BumpNodeVersion(ctx, id)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errs.New(errs.NotFound)
-		}
-		version = v
-		s.nodeChanged(ctx, realtime.OpUpdate, id)
-		if err := s.nodeAudit(ctx, "node.config.publish", id, map[string]any{"row_version": v}); err != nil {
-			return err
-		}
-		s.MarkConfigChanged(ctx)
-		return nil
-	})
-	return version, err
 }

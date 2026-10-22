@@ -2,6 +2,9 @@ package node
 
 import (
 	"context"
+	"strings"
+
+	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
@@ -21,6 +24,7 @@ func (s *Server) Start() {
 		s.log.Info("没有可用的落盘缓存，等面板下发配置", "err", err)
 		return
 	}
+	var cached []*nodev1.NodeConfig
 	for _, id := range order {
 		if _, dup := s.nodes[id]; dup || id == "" {
 			continue
@@ -30,6 +34,14 @@ func (s *Server) Start() {
 			s.log.Warn("节点的落盘配置不可用，等面板下发", "node", id, "err", err)
 			continue
 		}
+		cached = append(cached, nc)
+	}
+	s.wantCerts(cached)
+	for _, nc := range cached {
+		id := nc.GetNodeId()
+		if _, dup := s.nodes[id]; dup || id == "" {
+			continue
+		}
 		n := s.newNode(id, nc.GetNodeType())
 		s.nodes[id] = n
 		s.order = append(s.order, id)
@@ -37,7 +49,14 @@ func (s *Server) Start() {
 		err = s.installNodeConfig(n, nc)
 		n.offlineStart = false
 		if err != nil {
-			n.log.Warn("没能用落盘缓存起服务，等面板下发", "err", err)
+			// 记进坏版本台账：缓存的 acme 证书不在（被删或坏了）时，证书一到 onCertReady 就能重装，
+			// 别的原因按「已停」的间隔由内务节拍重试，重试照样带落盘名单；不记的话面板连上之前这个节点一直不服务（certs 审查 S4）
+			n.failed = &applyFailure{
+				sha: strings.ToLower(nc.GetContentSha256()), cfg: nc, attempts: 1,
+				nextRetry: s.clock().Add(panel.Jitter(stoppedRetryInterval)),
+				reason:    reasonOf(err), detail: reportDetail(err.Error()), fromCache: true,
+			}
+			n.log.Warn("没能用落盘缓存起服务，等面板下发或稍后重试", "err", err)
 			continue
 		}
 		n.fromCache = true

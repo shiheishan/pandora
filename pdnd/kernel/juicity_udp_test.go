@@ -121,7 +121,7 @@ func TestJuicityUDPResolveCachedPerRoute(t *testing.T) {
 	old := juicityResolveUDP
 	juicityResolveUDP = func(ctx context.Context, destination M.Socksaddr) (*net.UDPAddr, error) {
 		resolves.Add(1)
-		if destination.IsFqdn() {
+		if destination.IsDomain() {
 			return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(destination.Port)}, nil
 		}
 		return resolveUDPAddr(ctx, destination)

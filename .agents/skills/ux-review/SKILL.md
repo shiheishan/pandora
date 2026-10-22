@@ -1,6 +1,6 @@
 ---
 name: ux-review
-description: pandora 门户与后台的体验审查：派零上下文的模拟新手（sonnet）对着假后端场景做首次点击测试，再逐页按规则清单查（每个选择旁看得到结果、操作后给下一步、只有一个选项时不让选、禁用词 0 次、空/错/加载/限频冷却、文案一致、键盘、375 与 1280 宽、浅色深色），问题按「卡住 / 犯错 / 别扭」分级，前两级修完复测，出一张记录表。改了门户或后台的页面与流程、原型定稿前、购买等会动钱和链接的流程合并前、首次公开发布前复查，或用户问「新手看得懂吗」「好不好用」「符合直觉吗」时使用。功能通不通用 flow-walk。
+description: pandora 门户与后台的体验审查：派零上下文的模拟新手（sonnet，用 ego-browser 看截图点页面）对着假后端场景做首次点击测试，再逐页按规则清单查（每个选择旁看得到结果、操作后给下一步、只有一个选项时不让选、禁用词 0 次、空/错/加载/限频冷却、文案一致、键盘、375 与 1280 宽、浅色深色），问题按「卡住 / 犯错 / 别扭」分级，前两级修完复测，出一张记录表。改了门户或后台的页面与流程、原型定稿前、购买等会动钱和链接的流程合并前、首次公开发布前复查，或用户问「新手看得懂吗」「好不好用」「符合直觉吗」时使用。功能通不通用 flow-walk。
 ---
 
 # 体验审查与首次点击测试
@@ -28,12 +28,15 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
   - 场景与 `proto-*` 的定义、两个切场景的接口见 `.claude/rules/frontend-mock.md`。
   - 给测试员的每个任务都用 `GET /v1/__mock/proto?s=proto-s2[&to=/plans]` 开头，等于「重来」；非原型场景用 `POST /v1/__mock/portal-scenario`，见 flow-walk「假后端」。
 - **场景状态是整个 vite 进程共用的**：两个测试员连同一个端口，一个人付了款，另一个人的页面也跟着变。并行测试时一人一个端口，用 `scripts/mock-multi.sh`：
-  - `up <前端目录> <个数>` 在 5191 起依次开门户实例（`--strictPort`，被占就报错）；
+  - `up <前端目录> <个数>` 在 5191 起依次开门户实例（绑 127.0.0.1，`--strictPort`，被占就报错），打印每个测试员的地址 `http://t<N>.localhost:<端口>/`；
   - `down`、`status`。
   - 5181、5182 留给 flow-walk，8766 是原型服务器，都不占。
-  - 起完后，主 Agent 在内置浏览器里**逐个端口登录一次**（门户账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`，令牌按源存 `localStorage`，端口不同就要分别登录）。测试员不登录、不碰口令；测「注册 / 登录 / 找回密码」的测试员拿一个没登录的端口。
-  - vite 重启后会话失效，要重新登录。
-- 后台：`npm run dev:admin`（flow-walk 的 `admin-mock`，5182），场景只有一份默认数据。
+- **一人一个主机名，不只是一个端口**：登录态靠 HttpOnly 刷新 cookie `pandora_rt`（`Path=/v1/auth`），cookie 按主机名、不按端口区分，而 ego-browser 的所有 TaskSpace 共用用户资料的同一个 cookie 罐（10-20 实测：A 空间写的 cookie，B 空间同主机照样读到；换端口也读到）。所以几个门户实例都开在 `localhost` 上时，后登录的会覆盖前一个的 `pandora_rt`，前一个刷新就掉线。
+  - 办法：每个测试员用自己的 `t<N>.localhost`。Chrome 把 `*.localhost` 直接解析到本机回环，vite 8 默认放行 `.localhost` 结尾的主机名（`allowedHosts`），10-20 实测 `t1.localhost` 与 `t2.localhost` 的 cookie 互不可见。`mock-multi.sh` 打印的就是这种地址，**不要改回 `127.0.0.1` / `localhost`**。
+  - 起完后，主 Agent 自己开一个 TaskSpace（如「ux-review 登录准备」），**逐个测试员地址登录一次**（门户账号见 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`，本机假后端的夹具值），然后 `finish({ keep: [] })`。cookie 留在资料里，测试员在自己的 TaskSpace 打开同一地址时会自动恢复登录。测试员不登录、不碰口令；测「注册 / 登录 / 找回密码」的测试员拿一个没登录过的 `t<N>.localhost`。
+  - 切原型场景（`/v1/__mock/proto`）不登出；vite 重启后假后端的刷新记录全丢，要重新登录。
+  - 收尾删掉这些测试 cookie：每个地址 `Storage.clearDataForOrigin`（`storageTypes: "cookies,local_storage"`，只清那一个源），不用清整个资料的命令（见 ego-browser `references/clearing-state.md`）。
+- 后台：场景只有一份默认数据，但同样整个进程共用（加服务器、建节点会被别的测试员看到）。单人用 `npm run dev:admin`（flow-walk 的 `admin-mock`，5182）；并行时 `mock-multi.sh up <前端目录> <个数> admin`，一人一个实例与 `t<N>.localhost`，登录用 `MOCK_ACCOUNTS.admin`，刷新 cookie 是 `pandora_admin_rt`（同样按主机名区分）。
 
 ### 任务从哪来
 
@@ -53,7 +56,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 | proto-s7 / s7b / s7c | 余额 ¥12 / ¥50 / ¥29.50，续费 ¥30 | 续一个月，能用余额就用；说出最后用余额付了多少、另外付了多少 |
 | proto-s7d | 余额 ¥0.20，用优惠码 LUCKY99 续费只要 ¥0.30（低于支付最低额） | 用优惠码 LUCKY99 续一个月；下不了单时，说出为什么、该怎么办 |
 | proto-s8 | 标准版 3 天前过期 | 让它恢复能用，说出能用到哪天 |
-| 未登录端口 | — | 用朋友给的邀请码 `PANDORA` 注册（验证码会显示在页面提示里）；忘了密码，找回来 |
+| 未登录地址 | — | 用朋友给的邀请码 `PANDORA` 注册（验证码会显示在页面提示里）；忘了密码，找回来 |
 | empty | 什么都没有 | 第一次买一个套餐，装到手机上 |
 | default | 一份生效、一张待支付单 | 看看这个月花了多少钱、余额从哪来；有个问题想问客服 |
 
@@ -64,9 +67,9 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 ## 二、派模拟新手
 
 - 每个测试员一个 `sonnet` 子 agent，零上下文：**只给地址和任务**，不给代码、设计稿、flow.md、正确路径。prompt 用 `templates/tester-prompt.md` 填空。
-- `subagent_type` 用 `Explore`：它没有 Edit / Write，但有 Bash，所以全靠 prompt 禁止读文件、跑命令、看源码和用 `javascript_tool`。
-- 一人一个端口、一个标签页，同时不超过 3 个：内置浏览器窗格是共用的，标签数有上限。
-- **首次点击测试必须看截图**：派之前先 `tabs_context` 确认窗格是 displayed（窗格隐藏的坑见 flow-walk）。只靠 `read_page` 测出的结果要标「未看截图」，因为它会读到视觉上看不到的文字，成绩会偏好。
+- 浏览器用 ego-browser（默认，用户 10-20 定）。`subagent_type` 用 `Explore`：它没有 Edit / Write，有 Bash（要用它跑 `ego-browser nodejs`）和 Read（只用来看自己的截图），所以全靠 prompt 禁止读别的文件、跑别的命令、看源码，以及用 `page.evaluate` / `page.fetch` / `page.cdp`（模板里给好的设视口那一行除外）。
+- 一个测试员 = 一个用户目标 = 一个 TaskSpace（名字带场景、尺寸、编号，如「ux proto-s2 375 t1」），一人一个 `t<N>.localhost` 地址；同时不超过 3 个，ego 有页数预算，测试员也会抢用户屏幕。测试员做完自己 `finish({ keep: [] })`。
+- **首次点击测试必须看截图**：模板要求测试员每步 `page.screenshot` 后用 Read 看图，靠图决定点哪里。ego 的截图不依赖窗格是否显示。只靠 snapshot 测出的结果要标「未看截图」，因为它会读到视觉上看不到的文字，成绩会偏好。
 - 每个场景手机（375）和桌面（1280）各派一次，**不是同一个测试员换尺寸重做**，做过一遍的人已经学会了。
 - 测试员交回后，主 Agent 把原文存成 `tester-<场景>-<尺寸>.md`，位置见第五节。
 
@@ -74,10 +77,12 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 
 每个页面、弹层、结果页过一遍：
 
-1. **375×812 与 1280×900，各浅色深色**，共四种。
-   - 深色不能靠 `resize_window` 的 `colorScheme`：面板只认 `<html data-theme>`，默认浅色，不跟随系统。切深色要 `localStorage.setItem('pandora-theme','dark')` 后刷新，切回删掉这个键。
-   - 每种跑一次 `scripts/page-check.js`：把文件内容整段作为 `javascript_tool` 的 `text`。它返回横向溢出的元素、禁用词命中（含 `aria-label`、`title`、`placeholder`、打开着的 `<dialog>`）和没有可读名字的按钮。
-   - JS 错误用 `read_console_messages` 的 `onlyErrors`。
+1. **375×812 与 1280×900，各浅色深色**，共四种。一个 TaskSpace（如「ux-review 逐页检查」）里按页面逐个过，每轮脚本：
+   - 尺寸：开头 `page.cdp("Emulation.setDeviceMetricsOverride", { width: 375, height: 812, deviceScaleFactor: 3, mobile: true })`（桌面 `{ width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }`）。仿真只在本轮有效，每轮都要设。
+   - 深色不能靠 `Emulation.setEmulatedMedia` 的 `prefers-color-scheme`：面板只认 `<html data-theme>`，默认浅色，不跟随系统。切深色要 `page.evaluate(() => localStorage.setItem('pandora-theme', 'dark'))` 后 `reload`，切回删掉这个键。
+   - 每种跑一次 `scripts/page-check.js`：`const { readFile } = await import("node:fs/promises")`，`await page.evaluate(await readFile("<仓库绝对路径>/.agents/skills/ux-review/scripts/page-check.js", "utf8"))`，字符串整段在页面里求值并返回结果。它返回横向溢出的元素、禁用词命中（含 `aria-label`、`title`、`placeholder`、打开着的 `<dialog>`）和没有可读名字的按钮。
+   - JS 错误：本轮开头用 flow-walk「操作方法」第 8 条的 `Page.addScriptToEvaluateOnNewDocument` 装收集器，`reload` 后读 `window.__pdErr`。
+   - 一页一轮，别把十几页塞进一个 `page.evaluate`（约 15 秒上限）。
 2. **禁用词 0 次**（门户）。词表以单测 `panel/frontend/tests/mock-portal-wording.test.ts` 为准，`page-check.js` 顶部的 `WORDS` 与它保持一致。「升级」只许出现在兑换不同款套餐卡的选项里；「流量重置卡」是卡名，不算「重置」。
 3. 规则清单：
 
@@ -132,6 +137,8 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 
 - **任务文字泄题**：任务里出现按钮上的字（续费、加流量、换新链接），一次点对率会虚高。写完任务对照页面文字查一遍。
 - **原型 hint 是给主 Agent 看的**，不能原样当任务给测试员：hint 里带着按钮名。
-- **测试员越界**：sonnet 有时会去读 `read_page` 全树找按钮，或跑 JS 切场景。交回里出现页面上看不见的文字、或提到场景名时，这一条作废重派。
+- **测试员越界**：sonnet 有时会去读 `page.snapshot({ scope: "full_page" })` 全树找截图里看不到的按钮，或用 `page.evaluate` / `page.fetch` 跑 JS、切场景。交回里出现页面上看不见的文字、或提到场景名时，这一条作废重派。
 - **假后端不限频的地方**测不出冷却文案。哪些动作有限频，以 `dev/mock/portal/` 的实现为准，没模拟的在记录里写「未测（假后端未模拟）」，留到测试机上用 flow-walk 补。
-- 内置浏览器的通用用法见 flow-walk，这里不重复：标签数上限、每个调用带 `tabId`、窗格隐藏时视口 0x0，在「操作方法」第 1、3 条；toast 不在 `<main>` 里、SSE 让网络永不空闲、假收银台整页跳转，在「坑」。
+- **几个门户实例开在同一个主机名上**：互相顶掉 `pandora_rt`，测试员中途「莫名其妙被登出」。一律用 `mock-multi.sh` 打印的 `t<N>.localhost`，见第一节。
+- ego-browser 的通用用法见 flow-walk，这里不重复：一个目标一个 TaskSpace、视口每轮重设、`page.evaluate` 15 秒上限、真实资料里只做任务内的事，在「操作方法」；toast 在 `[role=status]`、SSE 让网络永不空闲、假收银台整页跳转、登录态口径，在「坑」。
+- **只用 ego-browser**（用户 10-21 定）：测试员与逐页检查都不用内置浏览器；ego 连不上就停下告诉用户。

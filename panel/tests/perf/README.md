@@ -125,7 +125,6 @@ worker:
   metrics_addr: "10.0.0.10:9465"
 ratelimit:
   ip_per_min: 1000000
-  account_per_min: 1000000
   auth_per_min: 100000
 auth:
   access_ttl: 1h
@@ -173,6 +172,14 @@ ADMIN_TOKEN=$(curl -sS -X POST "http://127.0.0.1:9001/v1/auth/login" \
 EOF
 )
 
+# 改邮件设置要近期重新验证：用同一个口令换一枚重新验证过的 token
+ADMIN_TOKEN=$(curl -sS -X POST "http://127.0.0.1:9001/v1/auth/reauth" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  --data @- <<EOF | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])'
+{"password":"$(cat /root/.admin_pass)"}
+EOF
+)
+
 # 写入 Mailpit 配置
 curl -sS -X POST "http://127.0.0.1:9001/v1/settings/mail" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -187,10 +194,10 @@ curl -sS -X POST "http://127.0.0.1:9001/v1/settings/mail" \
 所有造数和节点连入必须严格按以下顺序进行，每步均有检查点：
 
 ### 步骤 1：编译工具
-测试机上不装 Go：在开发机交叉编译，再 `scp` 过去（本机 Go 加 `GOTOOLCHAIN=go1.26.9`）。
+测试机上不装 Go：在开发机交叉编译，再 `scp` 过去（本机 Go 加 `GOTOOLCHAIN=go1.26.10`）。
 ```bash
-( cd panel && GOTOOLCHAIN=go1.26.9 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/perfseed ./tools/perfseed )
-( cd pdnd && GOTOOLCHAIN=go1.26.9 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/nodesim ./release/nodesim )
+( cd panel && GOTOOLCHAIN=go1.26.10 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/perfseed ./tools/perfseed )
+( cd pdnd && GOTOOLCHAIN=go1.26.10 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/nodesim ./release/nodesim )
 scp /tmp/perfseed root@10.0.0.10:/root/perf-data/
 scp /tmp/nodesim root@10.0.0.20:/root/perf-sim/
 ```

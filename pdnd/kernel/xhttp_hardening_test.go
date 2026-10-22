@@ -24,7 +24,7 @@ func TestXHTTPUnauthSessionsCannotPinMemory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	base, adapter := startAutoXHTTPVLESS(t, ctx, 7601, uuid.New())
-	transport := h2cTransport()
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 	const sessions, posts, size = 20, 10, 1_000_000
 	runtime.GC()
@@ -158,7 +158,7 @@ func TestXHTTPSecondStreamUpRejected(t *testing.T) {
 	defer cancel()
 	id := uuid.New()
 	base, _ := startAutoXHTTPVLESS(t, ctx, 7602, id)
-	victim, attacker := h2cTransport(), h2cTransport()
+	victim, attacker := h2cTestTransport(nil), h2cTestTransport(nil)
 	defer victim.CloseIdleConnections()
 	defer attacker.CloseIdleConnections()
 	session := "victim-" + uuid.NewString()

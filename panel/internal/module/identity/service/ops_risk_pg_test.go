@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	auditsvc "github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/pkg/errs"
+	"github.com/aegispanel/aegis/internal/pkg/reqmeta"
 	"github.com/google/uuid"
 )
 
@@ -81,8 +83,20 @@ func TestPGUserProfile(t *testing.T) {
 	if len(prof.Fetches) != 1 || prof.FetchSources7d != fs.sources {
 		t.Fatalf("fetches %+v sources=%d", prof.Fetches, prof.FetchSources7d)
 	}
-	if e.auditCount(ctx, "security.source_ip_viewed", u1) != 1 {
-		t.Fatal("source ip viewed audit")
+	// 用户 10-21 定：读画像不记「看了 IP」审计（只有溯源「显示」明文那一处记）
+	if e.auditCount(ctx, "security.source_ip_viewed", u1) != 0 {
+		t.Fatal("读画像不该记 source_ip_viewed")
+	}
+	if prof.Risk != "mid" {
+		t.Fatalf("prof.Risk %q", prof.Risk)
+	}
+	if shared.Risk != "mid" || shared.Geo != "" || shared.NetworkKind != "" {
+		t.Fatalf("shared ip %+v", *shared)
+	}
+	for _, pip := range prof.IPs {
+		if pip.IP == "203.0.113.61" && pip.Risk != "" {
+			t.Fatalf("203.0.113.61 risk %q", pip.Risk)
+		}
 	}
 	_, err = e.svc.UserProfile(actx, uuid.New())
 	if codeOf(err) != errs.NotFound {
@@ -93,7 +107,7 @@ func TestPGUserProfile(t *testing.T) {
 func TestPGAccessLog(t *testing.T) {
 	e, ctx, fs := opsEnv(t)
 	ip := "203.0.113.62"
-	u1, _, _, _, _, actx := riskUsers(t, e, ctx, "alog", ip)
+	u1, u2, _, _, _, actx := riskUsers(t, e, ctx, "alog", ip)
 	u1u, _ := e.svc.Get(ctx, u1)
 
 	items, err := e.svc.AccessLog(actx, AccessLogQuery{Category: "login", User: u1.String()})
@@ -167,6 +181,69 @@ func TestPGAccessLog(t *testing.T) {
 	items, err = e.svc.AccessLog(actx, AccessLogQuery{User: "不存在的片段zz"})
 	if err != nil || len(items) != 0 {
 		t.Fatalf("bad user fragment len=%d err=%v", len(items), err)
+	}
+
+	op := e.svc.ops.(*auditsvc.Service)
+	anonCtx := reqmeta.With(ctx, reqmeta.Meta{IP: "203.0.113.64", UserAgent: "python-requests/2.31"})
+	if err := op.Write(anonCtx, auditsvc.Event{
+		Action: "user.login_failed", Outcome: auditsvc.OutcomeFailure,
+		ResourceType: "user", ResourceID: &u1,
+		Data: map[string]any{"reason": "invalid_credentials"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.Write(anonCtx, auditsvc.Event{
+		Action: "user.login_failed", Outcome: auditsvc.OutcomeFailure,
+		ResourceType: "user", ResourceID: &u2,
+		Data: map[string]any{"reason": "invalid_credentials"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err = e.svc.AccessLog(actx, AccessLogQuery{Category: "login", User: u1.String()})
+	if err != nil || len(items) != 3 {
+		t.Fatalf("login+u1 len=%d err=%v", len(items), err)
+	}
+	var failU1 *AccessItem
+	for i := range items {
+		if items[i].Action == "user.login_failed" {
+			failU1 = &items[i]
+			break
+		}
+	}
+	if failU1 == nil || failU1.UserID != nil || failU1.TargetUserID == nil || *failU1.TargetUserID != u1 {
+		t.Fatalf("fail u1 %+v", failU1)
+	}
+	if failU1.TargetUserEmail != u1u.Email || failU1.Outcome != "failure" || failU1.IP != "203.0.113.64" || failU1.Category != "login" {
+		t.Fatalf("fail u1 fields %+v", *failU1)
+	}
+
+	items, err = e.svc.AccessLog(actx, AccessLogQuery{Category: "login", User: u1u.Email})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEmail := false
+	for _, it := range items {
+		if it.TargetUserID != nil && *it.TargetUserID == u1 {
+			foundEmail = true
+		}
+	}
+	if !foundEmail {
+		t.Fatalf("email filter missing fail for u1 %+v", items)
+	}
+
+	items, err = e.svc.AccessLog(actx, AccessLogQuery{IP: "203.0.113.64"})
+	if err != nil || len(items) != 2 {
+		t.Fatalf("ip64 len=%d err=%v", len(items), err)
+	}
+	byTarget := map[uuid.UUID]AccessItem{}
+	for _, it := range items {
+		if it.TargetUserID != nil {
+			byTarget[*it.TargetUserID] = it
+		}
+	}
+	if len(byTarget) != 2 || byTarget[u1].TargetUserEmail == "" || byTarget[u2].TargetUserEmail == "" {
+		t.Fatalf("ip64 targets %+v", byTarget)
 	}
 }
 

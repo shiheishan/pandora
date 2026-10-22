@@ -23,15 +23,9 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type fakePrice struct {
-	plan   uuid.UUID
-	amount decimal.Decimal
-}
-
-// fakeCatalog 实现 CatalogReader，供试算与建券时校验套餐。
+// fakeCatalog 实现 CatalogReader，供建券时校验套餐。
 type fakeCatalog struct {
-	plans  map[uuid.UUID]bool
-	prices map[uuid.UUID]fakePrice
+	plans map[uuid.UUID]bool
 }
 
 func (f *fakeCatalog) MissingPlans(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
@@ -42,14 +36,6 @@ func (f *fakeCatalog) MissingPlans(_ context.Context, ids []uuid.UUID) ([]uuid.U
 		}
 	}
 	return missing, nil
-}
-
-func (f *fakeCatalog) PriceSubtotal(_ context.Context, planID, priceID uuid.UUID) (decimal.Decimal, error) {
-	p, ok := f.prices[priceID]
-	if !ok || p.plan != planID {
-		return decimal.Zero, errs.New(errs.NotFound)
-	}
-	return p.amount, nil
 }
 
 // fakeUsers 实现 UserDirectory。
@@ -107,8 +93,7 @@ func newEnv(t *testing.T) *env {
 	txm := tx.NewManager(d)
 	svc := New(repo.New(d), txm, auditSvc)
 	cat := &fakeCatalog{
-		plans:  map[uuid.UUID]bool{},
-		prices: map[uuid.UUID]fakePrice{},
+		plans: map[uuid.UUID]bool{},
 	}
 	users := &fakeUsers{
 		emails: map[uuid.UUID]string{},

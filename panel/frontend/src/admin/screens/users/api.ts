@@ -6,22 +6,24 @@ import { planOptionsKey } from '../plans/api'
 import { exactEmail } from './model'
 import { signupSettingsSchema } from './signupSettings'
 import { bulkBanSchema, generationJobSchema, generationJobsSchema } from './opsSchemas'
-import { quotaSchema, userDetailSchema, usersSchema } from './schemas'
+import { balanceEntriesSchema, profileSchema, quotaSchema, userDetailSchema, usersSchema } from './schemas'
 export { bulkBanSchema }
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
 export { type OrderRow, type OrderStatus } from '../billing/schemas'
 
 export {
+  profileSchema,
   resetDoneSchema,
   userDetailSchema,
   usersSchema,
-  type RiskLevel,
   type SubStatus,
   type SubscriptionRow,
   type UserDetail,
   type UserRow,
   type UserStatus,
+  type ProfileIpActivity,
+  type ProfileRisk,
 } from './schemas'
 
 const int = z.number().int()
@@ -51,19 +53,6 @@ const userGroupSchema = z.object({
 })
 export const userGroupsSchema = z.object({ groups: z.array(userGroupSchema) })
 export type UserGroup = z.output<typeof userGroupSchema>
-
-// ---------------------------------------------------------------------------
-// GET v1/users/{id}/profile：风控画像，明文 IP 只在这里
-// ---------------------------------------------------------------------------
-export const profileSchema = z.object({
-  events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
-  ips: z.array(z.object({ ip: z.string(), count: count, first: time, last: time, accounts: count })),
-  related: z.array(z.object({ id: z.string(), email: z.string() })),
-  fetches: z.array(z.object({ ip: z.string(), ua: z.string(), family: z.string(), result: z.string(), format: z.string(), at: time })),
-  fetch_sources_7d: count,
-  registered_ip: z.string(),
-})
-export type UserProfile = z.output<typeof profileSchema>
 
 // ---------------------------------------------------------------------------
 // 写接口的响应
@@ -169,6 +158,8 @@ export const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.stri
 // ---------------------------------------------------------------------------
 export const UK = ['admin', 'users'] as const
 export const USERS_PAGE = 25
+/** 后台余额流水每页条数，与 Go 缺省一致 */
+export const BALANCE_ENTRIES_PAGE = 20
 
 export interface UsersParams {
   q?: string
@@ -212,6 +203,18 @@ export function useUserProfile(id: string) {
   return useQuery({
     queryKey: [...UK, 'profile', id],
     queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/profile`, profileSchema, { signal }),
+  })
+}
+
+/** 某用户的余额流水（只读，新的在前）；订单结算、取消会动余额，跟着 orders.changed 刷新 */
+export function useBalanceEntries(id: string, offset: number) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'balance-entries', id, offset],
+    queryFn: ({ signal }) =>
+      api.get(`v1/users/${encodeURIComponent(id)}/balance-entries`, balanceEntriesSchema, { signal, query: { limit: BALANCE_ENTRIES_PAGE, offset } }),
+    meta: { topics: ['orders.changed'] },
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -269,6 +272,7 @@ export function useInvalidateUsers() {
       Promise.all([
         client.invalidateQueries({ queryKey: [...UK, 'list'] }),
         client.invalidateQueries({ queryKey: [...UK, 'detail'] }),
+        client.invalidateQueries({ queryKey: [...UK, 'balance-entries'] }),
         client.invalidateQueries({ queryKey: [...UK, 'devices'] }),
         client.invalidateQueries({ queryKey: [...UK, 'bulk'] }),
         withGroups ? client.invalidateQueries({ queryKey: [...UK, 'groups'] }) : undefined,

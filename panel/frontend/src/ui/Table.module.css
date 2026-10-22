@@ -117,8 +117,19 @@
 
 .clickable:hover td,
 .clickable:focus-visible td,
-.picked td {
+.picked td,
+.open td {
   background: var(--surface-2);
+}
+
+/* 展开的细节行：接在所属行下面，同底色、不加分隔线 */
+.open td {
+  border-bottom-color: transparent;
+}
+
+.detailRow td {
+  background: var(--surface-2);
+  padding-top: 0;
 }
 
 /* 键盘聚焦的行：外圈画在行内，免得被横向滚动容器裁掉 */

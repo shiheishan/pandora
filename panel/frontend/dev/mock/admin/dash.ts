@@ -1,5 +1,6 @@
 import type { MockContext, MockModule } from '../types.ts'
 import { stalePendingCount } from './billing-store.ts'
+import { certAttentionSummary, nodeTrafficRows, offlineNodes, reportNodeCounts } from './nodes.ts'
 
 // ---------------------------------------------------------------------------
 // 确定性的伪数据：同一天得到同一组数，刷新不跳
@@ -43,20 +44,12 @@ function sumNet(from: number, to: number, pick: 'net' | 'actual' | 'adjustment' 
 // 流量排行：字节是十进制字符串（DASH-01）；用户只给脱敏邮箱
 // ---------------------------------------------------------------------------
 const GiB = 1024n ** 3n
-const NODE_ROWS = [
-  { node_id: '5b0c7f1e-2d4a-4c1b-9a3e-1f2e3d4c5b6a', name: 'hk-hkg-01', display_name: 'HK-HKG-01', gb: 1840n },
-  { node_id: '6c1d8a2f-3e5b-4d2c-8b4f-2a3b4c5d6e7f', name: 'jp-tyo-03', display_name: 'JP-TYO-03', gb: 1522n },
-  { node_id: '7d2e9b3a-4f6c-4e3d-9c5a-3b4c5d6e7f8a', name: 'sg-sin-02', display_name: null, gb: 1210n },
-  { node_id: '8e3fac4b-5a7d-4f4e-8d6b-4c5d6e7f8a9b', name: 'us-lax-01', display_name: 'US-LAX-01', gb: 864n },
-  { node_id: '9f4abd5c-6b8e-4a5f-9e7c-5d6e7f8a9b0c', name: 'tw-tpe-01', display_name: 'TW-TPE-01', gb: 540n },
-  { node_id: 'a05bce6d-7c9f-4b6a-8f8d-6e7f8a9b0c1d', name: 'de-fra-01', display_name: 'DE-FRA-01', gb: 402n },
-] as const
 const USER_ROWS = [
-  { user_id: '1a2b3c41-0000-4000-8000-000000000001', email_masked: 'z***@qq.com', gb: 312n, subs: 1 },
-  { user_id: '1a2b3c42-0000-4000-8000-000000000002', email_masked: 'k***@proton.me', gb: 268n, subs: 2 },
-  { user_id: '1a2b3c43-0000-4000-8000-000000000003', email_masked: 'w***@163.com', gb: 221n, subs: 1 },
-  { user_id: '1a2b3c44-0000-4000-8000-000000000004', email_masked: 'm***@gmail.com', gb: 189n, subs: 1 },
-  { user_id: '1a2b3c45-0000-4000-8000-000000000005', email_masked: 'y***@outlook.com', gb: 152n, subs: 3 },
+  { user_id: '1a2b3c41-0000-4000-8000-000000000001', email_masked: 'z***@example.net', gb: 312n, subs: 1 },
+  { user_id: '1a2b3c42-0000-4000-8000-000000000002', email_masked: 'k***@mail.example.net', gb: 268n, subs: 2 },
+  { user_id: '1a2b3c43-0000-4000-8000-000000000003', email_masked: 'w***@example.org', gb: 221n, subs: 1 },
+  { user_id: '1a2b3c44-0000-4000-8000-000000000004', email_masked: 'm***@example.com', gb: 189n, subs: 1 },
+  { user_id: '1a2b3c45-0000-4000-8000-000000000005', email_masked: 'y***@mail.example.com', gb: 152n, subs: 3 },
   { user_id: '1a2b3c46-0000-4000-8000-000000000006', email_masked: '***', gb: 97n, subs: 1 },
 ] as const
 
@@ -86,6 +79,12 @@ function trafficWindow(ctx: MockContext) {
   return { range, limit: Number(limitRaw), scale: RANGE_SCALE[range]!, snapshot, from }
 }
 
+function bytesFromBase(bytes24h: number, scale: bigint, share: bigint) {
+  const total = BigInt(Math.round(bytes24h)) * scale + 123_456n
+  const upload = (total * share) / 100n
+  return { upload_bytes: String(upload), download_bytes: String(total - upload), total_bytes: String(total) }
+}
+
 function bytes(gb: bigint, scale: bigint, share: bigint) {
   const total = gb * GiB * scale + 123_456n
   const upload = (total * share) / 100n
@@ -98,6 +97,19 @@ const BACKLOG = {
   max_ready_lag_seconds: 1_260,
 }
 
+// 后端 report:integrity 的检查代号（顺序同后端）
+const INTEGRITY_CODES = [
+  'ledger_drift',
+  'ledger_hold_mismatch',
+  'payment_unsettled',
+  'order_paid_unfulfilled',
+  'order_reservation_mismatch',
+  'commission_unpaid_order',
+  'giftcard_redemption_mismatch',
+  'subscription_expire_overdue',
+  'subscription_close_overdue',
+]
+
 function isInt(raw: string | null): boolean {
   return raw !== null && /^-?\d+$/.test(raw)
 }
@@ -105,14 +117,17 @@ function isInt(raw: string | null): boolean {
 export const dash: MockModule = {
   routes: {
     'GET /v1/dashboard/tasks': (ctx) => {
+      const checkedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString()
       const items = [
         { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 + 540 },
         { kind: 'withdrawals_pending', count: 3, amount: 128_000 },
-        { kind: 'nodes_offline', count: 3, sample: [{ id: NODE_ROWS[1].node_id, name: 'JP-TYO-03' }, { id: NODE_ROWS[3].node_id, name: 'US-LAX-01' }, { id: NODE_ROWS[5].node_id, name: 'DE-FRA-01' }], longest_offline_seconds: 26 * 60 },
+        { kind: 'nodes_offline', ...offlineNodes(3) },
+        { kind: 'node_certs', ...certAttentionSummary(3) },
         // 与订单假后端同一份数据：待支付筛选里能看到这几张
         { kind: 'orders_pending_stale', count: stalePendingCount(1800 * 1000), threshold_seconds: 1800 },
         { kind: 'notifications_backlog', queued: BACKLOG.counts.ready + BACKLOG.counts.scheduled, failed_total: BACKLOG.counts.failed_total, backlog_state: BACKLOG.backlog_state },
-        { kind: 'ledger_drift', count: 0 },
+        // 数据巡检：九项都是 0（有违例时总览待办才出第四格「数据巡检」）
+        { kind: 'integrity', checks: INTEGRITY_CODES.map((code) => ({ code, count: 0, checked_at: checkedAt })) },
       ]
       ctx.send(200, { as_of: new Date().toISOString(), items })
     },
@@ -158,7 +173,7 @@ export const dash: MockModule = {
         revenue,
         orders: { paid_today: 142, pending: 17, failed_today: 3 },
         ledger_drift_accounts: 0,
-        nodes: { total: 44, online: 41 },
+        nodes: reportNodeCounts(),
       })
     },
 
@@ -178,11 +193,11 @@ export const dash: MockModule = {
     'GET /v1/dashboard/traffic/nodes': (ctx) => {
       const w = trafficWindow(ctx)
       if (!w) return
-      const all = NODE_ROWS.map((n, i) => ({
+      const all = nodeTrafficRows().map((n, i) => ({
         node_id: n.node_id,
         name: n.name,
         display_name: n.display_name,
-        ...bytes(n.gb, w.scale, BigInt(8 + i)),
+        ...bytesFromBase(n.bytes_24h, w.scale, BigInt(8 + i)),
         contributing_entry_count: 4_800 - i * 500,
         report_count: 1_440 - i * 60,
         last_report_at: micros(new Date(w.snapshot.getTime() - (i + 1) * 45_000)),
@@ -237,6 +252,9 @@ export const dash: MockModule = {
     // state / components 必回，8 个组件总在
     'GET /v1/system/status': (ctx) => {
       const now = Date.now()
+      const nodeCounts = reportNodeCounts()
+      const config_lagging = 0
+      const nodeFabricState = nodeCounts.online < nodeCounts.total || config_lagging > 0 ? 'warn' : 'ok'
       const files = Array.from({ length: 10 }, (_, i) => {
         const at = new Date(now - (i * 24 + 5) * 3_600_000)
         return {
@@ -267,7 +285,7 @@ export const dash: MockModule = {
         components: [
           { key: 'postgres', state: 'ok', latency_ms: 3.2, metrics: { size_bytes: 3_418_000_000, connections: 23, max_connections: 200 } },
           { key: 'redis', state: 'ok', latency_ms: 0.4, metrics: {} },
-          { key: 'node_fabric', state: 'warn', metrics: { total: 44, online: 41, config_lagging: 2 }, message: '3 个节点心跳超过 90 秒' },
+          { key: 'node_fabric', state: nodeFabricState, metrics: { total: nodeCounts.total, online: nodeCounts.online, config_lagging } },
           { key: 'payment_callbacks', state: 'ok', metrics: { pending: 0 } },
           { key: 'mail', state: 'warn', metrics: { queued: 214, retrying: 21, failed_total: 9 }, message: 'SMTP 连接超时，正在重试' },
           { key: 'telegram', state: 'ok', metrics: { queued: 48, retrying: 0, failed_total: 0 } },

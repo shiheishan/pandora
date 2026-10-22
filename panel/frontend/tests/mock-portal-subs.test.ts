@@ -99,4 +99,24 @@ describe('mock api · portal subscriptions (purchase model)', () => {
     expect(res.headers.get('location')).toBe('/#/wallet/redeem')
     expect((await fetch(`${base}/v1/__mock/proto?s=default`, { redirect: 'manual' })).status).toBe(422)
   })
+
+  it('proto-s9：改了用量的那份带 next_usage，试用那份 is_trial；其余场景 next_usage 为 null、is_trial 为 false', async () => {
+    const GIB = 1024 ** 3
+    await scenario('proto-s9')
+    const list = await subs()
+    const mine = list.subscriptions.find((s) => s.label === '我的')
+    const trial = list.subscriptions.find((s) => s.label === '备用机')
+    expect(mine).toBeDefined()
+    expect(trial).toBeDefined()
+    expect(mine!.usage).toEqual({ traffic_bytes: 50 * GIB, device_limit: 2, throttle_kbps: null })
+    expect(mine!.next_usage).toEqual({ traffic_bytes: 100 * GIB, device_limit: 3, throttle_kbps: null })
+    expect(mine!.is_trial).toBe(false)
+    expect(trial!.is_trial).toBe(true)
+    expect(trial!.next_usage).toBeNull()
+    await scenario('default')
+    for (const s of (await subs()).subscriptions) {
+      expect(s.next_usage).toBeNull()
+      expect(s.is_trial).toBe(false)
+    }
+  })
 })

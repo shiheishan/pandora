@@ -1,5 +1,5 @@
-import { formatBytes } from '../../../core/format'
-import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, Quota, RiskLevel, SubscriptionRow, SubStatus, UserGroup, UserProfile, UserRow, UserStatus, UsersParams } from './api'
+import { formatBytes, formatMoney } from '../../../core/format'
+import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, ProfileIpActivity, ProfileRisk, Quota, SubscriptionRow, SubStatus, UserGroup, UserRow, UserStatus, UsersParams } from './api'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -54,20 +54,52 @@ export const SUB_STATUS_VIEW: Record<SubStatus, { label: string; tone: Tone }> =
   expired: { label: '已过期', tone: 'danger' },
 }
 
-/** 库里 5 个状态 → 设计 3 个 + 已过期 */
+/**
+ * 库里 5 个状态 → 与用户端同一套叫法（用户端把超时未付归进「已取消」、结果写「超时未支付，已自动取消」，
+ * `portal/screens/common/orders.ts` 的 `orderResult`）；后台要分得清，超时那种写「超时取消」
+ * （订单页「已取消」筛选同样含 cancelled 与 expired；表格状态列只有 80px、标签不换行，所以不写长的「已取消（超时未支付）」）
+ */
 export const ORDER_STATUS_VIEW: Record<OrderStatus, { label: string; tone: Tone }> = {
   pending_payment: { label: '待支付', tone: 'warn' },
   paid: { label: '已支付', tone: 'ok' },
   fulfilled: { label: '已支付', tone: 'ok' },
   cancelled: { label: '已取消', tone: 'neutral' },
-  expired: { label: '已过期', tone: 'neutral' },
+  expired: { label: '超时取消', tone: 'neutral' },
 }
 
-export const RISK_VIEW: Record<RiskLevel, { label: string; tone: Tone }> = {
-  trusted: { label: '可信', tone: 'ok' },
-  normal: { label: '正常', tone: 'neutral' },
-  elevated: { label: '偏高', tone: 'warn' },
-  high: { label: '高', tone: 'danger' },
+/**
+ * 余额流水的类型中文名：与用户端钱包 `portal/screens/wallet/model.ts` 的 LEDGER 逐条一致（守卫在 model.test.ts），
+ * 客服对着用户的截图能认出是哪一笔；认不出的按正负写「余额入账 / 余额支出」，同用户端
+ */
+const BALANCE_KIND_LABELS: Readonly<Record<string, string>> = {
+  balance_topup: '充值',
+  balance_hold: '下单用余额',
+  plan_change_refund: '换套餐退回',
+  balance_release: '订单取消退回',
+  balance_adjusted: '人工调整',
+  commission_to_balance: '佣金转入',
+  gift_card_balance: '礼品卡',
+  late_payment_applied: '待处理到账转入',
+  late_payment_suspense: '待处理到账转入',
+}
+export const BALANCE_KINDS = Object.keys(BALANCE_KIND_LABELS)
+
+export function balanceKindLabel(kind: string, delta: number): string {
+  return BALANCE_KIND_LABELS[kind] ?? (delta < 0 ? '余额支出' : '余额入账')
+}
+
+/** 金额列：「+¥10.00」/「−¥3.00」（减号用 U+2212，同用户端），out 表示出账 */
+export function balanceDeltaView(delta: number): { text: string; out: boolean } {
+  const out = delta < 0
+  return { text: `${out ? '−' : '+'}${formatMoney(Math.abs(delta))}`, out }
+}
+
+/** 画像风险：后端按共用 IP 推出（identity clusterRisk，与「安全与运维 › 风控」同一条规则）；空串 = 没有和别的账号共用 IP */
+export const PROFILE_RISK_VIEW: Record<ProfileRisk, { label: string; tone: Tone }> = {
+  '': { label: '正常', tone: 'neutral' },
+  low: { label: '低风险', tone: 'neutral' },
+  mid: { label: '中风险', tone: 'warn' },
+  high: { label: '高风险', tone: 'danger' },
 }
 
 const INTERVAL_LABELS: Record<string, string> = {
@@ -449,7 +481,7 @@ export function subExpiryView(periodEnd: string | null, now: Date): { text: stri
 // ===========================================================================
 const LOGIN_IP_WINDOW_DAYS = 7
 
-export function loginIps7d(ips: UserProfile['ips'], now: Date): number {
+export function loginIps7d(ips: readonly ProfileIpActivity[], now: Date): number {
   const since = now.getTime() - LOGIN_IP_WINDOW_DAYS * DAY
   return new Set(ips.filter((r) => new Date(r.last).getTime() >= since).map((r) => r.ip)).size
 }

@@ -1,5 +1,5 @@
 // Package handler 是 subscription 模块的 HTTP 层：订阅链接拉取、链接列表与换链接、线路预览、按日用量，
-// 门户「我的套餐」与改名，后台加时长、加本期流量、手动重置流量、改设备数与重置日志，
+// 门户「我的套餐」与改名，后台加时长、加本期流量、手动重置流量、改设备数，
 // 以及订阅域名分组与探测（门户票据、探测页、上报、公开探测接口）。只做参数绑定与校验、调 service、写响应。
 package handler
 
@@ -34,8 +34,6 @@ type Service interface {
 	AdminGrantTraffic(ctx context.Context, subID uuid.UUID, bytes int64, reason string) (service.AdminTrafficGrantResult, error)
 	AdminResetTraffic(ctx context.Context, subID uuid.UUID, note string) (int64, error)
 	AdminSetDeviceLimit(ctx context.Context, subID uuid.UUID, limit *int) error
-	ListTrafficResets(ctx context.Context, f service.ResetLogFilter) ([]service.ResetLogView, int64, error)
-	TrafficResetStats(ctx context.Context) (service.ResetStats, error)
 	Pull(ctx context.Context, req service.PullRequest) (service.PullResult, error)
 	MyLinks(ctx context.Context) ([]service.Link, error)
 	MyRotate(ctx context.Context, subID uuid.UUID) (string, error)
@@ -44,7 +42,6 @@ type Service interface {
 	AdminRotate(ctx context.Context, subID uuid.UUID, reason string) (service.AdminRotateResult, error)
 	AdminSetPeriodEnd(ctx context.Context, subID uuid.UUID, end time.Time, reason string) (service.AdminSetPeriodEndResult, error)
 	AdminSetQuotaLimit(ctx context.Context, subID uuid.UUID, metric, period string, limit *int64, reason string) error
-	TemplateService
 	DomainService
 }
 
@@ -115,19 +112,10 @@ func (h *Handler) RegisterAdmin(v1 *gin.RouterGroup, k route.Kit) {
 	v1.POST("/subscriptions/:id/traffic-pack", k.RequireAuth, k.RecentReauth, k.Idempotency(TrafficGrantIdempotencyScope), h.adminGrantTraffic)
 	v1.POST("/subscriptions/:id/traffic-reset", k.RequireAuth, k.RecentReauth, k.Idempotency(TrafficResetIdempotencyScope), h.adminResetTraffic)
 	v1.POST("/subscriptions/:id/device-limit", k.RequireAuth, h.adminSetDeviceLimit)
-	v1.GET("/traffic-resets", k.RequireAuth, h.listTrafficResets)
-	v1.GET("/traffic-resets/stats", k.RequireAuth, h.trafficResetStats)
-	v1.GET("/users/:id/traffic-resets", k.RequireAuth, h.userTrafficResets)
 	// 换掉别人的链接会让他所有设备断开：要近期重认证；不是「多一份」的操作，不挂幂等
 	v1.POST("/subscriptions/:id/rotate", k.RequireAuth, k.RecentReauth, h.adminRotateLink)
 	v1.POST("/subscriptions/:id/period-end", k.RequireAuth, k.RecentReauth, h.adminSetPeriodEnd)
 	v1.POST("/subscriptions/:id/quota", k.RequireAuth, k.RecentReauth, h.adminSetQuotaLimit)
-	// 改模板影响所有用户的订阅，保存与恢复缺省要近期重认证；预览只渲染示例节点、不写库
-	v1.GET("/subscription-templates", k.RequireAuth, h.adminTemplates)
-	v1.GET("/subscription-templates/:format", k.RequireAuth, h.adminTemplate)
-	v1.PUT("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminSaveTemplate)
-	v1.DELETE("/subscription-templates/:format", k.RequireAuth, k.RecentReauth, h.adminResetTemplate)
-	v1.POST("/subscription-templates/:format/preview", k.RequireAuth, h.adminPreviewTemplate)
 	// 订阅域名分组：整份替换，影响之后新生成的所有订阅链接；保存要近期重认证（审计在 service）
 	v1.GET("/subscription-domains", k.RequireAuth, h.adminDomains)
 	v1.PUT("/subscription-domains", k.RequireAuth, k.RecentReauth, h.adminSaveDomains)

@@ -383,7 +383,7 @@ func auditFromGroups(groups []DomainGroup) []map[string]any {
 	return out
 }
 
-// AdminDomainConfig 返回后台订阅域名配置（直读库，含 Redis 分数）。
+// AdminDomainConfig 返回后台订阅域名配置（直读库，含 Redis 全国一级分数）。
 func (s *Service) AdminDomainConfig(ctx context.Context) (DomainConfigView, error) {
 	if _, err := adminPrincipal(ctx); err != nil {
 		return DomainConfigView{}, err
@@ -399,7 +399,8 @@ func (s *Service) AdminDomainConfig(ctx context.Context) (DomainConfigView, erro
 			urls = append(urls, d.BaseURL)
 		}
 	}
-	scores, scoresOK := s.scores.Read(ctx, urls, s.clock())
+	// 后台看全国一级（*）
+	scores, scoresOK := s.scores.Read(ctx, urls, domainRegion{}, s.clock())
 	viewGroups := make([]DomainGroupView, len(groups))
 	for i, g := range groups {
 		domViews := make([]DomainView, len(g.Domains))
@@ -461,6 +462,7 @@ func (s *Service) AdminSaveDomainConfig(ctx context.Context, in []DomainGroupInp
 	}); err != nil {
 		return DomainConfigView{}, err
 	}
-	s.extras.snap.Store(nil)
+	// 本进程的拉取快照立即作废，下一次拉取就用新的域名分组
+	s.extras.invalidate()
 	return s.AdminDomainConfig(ctx)
 }

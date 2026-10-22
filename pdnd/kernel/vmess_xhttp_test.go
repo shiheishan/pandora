@@ -14,7 +14,6 @@ import (
 	"github.com/apernet/quic-go/http3"
 	vmessref "github.com/sagernet/sing-vmess"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/http2"
 )
 
 type vmessXHTTPClientConn struct {
@@ -95,12 +94,7 @@ func TestVMessNativeXHTTPStreamLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/octet-stream")
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
-		},
-	}
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 	responseCh := make(chan struct {
 		resp *http.Response
@@ -322,12 +316,7 @@ func TestVMessNativeXHTTPPacketReconnectLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
-		},
-	}
+	transport := h2cTestTransport(nil)
 	defer transport.CloseIdleConnections()
 	requestReader, requestWriter := io.Pipe()
 	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+itoa(port)+"/xhttp/vmess-packet/0/", requestReader)

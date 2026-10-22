@@ -4,7 +4,7 @@ import { useApi } from '../../../shell/runtime'
 import { COMMISSION_KEY } from '../../queries'
 import { inviteCodeSchema, inviteSchema } from './schemas'
 
-export { inviteCodeSchema, inviteSchema, type Invite, type InviteCode } from './schemas'
+export { inviteSchema, type Invite, type InviteCode } from './schemas'
 
 export function useInvite() {
   const api = useApi()

@@ -123,7 +123,7 @@ export function TelegramCard() {
 }
 
 // ---------------------------------------------------------------------------
-// 通知方式：3 类 × 2 渠道
+// 通知方式：3 类 × 2 渠道，营销类没有 Telegram 一格
 // ---------------------------------------------------------------------------
 const CHANNEL_LABEL: Record<PrefChannel, string> = { email: '邮件', telegram: 'Telegram' }
 
@@ -153,6 +153,9 @@ export function NotificationPrefsCard() {
                   <small>{row.hint}</small>
                 </span>
                 {PREF_CHANNELS.map((channel) => {
+                  if (!row.channels.includes(channel)) {
+                    return <span key={channel} className={css.pfCell} />
+                  }
                   const p = list.find((x) => x.category === row.category && x.channel === channel)
                   const usable = channel === 'email' || tgUsable
                   return (

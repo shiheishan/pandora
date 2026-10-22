@@ -6,12 +6,14 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "version": 1,
       "status": "stable",
       "required": [
+        "cert_mode",
         "cert_path",
         "key_path"
       ],
       "allowed_properties": [
         "network",
         "tls",
+        "cert_mode",
         "cert_path",
         "key_path",
         "padding_scheme",
@@ -21,6 +23,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "fallback"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "network": [
           "tcp"
         ],
@@ -42,14 +48,15 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls_settings.allow_insecure": "boolean"
       },
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；可以填本机（如 127.0.0.1:80 的本机 nginx），不能填内网地址。留空时回一个中性的 404 页面。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
-        "tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+        "tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
         "tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
         "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。"
       },
-      "note": "证书必填：没证书时节点会以明文起，而客户端都强制 TLS，存得进去却谁都连不上。",
+      "note": "证书必填（默认自动申请）：没证书时节点会以明文起，而客户端都强制 TLS，存得进去却谁都连不上。",
       "fields": [
         {
           "path": "network",
@@ -61,13 +68,32 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "label": "开启 TLS"
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/fullchain.pem"
         },
         {
           "path": "key_path",
           "label": "私钥路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/privkey.pem"
         },
         {
@@ -90,7 +116,12 @@ export const NODE_PROTOCOL_SCHEMAS = {
         },
         {
           "path": "tls_settings.allow_insecure",
-          "label": "允许不安全证书"
+          "label": "允许不安全证书",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          }
         },
         {
           "path": "fallback",
@@ -103,15 +134,22 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "node_type": "http",
       "version": 1,
       "status": "stable",
-      "required": [],
+      "required": [
+        "cert_mode"
+      ],
       "allowed_properties": [
         "network",
         "tls",
+        "cert_mode",
         "cert_path",
         "key_path",
         "security"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "network": [
           "tcp"
         ],
@@ -123,10 +161,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls": "boolean"
       },
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       },
-      "note": "开 TLS 时需要填证书。",
+      "note": "开 TLS 时需要证书：默认自动申请，也可以手填路径。",
       "fields": [
         {
           "path": "network",
@@ -139,9 +178,26 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "default": false
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "show_if": {
+            "tls": [
+              "true"
+            ]
+          },
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "true"
             ]
@@ -152,6 +208,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "path": "key_path",
           "label": "私钥路径",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "true"
             ]
@@ -171,11 +230,13 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "version": 1,
       "status": "stable",
       "required": [
+        "cert_mode",
         "cert_path",
         "key_path"
       ],
       "allowed_properties": [
         "network",
+        "cert_mode",
         "cert_path",
         "key_path",
         "obfs.type",
@@ -187,6 +248,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls_settings.allow_insecure"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "network": [
           "udp"
         ],
@@ -203,12 +268,13 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "obfs.password"
       ],
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
-        "tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+        "tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
         "tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。"
       },
-      "note": "走 UDP；证书必填。",
+      "note": "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
       "fields": [
         {
           "path": "network",
@@ -216,13 +282,32 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "default": "udp"
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/fullchain.pem"
         },
         {
           "path": "key_path",
           "label": "私钥路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/privkey.pem"
         },
         {
@@ -264,7 +349,12 @@ export const NODE_PROTOCOL_SCHEMAS = {
         },
         {
           "path": "tls_settings.allow_insecure",
-          "label": "允许不安全证书"
+          "label": "允许不安全证书",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          }
         }
       ]
     },
@@ -273,16 +363,22 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "version": 1,
       "status": "stable",
       "required": [
+        "cert_mode",
         "cert_path",
         "key_path"
       ],
       "allowed_properties": [
         "network",
+        "cert_mode",
         "cert_path",
         "key_path",
         "congestion_control"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "congestion_control": [
           "cubic",
           "new_reno",
@@ -293,10 +389,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         ]
       },
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       },
-      "note": "走 UDP；证书必填。",
+      "note": "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
       "fields": [
         {
           "path": "network",
@@ -304,13 +401,32 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "default": "udp"
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/fullchain.pem"
         },
         {
           "path": "key_path",
           "label": "私钥路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/privkey.pem"
         },
         {
@@ -351,12 +467,14 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "status": "stable",
       "required": [
         "tls",
+        "cert_mode",
         "cert_path",
         "key_path"
       ],
       "allowed_properties": [
         "network",
         "tls",
+        "cert_mode",
         "cert_path",
         "key_path",
         "security",
@@ -365,6 +483,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "fallback"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "network": [
           "tcp"
         ],
@@ -377,13 +499,14 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls_settings.allow_insecure": "boolean"
       },
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；可以填本机（如 127.0.0.1:80 的本机 nginx），不能填内网地址。留空时回一个中性的 404 页面。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
-        "tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+        "tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
         "tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。"
       },
-      "note": "必须开 TLS 并填证书。",
+      "note": "必须开 TLS；证书默认自动申请，也可以手填路径。",
       "fields": [
         {
           "path": "network",
@@ -396,13 +519,32 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "default": true
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/fullchain.pem"
         },
         {
           "path": "key_path",
           "label": "私钥路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/privkey.pem"
         },
         {
@@ -418,7 +560,12 @@ export const NODE_PROTOCOL_SCHEMAS = {
         },
         {
           "path": "tls_settings.allow_insecure",
-          "label": "允许不安全证书"
+          "label": "允许不安全证书",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          }
         },
         {
           "path": "fallback",
@@ -451,7 +598,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "fields": [
         {
           "path": "cipher",
-          "label": "加密方式"
+          "label": "加密方式",
+          "default": "aes-256-gcm"
         }
       ]
     },
@@ -552,15 +700,22 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "node_type": "socks",
       "version": 1,
       "status": "stable",
-      "required": [],
+      "required": [
+        "cert_mode"
+      ],
       "allowed_properties": [
         "network",
         "tls",
+        "cert_mode",
         "cert_path",
         "key_path",
         "security"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "network": [
           "tcp",
           "udp"
@@ -573,10 +728,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls": "boolean"
       },
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       },
-      "note": "开 TLS 时需要填证书。",
+      "note": "开 TLS 时需要证书：默认自动申请，也可以手填路径。",
       "fields": [
         {
           "path": "network",
@@ -588,9 +744,26 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "default": false
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "show_if": {
+            "tls": [
+              "true"
+            ]
+          },
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "true"
             ]
@@ -601,6 +774,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "path": "key_path",
           "label": "私钥路径",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "true"
             ]
@@ -620,7 +796,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "version": 1,
       "status": "stable",
       "required": [
-        "tls"
+        "tls",
+        "cert_mode"
       ],
       "allowed_properties": [
         "network",
@@ -632,6 +809,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "network_settings.mode",
         "ws_path",
         "grpc_path",
+        "cert_mode",
         "cert_path",
         "key_path",
         "reality_settings.dest",
@@ -653,6 +831,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "mask_password"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "network": [
           "tcp",
           "ws",
@@ -694,6 +876,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "mask_password"
       ],
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；可以填本机（如 127.0.0.1:80 的本机 nginx），不能填内网地址。留空时回一个中性的 404 页面。只在 tcp 传输上生效。",
         "grpc_path": "旧字段名，与 serviceName 二选一即可。",
@@ -702,12 +885,12 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "reality_settings.dest": "借用握手的真实公网站点，域名:端口，例如 www.apple.com:443；dest 需支持 TLS 1.3 + X25519。不能填 IP、localhost 或内网域名。",
         "reality_settings.server_name": "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。",
         "reality_settings.short_id": "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。",
-        "tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+        "tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
         "tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。",
         "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "Trojan 支持普通 TLS（1）与 REALITY（2），不能不加密；没有流控。",
+      "note": "缺省是普通 TLS（1）+ 自动申请证书（Let's Encrypt）：上线前把对外地址解析到这台服务器；也可选 REALITY（2）。Trojan 不能不加密；没有流控。",
       "fields": [
         {
           "path": "network",
@@ -717,6 +900,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         {
           "path": "tls",
           "label": "加密",
+          "default": 1,
           "option_labels": {
             "1": "1 · TLS",
             "2": "2 · REALITY"
@@ -730,9 +914,26 @@ export const NODE_PROTOCOL_SCHEMAS = {
           }
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "show_if": {
+            "tls": [
+              "1"
+            ]
+          },
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "1"
             ]
@@ -743,6 +944,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "path": "key_path",
           "label": "私钥路径",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "1"
             ]
@@ -763,6 +967,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "path": "tls_settings.allow_insecure",
           "label": "允许不安全证书",
           "show_if": {
+            "cert_mode": [
+              "file"
+            ],
             "tls": [
               "1"
             ]
@@ -776,6 +983,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com:443",
           "placeholder": "www.apple.com:443"
         },
         {
@@ -786,6 +994,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com",
           "placeholder": "www.apple.com"
         },
         {
@@ -988,11 +1197,13 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "version": 1,
       "status": "stable",
       "required": [
+        "cert_mode",
         "cert_path",
         "key_path"
       ],
       "allowed_properties": [
         "network",
+        "cert_mode",
         "cert_path",
         "key_path",
         "congestion_control",
@@ -1004,6 +1215,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls_settings.allow_insecure"
       ],
       "enums": {
+        "cert_mode": [
+          "acme",
+          "file"
+        ],
         "congestion_control": [
           "cubic",
           "new_reno",
@@ -1018,12 +1233,13 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "zero_rtt": "boolean"
       },
       "hints": {
+        "cert_mode": "自动申请：节点端用本机 80 端口向 Let's Encrypt 申请并自动续期，80 端口要能从公网访问。证书名字用「客户端 SNI」，没填就用节点的连接地址，可以是公网 IP（证书约 6 天一换）或域名（约 90 天）。选自动申请即视为同意 Let's Encrypt 订户协议（https://letsencrypt.org/repository/）。手填：自己把证书放到节点机上，填路径。",
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
-        "tls_settings.allow_insecure": "只进订阅；自签证书时才打开。",
+        "tls_settings.allow_insecure": "只进订阅；手填自签证书时才打开，自动申请的证书不需要。",
         "tls_settings.server_name": "只进订阅，告诉客户端握手用的域名。"
       },
-      "note": "走 UDP；证书必填。",
+      "note": "走 UDP；证书默认自动申请（需要 80 端口），也可以手填路径。",
       "fields": [
         {
           "path": "network",
@@ -1031,13 +1247,32 @@ export const NODE_PROTOCOL_SCHEMAS = {
           "default": "udp"
         },
         {
+          "path": "cert_mode",
+          "label": "证书来源",
+          "default": "acme",
+          "option_labels": {
+            "acme": "自动申请（Let's Encrypt）",
+            "file": "手填证书路径"
+          }
+        },
+        {
           "path": "cert_path",
           "label": "证书路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/fullchain.pem"
         },
         {
           "path": "key_path",
           "label": "私钥路径",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          },
           "placeholder": "/etc/pandora-native/certs/example.com/privkey.pem"
         },
         {
@@ -1076,7 +1311,12 @@ export const NODE_PROTOCOL_SCHEMAS = {
         },
         {
           "path": "tls_settings.allow_insecure",
-          "label": "允许不安全证书"
+          "label": "允许不安全证书",
+          "show_if": {
+            "cert_mode": [
+              "file"
+            ]
+          }
         }
       ]
     },
@@ -1220,11 +1460,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "reality_settings.dest": "借用握手的真实公网站点，域名:端口，例如 www.apple.com:443；dest 需支持 TLS 1.3 + X25519。不能填 IP、localhost 或内网域名。",
         "reality_settings.server_name": "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。",
         "reality_settings.short_id": "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。",
-        "tls": "不加密时不能用裸 tcp。",
+        "tls": "缺省 2 · REALITY。选 0 · 不加密时传输不能是 tcp，否则保存会被拒绝。",
         "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "REALITY + tcp 时用 xtls-rprx-vision；普通 TLS（tls=1）暂未开放。",
+      "note": "缺省是 REALITY + tcp + xtls-rprx-vision：目标站与 SNI 已预填常用值（不懂就保持不动），密钥对进到这一步会自动生成；不加密时不能用裸 tcp（保存会被拒绝），要换 ws / httpupgrade / grpc / xhttp 并套 CDN。普通 TLS（tls=1）暂未开放。",
       "fields": [
         {
           "path": "network",
@@ -1234,6 +1474,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         {
           "path": "tls",
           "label": "加密",
+          "default": 2,
           "option_labels": {
             "0": "0 · 不加密",
             "2": "2 · REALITY"
@@ -1251,6 +1492,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "xtls-rprx-vision",
           "option_labels": {
             "": "留空"
           }
@@ -1275,6 +1517,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com:443",
           "placeholder": "www.apple.com:443"
         },
         {
@@ -1285,6 +1528,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
               "2"
             ]
           },
+          "default": "www.apple.com",
           "placeholder": "www.apple.com"
         },
         {
@@ -1787,11 +2031,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "grpc_path": "旧字段名，与 serviceName 二选一即可。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
         "mask": "把 UDP 包变成随机字节，盖掉 mKCP 自身的特征。",
-        "network": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+        "network": "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
         "tls": "VMess 不支持 REALITY，只有这一个选项。",
         "ws_path": "旧字段名，与「路径」二选一即可。"
       },
-      "note": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+      "note": "VMess 不能开 TLS：建议用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 能保存，但特征明显、容易被识别封锁。",
       "fields": [
         {
           "path": "network",

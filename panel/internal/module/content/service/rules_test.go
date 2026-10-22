@@ -13,37 +13,23 @@ import (
 func TestNormalizePublishInput(t *testing.T) {
 	in, err := normalizePublishInput(PublishInput{
 		Slug: "  Getting-Started  ", Title: "开始使用", Body: "这是足够长的安全纯文本正文内容。",
-		TargetPlatforms: []string{"Android", "web", "android"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if in.Slug != "getting-started" || in.Kind != "kb_article" ||
-		in.Locale != "zh-CN" || in.Visibility != "authenticated" || in.Status != "draft" {
+		in.Visibility != "authenticated" || in.Status != "draft" {
 		t.Fatalf("normalized input=%+v", in)
-	}
-	if len(in.TargetPlatforms) != 2 || in.TargetPlatforms[0] != "android" || in.TargetPlatforms[1] != "web" {
-		t.Fatalf("platforms=%v", in.TargetPlatforms)
 	}
 }
 
 func TestNormalizePublishInputRejectsUnsafeShape(t *testing.T) {
 	_, err := normalizePublishInput(PublishInput{
 		Slug: "../../admin", Kind: "kb_article", Title: "x", Body: "short",
-		Visibility: "group", Status: "published", MinClientVersion: "2.0.0", MaxClientVersion: "1.0.0",
+		Visibility: "group", Status: "published",
 	})
 	if err == nil {
 		t.Fatal("unsafe input accepted")
-	}
-}
-
-func TestNormalizePublishInputRejectsUnknownPlatform(t *testing.T) {
-	_, err := normalizePublishInput(PublishInput{
-		Slug: "getting-started", Title: "开始使用", Body: "这是足够长的安全纯文本正文内容。",
-		TargetPlatforms: []string{"web", "symbian"},
-	})
-	if err == nil {
-		t.Fatal("unknown platform accepted")
 	}
 }
 
@@ -54,24 +40,6 @@ func TestNormalizePublishInputRejectsAnonymousPublicVisibility(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("unsupported anonymous public visibility accepted")
-	}
-}
-
-func TestVersionVisibility(t *testing.T) {
-	for _, tc := range []struct {
-		min, max, actual string
-		want             bool
-	}{
-		{"", "", "", true},
-		{"1.2.0", "", "1.2.0", true},
-		{"1.2.0", "2.0.0", "1.9.9", true},
-		{"1.2.0", "2.0.0", "1.1.9", false},
-		{"1.2.0", "2.0.0", "2.0.1", false},
-		{"1.2.0", "", "", false},
-	} {
-		if got := versionVisible(tc.min, tc.max, tc.actual); got != tc.want {
-			t.Fatalf("versionVisible(%q,%q,%q)=%v want %v", tc.min, tc.max, tc.actual, got, tc.want)
-		}
 	}
 }
 
@@ -128,15 +96,6 @@ func TestEncodeDecodeList(t *testing.T) {
 	got := decodeList(encodeList(orig))
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("round trip=%v", got)
-	}
-}
-
-func TestCompareVersion(t *testing.T) {
-	if compareVersion("v1.2", "1.2.0") != 0 {
-		t.Fatalf("v1.2 vs 1.2.0")
-	}
-	if compareVersion("1.10.0", "1.9.9") <= 0 {
-		t.Fatalf("1.10.0 should be > 1.9.9")
 	}
 }
 

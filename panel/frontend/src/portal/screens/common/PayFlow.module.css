@@ -209,6 +209,16 @@
   background: var(--surface-2);
 }
 
+/* 应付低于这个方式的最低额：置灰、不可点 */
+.payOff {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.payOff:hover {
+  background: none;
+}
+
 .pi {
   flex: none;
   width: 30px;

@@ -17,12 +17,12 @@
 4. 你自己写代码只在两种情况：composer 按同一份说明返工两次仍不过；只改几行、转手不值。
 
 ## 规则
-- 不 build、不 test、不 typecheck；要验证的命令写进交回说明，由主 Agent 跑。
+- 可以对本块改过的包跑快速检查：gofmt、go build、go vet、改动包的 go test（本机 PG 起着时含 PG 用例）、前端 `npm run typecheck`、`npx eslint <改过的文件>`、`npx vitest run <相关文件>`。不跑 `npm ci`、全量测试、`-race`、全仓 lint、e2e 与浏览器。交回前改动包的这些检查要过。
 - 尽早提交、尽早返回；遇到卡点，或需要改范围外的文件，先停下交回说明。
 - 不推送、不合并、不删 worktree，这些由主 Agent 做。
 
 ## 交回（你的最后一条消息）
 - 提交列表：sha + 一句话
 - 改了哪些文件
-- 建议主 Agent 跑的验证命令
+- 跑过的检查与结果；建议主 Agent 再跑的验证命令
 - 没做完或拿不准的

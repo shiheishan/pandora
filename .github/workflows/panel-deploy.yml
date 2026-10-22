@@ -5,7 +5,8 @@ name: Panel deploy script contracts
 #   2. install.sh 写进 Redis 配置的 pandora 块，在支持的 Redis 版本上真起一遍（要 Docker）；
 #   3. 真 PG18 上走一遍 bootstrap.sh roles → pandora migrate up（pandora_owner）→ bootstrap.sh grants，
 #      再以 pandora_app 跑 production 的 pandora admin 与 serve，核运行角色权限；
-#   4. 要 Linux root 的备份链桩测试：真跑备份 → 校验 → 恢复一整圈。
+#   4. 要 Linux root 的备份链桩测试：真跑备份 → 校验 → 恢复一整圈；
+#   5. 真 nginx 上的 JSON 错误页：面板不起时 API 路径回 502 信封（要 root 与 apt）。
 
 on:
   workflow_dispatch:
@@ -57,7 +58,7 @@ jobs:
             backup-scripts_mock_test.sh backup-provenance_mock_test.sh edge-tls_mock_test.sh
             cloudflare-realip_mock_test.sh healthcheck_mock_test.sh healthcheck-install_static_test.sh
             tls-renew_static_test.sh logrotate-pandora_static_test.sh webdav-backup-hardening_mock_test.sh
-            pg-revive_mock_test.sh get_mock_test.sh
+            pg-revive_mock_test.sh get_mock_test.sh nginx-error-pages_real_test.sh
           )
           data=(
             nginx-pandora.conf configure-app-role.sql postgresql-pandora.conf release-artifact.env.example
@@ -157,6 +158,48 @@ jobs:
           pg_lsclusters
       - name: Database bootstrap, migrate, grants, runtime checks
         run: bash panel/deploy/db-roles_pg18_test.sh
+
+  # 真 nginx 上验 JSON 错误页（map $uri $pandora_api + error_page + 命名 location）：apt 装 Ubuntu 的 nginx 包，
+  # render-nginx.sh 渲染正式模板，面板不起（9000 / 9001 没人听），门户与后台 API 路径经回环 9080 与 443
+  # 都回 502 信封（正文、Content-Type、no-store、nosniff），非 API 路径回 nginx 默认 502 页；另验 413 / 429 信封、
+  # /readyz /healthz 403、80 的 308 与未知 Host 444、缺省不采信客户端自填的真实 IP 头。
+  # render-nginx_test.sh 只核渲染出的文本；真 nginx 的行为原先由 panel-docker.yml 停掉 serve 时实测，
+  # 10-21 删掉 Docker 装法后挪到这里。要 root 与 apt，只在 GitHub 上跑。
+  deploy-nginx-error-pages:
+    name: Real nginx returns the JSON 502 envelope with the panel down
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # 检查机回放不认 if:、不设 GITHUB_ACTIONS：装包这步也先判断，免得在检查机上 apt 装 nginx
+      - name: Install nginx from the distribution
+        run: |
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过装 nginx（GitHub 上必跑）"
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx
+          nginx -v
+      - name: Render the panel site and probe API paths with no backend
+        run: |
+          t=nginx-error-pages_real_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          sudo -n bash "$t"
+      - name: Print nginx diagnostics on failure
+        if: failure()
+        run: |
+          sudo nginx -t 2>&1 || true
+          sudo tail -n 50 /var/log/nginx/error.log /var/log/nginx/pandora-error.log 2>/dev/null || true
 
   # 备份链的桩测试要 Linux root（deploy.env 与可执行文件按属主和 /proc/self/fd 绑定）。GitHub runner
   # 有免密 sudo，在这里必跑；不在 GitHub Actions 上明说跳过，以 GitHub 的结论为准。

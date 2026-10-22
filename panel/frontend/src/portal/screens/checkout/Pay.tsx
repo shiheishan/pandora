@@ -4,9 +4,9 @@ import { Empty, Skeleton } from '../../../ui'
 import { usePageHead } from '../../head'
 import { Btn } from '../../kit'
 import { LoadError } from '../common/Blocks'
-import { methodKey, usePaymentMethods } from '../common/catalog'
+import { usePaymentMethods } from '../common/catalog'
 import { isPayable, PAID_STATUSES, useCancelOrder, useOrder } from '../common/orders'
-import { PayPanel, SwitchToBalance } from '../common/PayFlow'
+import { PayPanel, pickMethod, SwitchToBalance } from '../common/PayFlow'
 import { placedOrders } from './model'
 import css from './Pay.module.css'
 
@@ -43,7 +43,7 @@ export function Pay({ orderId }: { orderId: string }) {
   const failed = order.isError ? order : methods.isError ? methods : null
   if (failed) return <LoadError error={failed.error} onRetry={() => void failed.refetch()} what="订单" />
   const o = order.data!
-  const method = methods.data!.find((m) => methodKey(m) === query.get('m')) ?? methods.data![0]
+  const method = pickMethod(methods.data, query.get('m') ?? '', o.payable_amount) ?? undefined
   if (!isPayable(o) || !method) {
     // 还挂着待支付、但过了付款期限：给「取消这张单」，取消后回选购页（A 路：发起支付会回 409）
     const lapsed = method !== undefined && o.status === 'pending_payment'

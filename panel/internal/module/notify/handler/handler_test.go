@@ -169,7 +169,7 @@ func TestGetMailSettingsKeys(t *testing.T) {
 
 func TestSetMailSettingsPasswordAndOptional(t *testing.T) {
 	fake := &fakeNotify{}
-	e, _ := setupEngine(fake)
+	e, k := setupEngine(fake)
 	base := `{"smtp_host":"","smtp_port":25,"encryption":"none","smtp_username":"","from_address":"","from_name":""`
 
 	for _, tc := range []struct {
@@ -214,6 +214,10 @@ func TestSetMailSettingsPasswordAndOptional(t *testing.T) {
 	var ok okResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &ok); err != nil || !ok.OK {
 		t.Fatalf("ok resp %s", rec.Body.String())
+	}
+	// 改 SMTP 口令与注册方式，和其他设置写接口一样要近期重新验证（每次请求过一次）
+	if k.reauthCalls != 4 {
+		t.Fatalf("reauth calls %d, want 4", k.reauthCalls)
 	}
 }
 
@@ -348,7 +352,8 @@ func TestTestTemplateDraftPointersAndReauth(t *testing.T) {
 	}
 }
 
-// 后台不分权限：每条后台路由都挂 RequireAuth，且只挂一次。
+// 后台不分权限：每条后台路由都挂 RequireAuth，且只挂一次；reauth 一列钉住哪些要近期重新验证
+// （改设置、保存与恢复模板、发测试模板、绑定码、公告、群发要；两条只发固定内容的 test 路由与模板预览不要），新加路由要补这一列。
 func TestAdminRoutesRequireAuth(t *testing.T) {
 	e, k := setupEngine(&fakeNotify{
 		mail: service.MailSettings{RegistrationMode: "open"},
@@ -361,33 +366,35 @@ func TestAdminRoutesRequireAuth(t *testing.T) {
 		method string
 		path   string
 		body   string
+		reauth bool
 	}{
-		{http.MethodGet, "/v1/settings/mail", ""},
-		{http.MethodPost, "/v1/settings/mail", `{"smtp_port":25,"encryption":"none"}`},
-		{http.MethodPost, "/v1/settings/mail/test", `{"to":"a@b.c"}`},
-		{http.MethodGet, "/v1/mail/templates", ""},
-		{http.MethodPost, "/v1/mail/templates/preview", `{"code":"c","channel":"email","subject":"","body":""}`},
-		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`},
-		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`},
-		{http.MethodPost, "/v1/mail/templates/test", `{"code":"c","channel":"email","to":"a@b.c"}`},
-		{http.MethodGet, "/v1/settings/telegram", ""},
-		{http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":""}`},
-		{http.MethodPost, "/v1/settings/telegram/test", `{"chat_id":1}`},
-		{http.MethodGet, "/v1/settings/telegram/extras", ""},
-		{http.MethodPost, "/v1/settings/telegram/extras", `{}`},
-		{http.MethodGet, "/v1/me/telegram", ""},
-		{http.MethodPost, "/v1/me/telegram/bind-code", ""},
-		{http.MethodDelete, "/v1/me/telegram", ""},
-		{http.MethodGet, "/v1/announcements", ""},
-		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
-		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001", `{"title":"t","body":"b","expected_version":1}`},
-		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001/withdraw", `{"expected_version":1}`},
-		{http.MethodPost, "/v1/users/bulk/mail", `{"subject":"s","body":"b"}`},
+		{http.MethodGet, "/v1/settings/mail", "", false},
+		{http.MethodPost, "/v1/settings/mail", `{"smtp_port":25,"encryption":"none"}`, true},
+		{http.MethodPost, "/v1/settings/mail/test", `{"to":"a@b.c"}`, false},
+		{http.MethodGet, "/v1/mail/templates", "", false},
+		{http.MethodPost, "/v1/mail/templates/preview", `{"code":"c","channel":"email","subject":"","body":""}`, false},
+		{http.MethodPost, "/v1/mail/templates", `{"code":"c","channel":"email","subject":"","body":""}`, true},
+		{http.MethodPost, "/v1/mail/templates/reset", `{"code":"c","channel":"email"}`, true},
+		{http.MethodPost, "/v1/mail/templates/test", `{"code":"c","channel":"email","to":"a@b.c"}`, true},
+		{http.MethodGet, "/v1/settings/telegram", "", false},
+		{http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":""}`, true},
+		{http.MethodPost, "/v1/settings/telegram/test", `{"chat_id":1}`, false},
+		{http.MethodGet, "/v1/settings/telegram/extras", "", false},
+		{http.MethodPost, "/v1/settings/telegram/extras", `{}`, true},
+		{http.MethodGet, "/v1/me/telegram", "", false},
+		{http.MethodPost, "/v1/me/telegram/bind-code", "", true},
+		{http.MethodDelete, "/v1/me/telegram", "", false},
+		{http.MethodGet, "/v1/announcements", "", false},
+		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`, true},
+		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001", `{"title":"t","body":"b","expected_version":1}`, true},
+		{http.MethodPost, "/v1/announcements/018f0000-0000-7000-8000-000000000001/withdraw", `{"expected_version":1}`, true},
+		{http.MethodPost, "/v1/users/bulk/mail", `{"subject":"s","body":"b"}`, true},
 	}
 	k.principal = &authn.Principal{UserID: uuid.MustParse("018f0000-0000-7000-8000-0000000000ad"), Audience: authn.AudienceAdmin}
 	if n := len(e.Routes()); n != len(calls) {
 		t.Fatalf("后台路由 %d 条，用例覆盖 %d 条", n, len(calls))
 	}
+	reauthBefore := 0
 	for i, c := range calls {
 		rec := doNotify(e, c.method, c.path, c.body)
 		if rec.Code != http.StatusOK {
@@ -396,5 +403,13 @@ func TestAdminRoutesRequireAuth(t *testing.T) {
 		if k.authCalls != i+1 {
 			t.Fatalf("%s %s: RequireAuth 调用 %d 次，want %d", c.method, c.path, k.authCalls, i+1)
 		}
+		want := reauthBefore
+		if c.reauth {
+			want++
+		}
+		if k.reauthCalls != want {
+			t.Fatalf("%s %s: RecentReauth 调用 %d 次，want %d", c.method, c.path, k.reauthCalls-reauthBefore, want-reauthBefore)
+		}
+		reauthBefore = k.reauthCalls
 	}
 }

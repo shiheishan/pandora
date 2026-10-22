@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../../core/api'
 import { preferenceSchema, quickLoginSchema, sessionSchema, telegramSchema } from './api'
-import { BIND_CODE_TTL_MS, bindDeadline, deviceKind, deviceName, formatCountdown, lastSeenLabel, loginAtLabel, passwordErrors, secondsLeft, shortUserId, sortSessions, telegramDeepLink, validateNewPassword } from './model'
+import { BIND_CODE_TTL_MS, PREF_ROWS, bindDeadline, deviceKind, deviceName, formatCountdown, lastSeenLabel, loginAtLabel, passwordErrors, secondsLeft, shortUserId, sortSessions, telegramDeepLink, validateNewPassword } from './model'
 
 const UA = {
   chromeMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
@@ -118,5 +118,15 @@ describe('账号安全', () => {
     // 本机快了：截止已在本地「过去」
     expect(bindDeadline('2026-10-16T09:50:00Z', at)).toBe(at + BIND_CODE_TTL_MS)
     expect(bindDeadline('坏值', at)).toBe(at + BIND_CODE_TTL_MS)
+  })
+})
+
+describe('notification preference rows', () => {
+  it('营销类只有邮件一格，其余两类邮件与 Telegram 都有（与后端 5 项目录一致）', () => {
+    expect(PREF_ROWS.map((r) => [r.category, r.channels])).toEqual([
+      ['transactional', ['email', 'telegram']],
+      ['service', ['email', 'telegram']],
+      ['marketing', ['email']],
+    ])
   })
 })

@@ -15,8 +15,9 @@ paths:
 ## 中间件链
 - 两个引擎（public、admin）都由 `panel/internal/app/serve.go` 的 `newEngine` 建，顺序：`RequestID` → `AccessLog` → `Recovery` → `Errors` → `SecurityHeaders` → `Concurrency` → `Timeout` → 引擎专属（admin 先 `AdminWritesGate`，再 `Authenticate` → `DomainGuard`）。SSE `/v1/events` 不占并发名额、不设请求超时（`isStream`）。
 - 服务器限额：请求头 64 KiB（`serve.go` 的 `maxHeaderBytes`）；JSON 请求体 1 MiB（`httpx.MaxBodyBytes`，回调与 webhook 各自 LimitReader）；超时、并发、连接池在 config 缺省值里（`internal/pkg/config/load.go`），改 `database.max_conns` 缺省要同步 `deploy/postgresql-pandora.conf` 的 `max_connections` 预算（serve 30 + worker 10）与 RUNBOOK 的连接预算一节。节点 gRPC 每条连接最多 16 条流（`node/grpc/server.go`）。
-- 安全响应头只在 `httpx.SecurityHeaders`（nosniff、X-Frame-Options、Referrer-Policy、COOP/CORP same-origin、Permissions-Policy、no-store；生产加 HSTS 一年、不带 includeSubDomains）。入口页的 CSP 在 `internal/pkg/webapp`（`indexCSP`）；webapp 不读设置，门户入口页经 `webapp.WithExtraSources` 由 app 装配注入额外来源（`internal/app/portal_csp.go`：只在开了人机验证时追加所选那家的固定来源；只读服务商一键、不解封 secret，进程内缓存：成功 30 秒、读失败 5 秒，本进程保存注册设置后（`SignupGeneration` 变了）立即重读，同一时刻只有一趟读库（singleflight，不持锁、上限 2 秒）；CSP 变了 ETag 跟着变）。HSTS 不放 nginx：location 一旦写了自己的 `add_header` 就不继承 server 级的。
+- 安全响应头只在 `httpx.SecurityHeaders`（nosniff、X-Frame-Options、Referrer-Policy、COOP/CORP same-origin、Permissions-Policy、no-store；生产加 HSTS 一年、不带 includeSubDomains；路径是 `/v1` 或 `/v1/…` 时加 `X-Robots-Tag: noindex, nofollow`，入口页与静态资源不加，由入口页的 meta robots 与 robots.txt 管）。订阅拉取（`subscription/handler/subscribe.go`）在 handler 开头自己加同一个 `X-Robots-Tag`：所有两段路径都进那里，真假路径（含伪装 404）带的头一样。入口页的 CSP 在 `internal/pkg/webapp`（`indexCSP`）；webapp 不读设置，门户入口页经 `webapp.WithExtraSources` 由 app 装配注入额外来源（`internal/app/portal_csp.go`：只在开了人机验证时追加所选那家的固定来源；只读服务商一键、不解封 secret，进程内缓存：成功 30 秒、读失败 5 秒，本进程保存注册设置后（`SignupGeneration` 变了）立即重读，同一时刻只有一趟读库（singleflight，不持锁、上限 2 秒）；CSP 变了 ETag 跟着变）。HSTS 不放 nginx：location 一旦写了自己的 `add_header` 就不继承 server 级的。
 - 路由级中间件经 `route.Kit` 传给每个模块（`panel/internal/pkg/route/route.go`）：`RequireAuth`、`RecentReauth`、`Idempotency(scope)`、`Switch(code)`。模块之间不互相 import handler。
+- 幂等中间件读请求体的上限是 `idempotency/service.MaxBodyBytes`，超限回 413 `payload_too_large`。
 - 顺序固定：`RecentReauth` 排在 `Idempotency` 之前，403 `reauth_required` 时幂等键还没被占，前端弹框后用原键重放。降级开关门同样排在幂等之前。
 - 后台不分权限：`RequireAuth` 在 admin 上就是「已登录的管理员」，没有权限码、角色。
 - 哪些后台写不要求重认证是产品决定，改之前先问用户：后台查单 `POST /v1/orders/:id/query` 只要幂等（只记渠道已确认的那笔，造不出钱）；节点 `activate` 不要重认证，`retire` 要（`panel/internal/module/node/handler/routes_inventory.go`）。
@@ -30,6 +31,8 @@ paths:
 - 请求体经 `httpx.BindJSON`（1 MiB、`DisallowUnknownFields`），校验失败 422 `validation_failed`，`fields` 写中文；业务校验在 service。
 - 成功响应不包信封：直接回 DTO，状态码表达结果，经 `httpx.OK` / `Created` / `Accepted` / `NoContent` 写；要录进幂等表的经 `idemsvc.JSON`。handler 里不直接调 `c.JSON`。
 - 错误交给 `httpx.Fail`（或 `c.Error`）统一写信封，不要自己拼 JSON。面向用户的文案是中文，页面原样显示。
+- 不直接写响应由 forbidigo 钉住（`c.JSON` 家族、`c.String`、`c.Data`、`c.Status`、`c.AbortWith*`、`c.Redirect`、`c.File*`、`gin.H`、`c.Writer.Write*`、`http.Error` / `NotFound` / `ServeContent` / `ServeFile` / `Redirect`）。非 JSON 出口按文件放行，白名单在 `panel/tools/depguardgen` 模板的 `exclusions.rules`：httpx、webapp、`realtime/sse.go`、幂等的 `recorder.go`、`robots.go`、订阅的 `subscribe.go` / `probe_frame.go`、`pdnd_dist.go`、identity / giftcard / audit 的 `csv.go`、支付的 `ack.go`。新的非 JSON 出口把写响应的那几行抽到同包单独文件再加进白名单，不用 `//nolint`。经 `io.Writer` 接口写正文（`csv.NewWriter(c.Writer)`、幂等重放的 `Serve(c.Writer)`）不在检查范围内，评审时看。
+- 引擎关了 `RedirectTrailingSlash`：后台在 nginx 前缀后面，gin 的跳转不带前缀会跳到门户；多一个尾斜杠就是 404。
 
 ## 幂等
 - `panel/internal/module/idempotency/handler/middleware.go` 的 `Middleware(scope)`：按 `Idempotency-Key` 认领；业务在同一事务里已调 `service.Complete*` 时中间件不再写库，否则按录下的响应完成或释放（非 2xx 释放，同键重试会重新执行）。

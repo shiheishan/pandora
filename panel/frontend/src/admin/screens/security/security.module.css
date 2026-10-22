@@ -55,6 +55,17 @@
   font-size: var(--fs-caption);
 }
 
+.traceLink {
+  color: var(--info);
+  font-size: var(--fs-caption);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.traceLink:hover {
+  text-decoration: underline;
+}
+
 .nowrap {
   white-space: nowrap;
 }
@@ -85,6 +96,73 @@
     table-layout: fixed;
     min-width: 880px;
   }
+}
+
+/* 结果标签后的展开箭头：展开时转向下 */
+.auditOutcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+tr[aria-expanded='true'] .chevron {
+  transform: rotate(45deg);
+}
+
+.auditDetail {
+  display: grid;
+  gap: 10px;
+  padding: 2px 4px 6px;
+  white-space: normal;
+}
+
+.auditDetailMeta {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.auditDetailList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.auditDetailList > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 160px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.auditDetailList dt {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.auditDetailList dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.auditDetailSame,
+.auditDetailSame dt {
+  color: var(--text-3);
+}
+
+.auditBefore {
+  color: var(--text-3);
+  text-decoration: line-through;
 }
 
 /* 手机上只剩操作人与结果两列：按内容排，操作人占满剩余宽度
@@ -218,7 +296,8 @@
 
 .logRow {
   display: grid;
-  grid-template-columns: 72px 64px 72px 128px minmax(0, 1fr);
+  /* 时间列放得下跨天的「MM-DD HH:mm:ss」（等宽 12px 约 101px）；当天只有 HH:mm:ss */
+  grid-template-columns: 104px 64px 72px minmax(0, 240px) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   height: 38px;
@@ -227,12 +306,22 @@
   white-space: nowrap;
 }
 
-.logRow:hover {
-  background: var(--surface-2);
-}
-
 .logRow:last-child {
   border-bottom: 0;
+}
+
+/* 手机：五列挤不下（账号列被压成 0、IP 被裁），分两行——时间、分类、结果、IP / 账号 · 动作占满一行 */
+@media (max-width: 639px) {
+  .logRow {
+    grid-template-columns: auto auto auto minmax(0, 1fr);
+    row-gap: 2px;
+    height: auto;
+    padding: 8px 16px;
+  }
+
+  .logAccount {
+    grid-column: 1 / -1;
+  }
 }
 
 .logTime {
@@ -263,10 +352,19 @@
 }
 
 .logIp {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.logGeo {
+  color: var(--text-3);
+  font-family: var(--font-ui);
 }
 
 .logAccount {
@@ -279,8 +377,28 @@
 
 .logAction {
   color: var(--text-3);
+}
+
+.term {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.logLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.logLink:hover {
+  text-decoration: underline;
+}
+
+.logCode {
+  margin-left: 6px;
+  color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .empty {

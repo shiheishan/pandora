@@ -12,9 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 type grpcDuplexConn struct {
@@ -206,15 +203,15 @@ func parseGRPCPath(raw map[string]any) (string, string, error) {
 	return path, host, nil
 }
 
-func serveNativeGRPC(listener net.Listener, path, host string, maxFrame uint32, h2cMode bool, onConn func(context.Context, net.Conn)) (*http.Server, error) {
-	return serveNativeGRPCHosts(listener, path, []string{host}, maxFrame, h2cMode, onConn)
+func serveNativeGRPC(listener net.Listener, path, host string, maxFrame uint32, onConn func(context.Context, net.Conn)) (*http.Server, error) {
+	return serveNativeGRPCHosts(listener, path, []string{host}, maxFrame, onConn)
 }
 
 // serveNativeGRPCHosts 同 serveNativeGRPC，但 :authority 可以是几个名字之一
 // （hosts 里有空串表示不检查）。VLESS REALITY 用它：标准客户端（sing-box、
 // mihomo、Xray）把 REALITY 的 server name 当 :authority 发，而那个名字已经由
 // REALITY 握手对照 server_names 校验过。
-func serveNativeGRPCHosts(listener net.Listener, path string, hosts []string, maxFrame uint32, h2cMode bool, onConn func(context.Context, net.Conn)) (*http.Server, error) {
+func serveNativeGRPCHosts(listener net.Listener, path string, hosts []string, maxFrame uint32, onConn func(context.Context, net.Conn)) (*http.Server, error) {
 	if listener == nil || onConn == nil {
 		return nil, fmt.Errorf("native grpc server requires listener and handler")
 	}
@@ -239,13 +236,7 @@ func serveNativeGRPCHosts(listener net.Listener, path string, hosts []string, ma
 		w.Header().Set("grpc-status", "0")
 	})
 	server := newInboundHTTPServer(handler, 64<<10)
-	if h2cMode {
-		server.Handler = h2c.NewHandler(handler, &http2.Server{})
-	} else {
-		if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {
-			return nil, err
-		}
-	}
+	server.Protocols = inboundH2Protocols()
 	go func() { _ = server.Serve(listener) }()
 	return server, nil
 }

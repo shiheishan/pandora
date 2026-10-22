@@ -7,7 +7,7 @@ import (
 )
 
 // registerRouting 注册出站、分流规则与路由组的后台路由。全部要登录；
-// 中间件顺序 RequireAuth → RecentReauth → Idempotency。影响多个节点的写（全局发布、改组、删组、组内路由、组成员）
+// 中间件顺序 RequireAuth → RecentReauth → Idempotency。影响多个节点的写（全局发布、改组、删组、组内路由）
 // 要近期重认证与幂等键；新建空组不影响节点，只要幂等；单节点路由与节点所在组只影响一个节点，靠节点行版本防并发覆盖。
 func (h *Handler) registerRouting(v1 *gin.RouterGroup, k route.Kit) {
 	v1.GET("/nodes/routing", k.RequireAuth, h.getGlobalRouting)
@@ -22,5 +22,4 @@ func (h *Handler) registerRouting(v1 *gin.RouterGroup, k route.Kit) {
 	v1.DELETE("/route-groups/:id", k.RequireAuth, k.RecentReauth, k.Idempotency("route_group_delete"), h.deleteRouteGroup)
 	v1.GET("/route-groups/:id/routing", k.RequireAuth, h.getGroupRouting)
 	v1.PUT("/route-groups/:id/routing", k.RequireAuth, k.RecentReauth, k.Idempotency("route_group_routing_publish"), h.setGroupRouting)
-	v1.PUT("/route-groups/:id/members", k.RequireAuth, k.RecentReauth, k.Idempotency("route_group_members_update"), h.setRouteGroupMembers)
 }

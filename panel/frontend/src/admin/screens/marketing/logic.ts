@@ -23,7 +23,7 @@ export function minorToYuan(minor: number): string {
 }
 
 /** 百分比输入到万分比：'15' → 1500，'15.5' → 1550 */
-export const percentToBasisPoints = yuanToMinor
+export const percentToBasisPoints = (input: string): number | null => yuanToMinor(input)
 
 /** 万分比到百分比文字：1550 → '15.5' */
 export function basisPointsToPercent(bp: number): string {

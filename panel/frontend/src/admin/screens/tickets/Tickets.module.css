@@ -51,6 +51,20 @@
   font-variant-numeric: tabular-nums;
 }
 
+.todoJump {
+  margin-left: 8px;
+  padding: 0 6px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-tag);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* 「⋯」更多操作按钮（样稿 .ib） */
 .moreBtn {
   all: unset;

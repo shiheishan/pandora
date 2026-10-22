@@ -7,31 +7,46 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 原则：本地轻、远端重。
 
-- 本地只跑秒级到几分钟、不起 Docker 的检查。
-- 真库真 Redis 上的测试、迁移往返、e2e 脚本、冒烟栈、Playwright、race 全量交给 GitHub。
+- 本地只跑秒级到几分钟、不起 Docker 的检查；改了 repo、service、迁移、SQL 的，推送前在本机 PG 上跑改到的包（见下「本机 PG」）。
+- 冒烟栈、Playwright、race 全量、Docker 类部署测试交给 GitHub。
 - **推送后 `wait-github.sh` 退出 0，才算完成。**
 
 ## 本地层：改了什么 → 本地跑什么
 
-本机的 go 命令一律加 `GOTOOLCHAIN=go<go.mod 版本>`（现在是 `go1.26.9`；本机缺省 Go 更新，见根 CLAUDE.md「环境与工具坑」），结论才与 CI 同口径。下表的 panel 命令都在 `panel/` 下跑。
+本机的 go 命令一律加 `GOTOOLCHAIN=go<go.mod 版本>`（现在是 `go1.26.10`；本机缺省 Go 更新，见根 CLAUDE.md「环境与工具坑」），结论才与 CI 同口径。下表的 panel 命令都在 `panel/` 下跑。
 
 | 改了什么 | 本地跑 |
 |---|---|
-| panel 的 Go 代码 | 改到的文件 `gofmt -l`；改到的包 `go vet` 与 `go test`，如 `go test ./internal/module/order/...`；再跑 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（含 depguard 分层） |
+| panel 的 Go 代码 | 改到的文件 `gofmt -l`；改到的包 `go vet` 与 `go test`，如 `go test ./internal/module/order/...`；再跑 lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（含 depguard 分层）；删了调用方或新加导出函数，在仓库根跑 `bash .github/scripts/deadcode.sh panel ./cmd/pandora ./tools/...` |
 | 加、删、改名了 `internal/module/<模块>` 或 `internal/pkg/<包>` | `go run ./tools/depguardgen` 重新生成 `.golangci.yml`（不手改），`go run ./tools/depguardgen -check` 确认不漂移，再跑 lint |
 | 新文件或大改的 .go 文件 | `go test ./tools/refactorcheck/`（单文件 ≤800 行） |
 | 迁移 `panel/db/migrations/` | 见 new-migration skill「自证」；外加读写这些表的模块包 |
 | `nodeapi/` 的 proto | 按 `.github/workflows/nodeapi.yml` 的 buf 步骤（本机没有 buf 就交给 CI），再 build 依赖它的 panel 与 pdnd |
-| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件 `gofmt -l`，对改到的包 `go vet` 和 `go test` |
+| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件 `gofmt -l`，对改到的包 `go vet` 和 `go test`；lint：`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...`（配置 `pdnd/.golangci.yml`，改了 linux 专属文件再加 `GOOS=linux` 跑一遍，改了带 build tag 的测试加 `--build-tags=<tag>`）；死代码：仓库根 `bash .github/scripts/deadcode.sh pdnd . ./cmd/... ./release/...` |
 | pdnd 的协议、能力矩阵，或面板的协议 schema（`internal/module/node/protocol`） | `python3 pdnd/release/check_native_panel_parity.py`；改了订阅渲染或字段翻译再跑 subscription-e2e |
-| 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`）；`npm run check` 会再构建一遍，按需 |
+| 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`（eslint 加 knip：没人用的文件、导出、依赖，配置 `knip.jsonc`）、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`）；`npm run check` 会再构建一遍，按需 |
 | 部署脚本 `panel/deploy/` | 跑对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
 
-本地跑不了的（本机没有 docker、psql、redis-cli）：
+### 本机 PG（10-21 起）
 
-- PG 用例（经 `internal/pkg/testkit` 取库的 `*_pg_test.go` 等）在 `PANDORA_TEST_DATABASE_URL` 没设时跳过，**跳过不等于通过**。
-- 迁移往返、`panel/tests/*.sh` 与 `invariants.sql`、冒烟栈、Playwright 购买路径：只在 GitHub。
-- 部署脚本里 `db-roles_pg18_test.sh`（要 PG18）、`redis-hardening_versions_docker_test.sh`（要 Docker）、`backup-provenance_mock_test.sh`（要 Linux root）只在 GitHub 的对应 job 跑。
+本机用 Homebrew 装了 postgresql@18 与 redis（用户 10-21 同意），**不常驻**：用 `.agents/skills/verify/scripts/local-db.sh` 按需起停，只听 127.0.0.1:5433 / 6380（与 `panel/dev/.env` 同端口）。
+
+```bash
+.agents/skills/verify/scripts/local-db.sh start
+cd panel && eval "$(../.agents/skills/verify/scripts/local-db.sh test-env)"   # PANDORA_TEST_DATABASE_URL 与 TZ=UTC
+GOTOOLCHAIN=go1.26.10 go test -p 4 -count=1 ./internal/module/order/... ./db/migrations/
+../.agents/skills/verify/scripts/local-db.sh stop                             # 用完就停
+```
+
+- 改到哪些包跑哪些；迁移改了带上 `./db/migrations/`（含 `TestRoundTrip` 往返）。全量 `./...` 本机 `-p 4` 约 40 秒（不带 race）：testkit 给每个测试进程从模板库复制一个自己的库（每个约 15MB，进程退出后下次自动删），包之间可以并行。
+- 必须带 `TZ=UTC`（test-env 已给）：有用例按本地时区算「一个月后」，本机时区跨夏令时会差一小时。
+- 占用：PG 约 60MB、Redis 约 3MB；为了少写盘关了 fsync，库里只有测试数据。本机是 16G 内存的笔记本，不要同时开多路全量；`-race` 留给 CI。
+- 起真面板：`local-db.sh dev-init`（按 `panel/dev/.env` 建库与 pandora_owner）后 `make migrate`、`make serve`，见 run-pandora。
+
+本地仍跑不了的（本机没有 docker）：
+
+- `panel/tests/*.sh` 与 `invariants.sql`：要先起真面板，按需；冒烟栈、Playwright 购买路径：只在 GitHub。
+- 部署脚本里 `db-roles_pg18_test.sh`（要 PG18）、`redis-hardening_versions_docker_test.sh`（要 Docker）、`backup-provenance_mock_test.sh`（要 Linux root）、`nginx-error-pages_real_test.sh`（要 Linux root 与系统 nginx）只在 GitHub 的对应 job 跑。
 - `build-release.sh` 要 GNU tar。
 
 ## 远端层：推送后等什么
@@ -44,13 +59,13 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 | workflow / job | 管什么 | 什么时候要特别看它 |
 |---|---|---|
-| panel-newstack.yml / lint | golangci-lint（含 depguard 分层）；`depguardgen -check` 防 `.golangci.yml` 漂移 | 改了 panel Go 代码、加删模块 |
-| panel-newstack.yml / test | PG18 + Redis 上的 `go test -race -p 1 ./...`（PG 用例在这里真跑）；二进制 `migrate up → status → down → up`；`serve` 的 healthz / readyz | 改了 repo、service、迁移 |
+| panel-newstack.yml / lint | golangci-lint（含 depguard 分层）；`depguardgen -check` 防 `.golangci.yml` 漂移；deadcode（`.github/scripts/deadcode.sh`，从 `cmd/pandora` 与 `tools/` 出发，只剩测试在调的也算死代码，误报在 `panel/.deadcode-ignore`） | 改了 panel Go 代码、加删模块 |
+| panel-newstack.yml / test | PG18 + Redis 上的 `go test -race -p 4 ./...`（PG 用例真跑，每个测试进程一个库）；二进制 `migrate up → status → down → up`；`serve` 的 healthz / readyz | 改了 repo、service、迁移 |
 | panel-newstack.yml / e2e | 新二进制上 `panel/tests` 的 e2e 脚本（清单是该步骤里的 `for s in …`）与 `invariants.sql` | 改了接口、钱、订单、订阅、风控，或 `panel/tests` |
 | panel-newstack.yml / node-e2e | nodesim 冒烟、到期、真 pdnd 的删人断线 | 改了 node 模块、节点通道、`nodeapi`、pdnd 的 node / panel / kernel |
 | panel-smoke.yml / smoke | `run-smoke-stack.sh` 起 pandora，页面 schema 解析真响应，Playwright 购买路径（`panel/frontend/tests/browser/`） | 改了前端 `src/`、接口形状、购买与支付流程 |
-| pandora-native.yml | pdnd 的 vet / race / 双架构构建、interop、ARM64 race；面板与 pdnd 的协议对照；面板内嵌前端契约；panel-frontend 的 lint / typecheck / vitest / 构建与嵌入 | 改了 pdnd 内核或协议、前端 |
-| panel-deploy.yml | 部署脚本桩测试；Redis 加固块在各支持版本上起得来；PG18 上属主迁移、收权限、以 pandora_app 跑 serve；备份链（root） | 改了 `panel/deploy`、`configure-app-role.sql`、迁移里的授权或 SECURITY DEFINER 函数 |
+| pandora-native.yml | pdnd 的 lint（pdnd-lint：golangci-lint 与 deadcode，误报在 `pdnd/.deadcode-ignore`）、vet / race / 双架构构建、interop、ARM64 race；面板与 pdnd 的协议对照；面板内嵌前端契约；panel-frontend 的 lint（eslint + knip）/ typecheck / vitest / 构建与嵌入 | 改了 pdnd 内核或协议、前端 |
+| panel-deploy.yml | 部署脚本桩测试；Redis 加固块在各支持版本上起得来；PG18 上属主迁移、收权限、以 pandora_app 跑 serve；备份链（root）；真 nginx 上面板不可用时 API 路径回 502 JSON 信封（root） | 改了 `panel/deploy`（尤其 `nginx-pandora.conf`、`render-nginx.sh`）、`configure-app-role.sql`、迁移里的授权或 SECURITY DEFINER 函数 |
 | nodeapi.yml | buf lint、格式、生成代码一致、对上一提交不破坏兼容 | 改了 `nodeapi/` |
 | go-vulncheck.yml | govulncheck 扫 panel、pdnd、subscription-e2e/tools。**只报告、不挡合并**：结论在 job summary 与 warning 注解里 | 改了 go.mod / go.sum 后看 summary；怎么读见 deps-upgrade |
 
@@ -61,5 +76,6 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 ## 坑
 
 - `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
-- CI 的 test job 按包串行（`-p 1`），所有包共用一个库：夹具里的唯一值（邮箱、名字、代码）要带随机后缀，否则单包能过、合起来撞。
+- 同一个包的 PG 用例共用一个库（包与包之间各用各的，CI `-p 4`）：夹具里的唯一值（邮箱、名字、代码）要带随机后缀，否则单个用例能过、一起跑撞。
 - 一次推多个提交只有最新那个有 run，等的时候传最新的 sha。
+- `wait-github.sh` / `wait-status.sh` 不要接管道（`| tail` 之类）：管道的退出码是最后一个命令的，CI 红了也拿到 0。要截输出就加 `set -o pipefail`，或者先跑完再读输出里的「未通过」。

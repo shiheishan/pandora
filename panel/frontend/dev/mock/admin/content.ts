@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { darkBrandTokens } from '../../../src/styles/brand-palette.ts'
 import { COLOR_TOKENS } from '../../../src/styles/design-tokens.ts'
 import { shareActiveTheme, shareSiteName } from '../appearance-share.ts'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
@@ -17,14 +18,21 @@ const at = (days: number, hours = 0) => new Date(Date.now() + days * 86_400_000 
 
 /** 请求体读成对象；非法 JSON、未知字段、类型不符分别按 httpx.DecodeJSON 回 400 */
 type Decoded = { ok: true; body: Json } | { ok: false; result: MockResult }
-async function decode(ctx: MockContext, shape: Record<string, 'string' | 'boolean' | 'number' | 'strings' | 'object'>): Promise<Decoded> {
+async function decode(ctx: MockContext, shape: Record<string, 'string' | 'boolean' | 'number' | 'strings' | 'object' | 'array'>): Promise<Decoded> {
   const bad = (message: string): Decoded => ({ ok: false, result: err(400, 'bad_request', message) })
   const body = await ctx.body()
   if (!body) return bad('请求体不是合法的 JSON')
   for (const [k, v] of Object.entries(body)) {
     const want = shape[k]
     if (!want) return bad(`请求体包含未知字段 "${k}"`)
-    const ok = want === 'strings' ? v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')) : want === 'object' ? v === null || isObject(v) : v === null || typeof v === want
+    const ok =
+      want === 'strings'
+        ? v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string'))
+        : want === 'object'
+          ? v === null || isObject(v)
+          : want === 'array'
+            ? v === null || Array.isArray(v)
+            : v === null || typeof v === want
     if (!ok) return bad(`字段 "${k}" 类型不正确`)
   }
   return { ok: true, body }
@@ -226,10 +234,6 @@ interface ContentRow {
   title: string
   summary: string
   body: string
-  locale: string
-  target_platforms: string[]
-  min_client_version: string
-  max_client_version: string
   target_plan_ids: string[]
   visibility: string
   status: 'draft' | 'published' | 'archived'
@@ -261,10 +265,6 @@ function seedArticle(slug: string, kind: string, category: string, title: string
       title: i === versions.length - 1 ? title : `${title}（旧稿）`,
       summary: '',
       body: i === versions.length - 1 ? body : `${body}\n\n（v${i + 1} 的旧内容）`,
-      locale: 'zh-CN',
-      target_platforms: [],
-      min_client_version: '',
-      max_client_version: '',
       target_plan_ids: [],
       visibility: 'authenticated',
       status,
@@ -278,16 +278,16 @@ function seedArticle(slug: string, kind: string, category: string, title: string
   })
 }
 seedArticle('first-connect', 'kb_article', '快速上手', '三分钟完成首次连接', '# 三分钟完成首次连接\n\n1. 在「我的订阅」复制订阅地址\n2. 打开客户端，选择「从剪贴板导入」\n3. 选择延迟最低的节点', ['archived', 'archived', 'archived', 'archived', 'archived', 'published'])
-seedArticle('clash-verge-rev', 'kb_article', '客户端教程', 'Clash Verge Rev（Windows / macOS）', '# Clash Verge Rev\n\n## 导入订阅\n\n配置 → 新建 → 类型选择 Remote，粘贴订阅地址。\n\n## 常见问题\n\n解析失败：请确认复制的是 Clash 格式链接。', ['archived', 'archived', 'published', 'draft'], { target_platforms: ['macos', 'windows'] })
-seedArticle('shadowrocket', 'kb_article', '客户端教程', 'Shadowrocket（iOS）', '# Shadowrocket\n\n在 App Store 外区账号下载后，点右上角加号粘贴订阅地址。', ['archived', 'archived', 'published'], { target_platforms: ['ios'] })
-seedArticle('hiddify', 'kb_article', '客户端教程', 'Hiddify（Android）', '# Hiddify\n\n首页点「新建配置」→「从剪贴板添加」。', ['published'], { target_platforms: ['android'] })
+seedArticle('clash-verge-rev', 'kb_article', '客户端教程', 'Clash Verge Rev（Windows / macOS）', '# Clash Verge Rev\n\n## 导入订阅\n\n配置 → 新建 → 类型选择 Remote，粘贴订阅地址。\n\n## 常见问题\n\n解析失败：请确认复制的是 Clash 格式链接。', ['archived', 'archived', 'published', 'draft'])
+seedArticle('shadowrocket', 'kb_article', '客户端教程', 'Shadowrocket（iOS）', '# Shadowrocket\n\n在 App Store 外区账号下载后，点右上角加号粘贴订阅地址。', ['archived', 'archived', 'published'])
+seedArticle('hiddify', 'kb_article', '客户端教程', 'Hiddify（Android）', '# Hiddify\n\n首页点「新建配置」→「从剪贴板添加」。', ['published'])
 seedArticle('gift-card', 'kb_article', '账单与支付', '如何使用礼品卡', '# 礼品卡\n\n在「钱包」页输入卡码，先预览再兑换。', ['archived', 'published'])
 seedArticle('refund-policy-old', 'kb_article', '账单与支付', '退款政策（旧）', '# 退款政策\n\n本政策已由新版服务条款取代。', ['published', 'archived', 'archived', 'archived', 'archived'])
-seedArticle('router-setup', 'tutorial', '进阶', '在路由器上使用订阅', '# 路由器\n\nOpenWrt 安装 OpenClash 后导入 Clash 格式订阅。', ['published'], { target_platforms: ['linux'] })
+seedArticle('router-setup', 'tutorial', '进阶', '在路由器上使用订阅', '# 路由器\n\nOpenWrt 安装 OpenClash 后导入 Clash 格式订阅。', ['published'])
 seedArticle('terms-of-service', 'legal', '', '服务条款', '# 服务条款\n\n使用本服务即表示同意以下条款。', ['archived', 'published'])
 
-const audienceKey = (r: Pick<ContentRow, 'locale' | 'target_platforms' | 'min_client_version' | 'max_client_version' | 'target_plan_ids' | 'visibility'>) =>
-  JSON.stringify([r.locale, [...r.target_platforms].sort(), r.min_client_version, r.max_client_version, [...r.target_plan_ids].sort(), r.visibility])
+const audienceKey = (r: Pick<ContentRow, 'target_plan_ids' | 'visibility'>) =>
+  JSON.stringify([[...r.target_plan_ids].sort(), r.visibility])
 
 /** Go 的 Page JSON：omitempty 字段为空时省略，列表不带正文，作者只在列表里 */
 function pageJson(r: ContentRow, opts: { body: boolean; author: boolean }) {
@@ -303,11 +303,7 @@ function pageJson(r: ContentRow, opts: { body: boolean; author: boolean }) {
     title: r.title,
     ...(r.summary ? { summary: r.summary } : {}),
     ...(opts.body && r.body ? { body: r.body } : {}),
-    locale: r.locale,
     sanitizer_version: 'plain-v1',
-    target_platforms: r.target_platforms,
-    ...(r.min_client_version ? { min_client_version: r.min_client_version } : {}),
-    ...(r.max_client_version ? { max_client_version: r.max_client_version } : {}),
     target_plan_ids: r.target_plan_ids,
     visibility: r.visibility,
     status: r.status,
@@ -323,20 +319,11 @@ function pageJson(r: ContentRow, opts: { body: boolean; author: boolean }) {
 }
 
 const PAGE_SHAPE = {
-  slug: 'string', kind: 'string', category: 'string', title: 'string', summary: 'string', body: 'string', locale: 'string',
-  target_platforms: 'strings', min_client_version: 'string', max_client_version: 'string', target_plan_ids: 'strings',
+  slug: 'string', kind: 'string', category: 'string', title: 'string', summary: 'string', body: 'string',
+  target_plan_ids: 'strings',
   visibility: 'string', status: 'string', review_due_at: 'string', expected_latest_version: 'number',
 } as const
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const LOCALE = /^[a-z]{2,3}(?:-[A-Z]{2})?$/
-const CLIENT_VERSION = /^v?[0-9]+(?:\.[0-9]+){0,2}$/
-const PLATFORMS = ['web', 'windows', 'macos', 'linux', 'android', 'ios']
-const cmpVersion = (a: string, b: string) => {
-  const p = (s: string) => s.replace(/^v/, '').split('.').map((x) => Number(x) || 0)
-  const [l, r] = [p(a), p(b)]
-  for (let i = 0; i < 3; i++) if ((l[i] ?? 0) !== (r[i] ?? 0)) return (l[i] ?? 0) < (r[i] ?? 0) ? -1 : 1
-  return 0
-}
 
 async function publishPage(ctx: MockContext): Promise<MockResult> {
   const decoded = await decode(ctx, PAGE_SHAPE)
@@ -346,10 +333,8 @@ async function publishPage(ctx: MockContext): Promise<MockResult> {
   const t = (k: string) => str(body[k]).trim()
   const slug = t('slug').toLowerCase()
   const kind = t('kind') || 'kb_article'
-  const locale = t('locale') || 'zh-CN'
   const visibility = t('visibility') || 'authenticated'
   const status = t('status') || 'draft'
-  const [minV, maxV] = [t('min_client_version'), t('max_client_version')]
   const fields: Record<string, string> = {}
   if (slug.length > 80 || !SLUG.test(slug)) fields.slug = '标识只能由小写字母、数字和单个连字符组成，最长 80 字符'
   if (!['page', 'kb_article', 'tutorial', 'legal'].includes(kind)) fields.kind = '类型必须是 page / kb_article / tutorial / legal'
@@ -357,14 +342,8 @@ async function publishPage(ctx: MockContext): Promise<MockResult> {
   if (runes(t('title')) < 2 || runes(t('title')) > 160) fields.title = '标题需在 2–160 字之间'
   if (runes(t('summary')) > 500) fields.summary = '摘要最长 500 字'
   if (runes(t('body')) < 10 || runes(t('body')) > 100000) fields.body = '正文需在 10–100000 字之间'
-  if (!LOCALE.test(locale)) fields.locale = '语言格式不正确'
   if (visibility !== 'authenticated' && visibility !== 'internal') fields.visibility = '可见性必须是 authenticated / internal'
   if (status !== 'draft' && status !== 'published') fields.status = '状态必须是 draft / published'
-  if (minV && !CLIENT_VERSION.test(minV)) fields.min_client_version = '最低客户端版本格式不正确'
-  if (maxV && !CLIENT_VERSION.test(maxV)) fields.max_client_version = '最高客户端版本格式不正确'
-  if (minV && maxV && cmpVersion(minV, maxV) > 0) fields.max_client_version = '最高客户端版本不能低于最低版本'
-  const platforms = [...new Set(strs(body.target_platforms).map((p) => p.trim().toLowerCase()))].sort()
-  if (platforms.some((p) => !PLATFORMS.includes(p))) fields.target_platforms = '包含不支持的平台'
   const planIds = normalizeIds(strs(body.target_plan_ids))
   if (!planIds) fields.target_plan_ids = '套餐 ID 格式不正确'
   if (Object.keys(fields).length > 0) return invalid(fields)
@@ -382,10 +361,6 @@ async function publishPage(ctx: MockContext): Promise<MockResult> {
     title: t('title'),
     summary: t('summary'),
     body: t('body'),
-    locale,
-    target_platforms: platforms,
-    min_client_version: minV,
-    max_client_version: maxV,
     target_plan_ids: planIds!,
     visibility,
     status: status as ContentRow['status'],
@@ -438,7 +413,7 @@ const themes: MockTheme[] = [
     is_active: false,
     tokens: {
       light: { ...tokenGroup('light'), '--brand': '#2b6cb9', '--brand-hover': '#235a9c', '--brand-ink': '#1d4a80', '--brand-soft': '#dfeaf7', '--brand-tint': '#f1f6fc', '--bg': '#f2f5f8' },
-      dark: { ...tokenGroup('dark'), '--brand': '#5b9be4', '--brand-hover': '#79afea', '--brand-ink': '#a6c8f1', '--brand-soft': '#1b2a3d', '--brand-tint': '#141b24', '--bg': '#0f1216' },
+      dark: { ...tokenGroup('dark'), ...darkBrandTokens('#2b6cb9'), '--bg': '#0f1216' },
     },
     branding: { tagline: '一路畅通' },
   },
@@ -447,7 +422,6 @@ const themes: MockTheme[] = [
 // 与 Go appearance 同一套规则（tokens.go / branding.go）：错误标在 tokens.<组>.<键>、branding.<键> 上
 const TOKEN_NAMES = new Set(COLOR_TOKENS.map((t) => t.name))
 const TOKEN_BAD = /[;{}<>\\]/
-const LOGO = /^data:(image\/png|image\/jpeg|image\/webp|image\/svg\+xml);base64,([A-Za-z0-9+/]+={0,2})$/
 
 function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockTheme['tokens']; branding: Record<string, string> } {
   const tokens = { light: {}, dark: {} } as MockTheme['tokens']
@@ -479,21 +453,13 @@ function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockT
   for (const k of Object.keys(rawBranding)) {
     if (k === 'site_name') {
       fields['branding.site_name'] = '站点名不在主题里设置：到「内容与外观 → 主题与插槽」的站点设置里改'
-    } else if (!['tagline', 'logo'].includes(k)) {
-      fields.branding = `不认识的品牌字段：${k}（只允许标语与 Logo）`
+    } else if (k !== 'tagline') {
+      fields.branding = `不认识的品牌字段：${k}（只允许标语）`
     }
   }
   const tagline = str(rawBranding.tagline).trim()
   if (runes(tagline) > 80) fields['branding.tagline'] = '标语最多 80 个字'
   else if (tagline) branding.tagline = tagline
-  const logo = str(rawBranding.logo).trim()
-  if (logo) {
-    const m = LOGO.exec(logo)
-    if (!logo.startsWith('data:')) fields['branding.logo'] = 'Logo 只能是上传的图片（data:image/… 形式），门户不加载外链图片'
-    else if (!m) fields['branding.logo'] = 'Logo 只支持 PNG、JPEG、WebP 或 SVG'
-    else if (Buffer.from(m[2]!, 'base64').length > 48 * 1024) fields['branding.logo'] = 'Logo 不能超过 48KB'
-    else branding.logo = logo
-  }
   return { tokens, branding }
 }
 
@@ -530,16 +496,13 @@ const SLOT_CATALOG: ReadonlyArray<readonly [string, string, string]> = [
   ['portal.login.notice', '登录页提示', '登录框上方，未登录访客可见'],
   ['portal.home.banner', '我的套餐横幅', '我的套餐页最顶部，通栏'],
   ['portal.home.aside', '我的套餐附加卡片', '我的套餐页内容下方'],
-  ['portal.sidebar.extra', '侧栏附加内容', '侧栏导航下方、账号信息上方'],
-  ['portal.subscribe.notice', '订阅页说明', '「我的订阅」页顶部'],
+  ['portal.subscribe.notice', '我的套餐说明', '「我的套餐」页顶部，横幅下方'],
   ['portal.plans.notice', '选购页说明', '「选购套餐」页顶部，适合放退换与发票说明'],
-  ['portal.footer', '页脚', '所有页面底部'],
 ]
 const stamp = () => new Date().toISOString().slice(0, 16).replace('T', ' ')
 const savedSlots = new Map<string, { content: string; enabled: boolean; updated_at: string }>([
   ['portal.login.notice', { content: '国庆活动：全场 8 折，优惠码 AUTUMN26', enabled: true, updated_at: '2026-09-20 10:12' }],
   ['portal.subscribe.notice', { content: '订阅地址请勿分享，泄露后可在本页一键更换。', enabled: true, updated_at: '2026-09-02 18:40' }],
-  ['portal.footer', { content: '<a href="/tos">服务条款</a> · <a href="/privacy">隐私</a>', enabled: false, updated_at: '2026-08-14 09:03' }],
 ])
 
 /** 净化的粗略模拟：去掉 script / style 元素与 on* 属性，逐条说明；空内容回 null（与 Go 的 nil 切片一致） */
@@ -557,6 +520,38 @@ function sanitize(input: string): { clean: string; dropped: string[] | null } {
 let siteTimezone = 'Asia/Shanghai'
 // 系统设置的站点名（真后端 site.name）：后台假后端启动时经 shareAppearance 写给门户，改了立刻再写
 let siteName = 'Pandora'
+let siteSeoKeywords = ''
+let siteSeoDescription = ''
+let siteAllowIndexing = false
+// 主域名（真后端 site.url，空 = 用安装时的地址 url_fallback）：校验与文案照 Go settings/service/site_url.go，假后端按生产口径只收 https。
+// 保存前的连通核对假后端发不了真请求：主机名以 .invalid 结尾的一律当「打不开本面板」，页面上能走到 422 那一支
+const SITE_URL_FALLBACK = 'https://panel.example.test'
+let siteURL = ''
+const SITE_URL_FORMAT = '请填写完整的地址，如 https://panel.example.com，不带路径和查询串'
+const normalizeSiteURL = (raw: string): { url: string } | { error: string } => {
+  const v = raw.trim()
+  if (!v) return { url: '' }
+  // eslint-disable-next-line no-control-regex
+  if (v.length > 200 || /[?#\s\u0000-\u001f\u007f]/.test(v)) return { error: SITE_URL_FORMAT }
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/]*)\/?$/.exec(v)
+  if (!m) return { error: SITE_URL_FORMAT }
+  const scheme = m[1]!.toLowerCase()
+  if (scheme === 'http') return { error: '主域名必须使用 https' }
+  if (scheme !== 'https') return { error: SITE_URL_FORMAT }
+  let u: URL
+  try {
+    u = new URL(v)
+  } catch {
+    return { error: SITE_URL_FORMAT }
+  }
+  const host = u.hostname.replace(/\.$/, '')
+  if (u.username || u.password || !host || u.port === '0') return { error: SITE_URL_FORMAT }
+  if (host.endsWith('.invalid')) return { error: '这个地址打不开本面板' }
+  return { url: `https://${host}${u.port ? `:${u.port}` : ''}` }
+}
+// 站点 SEO 文字不许含控制字符（同 Go 的 unicode.IsControl）
+// eslint-disable-next-line no-control-regex
+const SEO_CONTROL = /[\u0000-\u001f\u007f-\u009f]/
 const validTimezone = (name: string) => {
   if (!name || name === 'Local' || name.length > 64) return false
   try {
@@ -566,6 +561,16 @@ const validTimezone = (name: string) => {
     return false
   }
 }
+
+let homeEnabled = true
+let homeIntro = ''
+let homeFaq: Array<{ q: string; a: string }> = []
+const normalizeMultiline = (s: string) => s.replace(/\r\n?/g, '\n').trim()
+// eslint-disable-next-line no-control-regex
+const HOME_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/
+// eslint-disable-next-line no-control-regex
+const LINE_CONTROL = /[\u0000-\u001f\u007f-\u009f]/
+const homeBody = () => ({ enabled: homeEnabled, intro: homeIntro, faq: homeFaq.map((x) => ({ ...x })) })
 
 // ---------------------------------------------------------------------------
 // 路由
@@ -661,16 +666,42 @@ export const content: MockModule = {
     },
 
     'GET /v1/settings/site': (ctx) => {
-      ctx.send(200, { name: siteName, timezone: siteTimezone })
+      ctx.send(200, {
+        name: siteName,
+        timezone: siteTimezone,
+        seo_keywords: siteSeoKeywords,
+        seo_description: siteSeoDescription,
+        allow_indexing: siteAllowIndexing,
+        url: siteURL,
+        url_fallback: SITE_URL_FALLBACK,
+      })
     },
     'POST /v1/settings/site': async (ctx) => {
       if (!ctx.requireReauth()) return
-      const decoded = await decode(ctx, { name: 'string', timezone: 'string' })
+      const decoded = await decode(ctx, {
+        name: 'string',
+        timezone: 'string',
+        seo_keywords: 'string',
+        seo_description: 'string',
+        allow_indexing: 'boolean',
+        url: 'string',
+      })
       if (!decoded.ok) return reply(ctx, decoded.result)
       const body = decoded.body
       const fields: Record<string, string> = {}
       let nextName = siteName
       let nextTimezone = siteTimezone
+      let nextSeoKeywords = siteSeoKeywords
+      let nextSeoDescription = siteSeoDescription
+      let nextAllowIndexing = siteAllowIndexing
+      let nextURL = siteURL
+
+      // 主域名在事务外先校验、核对连通（Go 的 prepareSiteURL），不过就整次不写
+      if ('url' in body && body.url !== null) {
+        const r = normalizeSiteURL(str(body.url))
+        if ('error' in r) return reply(ctx, invalid({ url: r.error }))
+        nextURL = r.url
+      }
 
       if ('name' in body && body.name !== null) {
         const name = str(body.name).trim()
@@ -685,6 +716,24 @@ export const content: MockModule = {
         else nextTimezone = tz
       }
 
+      if ('seo_keywords' in body && body.seo_keywords !== null) {
+        const kw = str(body.seo_keywords).trim()
+        if (runes(kw) > 200) fields.seo_keywords = '关键词最多 200 个字'
+        else if (SEO_CONTROL.test(kw)) fields.seo_keywords = '关键词不能包含换行或控制字符'
+        else nextSeoKeywords = kw
+      }
+
+      if ('seo_description' in body && body.seo_description !== null) {
+        const desc = str(body.seo_description).trim()
+        if (runes(desc) > 160) fields.seo_description = '站点描述最多 160 个字'
+        else if (SEO_CONTROL.test(desc)) fields.seo_description = '站点描述不能包含换行或控制字符'
+        else nextSeoDescription = desc
+      }
+
+      if ('allow_indexing' in body && body.allow_indexing !== null) {
+        nextAllowIndexing = body.allow_indexing === true
+      }
+
       if (Object.keys(fields).length > 0) return reply(ctx, invalid(fields))
 
       if (nextName !== siteName) {
@@ -692,8 +741,92 @@ export const content: MockModule = {
         shareSiteName(siteName)
       }
       siteTimezone = nextTimezone
+      siteSeoKeywords = nextSeoKeywords
+      siteSeoDescription = nextSeoDescription
+      siteAllowIndexing = nextAllowIndexing
+      siteURL = nextURL
 
-      ctx.send(200, { name: siteName, timezone: siteTimezone })
+      ctx.send(200, {
+        name: siteName,
+        timezone: siteTimezone,
+        seo_keywords: siteSeoKeywords,
+        seo_description: siteSeoDescription,
+        allow_indexing: siteAllowIndexing,
+        url: siteURL,
+        url_fallback: SITE_URL_FALLBACK,
+      })
+    },
+
+    'GET /v1/settings/home': (ctx) => ctx.send(200, homeBody()),
+    'POST /v1/settings/home': async (ctx) => {
+      if (!ctx.requireReauth()) return
+      const decoded = await decode(ctx, { enabled: 'boolean', intro: 'string', faq: 'array' })
+      if (!decoded.ok) return reply(ctx, decoded.result)
+      const body = decoded.body
+      const fields: Record<string, string> = {}
+      let nextEnabled = homeEnabled
+      let nextIntro = homeIntro
+      let nextFaq = homeFaq
+
+      if ('enabled' in body && body.enabled !== null) {
+        nextEnabled = body.enabled === true
+      }
+
+      if ('intro' in body && body.intro !== null) {
+        const intro = normalizeMultiline(str(body.intro))
+        if (runes(intro) > 500) fields.intro = '介绍最多 500 个字'
+        else if (HOME_CONTROL.test(intro)) fields.intro = '介绍不能包含控制字符'
+        else nextIntro = intro
+      }
+
+      if ('faq' in body && body.faq !== null) {
+        const raw = body.faq as unknown[]
+        if (raw.length > 20) fields.faq = '常见问题最多 20 条'
+        else {
+          const parsed: Array<{ q: string; a: string }> = []
+          let faqShapeBad = false
+          for (let i = 0; i < raw.length; i++) {
+            const item = raw[i]
+            if (!isObject(item)) {
+              faqShapeBad = true
+              break
+            }
+            const keys = Object.keys(item)
+            if (keys.length !== 2 || !keys.includes('q') || !keys.includes('a')) {
+              faqShapeBad = true
+              break
+            }
+            if (typeof item.q !== 'string' || typeof item.a !== 'string') {
+              faqShapeBad = true
+              break
+            }
+            parsed.push({ q: item.q, a: item.a })
+          }
+          if (faqShapeBad) return reply(ctx, err(400, 'bad_request', '字段 "faq" 类型不正确'))
+          if (!fields.faq) {
+            const normalized: Array<{ q: string; a: string }> = []
+            for (let i = 0; i < parsed.length; i++) {
+              const q = parsed[i]!.q.trim()
+              const a = normalizeMultiline(parsed[i]!.a)
+              if (!q) fields[`faq.${i}.q`] = '问题必填'
+              else if (runes(q) > 100) fields[`faq.${i}.q`] = '问题最多 100 个字'
+              else if (LINE_CONTROL.test(q)) fields[`faq.${i}.q`] = '问题不能包含换行或控制字符'
+              if (!a) fields[`faq.${i}.a`] = '回答必填'
+              else if (runes(a) > 500) fields[`faq.${i}.a`] = '回答最多 500 个字'
+              else if (HOME_CONTROL.test(a)) fields[`faq.${i}.a`] = '回答不能包含控制字符'
+              normalized.push({ q, a })
+            }
+            if (Object.keys(fields).length === 0) nextFaq = normalized
+          }
+        }
+      }
+
+      if (Object.keys(fields).length > 0) return reply(ctx, invalid(fields))
+
+      homeEnabled = nextEnabled
+      homeIntro = nextIntro
+      homeFaq = nextFaq
+      ctx.send(200, homeBody())
     },
   },
 }

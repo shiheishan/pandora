@@ -72,3 +72,17 @@ export function quickLoginTokenFromInput(input: string): string | null {
   if (hashAt >= 0) return quickLoginTokenFromHash(text.slice(hashAt))
   return /^[A-Za-z0-9_-]+$/.test(text) ? text : null
 }
+
+/** 登录、注册页的地址（首页片段里的链接也指向它们：panel/internal/pkg/webapp/home.go） */
+export const LOGIN_PATH = '/login'
+export const REGISTER_PATH = '/register'
+
+/** hash 路径 → 登录页的哪个页签：/login → 'login'，/register → 'reg'，其它 null */
+export function authTabFromPath(path: string): 'login' | 'reg' | null {
+  if (path === LOGIN_PATH) return 'login'
+  if (path === REGISTER_PATH) return 'reg'
+  return null
+}
+
+/** 地址没有页面（'' / '#' / '#/' 解析出的路径都是 /）：未登录时这里显示首页 */
+export const isHomePath = (path: string): boolean => path === '/'

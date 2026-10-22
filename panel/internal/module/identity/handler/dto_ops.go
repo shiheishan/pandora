@@ -291,6 +291,7 @@ type userProfileResponse struct {
 	Fetches        []profileFetchResponse `json:"fetches"`
 	FetchSources7d int                    `json:"fetch_sources_7d"`
 	RegisteredIP   string                 `json:"registered_ip"`
+	Risk           string                 `json:"risk"`
 }
 
 type profileEventResponse struct {
@@ -303,11 +304,14 @@ type profileEventResponse struct {
 }
 
 type profileIPResponse struct {
-	IP       string    `json:"ip"`
-	Count    int       `json:"count"`
-	First    time.Time `json:"first"`
-	Last     time.Time `json:"last"`
-	Accounts int       `json:"accounts"`
+	IP          string    `json:"ip"`
+	Count       int       `json:"count"`
+	First       time.Time `json:"first"`
+	Last        time.Time `json:"last"`
+	Accounts    int       `json:"accounts"`
+	Geo         string    `json:"geo"`
+	NetworkKind string    `json:"network_kind"`
+	Risk        string    `json:"risk"`
 }
 
 type profileUserResponse struct {
@@ -331,16 +335,18 @@ type accessLogResponse struct {
 
 // accessLogItem 是访问明细的一行。
 type accessLogItem struct {
-	Category    string    `json:"category"`
-	Action      string    `json:"action,omitempty"`
-	UserID      string    `json:"user_id,omitempty"`
-	UserEmail   string    `json:"user_email,omitempty"`
-	IP          string    `json:"ip,omitempty"`
-	Geo         string    `json:"geo,omitempty"`
-	NetworkKind string    `json:"network_kind,omitempty"`
-	UserAgent   string    `json:"user_agent,omitempty"`
-	Outcome     string    `json:"outcome,omitempty"`
-	OccurredAt  time.Time `json:"occurred_at"`
+	Category        string    `json:"category"`
+	Action          string    `json:"action,omitempty"`
+	UserID          string    `json:"user_id,omitempty"`
+	UserEmail       string    `json:"user_email,omitempty"`
+	TargetUserID    string    `json:"target_user_id,omitempty"`
+	TargetUserEmail string    `json:"target_user_email,omitempty"`
+	IP              string    `json:"ip,omitempty"`
+	Geo             string    `json:"geo,omitempty"`
+	NetworkKind     string    `json:"network_kind,omitempty"`
+	UserAgent       string    `json:"user_agent,omitempty"`
+	Outcome         string    `json:"outcome,omitempty"`
+	OccurredAt      time.Time `json:"occurred_at"`
 }
 
 // ipClustersResponse 是同源 IP 聚类列表。
@@ -408,7 +414,14 @@ func profileFrom(p service.UserProfile) userProfileResponse {
 	ips := make([]profileIPResponse, 0, len(p.IPs))
 	for _, ip := range p.IPs {
 		ips = append(ips, profileIPResponse{
-			IP: ip.IP, Count: ip.Count, First: ip.First, Last: ip.Last, Accounts: ip.Accounts,
+			IP:          ip.IP,
+			Count:       ip.Count,
+			First:       ip.First,
+			Last:        ip.Last,
+			Accounts:    ip.Accounts,
+			Geo:         ip.Geo,
+			NetworkKind: ip.NetworkKind,
+			Risk:        ip.Risk,
 		})
 	}
 	related := make([]profileUserResponse, 0, len(p.Related))
@@ -423,7 +436,7 @@ func profileFrom(p service.UserProfile) userProfileResponse {
 	}
 	return userProfileResponse{
 		Events: events, IPs: ips, Related: related, Fetches: fetches,
-		FetchSources7d: p.FetchSources7d, RegisteredIP: p.RegisteredIP,
+		FetchSources7d: p.FetchSources7d, RegisteredIP: p.RegisteredIP, Risk: p.Risk,
 	}
 }
 
@@ -449,6 +462,10 @@ func accessItemFrom(it service.AccessItem) accessLogItem {
 	}
 	if it.UserID != nil {
 		row.UserID = it.UserID.String()
+	}
+	if it.TargetUserID != nil {
+		row.TargetUserID = it.TargetUserID.String()
+		row.TargetUserEmail = it.TargetUserEmail
 	}
 	return row
 }

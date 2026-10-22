@@ -116,7 +116,7 @@ func poolDedupeSortIDs(ids []uuid.UUID) []uuid.UUID {
 // 发布检查的两种「没有可用池」提示。
 const (
 	poolNoteUnbound     = "发布前至少绑定一个节点池"
-	poolNoteAllDisabled = "绑定的节点池都已停用：先在「线路 · 节点池」里启用，或换绑一个启用中的池"
+	poolNoteAllDisabled = "绑定的节点池都已停用：先在「节点与服务器 › 节点池」里启用，或换绑一个启用中的池"
 )
 
 // CheckPublishable 在发布套餐前检查套餐绑定的池是否至少有一个可服务节点（catalog 的 PublishGate）。

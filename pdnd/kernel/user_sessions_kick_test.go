@@ -18,8 +18,8 @@ type alertingOuter struct {
 func (o *alertingOuter) NetConn() net.Conn { return o.Conn }
 
 func (o *alertingOuter) Close() error {
-	_ = o.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, _ = o.Conn.Write([]byte("ALERT"))
+	_ = o.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, _ = o.Write([]byte("ALERT"))
 	return o.Conn.Close()
 }
 
@@ -71,4 +71,15 @@ func TestRevokeClosesUnderlyingFirst(t *testing.T) {
 			t.Fatalf("第 %d 条连接的流里出现了外层告警", i)
 		}
 	}
+}
+
+// peek 读一个用户当前未取走的增量，不清零（测试与诊断用）。
+func (s *userSessions) peek(id int64) core.UserTraffic {
+	s.mu.Lock()
+	c := s.traffic[id]
+	s.mu.Unlock()
+	if c == nil {
+		return core.UserTraffic{ID: id}
+	}
+	return core.UserTraffic{ID: id, Upload: c.up.Load(), Download: c.down.Load()}
 }

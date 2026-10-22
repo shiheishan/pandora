@@ -1,6 +1,6 @@
 name: Panel new stack
 
-# 面板的门禁：lint（含 depguard 分层）、生成的 lint 配置不漂移、真库与真 Redis 上的 go test，
+# 面板的门禁：lint（含 depguard 分层与 deadcode）、生成的 lint 配置不漂移、真库与真 Redis 上的 go test，
 # 以及新二进制上的 e2e 脚本、节点通道 e2e。
 
 on:
@@ -15,6 +15,7 @@ on:
       - "!panel/**/*.md"
       - "nodeapi/**"
       - ".github/workflows/panel-newstack.yml"
+      - ".github/scripts/deadcode.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
       # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
@@ -31,6 +32,7 @@ on:
       - "!panel/**/*.md"
       - "nodeapi/**"
       - ".github/workflows/panel-newstack.yml"
+      - ".github/scripts/deadcode.sh"
       - "pdnd/panel/**"
       - "pdnd/release/nodesim/**"
       # node_kick_e2e 跑真 pdnd：删人断线走 node 的名单 diff 与 NativeCore（kernel）的按用户踢线
@@ -67,6 +69,10 @@ jobs:
           verify: false
           working-directory: panel
           args: ./internal/pkg/... ./internal/app/... ./internal/module/... ./cmd/pandora/... ./db/...
+      # 从 cmd/pandora 与 tools/ 下的各个 main 出发，只剩测试在调的函数也算死代码；误报写进 panel/.deadcode-ignore
+      - name: Dead code
+        working-directory: .
+        run: bash .github/scripts/deadcode.sh panel ./cmd/pandora ./tools/...
 
   test:
     name: Tests on PostgreSQL 18 and Redis
@@ -107,9 +113,10 @@ jobs:
           cache-dependency-path: panel/go.sum
       - name: Build pandora
         run: go build -mod=readonly -o "$RUNNER_TEMP/pandora" ./cmd/pandora
-      # 测试按包串行（-p 1）：迁移往返与事务测试共用同一个库
+      # 各包并行（-p 4，公开仓库的 runner 是 4 核）：testkit 给每个测试进程从模板库复制一个自己的库；
+      # 迁移往返与 tx 包的测试直接用 DSN 那个库，两者不碰同一批表
       - name: Tests
-        run: go test -mod=readonly -race -p 1 -count=1 ./...
+        run: go test -mod=readonly -race -p 4 -count=1 ./...
       - name: Migration round trip through the binary
         env:
           PANDORA_DATABASE_MIGRATION_URL: ${{ env.PANDORA_TEST_DATABASE_URL }}
@@ -188,7 +195,6 @@ jobs:
       # 几个脚本都从 127.0.0.1 注册、登录、调后台几百次（risk_e2e 还用 X-Real-IP 扮上百个来源）：
       # 放宽按 IP、按账号、认证三种限流（失败 10 次暂停按账号计，不受影响；每条凭据每小时拉取上限不放宽）
       PANDORA_RATELIMIT_IP_PER_MIN: "100000"
-      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
       PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
       # risk_e2e 自己给后台调用限速的预算（每分钟），限流已放宽，调大免得白等
       RISK_ADMIN_BUDGET: "1000"
@@ -307,7 +313,6 @@ jobs:
       # 200 个用户都从 127.0.0.1 注册、登录、拉订阅，管理员一分钟里开 200 张单：放宽按 IP、按账号、认证三种限流
       # （每条凭据每小时 60 次的拉取上限不放宽，冒烟脚本的拉取次数远低于它）
       PANDORA_RATELIMIT_IP_PER_MIN: "100000"
-      PANDORA_RATELIMIT_ACCOUNT_PER_MIN: "100000"
       PANDORA_RATELIMIT_AUTH_PER_MIN: "100000"
       NODE_SMOKE_E2E_DISPOSABLE: YES_DELETE_FIXTURES
       EXPIRY_E2E_DISPOSABLE: YES_DELETE_FIXTURES

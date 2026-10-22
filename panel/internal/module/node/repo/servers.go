@@ -173,28 +173,42 @@ func (r *Repo) ServerHasActiveNode(ctx context.Context, serverID uuid.UUID) (boo
 	return row.Found, err
 }
 
-// RetireServerNodes 删服务器时退役它名下未退役的节点，再把全部节点从这台服务器上摘下（级联静默）；
-// 返回退役的行数与被摘下的未删除节点 id（给实时推送用）。
-func (r *Repo) RetireServerNodes(ctx context.Context, serverID uuid.UUID) (retired int64, nodeIDs []uuid.UUID, err error) {
+// DetachServerNodes 删服务器时把名下节点全部摘下：在役的退役；草稿与已停用的只解绑、留作配置（同 SetNodeServer
+// 清运行状态与配置回执，端口值留着），以后能绑到别的服务器；已退役与已删除的只清 server_id（级联静默）。
+// 返回退役与解绑的行数，以及被摘下的未删除节点 id（给实时推送用）。
+func (r *Repo) DetachServerNodes(ctx context.Context, serverID uuid.UUID) (retired, unbound int64, nodeIDs []uuid.UUID, err error) {
 	res := r.d.Conn(ctx).Exec(`UPDATE nodes SET serving_status = 'retired', retired_at = now(),
 		row_version = row_version + 1, updated_at = now()
-		WHERE server_id = ? AND deleted_at IS NULL AND serving_status <> 'retired'`, serverID)
+		WHERE server_id = ? AND deleted_at IS NULL AND serving_status = 'active'`, serverID)
 	if res.Error != nil {
-		return 0, nil, inventoryErr(res.Error)
+		return 0, 0, nil, inventoryErr(res.Error)
 	}
 	retired = res.RowsAffected
+	var freed []uuid.UUID
+	if err := r.d.Conn(ctx).Raw(`UPDATE nodes SET server_id = NULL,
+		runtime_status = NULL, runtime_reason = NULL, runtime_reason_node_id = NULL, runtime_state_at = NULL,
+		cert_identifier = NULL, cert_not_after = NULL, cert_error_code = NULL, cert_error_detail = NULL, cert_next_attempt_at = NULL, cert_state_at = NULL,
+		applied_config_sha256 = NULL, applied_config_at = NULL,
+		apply_failed_sha256 = NULL, apply_failed_reason = NULL, apply_failed_detail = NULL, apply_failed_at = NULL,
+		row_version = row_version + 1, updated_at = now()
+		WHERE server_id = ? AND deleted_at IS NULL AND serving_status IN ('draft', 'disabled')
+		RETURNING id`, serverID).Scan(&freed).Error; err != nil {
+		return 0, 0, nil, inventoryErr(err)
+	}
+	unbound = int64(len(freed))
 	var rows []struct {
 		ID   uuid.UUID `gorm:"column:id"`
 		Live bool      `gorm:"column:live"`
 	}
+	// 解绑的那批已经不在这台上，这里只剩退役与已删除的
 	if err := r.d.Conn(ctx).Raw(`UPDATE nodes SET server_id = NULL, updated_at = now() WHERE server_id = ? RETURNING id, deleted_at IS NULL AS live`, serverID).Scan(&rows).Error; err != nil {
-		return 0, nil, inventoryErr(err)
+		return 0, 0, nil, inventoryErr(err)
 	}
-	nodeIDs = []uuid.UUID{}
+	nodeIDs = freed
 	for _, row := range rows {
 		if row.Live {
 			nodeIDs = append(nodeIDs, row.ID)
 		}
 	}
-	return retired, nodeIDs, nil
+	return retired, unbound, nodeIDs, nil
 }

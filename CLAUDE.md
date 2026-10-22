@@ -6,9 +6,9 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 面板前端在 `panel/frontend`（React + TypeScript + Vite），构建产物嵌入 `panel/web`，由面板在根 `/` 下发。
 - 「交互」里停下问我的规则、「协作方式」「长任务的任务清单」「环境与工具坑」「Compact instructions」写给主会话和 opus 子 Agent；经 composer-dispatch 启动的编码子 Agent 按任务说明和自己的系统提示办，这几节跳过。
 
-## 当前阶段：清理与发版准备（P8 之后）
+## 当前阶段：10-19 问题整理（首个 Release 之后）
 
-后端已换成主流、有社区和第三方维护的技术栈（P0–P7，2026-10-13 完成），下表与下面的架构规矩继续有效。P8 测出的四个瓶颈已优化合入（10-14），性能改动从此一律过同机性能闸门。现在按 10-14 的审计删旧代码、死代码，统一重复的机制，然后发第一个 Release。
+后端已换成主流、有社区和第三方维护的技术栈（P0–P7，2026-10-13 完成），下表与下面的架构规矩继续有效。P8 测出的四个瓶颈已优化合入（10-14），性能改动一律过同机性能闸门。门户 v5、后台 v4 已落地，首个 Release v2026.10.17 已发（10-17）。现在按用户 10-19 的问题整理逐条核对现状、补缺口，进度看 `.claude/TASKS.md`。
 
 | 方面 | 用什么 |
 |---|---|
@@ -43,6 +43,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 3. **迁移与 DDL**：迁移是 goose 版本化 SQL，每个都有 Down，确实不可逆的写明原因；不用 GORM AutoMigrate。CI 跑 up → down → up。会锁大表、失败代价高的 DDL 写清预检、超时和失败后怎么回滚。
 4. **数据约束进数据库**：NOT NULL、CHECK、UNIQUE、外键能加就加；钱和余额的变动走只追加的账本。
 5. **回归普通**：错误、响应、日志、配置、鉴权各只有一套统一做法；用社区里最常见的写法，不发明新机制。
+6. **不留死代码**：没有调用方的代码、只剩测试在用的函数、被替换的旧做法，当场删掉，不注释掉、不留着备用。守卫：golangci 的 unused、`.github/scripts/deadcode.sh`（panel、pdnd，忽略表 `<module>/.deadcode-ignore`）、前端 knip（`npm run lint`）。
 
 分层和模块边界用 golangci-lint 的规则（如 depguard）钉住，不再写自研的源码扫描测试。
 
@@ -77,7 +78,8 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 
 ### 子 Agent 规则
 
-- 不 build、不 test、不 typecheck（不跑 go build/test/vet、npm run typecheck/test 等）；要验证的命令写进交回说明，由主 Agent 跑。
+- composer 跑不了命令；它说做完时，项目的收尾检查（`.agents/hooks/composer-gate.py`（Stop hook，登记在 `.claude/settings.json`））自动对它改过的 Go 包跑 gofmt 与 go vet、对改过的前端文件跑 tsc 与 eslint，有错退回给它改，最多两轮。
+- opus 子 Agent 可以对自己（含它派的 composer）改过的包跑几秒到几十秒的检查（用户 10-21 同意）：gofmt、go build、go vet、改动包的 go test（本机 PG 起着时含 PG 用例，见 verify skill「本机 PG」）、前端 `npm run typecheck`、`npx eslint <改过的文件>`、相关的 vitest（`npx vitest run <文件>`）。不跑 `npm ci`、全量测试、`-race`、lint 全仓、e2e 与浏览器；几路并行时别同时跑全模块的 build。交回说明写明跑过哪些、结果如何；主 Agent 照样自己复核。
 - 只改任务说明里列出的文件；需要动别的文件时不改，在交回说明里写明。
 - 尽早提交、尽早返回：composer 改完文件就返回，由派它的人核对并提交；opus 子 Agent 每核对完一块就在自己的分支上提交，做完立刻交回，遇到卡点也先交回。
 - 交回说明：改了哪些文件、提交 sha（opus）、做了什么、没做完或拿不准的。
@@ -95,6 +97,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 按目录生效的约定在 `.claude/rules/`，文件头的 `paths:` 写着管哪些目录。它只在用 Read / Edit / Write 碰到匹配文件时自动加载；用 Bash（cat、sed、grep）读文件或只看 `git diff` 时不会加载。所以要改或审某个目录的代码，先用 Read 打开那里的一个文件，或直接读对应的规则文件；给子 Agent 写任务说明、审查简报时，把相关规则文件的路径写进去。改了对应代码，同步改写这些规则。
 - 验证、推送后等 CI：verify skill。
 - 性能改动：perf-gate skill；合入前独立审查：pre-merge-review skill；发版：release skill。
+- 后台加设置项：add-setting skill；数据巡检报警后修数据：data-repair skill；网站与前端页面测试一律用 ego-browser（flow-walk、ux-review 里写了用法），不用内置浏览器（用户 10-21 定）；ego 连不上就停下告诉我。
 - skill 用 `~/ai/skills/bin/skills` 管理：项目自己的 skill 在 `.agents/skills/`（`.claude/skills` 是指向它的链接）；共享的 composer-dispatch、skill-creator 是本机链接，不入库。新做或改 skill 用 skill-creator。
 
 ## 仓库约定
@@ -129,8 +132,8 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 环境与工具坑
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）。
-- 本机 Go：缺省 1.27.1，比 go.mod 的 1.26.9 新。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.9`（模块缓存里已有，`GOPROXY=off` 也能切），结论才与 CI 同口径，报告里注明本机 Go 版本。pdnd 去掉 sing-box 后已能在 1.27 下链接（10-14）；还依赖 sing-box 的只剩 subscription-e2e 的 tools 模块，升 Go 1.27 前先处理它，见 deps-upgrade skill。
-- 本机（这台 Mac）没有 docker、psql、redis-cli：PG18 用例、迁移往返、e2e 脚本、冒烟栈、Playwright 购买路径本机跑不了；本机跳过不等于通过，以 CI 为准（verify skill）。
+- 本机 Go：缺省 1.27.x（Homebrew，10-20 为 1.27.2），比 go.mod 的 1.26.10 新。本机所有 go 命令加 `GOTOOLCHAIN=go1.26.10`（模块缓存里已有，`GOPROXY=off` 也能切），结论才与 CI 同口径，报告里注明本机 Go 版本。pdnd 去掉 sing-box 后已能在 1.27 下链接（10-14）；还依赖 sing-box 的只剩 subscription-e2e 的 tools 模块，升 Go 1.27 前先处理它，见 deps-upgrade skill。
+- 本机（这台 Mac）没有 docker：冒烟栈、Playwright 购买路径、要 Docker 起 Redis 或 PG 的部署测试、要 root 的真 nginx 测试本机跑不了，以 CI 为准（生产装法只有 install.sh，10-21 删了 Docker 装法）。PG18 与 Redis 用 Homebrew 装了（用户 10-21 同意），不常驻：`.agents/skills/verify/scripts/local-db.sh start|stop`，PG 用例与迁移往返推送前在本机跑（verify skill「本机 PG」，要 `TZ=UTC`）。本机是 16G 内存的笔记本：注意磁盘、CPU、内存占用，用完停库，不同时开多路全量、`-race` 留给 CI。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请我解锁；不改走 HTTPS。
 - 测试机上起后台进程一律 `ssh -n host 'cd /root/x; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；远端 `pkill -f` 的模式要锚定（`pkill -f '^vmstat'`），否则会误杀自己的 ssh 会话；限时的故障注入在远端自带撤销（`setsid -f sh -c 'sleep N; iptables -D …'`）。本机是 macOS，没有 setsid。
 - 性能闸门的测试机用 ssh 别名指定（主目录 `ops-local/netcup-perf/gate.env`），机器规矩先读 `~/ai/servers/` 下它的 `AGENTS.md`：只放虚构数据、测试端口只听回环、不改系统设置；机上日志可能带后台路径前缀，引用前先打码（`gate.sh` 的输出已打码）。一次运行约 30 分钟，放后台跑，同一时间只跑一个。

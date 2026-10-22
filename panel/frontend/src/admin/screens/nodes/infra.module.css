@@ -52,13 +52,13 @@
 .installCode {
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
   padding: 8px 10px;
   background: var(--surface-2);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 12px;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .installCopyBtn {
@@ -84,6 +84,10 @@
 .installHint {
   color: var(--text-3);
   font-size: 12px;
+}
+
+.installAction {
+  margin-top: 8px;
 }
 
 .installFooterNotice {
@@ -127,6 +131,11 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.pick {
+  display: inline-flex;
+  margin-right: 6px;
 }
 
 .ch b {

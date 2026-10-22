@@ -1,15 +1,7 @@
 import { Component, Suspense, type ReactNode } from 'react'
 import { Button, Empty, Skeleton } from '../ui'
+import { isChunkLoadError } from './chunk-error'
 import css from './ScreenFrame.module.css'
-
-// ---------------------------------------------------------------------------
-// 懒加载的页面块在发版后可能已被新哈希替换（旧标签页里点进一个没加载过的模块），
-// React.lazy 会缓存这次失败，重置边界无济于事，只能整页刷新拿新入口。
-// ---------------------------------------------------------------------------
-export function isChunkLoadError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  return /dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(error.message)
-}
 
 /** 页面块加载中的骨架：一行工具栏 + 一块内容，300ms 内不显现（ui/Skeleton 自带延迟）。 */
 function ScreenFallback() {

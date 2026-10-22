@@ -77,7 +77,7 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 	if s.issuer(audience) == nil {
 		return Tokens{}, errs.Newf(errs.Internal, "未知的登录域")
 	}
-	sid, secret, ok := parseRefresh(raw)
+	sid, gen, secret, ok := parseRefresh(raw)
 	if !ok {
 		return Tokens{}, errSessionInvalid
 	}
@@ -92,31 +92,25 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 		if !found || st.Audience != audience {
 			return Tokens{}, errSessionInvalid
 		}
+		// 不是本服务给这条会话签发的值只回 401，不吊销（sid 不保密，乱拼的值不能踢掉别人的会话）
+		if !s.refreshAuthentic(sid, st.RTSeed, gen, secret) {
+			return Tokens{}, errSessionInvalid
+		}
 
+		// 轮换写进去的是下一代；宽限内拿上一代来，重算出的正是当前那一枚
+		next := s.refreshSecret(sid, st.RTSeed, gen+1)
 		var mode string
-		var expect string
-		var newHash string
-		var newSecretPlain string
 		if sameHash(h, st.RTCur) {
 			mode = refreshModeRotate
-			expect = h
-			sec, err := newSecret()
-			if err != nil {
-				return Tokens{}, errs.Wrap(errs.Internal, err)
-			}
-			newSecretPlain = sec
-			newHash = hashSecret(sec)
 		} else if st.RTPrev != "" && sameHash(h, st.RTPrev) {
-			if now.Sub(st.RTRotatedAt) <= refreshGrace {
-				mode = refreshModeGrace
-				expect = h
-			} else {
+			if now.Sub(st.RTRotatedAt) > refreshGrace {
 				// 上一枚 refresh 在宽限外又被用：判为重放，吊销整条会话
 				return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
 			}
+			mode = refreshModeGrace
 		} else {
-			// 对不上任何一枚：只回 401，不吊销（sid 不保密，随机值不能踢掉别人的会话）
-			return Tokens{}, errSessionInvalid
+			// 真是这条会话签发过的旧代，却既不是当前也不是上一代：会话已被别人往前轮换过（偷到 cookie 的人连换两次），判重放
+			return Tokens{}, s.refreshReused(ctx, sid, st.UserID, audience)
 		}
 
 		if audience == authn.AudienceAdmin {
@@ -133,7 +127,7 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			}
 		}
 
-		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, expect, newHash)
+		status, ss, err := s.sessions.rotate(ctx, sid, st.UserID, audience, now, s.idleTimeout(audience), mode, h, hashSecret(next))
 		if err != nil {
 			return Tokens{}, errs.Wrap(errs.Unavailable, err)
 		}
@@ -153,8 +147,11 @@ func (s *Service) Refresh(ctx context.Context, audience, raw string) (Tokens, er
 			UserID:         st.UserID,
 			RefreshExpires: ss.AbsExp,
 		}
-		if mode == refreshModeRotate {
-			tok.Refresh = formatRefresh(sid, newSecretPlain)
+		// 宽限内不改任何状态，只把当前那一枚再发一遍：轮换的响应没送到浏览器（关页、F5、断网、前端超时放弃）时，
+		// 它拿回的就是服务端记着的 rt_cur，不会过了宽限被判重放；晚到的旧请求也不会把别人手里那枚换掉。
+		// 宽限分支里两者只在换过主密钥后才可能不等：那时不发 cookie，浏览器留着上一代，过了宽限按重放处理，不泄漏任何值。
+		if mode == refreshModeRotate || sameHash(hashSecret(next), st.RTCur) {
+			tok.Refresh = formatRefresh(sid, gen+1, next)
 		}
 		return tok, nil
 	}
@@ -207,11 +204,10 @@ func (s *Service) Logout(ctx context.Context, audience, rawRefresh string) error
 	if rawRefresh == "" {
 		return nil
 	}
-	sid, secret, ok := parseRefresh(rawRefresh)
+	sid, gen, secret, ok := parseRefresh(rawRefresh)
 	if !ok {
 		return nil
 	}
-	h := hashSecret(secret)
 	st, found, err := s.sessions.readRefresh(ctx, sid)
 	if err != nil {
 		return errs.Wrap(errs.Unavailable, err)
@@ -219,8 +215,8 @@ func (s *Service) Logout(ctx context.Context, audience, rawRefresh string) error
 	if !found || st.Audience != audience {
 		return nil
 	}
-	match := sameHash(h, st.RTCur) || (st.RTPrev != "" && sameHash(h, st.RTPrev))
-	if !match {
+	// 本会话签发过的任一代都能退出（含被换下的旧代）：会话被盗后用户点退出，攻击者那条也一起结束
+	if !s.refreshAuthentic(sid, st.RTSeed, gen, secret) {
 		return nil
 	}
 	return s.tx.Do(ctx, func(ctx context.Context) error {

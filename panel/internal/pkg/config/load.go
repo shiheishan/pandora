@@ -156,7 +156,6 @@ func defaults(v *viper.Viper) {
 	v.SetDefault("auth.password_hash.queue_timeout", "5s")
 
 	v.SetDefault("ratelimit.ip_per_min", 120)
-	v.SetDefault("ratelimit.account_per_min", 300)
 	v.SetDefault("ratelimit.auth_per_min", 10)
 
 	v.SetDefault("secrets.master_key", "")

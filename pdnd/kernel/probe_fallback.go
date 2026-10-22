@@ -170,12 +170,16 @@ func serveFallbackHTTP(conn net.Conn, prefix []byte, h2 bool, handler http.Handl
 		ErrorLog:          neutralHTTPErrorLog,
 	}
 	if h2 {
-		(&http2.Server{IdleTimeout: neutralHTTPIdleTimeout}).ServeConn(wrapped, &http2.ServeConnOpts{BaseConfig: base, Handler: handler})
+		// 仍用 x/net 的 ServeConn（已标弃用）：wrapped 不是 *tls.Conn，net/http 只能按明文 HTTP/2
+		// 接，那条路要等齐客户端的 24 字节前言才发 SETTINGS；真 Go 服务端（与 nginx）握完 TLS 就发，
+		// 探测方发半截前言就能分辨（守卫 TestProbeFallbackH2SettingsBeforeFullPreface）。Go 1.27 起
+		// ServeConn 由 net/http 实现，届时再看能不能换。
+		(&http2.Server{IdleTimeout: neutralHTTPIdleTimeout}).ServeConn(wrapped, &http2.ServeConnOpts{BaseConfig: base, Handler: handler}) //nolint:staticcheck // 理由见上
 		_ = wrapped.Close()
 		return
 	}
-	// 关掉 HTTP/2 升级（h2c），只讲 HTTP/1.x。
-	base.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
+	base.Protocols = new(http.Protocols)
+	base.Protocols.SetHTTP1(true)
 	listener := newSingleConnListener(wrapped)
 	_ = base.Serve(listener)
 	<-listener.closed
@@ -184,7 +188,7 @@ func serveFallbackHTTP(conn net.Conn, prefix []byte, h2 bool, handler http.Handl
 // negotiatedH2 报告 conn 的 TLS 是否协商出 h2。非 *tls.Conn 一律当 HTTP/1.x。
 func negotiatedH2(conn net.Conn) bool {
 	if tlsConn, ok := conn.(*tls.Conn); ok {
-		return tlsConn.ConnectionState().NegotiatedProtocol == http2.NextProtoTLS
+		return tlsConn.ConnectionState().NegotiatedProtocol == "h2"
 	}
 	return false
 }

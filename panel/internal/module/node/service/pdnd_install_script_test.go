@@ -115,6 +115,7 @@ func TestInstallScriptContract(t *testing.T) {
 		"unset TOKEN",
 		"validate-install",
 		"pandora_tune_sysctl || echo",
+		`systemctl enable --now "${UPGRADE_UNIT}.path"`,
 	} {
 		if !strings.Contains(pdndInstallTemplate, want) {
 			t.Errorf("脚本缺少 %q", want)
@@ -384,31 +385,42 @@ echo "$*" >> "` + applied + `"
 	}
 }
 
-// 安装器写的 unit 与发布包里的 pdnd/release/pandora-native.service 逐行一致（顺序不计）。
-func TestInstallScriptUnitMatchesPackaged(t *testing.T) {
-	start := strings.Index(pdndInstallTemplate, "[Unit]\n")
-	if start < 0 {
-		t.Fatal("脚本里没有 unit")
+func heredocBody(t *testing.T, marker string) string {
+	t.Helper()
+	startTag := "<<" + marker + "\n"
+	idx := strings.Index(pdndInstallTemplate, startTag)
+	if idx < 0 { // 不做展开的 heredoc（<<'MARK'）
+		startTag = "<<'" + marker + "'\n"
+		idx = strings.Index(pdndInstallTemplate, startTag)
 	}
-	end := strings.Index(pdndInstallTemplate[start:], "\nUNIT\n")
-	if end < 0 {
-		t.Fatal("unit 的 heredoc 没有结束标记")
+	if idx < 0 {
+		t.Fatalf("脚本里找不到 heredoc 标记 %q", startTag)
 	}
-	unit := strings.NewReplacer(
-		"${INSTALL_DIR}", "/usr/local/bin",
-		"${SERVICE}", "pandora-native",
-		"${CONFIG_DIR}", "/etc/pandora-native",
-	).Replace(pdndInstallTemplate[start : start+end])
+	bodyStart := idx + len(startTag)
+	endTag := "\n" + marker + "\n"
+	endIdx := strings.Index(pdndInstallTemplate[bodyStart:], endTag)
+	if endIdx < 0 {
+		t.Fatalf("脚本里 heredoc %q 没有结束标记 %q", marker, endTag)
+	}
+	return pdndInstallTemplate[bodyStart : bodyStart+endIdx]
+}
 
+func packagedUnit(t *testing.T, name string) string {
+	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller 失败")
 	}
-	packaged, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..", "pdnd", "release", "pandora-native.service"))
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "..", "pdnd", "release", name))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, want := unitLines(unit), unitLines(string(packaged))
+	return string(content)
+}
+
+func assertUnitsEqual(t *testing.T, script, packaged string) {
+	t.Helper()
+	got, want := unitLines(script), unitLines(packaged)
 	if !slices.Equal(got, want) {
 		var onlyScript, onlyPackaged []string
 		for _, l := range got {
@@ -422,6 +434,92 @@ func TestInstallScriptUnitMatchesPackaged(t *testing.T) {
 			}
 		}
 		t.Fatalf("unit 与发布包不一致\n只在脚本里：%q\n只在发布包里：%q", onlyScript, onlyPackaged)
+	}
+}
+
+// 安装器写的主 unit 与发布包里的 pdnd/release/pandora-native.service 逐行一致（顺序不计）。
+func TestInstallScriptUnitMatchesPackaged(t *testing.T) {
+	unit := strings.NewReplacer(
+		"${INSTALL_DIR}", "/usr/local/bin",
+		"${SERVICE}", "pandora-native",
+		"${CONFIG_DIR}", "/etc/pandora-native",
+	).Replace(heredocBody(t, "UNIT"))
+	assertUnitsEqual(t, unit, packagedUnit(t, "pandora-native.service"))
+}
+
+// 安装器写的升级触发器与助手 unit 与发布包逐行一致（顺序不计）。
+func TestInstallScriptUpgradeUnitsMatchPackaged(t *testing.T) {
+	repl := strings.NewReplacer(
+		"${INSTALL_DIR}", "/usr/local/bin",
+		"${SERVICE}", "pandora-native",
+		"${CONFIG_DIR}", "/etc/pandora-native",
+	)
+
+	pathUnit := repl.Replace(heredocBody(t, "PATHUNIT"))
+	assertUnitsEqual(t, pathUnit, packagedUnit(t, "pandora-native-upgrade.path"))
+
+	helperUnit := repl.Replace(heredocBody(t, "HELPERUNIT"))
+	assertUnitsEqual(t, helperUnit, packagedUnit(t, "pandora-native-upgrade.service"))
+}
+
+// 检查发布包里的升级单元与主单元的关键契约（触发路径、oneshot 助手、崩溃循环限制等）。
+func TestPackagedUpgradeUnitsContract(t *testing.T) {
+	pathContent := packagedUnit(t, "pandora-native-upgrade.path")
+	for _, want := range []string{
+		"PathExists=/var/lib/pandora-native/upgrade/request",
+		"PathExists=/var/lib/pandora-native-upgrade/applying",
+		"Unit=pandora-native-upgrade.service",
+	} {
+		if !strings.Contains(pathContent, want) {
+			t.Errorf("path 单元缺少 %q", want)
+		}
+	}
+
+	serviceContent := packagedUnit(t, "pandora-native-upgrade.service")
+	for _, want := range []string{
+		"Type=oneshot",
+		"User=root",
+		// 续做交给 .prev（新版一启动就崩时照样能回退），新请求用装着的版本。整行钉死：条件必须看 root 的工作区
+		// （看 pandora 可写的暂存目录，等于让 pandora 决定 root 跑哪一版、拿更老的 serial 验签），两个分支不能写反
+		"ExecStart=/bin/sh -c 'if [ -e /var/lib/pandora-native-upgrade/applying ] && [ -x /usr/local/bin/pandora-native.prev ]; then exec /usr/local/bin/pandora-native.prev upgrade-apply; fi; exec /usr/local/bin/pandora-native upgrade-apply'",
+		"TimeoutStartSec=600",
+		// 加固（upgrade-node 审查 S6）
+		"ProtectSystem=strict",
+		"ReadWritePaths=/usr/local/bin -/var/lib/pandora-native",
+		"CapabilityBoundingSet=CAP_DAC_OVERRIDE",
+		"PrivateNetwork=true",
+		"RestrictAddressFamilies=AF_UNIX",
+		"NoNewPrivileges=true",
+		"PrivateDevices=true",
+		"ProtectKernelTunables=true",
+		"ProtectKernelModules=true",
+		"ProtectKernelLogs=true",
+		"ProtectControlGroups=true",
+		"ProtectClock=true",
+		"ProtectHostname=true",
+		"RestrictNamespaces=true",
+		"RestrictRealtime=true",
+		"RestrictSUIDSGID=true",
+		"LockPersonality=true",
+		"MemoryDenyWriteExecute=true",
+		"SystemCallArchitectures=native",
+	} {
+		if !strings.Contains(serviceContent, want) {
+			t.Errorf("升级 service 单元缺少 %q", want)
+		}
+	}
+	if strings.Contains(serviceContent, "[Install]") {
+		t.Errorf("升级 service 单元不应包含 [Install]")
+	}
+
+	mainUnitContent := packagedUnit(t, "pandora-native.service")
+	for _, want := range []string{
+		"StartLimitIntervalSec=300",
+		"StartLimitBurst=10",
+	} {
+		if !strings.Contains(mainUnitContent, want) {
+			t.Errorf("主 service 单元缺少 %q", want)
+		}
 	}
 }
 

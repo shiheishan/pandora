@@ -44,7 +44,7 @@ export const nodeRowSchema = z.object({
   delivered_to_users: z.boolean(),
   delivery_note: z.string(),
   identity_serial: z.number().nullable(),
-  /** 能不能迁移到别的服务器：后端 service.nodeMovableState 算好，前端不自己判断 */
+  /** 能不能改绑 / 解绑（草稿或已停用）：后端 service.nodeMovableState 算好，前端不自己判断 */
   movable: z.boolean(),
   created_at: iso,
   node_type: z.string().nullable(),
@@ -71,6 +71,20 @@ export const nodeRowSchema = z.object({
   runtime_reason: z.string().nullish().transform((v) => v ?? null),
   runtime_state_at: iso.nullish().transform((v) => v ?? null),
   runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
+  // 入站证书状态（节点端心跳报的，node/handler 的 nodeCertResponse）；null = 节点端没报过
+  cert: z
+    .object({
+      mode: z.enum(['acme', 'file']),
+      identifier: z.string().nullable(),
+      identifier_kind: z.enum(['domain', 'ip']).nullable(),
+      not_after: iso.nullable(),
+      error_code: z.string().nullable(),
+      error_detail: z.string().nullable(),
+      next_attempt_at: iso.nullable(),
+      reported_at: iso,
+    })
+    .nullish()
+    .transform((v) => v ?? null),
   delivery_degraded: z.boolean().catch(false),
   ...xbNodeFields,
   relay_count: z.number(),
@@ -78,6 +92,7 @@ export const nodeRowSchema = z.object({
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
+export type NodeCert = NonNullable<NodeRow['cert']>
 
 /**
  * 单取（?id=）才带的编辑字段（node/handler 的 nodeDetailResponse）：列表不带，1000 个节点每次刷新省掉
@@ -168,6 +183,9 @@ export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'retired'] as const
 export type ServerStatus = (typeof SERVER_STATUSES)[number]
 
+export const UPGRADE_STATUSES = ['sent', 'staged', 'succeeded', 'failed', 'rolled_back', 'timed_out'] as const
+export type UpgradeStatus = (typeof UPGRADE_STATUSES)[number]
+
 export const serverSchema = z.object({
   id: uuid,
   name: z.string(),
@@ -184,6 +202,8 @@ export const serverSchema = z.object({
   agent_version: z.string().nullable(),
   last_heartbeat_at: iso.nullable(),
   heartbeat_online: z.boolean(),
+  /** 服务器有有效的接入身份（node/service 的 HasActiveIdentity 口径）：签发令牌、在机器上装好节点端后为 true，吊销或退役后为 false */
+  enrolled: z.boolean(),
   cpu_cores: z.number().nullable(),
   memory_mb: z.number().nullable(),
   disk_gb: z.number().nullable(),
@@ -201,26 +221,21 @@ export const serverSchema = z.object({
   disk_used_gb: z.number().nullable(),
   disk_total_gb: z.number().nullable(),
   metrics_at: iso.nullable(),
+  binary_sha256: z.string().nullable(),
+  upgrade: z.object({ available: z.boolean(), target_version: z.string().nullable(), reason: z.string().nullable() }),
+  last_upgrade: z
+    .object({ status: z.enum(UPGRADE_STATUSES), target_version: z.string(), reason_code: z.string().nullable(), updated_at: iso })
+    .nullable(),
 })
 // 三个列表 Go 侧都以空切片起步，不会是 null，按严格数组写
 export const serversResponse = z.object({ servers: z.array(serverSchema), total: z.number() })
 export type Server = z.output<typeof serverSchema>
 
-/** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
-const serverNodeSchema = z.object({
-  id: uuid,
-  name: z.string(),
-  serving_status: z.string(),
-  node_type: z.string().nullable(),
-  display_name: z.string().nullable(),
-  server_host: z.string().nullable(),
-  server_port: z.number().nullable(),
-  traffic_rate: z.number(),
-  config_validated_at: iso.nullable(),
-  last_heartbeat_at: iso.nullable(),
-  created_at: iso,
+export const serverUpgradeResponse = z.object({
+  target_version: z.string(),
+  results: z.array(z.object({ server_id: uuid, ok: z.boolean(), reason: z.string().nullable() })),
 })
-export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), total: z.number() })
+export type ServerUpgradeResponse = z.output<typeof serverUpgradeResponse>
 
 // ---------------------------------------------------------------------------
 // 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；

@@ -19,6 +19,7 @@ paths:
 
 ## 名单与线路资格
 - 名单 `Rosters`、订阅线路 `node_source.go` 共用 `poolAdmits`（`service/delivery.go`）；池限组时空名单 = 不限，默认组用户进不了限组池。
+- 后台节点列表 `state=cert` 与仪表盘 `CertAttentionNodes` 共用 `repo.CertAttentionBaseCond` / `CertFailingCond` / `CertExpiringCond`（`repo/report_reads.go`，两个占位符依次是 IP 证书、域名证书的门槛，service 按 `CertExpiringIP` / `CertExpiringDomain` 算好传入）；别在别处另写一份证书门槛。
 - 「节点自己能不能下发」只有 `repo.DeliverableNodeCond`；「服务器上该跑哪些节点」只有 `repo.ServedOnServerCond`（`repo/repo.go`）。订阅拉取、后台列表「是否下发」都引用前者，不另写 SQL 变体。
 - 心跳超时不写进 `DeliverableNodeCond`；从没心跳过的服务器不满足条件。运行异常只降级：`repo.NodeDegradedCond`，`preferFresh` 先摘降级节点，全是降级时仍下发（`repo/delivery.go`、`service/delivery.go` 的 `HeartbeatFreshWindow`）。
 - 名单版本 `rosterVersion` 前缀 `u1-`（`service/delivery.go`）；同池节点共用一份 `Users` 切片，不要改切片。
@@ -33,7 +34,6 @@ paths:
 - 合并只有 `mergeRouting`（`service/routing.go`）：层序节点私有 → 各路由组（`sort_order, id`）→ 全局；规则按层拼接，出站从低到高同 tag 覆盖且保留首次位置。读层用 `nodeRoutingLayers`（`service/routing_layers.go`）。下发配置用 `ServerConfigs`（`service/config_docs.go`），不要另写合并。
 - 内置出站 `direct` / `block` 保存时经 `canonicalRouteTag` 规范成小写；自定义 tag 大小写敏感。
 - 写路由用 `refuseNewDangling`：只拒本次新造成的悬空引用（`service/routing_write.go`）。
-- 复制节点勾选复制路由（`CopyNode` 的 `CopyRouting`）时，在同一事务里经 `copyNodeRouting`（`service/nodes_placement.go`）把私有出站、规则和路由组成员一起复制：先拿路由写锁再锁节点行（与其它改路由的写同一锁序），组成员变了推进组版本，照常 `refuseNewDangling`。
 - 单个节点的文档生成失败只跳过该节点（`assembleServerConfigs` 返回跳过集合），同批其余服务器与节点照发；不要改回整批失败。被跳过的节点不在下发的文档里，节点端会停掉它的入站直到配置修好。ERROR 只在下发路径记（`ServerConfigs`，供配置纪元与建流对齐）；只读路径（节点列表、`ConfigLaggingCount`）调 `serverConfigsWithSkips` 不记日志：列表把这些节点显示为 failed（「面板生成配置失败：…」），落后计数算上它们。
 
 ## 节点补齐 Xboard（迁移 00045）
@@ -48,16 +48,28 @@ paths:
 ## Shadowsocks 2022 服务端身份密钥（共用约定 2026-10-14）
 - 每个 2022 节点一把 iPSK，不存库：`HKDF-SHA256(主密钥, info = crypto.InfoSS2022ServerPSK || 0x00 || 方法名 || 0x00 || 节点 id 的 16 字节)`（带方法名：同一节点 128 与 256 两把彼此独立，不是前缀关系），长度按方法（`protocol.SS2022KeyLen`）；派生只有 `service/ss2022.go` 的 `applySS2022ServerPSK`（端口 `PSKDeriver` = `*crypto.Keys`，`UsePSKDeriver` 装配，进 `MissingPorts`）。向量钉在 `service/ss2022_test.go`。
 - 配置文档（`buildNodeConfigDoc`）与订阅线路（`deliverableFromRows`）都在 `protocol.KernelConfig` 之后调它：2022 方法写 `password` = base64(iPSK)，其它 shadowsocks 删掉 `password`；没装配派生器时文档只跳过该节点、线路装载回错误。中转经 `relayRenderNode` 浅拷贝父节点 Config，自然用父节点那把。
-- 换主密钥会让全部 2022 节点的 iPSK 一起变（节点与订阅同时变，客户端重新拉订阅），是接受的代价；iPSK 只取决于节点 id，线路缓存键不用改。复制节点得新 id、新密钥。
+- 换主密钥会让全部 2022 节点的 iPSK 一起变（节点与订阅同时变，客户端重新拉订阅），是接受的代价；iPSK 只取决于节点 id，线路缓存键不用改。
 
 ## 同机端口（先到先得）
 - L4 唯一口径：`protocol.ListenL4` = 写入 `nodes.listen_l4` = pdnd `kernel/port_claims.go`（`protocol/port_l4.go`、`protocol/port_l4_test.go`）。
 - L4 三种取值 `tcp` / `udp` / `tcp+udp`；shadowsocks 无条件 `tcp+udp`（同端口 TCP、UDP 都听，用户 2026-10-14 定）。冲突口径 `protocol.L4Conflicts`：相等，或一方是 `tcp+udp`；`tcp` 与 `udp` 同端口可共存。门禁按 `protocol.ConflictingL4s` 查占用者（`repo.NodePortHolder`），提示标签 `443/TCP+UDP`。
 - 库里兜底是两条部分唯一索引 `nodes_listen_tcp_claim_key`（`listen_l4 IN ('tcp','tcp+udp')`）与 `nodes_listen_udp_claim_key`（`IN ('udp','tcp+udp')`），都译成 `repo.ErrListenClaimTaken`（00038）。改 L4 规则时两条索引、`repo.inventoryErrs` 映射、pdnd 用例表一起改。
-- 建、改、克隆、迁服务器在服务器行锁内 `claimNodePort`；冲突 409。锁序：改节点为节点行 → 服务器行（`service/nodes.go` `PatchNode`）。
+- 建（绑了服务器时）、改、绑定 / 改绑都在服务器行锁内 `claimNodePort`；冲突 409。锁序：节点行 → 服务器行（`PatchNode`、`BindNode`）。没绑服务器的节点不占端口：端口唯一索引带 `server_id IS NOT NULL`，端口值只是配置。
+
+## 节点与服务器的绑定（用户 2026-10-20 定）
+- 节点是配置，可以不绑服务器（`nodes.server_id` 可空，不用迁移）：新建时 `NodeInput.ServerID` 为 nil 即「暂不绑定」，不锁服务器、不查端口，端口与地址都可以先空着；绑了服务器时端口必填。地址只在在役时必填（`nodeValidateProtocol` 的 `nodeEndpointNeed`：在役要地址，绑了服务器要端口；端口留空时丢掉 protocol 包的端口范围错误）。PATCH 不能把端口清成 0。
+- 绑定 / 改绑 `BindNode`、解绑 `UnbindNode`（`service/nodes_binding.go`，接口 `POST /nodes/:id/bind`、`/unbind`，取代旧的 `/move`）：只许草稿或已停用（`nodeMovableState`，列表的 `movable` 也用它），在役 409「节点在役，先停用再改绑 / 解绑」，退役 409。绑定要有端口（请求可带 `server_port`），换服务器走 `lockServerForNodes`（容量、退役），同一台只锁行；都过 `claimNodePort`。解绑只把 `server_id` 置空（端口释放，端口值留着）。两者都经 `repo.SetNodeServer` 一并清掉运行状态与配置回执（上一台报的不算数），推进配置与名单纪元，审计 `node.server_bind` / `node.server_unbind`。
+- 上线与批量启用：没绑服务器回 409 `fields.server_id`（`nodeUnboundActivateMsg`），先于协议就绪的检查；库里 `nodes_active_shape` 兜底。
+- 后台「是否下发」第一项就是绑没绑（`nodeDeliveryFacts.Bound` → `nodeNoteUnbound`）。下发、名单、配置文档天然排除未绑节点（只取在役节点、INNER JOIN servers），不改那些 SQL。
+- 删服务器（`DeleteServer` → `repo.DetachServerNodes`）：名下在役节点退役；草稿与已停用的只解绑、留作配置（同 `SetNodeServer` 清运行状态与配置回执，端口值留着），能再绑到别的服务器（用户 2026-10-20 定）；已退役的只清 `server_id`。审计 `server.delete` 带 `silenced_nodes`（退役数）与 `unbound_nodes`（解绑数）。退役且没服务器的节点「是否下发」照「未在役」说，不引导去绑定。
 
 ## 服务状态与运行态
 - 只有 `serving_status`（`draft` / `active` / `disabled` / `retired`），边表在 `nodeServingTransitions`（`service/node_status.go`）；无旧版 17 态生命周期触发器。
+- 给后台看的 409 文案不出英文状态码，用 `statusLabel(nodeStatusLabels / serverStatusLabels, …)` 换成中文状态名（与前端 `infra.ts` 的 `SERVER_STATUS` 同一组说法），并写明下一步；`fields` 里的 `"<from> -> <to>"` 与错误码照旧给前端判断（uxfix-node 10-21）。服务器进 ready 没有在役节点用 `serverNoActiveNodeMsg`（`fields.nodes: requires_valid_active_node` 不变）。
+- 上线结果的 `warnings`（`activationWarnings`，`service/nodes_lifecycle.go`）：无池 `nodeNoPoolWarning`；池没绑在用套餐 `nodePoolUnboundWarning`（与列表下发说明同一口径：`poolLivePlans` / `livePlansFromUsage`，`service/pool_live_plans.go`，列表的 `nodeListExtrasFor` 也调它）；读 catalog 出错只记警告、不挡上线。前端 `logic.activationHint` 按这两句原文匹配，改文案两边一起改。
+- 服务器 DTO 的 `enrolled`：有没有有效接入身份（`HasActiveIdentity` 口径；列表一次 `ActiveIdentitySeqs` 批量读，详情 `HasActiveIdentity`）。后台据此区分「还没接入」与「已接入」，不要按心跳猜。`heartbeat_online` 只对 ready 为真，草稿的心跳新鲜与否前端按 `last_heartbeat_at` 自己判。
+- 上线时服务器没接入回 409 `serverNotEnrolledMsg`（「先到「服务器」页签发安装令牌，在机器上用 root 执行安装命令」；叫法与后台一致，假后端 `nodes.ts` 有逐字副本）。
+- 接入时按公网 IP 回填空的 `servers.region`：`regionText`（`service/geo.go`）拼国家、省 / 州、城市，去首尾空白，相邻两段相同（忽略大小写）只留一段（「Austria Vienna Vienna」→「Austria Vienna」）；存量数据不回头修。
 - 服务器心跳在 `servers.last_heartbeat_at`；后台失联 `NodeStaleAfter`（90s，`service/node_types.go`）。`RecordHeartbeat` 每拍写服务器心跳，节点 `runtime_status` 只在变化时写（`service/session_store.go`）。
 - 配置回执 `RecordConfigAck`：`switched`/`health_passed` 写 `applied_config_*` 并清 `apply_failed_*`；`failed` 只写失败台账，已应用版本不动。
 
@@ -73,6 +85,15 @@ paths:
 - `Sessions` 的纪元轮次、`MinRoundGap`（缺省 1s）合并推送；发送队列满则 `ErrSessionOverflow` 断流重连。心跳合写、PG LISTEN 纪元、多实例分流尚未做：会话状态在进程内，按单 `serve` 实例设计。
 - 全量名单按 `UsersChunkSize`（500 人，一块编码后不到 32 KB）分块，发送循环逐块现转现发（`grpc/control_convert.go` 的 `usersFullChunks`），不要改回先转整份再发：gRPC 发送缓冲 32 KB 以上直接占 1 MB 一档，合批对齐后几百条流同时发全量，块大或整份先转就是几百 MB 的瞬时内存（10-14 闸门量到，守卫 `TestUsersFullChunkFitsSendBuffer`）。增量上限是另一个常量 `UsersDeltaMax`（5000），增量不分块。
 - 建流对齐合批（`service/session_align.go`）：同一时段到达的建流共用一次 `ServerConfigs` + `Rosters`，批串行（同时只有一批读库）、一批一对序号（先配置后名单）；批的 ctx 用 `context.WithoutCancel` 派生，单条流断开不连累同批。`AlignTimeout`（缺省 10s）既是等待者的总时限（到期 `ErrAlignBusy`）也是一批读库的时限；没有并发数参数，不要再加逐流的对齐读。
+
+## 在线升级（面板侧，迁移 00060；规格 `.claude/briefs/upgrade-spec.md`）
+- 信任根在节点：面板不验签，只检查 `pdnd-manifest.json` 与 `.sig` 在分发目录里、清单能解析（schema 1、版本、serial、只认 linux-amd64 / arm64、文件名固定），且托管的二进制摘要与清单一致（`service/pdnd_manifest.go` 的 `PdndTarget`，小文件按 size+mtime 缓存）。下载地址 = 安装脚本同一个 origin + `/pdnd/bin/<file>`。
+- 能不能升按 `upgrades.go` 的 `upgradeBlock` 依次判：未结束任务 → 发布包原因 → 非 ready → 没在线会话 → 会话没协商 `upgrade_v1` → 架构不在清单（取 Hello 自报的 arch，不用后台可改的 `servers.architecture`）→ 摘要已是目标 → `build_serial` 不比目标新。原因码与后台 `infra.ts` 的 `UPGRADE_REASON_TEXT` 同一张表，加码两边一起改。
+- `build_serial` 与 arch 只在会话状态里（`SessionUpgradeInfo`，Hello 时取），不落库。
+- `RequestUpgrades`：去重后 1..50 台；没装配分发 503、发布包不可用整单 409；一个事务里逐台判、批量插 sent（部分唯一索引 `server_upgrades_open_key` 挡同台第二条未结束任务，冲突的回 `in_progress`）、审计 `server.upgrade_requested`（`server_set`，带建成的 server_ids、目标版本与 serial、请求数与拒绝数）；提交后（`tx.AfterCommit` 键 `node:upgrade_dispatch`）经会话排 `Command.upgrade`，排上才写 `sent_at`，没排上当场 failed + `not_connected`。
+- 状态只在带旧状态条件的 UPDATE 里改，影响 0 行当作别处已处理：staged 只从 sent；failed 与 rolled_back 都从 sent / staged / succeeded / timed_out（新进程连上判 succeeded 后助手仍可能确认超时去回退，回退失败报 FAILED rollback_failed；超时只是面板猜测；都以节点回报为准）；Hello 自报摘要等于目标 → succeeded（未结束的，或这台最近一次已超时的；更早的超时不翻）；Hello 带的 `last_upgrade` 与 `UpgradeReport` 走同一个 `RecordUpgradeReport`。`RecordHello` 先记 `last_upgrade`，记不上返回 `ErrUpgradeOutcomeUnrecorded`、建流失败不发 Welcome（节点拿到 Welcome 就删本机结局文件，这样它留着文件重连再报）；流上的 `UpgradeReport` 记不上只能记日志（节点发出即删，没有回执），是已知限制。下发后流在送达前断了的任务停在 sent，要等 deadline（约 13 分钟）超时才能重发。签名文件面板只看结构（key_id 16 位小写 hex、sig 解码 64 字节），不验签。前端一次最多勾 50 台（`UPGRADE_BATCH_MAX`，与 Go `UpgradeBatchMax` 同值）。节点没给原因记 `unknown`，detail 截到 1024 字节。
+- 期限 = 建任务时刻 + 180 秒确认窗 + 10 分钟；任务 `node:upgrade_watch`（每分钟，`task/task.go`）把过期未结束的标为 timed_out（每轮 500 条，SKIP LOCKED）。每次状态变化推 `nodes.changed`。
+- 后台服务器 DTO 带 `binary_sha256`、`upgrade{available,target_version,reason}`、`last_upgrade`；目标版本不另开接口（同一份发布包，每台的 `upgrade.target_version` 即目标）。`server_upgrades` 暂无保留期清理。
 
 ## 保留期
 - 任务 `retention:node`（`task/task.go`）按 `service/retention.go` 的 `RetentionTables` 逐表分批清：流量上报、指标、在线设备 31 天，小时汇总 400 天，安装令牌 30 天。

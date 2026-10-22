@@ -1,5 +1,5 @@
 import { heartbeatLabel, protocolLabel, type Tone } from './logic'
-import type { NodeRow, Pool, PoolStatus, Server, ServerStatus } from './schemas'
+import type { NodeRow, Pool, PoolStatus, Server, ServerStatus, ServerUpgradeResponse, UpgradeStatus } from './schemas'
 
 // ---------------------------------------------------------------------------
 // 服务器状态
@@ -35,7 +35,7 @@ interface QuickToggle {
   done: string
 }
 
-/** 卡片上的一个快捷按钮：服务中 → 标记维护（draining）；维护中 / 停机维护 → 恢复服务；草稿 → 投入服务；其余走详情里的完整状态 */
+/** 卡片上的一个快捷按钮：服务中 → 标记维护（draining）；维护中 / 停机维护 → 恢复服务；草稿与已退役没有快捷按钮（草稿在节点「上线」时自动投入服务） */
 export function quickToggle(status: ServerStatus): QuickToggle | null {
   switch (status) {
     case 'ready':
@@ -43,8 +43,6 @@ export function quickToggle(status: ServerStatus): QuickToggle | null {
     case 'draining':
     case 'maintenance':
       return { to: 'ready', label: '恢复服务', done: '已恢复服务' }
-    case 'draft':
-      return { to: 'ready', label: '投入服务', done: '服务器已投入服务' }
     default:
       return null
   }
@@ -71,7 +69,7 @@ export function serverSubtitle(s: Pick<Server, 'region' | 'public_ipv4' | 'agent
  * 卡片与详情的提示行（按顺序）：
  * status_reason 非空 → `原因：${status_reason}`；
  * status 为 ready 且 heartbeat_online 为 false → 有 last_heartbeat_at 时 `心跳 ${heartbeatLabel(at, now)}，可能已断开`，没有时「还没有收到心跳」；
- * never_seen_node_count > 0 → `${n} 个在役节点从未心跳（多半没装 agent）`
+ * never_seen_node_count > 0 → 这台服务器从未上报心跳…
  */
 export function serverNotes(
   s: Pick<Server, 'status' | 'status_reason' | 'heartbeat_online' | 'last_heartbeat_at' | 'never_seen_node_count'>,
@@ -82,8 +80,87 @@ export function serverNotes(
   if (s.status === 'ready' && !s.heartbeat_online) {
     out.push(s.last_heartbeat_at ? `心跳 ${heartbeatLabel(s.last_heartbeat_at, now)}，可能已断开` : '还没有收到心跳')
   }
-  if (s.never_seen_node_count > 0) out.push(`${s.never_seen_node_count} 个在役节点从未心跳（多半没装 agent）`)
+  if (s.never_seen_node_count > 0)
+    out.push(`这台服务器从未上报心跳，名下 ${s.never_seen_node_count} 个在役节点不会下发（多半还没装节点端）`)
   return out
+}
+
+/** 心跳新鲜窗口：与后端 NodeStaleAfter（90 秒）一致 */
+const HEARTBEAT_FRESH_MS = 90_000
+
+/**
+ * 草稿服务器的下一步（卡片与详情同一句）；不是草稿回 null。
+ * 后端的 heartbeat_online 只对 ready 为真（servers_validate 的 HeartbeatOnline），草稿要自己按 last_heartbeat_at 判 90 秒：
+ * 没接入 → 「还没接入：签发安装令牌，在机器上用 root 执行」
+ * 已接入且 90 秒内有心跳 → 「已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务」
+ * 已接入但心跳断了 → `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(at, now)}）：先在机器上检查节点端服务，再新建或绑定节点并上线`
+ * 已接入但从没心跳 → 「已接入，但节点端还没连上面板：先在机器上检查节点端服务」
+ */
+export function serverNextStep(s: Pick<Server, 'status' | 'enrolled' | 'last_heartbeat_at'>, now: Date = new Date()): string | null {
+  if (s.status !== 'draft') return null
+  if (!s.enrolled) return '还没接入：签发安装令牌，在机器上用 root 执行'
+  if (!s.last_heartbeat_at) return '已接入，但节点端还没连上面板：先在机器上检查节点端服务'
+  if (now.getTime() - new Date(s.last_heartbeat_at).getTime() < HEARTBEAT_FRESH_MS) return '已接入：新建节点或把节点绑到这台，节点上线时这台自动投入服务'
+  return `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(s.last_heartbeat_at, now)}）：先在机器上检查节点端服务，再新建或绑定节点并上线`
+}
+
+/** 新建节点时所选服务器的接入状态：unknown 列表还没取到；unenrolled 没接入；never 接入了但从没心跳；offline 心跳断了；online 节点端连着面板 */
+export type ServerLink = 'unknown' | 'unenrolled' | 'never' | 'offline' | 'online'
+
+export function serverLink(
+  s: Pick<Server, 'status' | 'enrolled' | 'heartbeat_online' | 'last_heartbeat_at'> | undefined,
+  now: Date = new Date(),
+): ServerLink {
+  if (!s) return 'unknown'
+  if (!s.enrolled) return 'unenrolled'
+  if (!s.last_heartbeat_at) return 'never'
+  if (s.status === 'ready') return s.heartbeat_online ? 'online' : 'offline'
+  return now.getTime() - new Date(s.last_heartbeat_at).getTime() < HEARTBEAT_FRESH_MS ? 'online' : 'offline'
+}
+
+/** 新建节点向导第 2 步「所在服务器」的提示：按 serverLink 分五种，已接入且节点端在线时说可以直接上线 */
+export function wizardServerHint(
+  s: Pick<Server, 'status' | 'enrolled' | 'heartbeat_online' | 'last_heartbeat_at'> | undefined,
+  now: Date = new Date(),
+): string {
+  const link = serverLink(s, now)
+  switch (link) {
+    case 'unknown':
+      return '创建后在节点详情右上角点「上线」'
+    case 'unenrolled':
+      return '还没接入：创建后到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线'
+    case 'never':
+      return '已接入，但节点端还没连上面板：先在机器上检查节点端服务，再上线'
+    case 'offline': {
+      const at = s!.last_heartbeat_at!
+      return `已接入，但节点端没连着面板（心跳 ${heartbeatLabel(at, now)}）：先在机器上检查节点端服务，再上线`
+    }
+    case 'online':
+      return s!.status === 'draft'
+        ? '已接入：创建后可以直接在节点详情右上角点「上线」，这台服务器随之投入服务'
+        : '已接入：创建后可以直接在节点详情右上角点「上线」'
+  }
+}
+
+/** 新建节点成功的提示；bound 为 false 表示没绑服务器（s 忽略） */
+export function nodeCreatedToast(
+  bound: boolean,
+  s: Pick<Server, 'status' | 'enrolled' | 'heartbeat_online' | 'last_heartbeat_at'> | undefined,
+  now: Date = new Date(),
+): string {
+  if (!bound) return '节点已创建为草稿，还没绑服务器：要上线时在详情「身份与操作」里绑定服务器'
+  const link = serverLink(s, now)
+  switch (link) {
+    case 'unknown':
+      return '节点已创建为草稿：在节点详情右上角点「上线」'
+    case 'unenrolled':
+      return '节点已创建为草稿。所在服务器还没接入：到「服务器」页签发安装令牌，在机器上用 root 执行安装命令，再回来上线'
+    case 'never':
+    case 'offline':
+      return '节点已创建为草稿。所在服务器已接入，但节点端没连着面板：先在机器上检查节点端服务，再上线'
+    case 'online':
+      return '节点已创建为草稿，所在服务器已接入：可以直接在节点详情右上角点「上线」'
+  }
 }
 
 /** 服务器详情的节点列表：server_id 等于 serverId 且未退役，保持原顺序 */
@@ -93,7 +170,7 @@ export function serverNodeLines<T extends Pick<NodeRow, 'server_id' | 'serving_s
 
 /** 删除后果：后端不拒绝名下节点，而是级联静默（契约改写了设计的「先迁移或删除」）；资格另见 canDeleteServer */
 export function deleteServerNotice(s: Pick<Server, 'node_count'>): string {
-  return s.node_count > 0 ? `删除后不能恢复。名下 ${s.node_count} 个节点会一起下线，身份立即吊销；同名重新安装可以恢复。` : '删除后不能恢复。名下没有节点。'
+  return s.node_count > 0 ? `删除后不能恢复，服务器身份立即吊销。名下 ${s.node_count} 个节点里，在役的退役；草稿和已停用的解除绑定、留作配置，可以再绑到别的服务器。` : '删除后不能恢复。名下没有节点。'
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +186,11 @@ export interface Meter {
 export const meterLevel = (p: number): MeterLevel => (p > 85 ? 'hot' : p > 65 ? 'warm' : 'normal')
 
 const ratio = (used: number | null, total: number | null) => (used === null || !total ? null : Math.min(100, Math.round((used / total) * 100)))
+
+/** 占用还没有数据时的说明：没接入叫去装 agent；已接入（可能已在服务）说明还没收到上报，不再叫人去装 */
+export function meterEmptyText(s: Pick<Server, 'enrolled'>): string {
+  return s.enrolled ? '还没收到占用数据：agent 每分钟上报一次，稍后再看' : '装好 agent 后这里显示占用'
+}
 
 export function serverMeters(s: Pick<Server, 'cpu_bp' | 'mem_used_mb' | 'mem_total_mb' | 'disk_used_gb' | 'disk_total_gb'>): Meter[] {
   const cpu = s.cpu_bp === null ? null : Math.min(100, Math.round(s.cpu_bp / 100))
@@ -295,4 +377,134 @@ export function patchPoolBody(p: Pool, f: PoolForm): Record<string, unknown> | n
   if (f.region.trim() && f.region.trim() !== p.region) body.region = f.region.trim()
   if (f.status !== p.status) body.status = f.status
   return Object.keys(body).length ? body : null
+}
+
+// ---------------------------------------------------------------------------
+// 在线升级
+// ---------------------------------------------------------------------------
+export const UPGRADE_REASON_TEXT: Readonly<Record<string, string>> = {
+  manifest_missing: '面板上没有节点端发布清单',
+  signature_missing: '面板上没有有效的发布清单签名',
+  manifest_invalid: '发布清单格式不对',
+  binary_mismatch: '面板托管的节点端程序与发布清单不符',
+  in_progress: '正在升级',
+  not_ready: '服务器不在服务中',
+  not_connected: '节点端没有连着面板',
+  no_upgrade_support: '节点端版本太旧或没装升级助手，重装一次后才能在线升级',
+  arch_unsupported: '发布清单里没有这台机器的架构',
+  up_to_date: '已是最新版本',
+  serial_not_newer: '目标版本不比这台上的新',
+  not_found: '服务器不存在或已删除',
+  download_failed: '下载新版本失败',
+  sha256_mismatch: '下载的文件与发布清单的摘要不符',
+  signature_invalid: '发布清单的签名验不过',
+  busy: '这台已有一次升级在进行',
+  apply_failed: '替换程序或重启失败，已保持旧版',
+  confirm_timeout: '新版本没能连上面板，已自动装回旧版',
+  rollback_failed: '装回旧版失败，需要登录服务器处理',
+  unknown: '节点端没有给出原因',
+}
+
+export function upgradeReasonText(code: string | null | undefined): string {
+  if (code === null || code === undefined || code === '') return '节点端没有给出原因'
+  const text = UPGRADE_REASON_TEXT[code]
+  return text ?? `原因码 ${code}`
+}
+
+export const UPGRADE_STATUS: Readonly<Record<UpgradeStatus, { label: string; tone: Tone }>> = {
+  sent: { label: '升级中', tone: 'info' },
+  staged: { label: '升级中', tone: 'info' },
+  succeeded: { label: '已升级', tone: 'ok' },
+  failed: { label: '失败', tone: 'danger' },
+  rolled_back: { label: '已装回旧版', tone: 'warn' },
+  timed_out: { label: '超时', tone: 'warn' },
+}
+
+export function upgradeOffer(s: Pick<Server, 'upgrade'>): string | null {
+  if (s.upgrade.available && s.upgrade.target_version) return `可升级到 ${s.upgrade.target_version}`
+  return null
+}
+
+const UPGRADE_BLOCK_SILENT = new Set(['not_ready', 'not_connected', 'up_to_date', 'in_progress'])
+
+export function upgradeBlockNote(s: Pick<Server, 'upgrade'>): string | null {
+  const { available, reason } = s.upgrade
+  if (available || reason === null || UPGRADE_BLOCK_SILENT.has(reason)) return null
+  return `不能在线升级：${upgradeReasonText(reason)}`
+}
+
+export function upgradeTarget(list: readonly Pick<Server, 'upgrade'>[]): string | null {
+  for (const s of list) {
+    if (s.upgrade.available && s.upgrade.target_version) return s.upgrade.target_version
+  }
+  return null
+}
+
+export function upgradeSelectable(s: Pick<Server, 'upgrade'>): boolean {
+  return s.upgrade.available
+}
+
+/** 一次批量升级最多几台：与 Go 的 UpgradeBatchMax 同值，超过后端整批拒绝 */
+export const UPGRADE_BATCH_MAX = 50
+
+/** 已勾满上限时，没勾的卡片不能再勾 */
+export function upgradePickFull(picked: ReadonlySet<string>, id: string): boolean {
+  return picked.size >= UPGRADE_BATCH_MAX && !picked.has(id)
+}
+
+export function pruneUpgradePicks(picked: ReadonlySet<string>, list: readonly Pick<Server, 'id' | 'upgrade'>[]): Set<string> {
+  const out = new Set<string>()
+  const byId = new Map(list.map((s) => [s.id, s]))
+  for (const id of picked) {
+    const s = byId.get(id)
+    if (s && s.upgrade.available) out.add(id)
+  }
+  return out
+}
+
+const MS_24H = 24 * 60 * 60 * 1000
+
+function lastUpgradePresentation(
+  lu: NonNullable<Server['last_upgrade']>,
+  hideSucceededAfter24h: boolean,
+  now: Date,
+): { label: string; tone: Tone; text: string } | null {
+  const { status, target_version, reason_code, updated_at } = lu
+  if (hideSucceededAfter24h && status === 'succeeded' && now.getTime() - new Date(updated_at).getTime() >= MS_24H) return null
+  const { label, tone } = UPGRADE_STATUS[status]
+  let text: string
+  if (status === 'sent' || status === 'staged') text = `正在升级到 ${target_version}`
+  else if (status === 'succeeded') text = `已升级到 ${target_version}`
+  else if (status === 'rolled_back') text = `升级到 ${target_version}没成功：${upgradeReasonText(reason_code)}`
+  else if (status === 'timed_out' && reason_code === null) text = `升级到 ${target_version}超时：十几分钟内没有结果，请查看节点端日志`
+  else text = `升级到 ${target_version}${UPGRADE_STATUS[status].label}：${upgradeReasonText(reason_code)}`
+  return { label, tone, text }
+}
+
+export function lastUpgradeLine(s: Pick<Server, 'last_upgrade'>, now: Date = new Date()): { label: string; tone: Tone; text: string } | null {
+  if (s.last_upgrade === null) return null
+  return lastUpgradePresentation(s.last_upgrade, true, now)
+}
+
+export function lastUpgradeDetail(s: Pick<Server, 'last_upgrade'>): { label: string; tone: Tone; text: string } | null {
+  if (s.last_upgrade === null) return null
+  return lastUpgradePresentation(s.last_upgrade, false, new Date())
+}
+
+export function upgradeConfirmBody(count: number, version: string): string {
+  return `会重启这 ${count} 台服务器上的全部节点，正在连接的用户会断开后自动重连。新版本 3 分钟内连不上面板时，会自动装回旧版。整个过程约几分钟，结果显示在各台的卡片上。目标版本 ${version}。`
+}
+
+export function upgradeResultToast(r: ServerUpgradeResponse, names: ReadonlyMap<string, string>): { text: string; tone: 'ok' | 'danger' } {
+  const failed = r.results.filter((x) => !x.ok)
+  const n = r.results.length - failed.length
+  const m = failed.length
+  const listPart = (items: typeof failed) => {
+    const shown = items.slice(0, 3).map((x) => `${names.get(x.server_id) ?? x.server_id}（${upgradeReasonText(x.reason)}）`)
+    if (items.length <= 3) return shown.join('、')
+    return `${shown.join('、')}等 ${m} 台`
+  }
+  if (m === 0) return { text: `已向 ${n} 台服务器下发升级到 ${r.target_version}`, tone: 'ok' }
+  if (n === 0) return { text: `没有发起升级：${listPart(failed)}`, tone: 'danger' }
+  return { text: `已向 ${n} 台下发升级，${m} 台没有发起：${listPart(failed)}`, tone: 'ok' }
 }

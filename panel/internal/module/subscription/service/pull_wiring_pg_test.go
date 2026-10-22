@@ -7,10 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	settingssvc "github.com/aegispanel/aegis/internal/module/settings/service"
 	"github.com/aegispanel/aegis/internal/module/subscription/render"
+	"github.com/aegispanel/aegis/internal/pkg/geoip"
 	"github.com/aegispanel/aegis/internal/pkg/testkit"
 )
 
@@ -77,22 +80,6 @@ func TestPullInfoNodesAndPrefix(t *testing.T) {
 	// 前缀与名字之间不加空格，照 Xboard 的 getPrefixedServerName（$prefix . $name）
 	if !strings.Contains(body, `"[vless]香港 01"`) {
 		t.Fatalf("开了协议前缀却没有：%s", body)
-	}
-}
-
-func TestPullUsesCustomTemplate(t *testing.T) {
-	de, ctx, _, _, token := setupPull(t)
-	custom := strings.Replace(render.DefaultTemplate(render.FormatClash, render.Options{}), "mixed-port: 7890", "mixed-port: 7891", 1)
-	if err := de.svc.repo.UpsertTemplate(ctx, string(render.FormatClash), custom, de.svc.clock()); err != nil {
-		t.Fatal(err)
-	}
-	de.svc.extras.snap.Store(nil)
-	res, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(res.Body), "mixed-port: 7891") {
-		t.Fatalf("没用上自定义模板：%s", res.Body)
 	}
 }
 
@@ -222,7 +209,7 @@ func TestPullViaSubDomainNotesSuccess(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var score float64
 	for time.Now().Before(deadline) {
-		m, ok := de.svc.scores.Read(ctx, []string{"https://sub-a.example.test"}, cur)
+		m, ok := de.svc.scores.Read(ctx, []string{"https://sub-a.example.test"}, domainRegion{}, cur)
 		if ok && almost(m["https://sub-a.example.test"], 1.05, 0.01) {
 			score = m["https://sub-a.example.test"]
 			break
@@ -248,17 +235,166 @@ func TestPullViaSubDomainNotesSuccess(t *testing.T) {
 	}
 	// 加分在拉取里同步攒进 pending，没攒进去就不会有后台写：直接看 pending 与 Redis 即可，不用等
 	de.svc.scores.mu.Lock()
-	_, queued := de.svc.scores.pending["https://vip.example.test"]
+	queued := false
+	for b := range de.svc.scores.pending {
+		if b.BaseURL == "https://vip.example.test" {
+			queued = true
+		}
+	}
 	de.svc.scores.mu.Unlock()
-	if queued || rdb.HExists(ctx, domainScoreKey, "https://vip.example.test").Val() {
+	if queued || rdb.Exists(ctx, domainScoreKeyFor("https://vip.example.test")).Val() != 0 {
 		t.Fatal("令牌主人不在专线组，vip 域名不应加分")
 	}
 
 	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "other.example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if rdb.HExists(ctx, domainScoreKey, "https://other.example.test").Val() {
+	if rdb.Exists(ctx, domainScoreKeyFor("https://other.example.test")).Val() != 0 {
 		t.Fatal("未登记域名不应写分数")
+	}
+}
+
+func TestPullNotesSuccessByRegion(t *testing.T) {
+	de, ctx, _, _, token := setupPull(t)
+	admin := adminCtx(ctx, uuid.New())
+	_, err := de.svc.AdminSaveDomainConfig(admin, []DomainGroupInput{{
+		Name: "缺省", IsDefault: true,
+		Domains: []Domain{{BaseURL: "https://sub-a.example.test", Weight: 1}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	_, rdb := testkit.Redis(t)
+	de.svc.UseDomainScores(rdb)
+
+	geo := &fakeGeo{locs: map[string]geoip.Location{
+		"198.51.100.7": {Country: "中国", Region: "福建", ISP: "电信", Kind: geoip.KindResidential},
+	}}
+	de.svc.geo = geo
+
+	origNow := de.svc.now
+	base := time.Now().UTC()
+	var cur time.Time
+	cur = base
+	de.svc.now = func() time.Time { return cur }
+	t.Cleanup(func() { de.svc.now = origNow })
+
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "sub-a.example.test"}); err != nil {
+		t.Fatalf("第一次拉取: %v", err)
+	}
+	cur = base.Add(11 * time.Second)
+	if _, err := de.svc.Pull(ctx, PullRequest{Prefix: testPrefix, Token: token, Host: "sub-a.example.test"}); err != nil {
+		t.Fatalf("第二次拉取: %v", err)
+	}
+
+	// 同一凭据去重只记一次：全国 1.05，福建电信再加省、省|运营商两级偏移各 0.05
+	fj := domainRegion{Province: "福建", ISP: ispTelecom}
+	waitScore(t, de.svc.scores, "https://sub-a.example.test", cur, 1.05)
+	waitScoreIn(t, de.svc.scores, "https://sub-a.example.test", fj, cur, 1.15)
+
+	key := domainScoreKeyFor("https://sub-a.example.test")
+	if !rdb.HExists(ctx, key, "福建|电信").Val() {
+		t.Fatal("应有省|运营商 field")
+	}
+	if !rdb.HExists(ctx, key, "福建").Val() {
+		t.Fatal("应有省 field")
+	}
+	if !rdb.HExists(ctx, key, domainScoreFieldAll).Val() {
+		t.Fatal("应有全国 field")
+	}
+	if geo.calls.Load() != 1 {
+		t.Fatalf("同一凭据×域名每小时只查一次归属地，calls=%d", geo.calls.Load())
+	}
+}
+
+// linkScoresSetup 准备一份订阅、缺省组里两个域名（基础权重 wa、wb）与已注入的域名分数 Redis。
+func linkScoresSetup(t *testing.T, wa, wb int) (*deliveryEnv, context.Context, uuid.UUID, *miniredis.Miniredis, *redis.Client) {
+	t.Helper()
+	de, ctx, user, _ := rotateSetup(t)
+	_, err := de.svc.AdminSaveDomainConfig(adminCtx(ctx, uuid.New()), []DomainGroupInput{{
+		Name: "缺省-" + uuid.NewString()[:8], IsDefault: true,
+		Domains: []Domain{
+			{BaseURL: "https://sub-a.example.test", Weight: wa},
+			{BaseURL: "https://sub-b.example.test", Weight: wb},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	de.svc.extras.snap.Store(nil)
+	mr, rdb := testkit.Redis(t)
+	de.svc.UseDomainScores(rdb)
+	return de, ctx, user, mr, rdb
+}
+
+// countLinkHosts 调 n 次 MyLinks，数链接落在 sub-a、sub-b 的次数。
+func countLinkHosts(t *testing.T, de *deliveryEnv, ctx context.Context, n int) (a, b int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		links, err := de.svc.MyLinks(ctx)
+		if err != nil || len(links) != 1 {
+			t.Fatalf("链接列表: %v %d", err, len(links))
+		}
+		switch u := links[0].URL; {
+		case strings.HasPrefix(u, "https://sub-a.example.test/"):
+			a++
+		case strings.HasPrefix(u, "https://sub-b.example.test/"):
+			b++
+		default:
+			t.Fatalf("链接不在组里: %s", u)
+		}
+	}
+	return a, b
+}
+
+// MyLinks（linkBase）按请求 IP 的地区读细分级：全国分 A 0.1、B 3；福建电信的偏移把 A 顶到 3、把 B 压到 0.1。
+// 同一用户从福建电信 IP 来时多半拿到 A，从判不出地区的 IP 来时多半拿到 B（各 20 次，单次约 97%，阈值 14 次，误报概率可忽略）。
+func TestLinkBaseReadsVisitorRegionPG(t *testing.T) {
+	de, ctx, user, _, rdb := linkScoresSetup(t, 1, 1)
+	fjIP, otherIP := "198.51.100.7", "203.0.113.9"
+	geo := &fakeGeo{locs: map[string]geoip.Location{
+		fjIP: {Country: "中国", Region: "福建", ISP: "电信", Kind: geoip.KindResidential},
+	}}
+	de.svc.geo = geo
+	now := de.svc.clock()
+	if err := de.svc.scores.Apply(ctx, map[string]map[string]float64{
+		"https://sub-a.example.test": {domainScoreFieldAll: -5, "福建": 2.9, "福建|电信": 2.9},
+		"https://sub-b.example.test": {domainScoreFieldAll: 5, "福建": -2.9, "福建|电信": -2.9},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if rdb.Exists(ctx, domainScoreKeyFor("https://sub-a.example.test")).Val() != 1 {
+		t.Fatal("分数应已写入")
+	}
+
+	a, _ := countLinkHosts(t, de, userCtx(pullCtx(ctx, fjIP, "Mozilla/5.0"), user), 20)
+	if a < 14 {
+		t.Fatalf("福建电信访客 20 次里只有 %d 次拿到 A，应按细分级读分", a)
+	}
+	if geo.calls.Load() == 0 {
+		t.Fatal("生成链接应按请求 IP 查归属地")
+	}
+	_, b := countLinkHosts(t, de, userCtx(pullCtx(ctx, otherIP, "Mozilla/5.0"), user), 20)
+	if b < 14 {
+		t.Fatalf("判不出地区的访客 20 次里只有 %d 次拿到 B，应只读全国分", b)
+	}
+}
+
+// 分数 Redis 读失败时 linkBase 按基础权重选、不报错：A 权重 1 分数 3，B 权重 30 分数 0.1，有分数时两边约各半；
+// 读失败后按基础权重 B 约 97%（20 次，阈值 14 次）。
+func TestLinkBaseRedisDownUsesBaseWeightsPG(t *testing.T) {
+	de, ctx, user, mr, _ := linkScoresSetup(t, 1, 30)
+	if err := de.svc.scores.Apply(ctx, map[string]map[string]float64{
+		"https://sub-a.example.test": {domainScoreFieldAll: 5},
+		"https://sub-b.example.test": {domainScoreFieldAll: -5},
+	}, de.svc.clock()); err != nil {
+		t.Fatal(err)
+	}
+	mr.SetError("ERR 测试注入的故障")
+	_, b := countLinkHosts(t, de, userCtx(pullCtx(ctx, "198.51.100.7", "Mozilla/5.0"), user), 20)
+	if b < 14 {
+		t.Fatalf("Redis 读失败时 20 次里只有 %d 次拿到 B，应按基础权重", b)
 	}
 }
 

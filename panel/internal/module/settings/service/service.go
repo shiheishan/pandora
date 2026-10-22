@@ -43,7 +43,7 @@ type store interface {
 	// Delete 删除给定键；不存在不算错。
 	Delete(ctx context.Context, keys ...string) error
 
-	// ListSwitches 按 essential 降序、code 升序返回全部开关。
+	// ListSwitches 按 code 升序返回全部开关。
 	ListSwitches(ctx context.Context) ([]model.FeatureSwitch, error)
 	// GetSwitch 读一个开关；缺行 ok 为 false。
 	GetSwitch(ctx context.Context, code string) (sw model.FeatureSwitch, ok bool, err error)
@@ -76,8 +76,17 @@ type Service struct {
 	// rt 实时推送（realtime.go 的 UseRealtime）；nil 时不推
 	rt *realtime.Publisher
 
+	// siteListener 站点设置提交后清 appearance 的 PageMeta 快照；extrasListener 订阅附加设置提交后清 subscription 拉取快照；
+	// homeListener 首页设置提交后清 app 层门户首页快照。
+	siteListener   SiteChangeListener
+	extrasListener SubscriptionExtrasListener
+	homeListener   HomeChangeListener
+
 	// signupGen 是本进程保存注册设置的次数（提交后加一），门户入口页 CSP 的缓存按它失效，见 signup_provider.go。
 	signupGen atomic.Uint64
+
+	// su 是主域名的配置值、变更监听与进程内快照，见 site_url.go。
+	su siteURLState
 }
 
 // New 构造 settings service。sealer 用于封存 SMTP 口令；rdb 用于开关缓存失效的 pub/sub；
@@ -149,10 +158,23 @@ func (s *Service) writeAudit(ctx context.Context, action, resourceType string, d
 }
 
 // MissingPorts 返回还没注入的必需端口名（装配完成后由 internal/app 统一检查）。
+// 主域名的配置值（UseSiteURLConfig）不算端口。
 func (s *Service) MissingPorts() []string {
 	var out []string
 	if s.rt == nil {
 		out = append(out, "Realtime")
+	}
+	if s.siteListener == nil {
+		out = append(out, "SiteChangeListener")
+	}
+	if s.extrasListener == nil {
+		out = append(out, "SubscriptionExtrasListener")
+	}
+	if s.homeListener == nil {
+		out = append(out, "HomeChangeListener")
+	}
+	if s.su.listener == nil {
+		out = append(out, "SiteURLChangeListener")
 	}
 	return out
 }

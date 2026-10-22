@@ -29,8 +29,10 @@ type paymentMethodResponse struct {
 	Label      string `json:"label"`
 	FeeFixed   int64  `json:"fee_fixed"`
 	FeePercent string `json:"fee_percent"`
-	Fee        *int64 `json:"fee,omitempty"`
-	Total      *int64 `json:"total,omitempty"`
+	// MinAmount 渠道最低付款额（分）：订单应付低于它时这个方式付不了。
+	MinAmount int64  `json:"min_amount"`
+	Fee       *int64 `json:"fee,omitempty"`
+	Total     *int64 `json:"total,omitempty"`
 }
 
 func paymentMethodFrom(m service.PaymentMethod) (paymentMethodResponse, error) {
@@ -42,9 +44,14 @@ func paymentMethodFrom(m service.PaymentMethod) (paymentMethodResponse, error) {
 	if err != nil {
 		return paymentMethodResponse{}, err
 	}
+	minAmount, err := money.ToCents(m.MinAmount)
+	if err != nil {
+		return paymentMethodResponse{}, err
+	}
 	out := paymentMethodResponse{
 		Provider: m.Provider, Method: m.Method, Label: label,
 		FeeFixed: feeFixed, FeePercent: m.FeePercent.StringFixed(2),
+		MinAmount: minAmount,
 	}
 	if m.Fee != nil {
 		c, err := money.ToCents(*m.Fee)
@@ -259,7 +266,7 @@ type applyLatePaymentResponse struct {
 type paymentSettingsResponse struct {
 	NotifyBaseURL string `json:"notify_base_url"` // 存下的回调地址前缀；空 = 用站点地址
 	EffectiveBase string `json:"effective_base"`  // 实际生效的前缀
-	PublicBaseURL string `json:"public_base_url"` // 站点地址
+	SiteURL       string `json:"public_base_url"` // 当前生效的站点地址（后台主域名，留空时是安装时的地址）；字段名沿用，前端不改
 }
 
 // paymentSettingsRequest 是 PUT /v1/payment-settings 请求体。

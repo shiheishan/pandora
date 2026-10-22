@@ -10,8 +10,31 @@ import (
 
 func nodeAllDeliveryFacts() nodeDeliveryFacts {
 	return nodeDeliveryFacts{
-		Serving: "active", Pooled: true, PoolActive: true, PoolBound: true, EverSeen: true,
+		Bound: true, Serving: "active", Pooled: true, PoolActive: true, PoolBound: true, EverSeen: true,
 		BeatFresh: true, Deliverable: true, ServerReady: true, Degraded: false,
+	}
+}
+
+// 没绑服务器排在最前：即便状态、池这些也都不满足，也先给「未绑定服务器」。
+func TestNodeDeliveryVerdict_unboundFirst(t *testing.T) {
+	f := nodeAllDeliveryFacts()
+	f.Bound = false
+	f.Serving = "draft"
+	f.Pooled = false
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNoteUnbound {
+		t.Fatalf("未绑服务器应最先判为 (false, unbound)，got (%v, %q)", ok, note)
+	}
+}
+
+// 删服务器时节点先退役再清 server_id：这类节点不能再绑，说明照「未在役」给，不引导去绑定。
+func TestNodeDeliveryVerdict_retiredUnboundIsNotActive(t *testing.T) {
+	f := nodeAllDeliveryFacts()
+	f.Bound = false
+	f.Serving = NodeRetired
+	ok, note := nodeDeliveryVerdict(f)
+	if ok || note != nodeNoteNotActive {
+		t.Fatalf("退役且未绑应判为 (false, notActive)，got (%v, %q)", ok, note)
 	}
 }
 

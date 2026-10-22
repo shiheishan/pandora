@@ -1,6 +1,6 @@
 ---
 name: flow-walk
-description: pandora 的产品验证：像用户一样用内置浏览器把门户和后台的业务流程真点一遍（注册登录、买套餐、续费、换套餐看报价、加流量包、添加到 App、兑换卡、换新链接、钱包；后台开单、换发链接、加时长、重置流量、加服务器拿接入命令、建节点），每步读页面文字或截图核对，出一张记录表证明功能真能用。改了门户或后台的页面和流程后、验收前端分支、用户说「点一遍」「走一遍流程」「像用户一样验证」「功能真能用吗」时使用；新手看不看得懂、符合不符合直觉用 ux-review。不覆盖单元测试与 CI（见 verify）、接口级 e2e（panel/tests/*.sh）、订阅渲染（subscription-e2e）。
+description: pandora 的产品验证：像用户一样用浏览器（一律 ego-browser，`ego-browser nodejs` 跑脚本；不用内置浏览器）把门户和后台的业务流程真点一遍（注册登录、买套餐、续费、换套餐看报价、加流量包、添加到 App、兑换卡、换新链接、钱包；后台开单、换发链接、加时长、重置流量、加服务器拿接入命令、建节点），每步读页面文字或截图核对，出一张记录表证明功能真能用。改了门户或后台的页面和流程后、验收前端分支、用户说「点一遍」「走一遍流程」「像用户一样验证」「功能真能用吗」时使用；新手看不看得懂、符合不符合直觉用 ux-review。不覆盖单元测试与 CI（见 verify）、接口级 e2e（panel/tests/*.sh）、订阅渲染（subscription-e2e）。
 ---
 
 # 像用户一样走一遍流程
@@ -18,6 +18,8 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 购买路径（新购、续费、换套餐、流量包、礼品卡、换链接、后台开单）每次改动后自动在页面上点一遍 | `panel/frontend/tests/browser/paths.ts`（Playwright，CI 冒烟栈上跑，见 `.claude/rules/frontend-browser-e2e.md`） |
 | 新手看不看得懂、好不好用 | ux-review |
 | **CI 测不到的「点得通」**：测试机真后端、手机宽度、视觉、注册登录、添加到 App、后台加时长与重置流量等 | **本 skill** |
+
+用哪个浏览器：**一律 ego-browser**（用户 10-20 定默认，10-21 定不再用内置浏览器 `mcp__Claude_Browser__*`）。`ego-browser` 报连接错误时按它的 `references/install.md` 排查，仍不行就停下告诉用户，不换别的浏览器。
 
 ## 先选环境
 
@@ -37,23 +39,24 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 ### 假后端
 
-- 命令（从仓库根执行）：`mock-up.sh up [前端目录]`、`down`、`status`。
-  - 起 `npm run dev:portal`（127.0.0.1:5181）和 `npm run dev:admin`（127.0.0.1:5182），端口写死并加 `--strictPort`，被占就报错，不换端口、不抢。
-  - 避开 8766（别的任务的原型服务器）。
+- 起停（从仓库根执行）：`mock-up.sh up [前端目录]`、`down`、`status`。
+  - 起 `npm run dev:portal`（`http://127.0.0.1:5181`）和 `npm run dev:admin`（`http://127.0.0.1:5182`），绑 127.0.0.1，端口写死并加 `--strictPort`，被占就报错，不换端口、不抢。
+  - 避开 8766（别的任务的原型服务器）和 5191 起的端口（ux-review 的 `mock-multi.sh`）。
   - 要测 worktree 就传它的 `panel/frontend`；没有 `node_modules` 先在那里 `npm ci`（期间别跑 go 命令，见根 CLAUDE.md）。
   - 用完 `mock-up.sh down`。
-- 内置浏览器优先用 `preview_start`：`.claude/launch.json` 里已有 `portal-mock`（5181）和 `admin-mock`（5182）两条配置。每次 `preview_start` 会自动开一个标签并返回 `tabId`，那个标签就是自己的，用完 `tabs_close`，再 `preview_stop`。`launch.json` 别的任务在用，**不要自己改**。用 `preview_start` 就不要再跑 `mock-up.sh`（端口会冲突）；没有 `preview_start` 的环境才用 `mock-up.sh` 加 `navigate`。
+  - 只想截几张图、读几页文字，不必点流程：用 run-pandora 的 `driver.mjs`（Playwright，自带起停）。
+- 登录：假账号是项目夹具里的测试值，agent 可以自己在登录页填（只限本机假后端）。
 - 门户场景：`POST /v1/__mock/portal-scenario {"name": "..."}`，不需要令牌，切换即重建全部状态；场景名与含义见 `panel/frontend/dev/mock/portal/scenario.ts` 与 `.claude/rules/frontend-mock.md`。
-  - 在页面里切：`javascript_tool` 执行 `await fetch('/v1/__mock/portal-scenario',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'empty'})})`，然后刷新。
+  - 在页面里切：`await page.fetch('/v1/__mock/portal-scenario', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'empty' }) })`，然后 `page.reload()`。
   - 流程默认在 `default` 场景走，空态与错误态各挑一个场景补一遍。
-- 走「验证身份后继续」流程：先 `POST /__mock/expire-reauth`（路径没有 `/v1`），再做写操作。
+- 走「验证身份后继续」流程：先 `page.fetch('/__mock/expire-reauth', { method: 'POST' })`（路径没有 `/v1`），再做写操作。
 - 假收银台：门户下单选支付方式后，页面跳 `/v1/__mock/cashier?...`，点「模拟支付成功」回到门户；「模拟支付成功但回调丢失」用来看确认中状态。
 - 注册：验证码固定 `123456`，也会显示在表单提示里。
 
 ### 测试机
 
 - 面板怎么装、后台前缀、管理员账号：先读 `~/ai/servers/README.md` 找到那台，再读它目录下的 `AGENTS.md`，装机用 `panel/deploy/install.sh`。仓库里不写任何 IP、域名、前缀。
-- **登录由用户本人在浏览器里完成**（门户口令、后台口令、后台写操作弹出的重新认证口令都一样）。agent 不输入口令和令牌；用户说「已登录」后，在那个标签页上接着点。
+- **登录由用户本人在浏览器里完成**（门户口令、后台口令、后台写操作弹出的重新认证口令都一样）。agent 不输入口令和令牌：打开登录页后 `await task.handOff()` 结束本轮，告诉用户在哪个标签登录；用户说「已登录」后 `takeOverTaskSpace(<spaceId>)` 接回同一个 TaskSpace 接着点（见下「操作方法」）。
 - 支付：真支付渠道在测试机上通常没配。买套餐有三条路，走哪条由当次任务定：
   - 先在后台给用户调余额，结账页的「用余额」开关（默认打开）全额抵扣；
   - 后台人工开单选「赠送」或「线下已收款」；
@@ -61,18 +64,57 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 - 注册要邮件验证码：测试机没配邮件渠道就不测注册，用管理员建好的账号走登录，在记录里写明原因。
 - 登录、注册等认证入口按来源每分钟限 `ratelimit.auth_per_min` 次（缺省 10），同一账号连续输错 10 次停 15 分钟；反复登录会撞上，别循环刷新、别反复重登。
 
-## 操作方法
+## 操作方法（ego-browser）
 
-1. **自己开标签页，记下 tabId。** `tabs_create` 开一个，之后每个调用都显式带 `tabId`（窗格是共用的，同时开着两个标签时「当前标签」会在调用之间跳）；不碰别的任务开的标签。标签数到上限（`tabs_create` 报「Could not open a new tab」）时只关自己开过的（`preview_start` 自动开的也算），向主 Agent 说明。用完 `tabs_close`，`mock-up.sh down` 停服务。
-2. **两种尺寸都走。** 桌面用 `resize_window` `preset: "desktop"`，手机用 `preset: "mobile"`（375x812）。每条流程至少在桌面完整走一遍，手机上走关键几步（导航、表单、弹窗是否可点、有没有横向滚动）。测完把尺寸恢复成 `desktop`。切尺寸后刷新页面。
-3. **截图只用来核对视觉**（布局错位、遮挡、截断、颜色与状态标签、深浅色主题、手机宽度），文字核对读页面文字。
-   - 窗格没显示时（用户没打开 Browser 面板），新标签的视口是 0x0，`read_page` 返回空，截图超时。先对该标签 `resize_window`（例如 1280x900）再读；要截图就得请用户把窗格打开，否则这一项记「未测」。
-4. **写操作要核对两层。**
+动手前先跑一次 `ego-browser skill` 读当期用法（输出长就重定向到 scratchpad 分段读，见 ego-browser skill）。下面只写本项目要注意的。
+
+1. **一个目标一个 TaskSpace。** 一次 flow-walk（例如「门户买套餐 + 后台开单，提交 abc123」）只开一个 TaskSpace，第一轮打印 `spaceId`，之后每轮 `taskSpace(<spaceId>)` 续上；页面用 `p1`，要同时开门户和后台再 `task.newPage()` 得 `p2`。卡住、超时也在同一个 space 里恢复，不新开 space。全部走完最后一轮 `await task.finish({ keep: [] })`；停下等用户（handOff）或出错中止时不调 `finish`。
+2. **它跑在用户真实的浏览器资料里。** 带着用户自己的登录态与 cookie：只开任务要的地址，不碰无关站点和账号，不读别的站点的 cookie。要清登录态先读 ego-browser 的 `references/clearing-state.md`：只用 `Storage.clearDataForOrigin`（本源）或 `Network.deleteCookies`（单个 cookie），**不用** `Network.clearBrowserCookies`、`Network.clearBrowserCache`，那会清掉用户整个资料、无法恢复。
+3. **每轮一个完整脚本**（heredoc 喂给 `ego-browser nodejs`）。脚本跑在 Node 里，页面里的代码放进 `page.evaluate()`；文件路径一律绝对路径，截图写会话 scratchpad。一轮里把能预见的几步连着做完，最后打印 `page.snapshot()` 给下一轮用。样板：
+
+   ```bash
+   ego-browser nodejs <<'EOF'
+   const task = await taskSpace("flow-walk 门户买套餐 abc123");   // 之后各轮：await taskSpace(<spaceId>)
+   const page = task.page("p1");
+   // 视口每轮都要重设：仿真只在本轮生效，脚本一结束就复原（10-20 实测）
+   await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+   await page.goto("http://127.0.0.1:5181/#/plans");
+   await page.waitForSelector("text=选购", { timeout: 10_000 });
+   console.log({ spaceId: task.spaceId });
+   console.log(await page.snapshot());
+   EOF
+   ```
+
+4. **两种尺寸都走。** 桌面 `{ width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }`，手机 `{ width: 375, height: 812, deviceScaleFactor: 3, mobile: true }`，都用 `Emulation.setDeviceMetricsOverride`，**放在每轮脚本开头**（上一轮设的不会留下来）。每条流程至少在桌面完整走一遍，手机上走关键几步（导航、表单、弹窗是否可点、有没有横向滚动：`document.documentElement.scrollWidth > clientWidth`）。
+5. **深色**：面板只认 `<html data-theme>`，来源是 `localStorage['pandora-theme']`，不跟随系统，所以 `Emulation.setEmulatedMedia` 的 `prefers-color-scheme` 没用。切深色 `page.evaluate(() => localStorage.setItem('pandora-theme', 'dark'))` 后 `page.reload()`，切回 `removeItem`。
+6. **文字用 snapshot，截图只核视觉**（布局错位、遮挡、截断、颜色与状态标签、深浅色、手机宽度）。`page.snapshot()` 只拍当前视口，长页面用 `{ scope: "full_page" }`；截图 `page.screenshot({ path: "<scratchpad 绝对路径>/x.png" })` 后用 Read 看。
+7. **`page.evaluate` 有约 15 秒的安全上限**：轮询、批量读取都要在 15 秒内结束，长循环按页面或模块拆成几次调用。超时报错里看 `mayHaveLateEffects`，为真就先 `reload` 再继续，免得重复点。
+8. **写操作要核对两层。**
    - 页面层：toast 文字、列表里的新行、状态标签。
-   - 接口层（需要时）：`read_network_requests` 找对应请求，看状态码和响应体；`read_console_messages` 看有没有报错。
+   - 接口层（需要时）：ego 没有网络面板，在动手前装一个只记录不改动的 fetch 记录器（前端经全局 `fetch` 发请求，`src/core/api.ts`），操作后取出来看状态码和响应体：
+
+     ```js
+     await page.evaluate(() => {
+       if (window.__pdLog) return
+       window.__pdLog = []
+       const orig = window.fetch
+       window.fetch = async (...args) => {
+         const res = await orig(...args)
+         const url = String(args[0] instanceof Request ? args[0].url : args[0])
+         if (url.includes('/v1/')) res.clone().text().then((body) => window.__pdLog.push({ url, status: res.status, body: body.slice(0, 2000) }))
+         return res
+       }
+     })
+     // ……点按钮……
+     console.log(await page.evaluate(() => window.__pdLog.splice(0)))
+     ```
+
+     记录器在 `reload`、整页跳转（假收银台）后就没了，要重装。响应里的令牌、链接尾号以外的密钥不抄进记录。
+   - JS 报错：本轮开头 `page.cdp("Page.addScriptToEvaluateOnNewDocument", { source: "window.__pdErr=[];addEventListener('error',e=>__pdErr.push(String(e.message)));addEventListener('unhandledrejection',e=>__pdErr.push(String(e.reason)));const ce=console.error;console.error=(...a)=>{__pdErr.push(a.map(String).join(' '));ce(...a)}" })`，再 `reload`，最后读 `window.__pdErr`（只在本轮有效，加载期的报错也收得到）。
    - 本表「要核对的结果」一列写的是页面文字，接口层只在标了「接口」的步骤看。
-5. **每步记一行**，不攒到最后补（格式见下）。失败不重试到绿：记下实际表现，截图，停下报告。
-6. **别在已有数据上做不可逆的事。** 测试机上只动自己建的测试用户和订单；删除、取消订单类操作只对自己下的单做。
+9. **每步记一行**，不攒到最后补（格式见下）。失败不重试到绿：记下实际表现，截图，停下报告。
+10. **别在已有数据上做不可逆的事。** 测试机上只动自己建的测试用户和订单；删除、取消订单类操作只对自己下的单做。
+11. 收尾：`task.finish({ keep: [] })`，`mock-up.sh down`。
 
 ### 记录格式
 
@@ -95,24 +137,24 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 
 | 流程 | 起点 | 步骤 | 要核对的结果 |
 |---|---|---|---|
-| 登录 | `/#/`（未登录） | 填账号登录 | 落到「我的套餐」（`/#/subs`），顶部导航（我的套餐、选购、钱包）出现；错口令有错误提示且不跳转 |
+| 登录 | `/#/`（未登录） | 填账号登录 | 落到「我的套餐」（`/#/subs`），顶部导航（我的套餐、选购、钱包）出现；错口令有错误提示且不跳转；`reload` 后仍是登录态（靠刷新 cookie 恢复，见「坑·登录态」） |
 | 注册 | 同上，切注册 | 填邮箱（需邀请码时填邀请码）取验证码；填验证码和密码（至少 8 位含字母和数字）提交 | 步骤条从第 1 步走到第 2 步；成功有提示并进入已登录状态。假后端验证码 `123456`；测试机无邮件渠道则标未测 |
 | 买套餐（新购） | `/#/plans` | 见 `paths.ts` 的 A0、A1 | CI 已覆盖；本 skill 只在测试机真后端上走一次并核对手机宽度 |
 | 续费 | `/#/subs` | 见 `paths.ts` 的 A4、B1、B2 | 同上 |
 | 换套餐看报价 | `/#/plans` | 见 `paths.ts` 的 B3、B4、B5 | 同上；另核**接口**：`POST …/change-plan/preview` 返回 `direction`、`proration_credit`、`total`，与页面数字一致 |
 | 加流量包 | `/#/plans?tab=packs` | 见 `paths.ts` 的 A5 | 同上；没有生效订阅时的提示记原文 |
-| 添加到 App | `/#/subs` | 点某份卡片上的「添加到 App」（弹层「把这份添加到 App」）；选「就是现在这台」，看各 App 一行的「添加」，试一行「复制链接」；再回头选「别的设备」 | 「添加」是深链（`clash://…`，用 `read_page` 看 href，不用真唤起），点后 toast「正在打开 …」且弹层关闭；复制行 toast「已复制链接，打开 …」；「别的设备」给出「复制链接和说明，发给对方」。节点列表在 `/#/subs/<id>/detail` 的「可用节点」卡 |
+| 添加到 App | `/#/subs` | 点某份卡片上的「添加到 App」（弹层「把这份添加到 App」）；选「就是现在这台」，看各 App 一行的「添加」，试一行「复制链接」；再回头选「别的设备」 | 「添加」是深链（`clash://…`，用 snapshot 或 `page.evaluate` 读 href，不用真唤起），点后 toast「正在打开 …」且弹层关闭；复制行 toast「已复制链接，打开 …」；「别的设备」给出「复制链接和说明，发给对方」。节点列表在 `/#/subs/<id>/detail` 的「可用节点」卡 |
 | 兑换卡 | `/#/wallet` | 见 `paths.ts` 的 C6a–C6g | 假后端卡密：`GC-0923-H2K9-7QPA`（余额 ¥100）、`GC-1001-TRAF-0200`（200 GB 流量）、`GC-EXTD-0007-DAYS`（顺延 7 天）、`GC-0000-NEWU-0001`（报仅限新用户）；点完等约 1 秒再读。测试机的卡密由后台「营销 → 礼品卡」现发 |
 | 换新链接 | `/#/subs` | 卡片底部「换新链接」，弹层「换一个新链接？」确认；见 `paths.ts` 的 C8b | 进完成页「已换新链接」，新链接与「添加到 App」在最上面，尾号变了；每份 10 分钟内只能换一次，再换时按钮置灰写剩余冷却（限频是后端 429，只在测试机上核对，假后端不模拟） |
 | 钱包余额 | `/#/wallet` | 看账户余额；选充值金额，走支付；回来看余额明细 | 金额与概览、结账页的可用余额一致；充值成功后余额增加，明细多一行 |
 | 订单 | `/#/orders` | 看待支付单；取消订单并确认 | 取消见 `paths.ts` 的 A0、C5b；已取消的单不能再支付 |
-| 退出 | `/#/account` | 点退出登录 | 回登录页；`localStorage` 里门户令牌被清掉 |
+| 退出 | `/#/account` | 点退出登录 | 回登录页；`localStorage` 里门户登录标志 `pandora-portal-session` 被删掉；刷新 cookie `pandora_rt` 被清（`page.cdp("Network.getCookies", { urls: [origin + "/v1/auth/refresh"] })` 里没有它，只看名字不抄值）；`reload` 后仍是未登录 |
 
 上表没有逐行对照当前页面复核过；对不上的先改上表，再走流程。叫法以 `tests/mock-portal-wording.test.ts` 的禁用词为准。还没有现成页面的流程不写进来。
 
 ## 后台流程
 
-入口 `http://127.0.0.1:5182/`（假后端）或测试机的 `<后台前缀>`。路由是 hash：`#/<模块>/<标签>`，如 `#/users/list`、`#/billing/orders`、`#/nodes/nodes`、`#/nodes/servers`。抽屉由路径带出：用户 `#/users/list/<用户id>`，节点 `#/nodes/nodes/<节点id>/<标签>`（标签有 `metrics`、`proto`、`routing`、`identity`、`ops`）。写操作会弹「验证身份后继续」，输入口令后原操作随后继续。表里同样只写核对哪类结果，文案以页面为准。
+入口 `http://127.0.0.1:5182/`（假后端）或测试机的 `<后台前缀>`。路由是 hash：`#/<模块>/<标签>`，如 `#/users/list`、`#/billing/orders`、`#/nodes/nodes`、`#/nodes/servers`。抽屉由路径带出：用户 `#/users/list/<用户id>`，节点 `#/nodes/nodes/<节点id>/<标签>`（标签有 `metrics`、`proto`、`routing`、`identity`、`ops`）。写操作会弹「验证身份后继续」，输入口令后原操作随后继续（测试机上这一步也交给用户）。表里同样只写核对哪类结果，文案以页面为准。
 
 | 流程 | 起点 | 步骤 | 要核对的结果 |
 |---|---|---|---|
@@ -126,20 +168,39 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 加服务器拿接入命令 | `#/nodes/servers` | 点添加服务器，填名称，提交 | toast 说明已添加为草稿、正在签发安装令牌；页面出现安装命令区域 |
 
 注意：
-- 命令与令牌是密钥，**不要抄进记录表或报告**，只记「出现了命令和令牌两行」。
+- 命令与令牌是密钥，**不要抄进记录表或报告**，只记「出现了命令和令牌两行」；snapshot 输出里带着它们时，不要原样转贴。
 - 真节点接入（用命令在机器上装 pdnd）和协议逐个验证不在本 skill 内，见 node-e2e skill；测试机见 test-machine。
 - 假后端建的节点没有真机，不会上线。
 
 ## 坑
 
-- **SSE 让网络永远不空闲**：页面开着实时事件长连接，不要等「网络空闲」。导航后等页面的 `load`，再固定等 1 到 2 秒，或直接等某个文字出现（`find`）。只差 `#路由` 的 `navigate` 是同文档跳转，不重新加载、渲染晚 1 到 2 秒：要验「刷新后还在」就显式刷新，马上 `find` 找不到先 `wait` 2 秒。
-- **令牌存储键**：`localStorage` 里门户是 `pandora-portal-token`，后台是 `pandora-admin-token`（`panel/frontend/src/core/token.ts` 的 `tokenStorageKey`）。
-  - 同源的两个入口键不同、互不通用。
-  - 验退出、验令牌被清、验登录态是否保持时看它；不要把令牌值贴进记录表。
-  - 存储被禁用时令牌只留在内存，刷新后要重新登录，这是设计行为。
+- **登录态**（安全加固合入后的口径）：访问令牌只在页面内存里；刷新靠 HttpOnly cookie（门户 `pandora_rt`、后台 `pandora_admin_rt`，`Path=/v1/auth`）；本地只存不含秘密的「登录过」标志：门户 `pandora-portal-session`、后台 `pandora-admin-session`，值是 `"1"`（`panel/frontend/src/core/token.ts`、`shell/session.ts`）；`localStorage` 里出现任何 `*-token` 键都是缺陷。
+  - 刷新页面、新开标签会自动用 cookie 换新令牌恢复登录，这是设计行为；令牌不在 `localStorage` 里，别去那里找。
+  - 验退出、验登录态保持：看 `reload` 后的页面，加上 `Network.getCookies` 里那个 cookie 在不在。HttpOnly 的 `document.cookie` 读不到。不把 cookie 值、令牌贴进记录。
+  - cookie **按主机名、不按端口**区分，而且 ego 的所有 TaskSpace 共用用户资料的 cookie 罐（10-20 实测）。同一主机上的两个门户实例会互相覆盖 `pandora_rt`；本 skill 只起一个门户、一个后台（cookie 名不同），不受影响，多实例的隔离办法见 ux-review。
+  - 刷新后先有一瞬空白（开机恢复登录），再进外框；接口 429、5xx 或断网时显示「暂时连不上服务器，还没确认你的登录状态」和「重试」，不会掉回登录页。
+  - 一个标签页退出，同入口的其它标签页跟着回登录页（BroadcastChannel）；一个标签页登录，其它停在登录页的标签页自己恢复登录。
+  - vite 重启后假后端的刷新记录全丢，页面会掉线，重新登录即可。
+- **SSE 让网络永远不空闲**：页面开着实时事件长连接，`goto` / `reload` 不要用 `waitUntil: "networkidle"`（默认 `load` 就好），之后等某个文字出现（`waitForSelector("text=…")`）。只差 `#路由` 的 `goto` 是同文档跳转，不重新加载、渲染晚 1 到 2 秒：要验「刷新后还在」就显式 `reload`。
 - **假后端状态在内存**：vite 重启即复原，每次验收从干净状态开始比较稳；写操作做完想重来就重启（`mock-up.sh down` 再 `up`）。
 - **后台主题互通**：两个 vite 进程经 `node_modules/.cache/pandora-mock/appearance.json` 共享生效主题，后台启动时会重写它；先起后台再看门户外观，别被上次激活的主题误导。
-- **弹窗里的按钮在 `<dialog>` 里**：`read_page` 能读到，但页面背景被遮；点完弹窗再读背景页的文字。
-- **toast 很快消失，而且不在 `<main>` 里**：`get_page_text` 只读 `<main>`，读不到 toast。toast 住在 `[role=status]` 里。要核对文字，用 `javascript_tool` 在同一段脚本里点按钮并每 200 毫秒读一次 `document.querySelector('[role=status]')?.textContent`，收集到的去重后记录；点按钮用 `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '…').click()`。
-- **支付页是整页跳转**：假收银台会离开门户再回来，tabId 不变，等回到 `/#/…` 再核对；订单状态可能还在「确认中」，等 3 到 6 秒再读。
+- **弹窗里的按钮在 `<dialog>` 里**：snapshot 能读到，但页面背景被遮；点完弹窗再读背景页的文字。
+- **toast 很快消失**，住在 `[role=status]` 里。要核对文字，在同一个 `page.evaluate` 里点按钮并每 200 毫秒读一次，总时长控制在 15 秒内：
+
+  ```js
+  const seen = await page.evaluate(async (label) => {
+    const out = new Set()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === label)?.click()
+    for (let i = 0; i < 25; i++) {
+      const t = document.querySelector('[role=status]')?.textContent?.trim()
+      if (t) out.add(t)
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    return [...out]
+  }, '确认延长')
+  ```
+
+- **支付页是整页跳转**：假收银台会离开门户再回来，Page 标签不变，`waitForURL(/#\//)` 等回到门户再核对；订单状态可能还在「确认中」，等 3 到 6 秒再读。fetch 记录器要重装。
+- **ego 的视口与报错收集只活在本轮**：`Emulation.*`、`addScriptToEvaluateOnNewDocument` 在脚本结束时就失效，下一轮要重设；漏设时截到的是用户窗口的实际宽度。
+- **ego 是用户看得见的真窗口**：用户可能正在用它；用户接管（`waitForControl`、空间变成非活动）时停下，不绕开。
 - 记录表、截图和报告里的测试机一律写别名或 `<后台前缀>`（仓库公开红线见根 CLAUDE.md）。

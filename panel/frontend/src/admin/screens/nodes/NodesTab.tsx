@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'
 import { navigate, parseHash, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { BulkAction, BulkBar, PageActions } from '../../kit'
+import { BulkAction, BulkBar, PageActions, useNow } from '../../kit'
 import { Button, Checkbox, Empty, Menu, Pager, QueryView, SearchField, Segmented, Tag, useToast } from '../../../ui'
 import {
   addressLabel,
@@ -13,6 +13,7 @@ import {
   moveItem,
   nodeCounts,
   nodeState,
+  onlineUsersView,
   orderItems,
   parseNodeFilter,
   protocolLabel,
@@ -21,12 +22,13 @@ import {
   type NodeFilter,
   type NodeLineData,
 } from './logic'
-import { runState, sameRunState, type RunState } from './runtime'
+import { nodeCreatedToast } from './infra'
+import { runState, certBadge, sameRunState, type RunState } from './runtime'
 import { NodeBatchEdit } from './NodeBatchEdit'
 import { NodeCreateWizard } from './NodeForm'
 import css from './nodes.module.css'
 import s from './NodesTab.module.css'
-import { NODE_PAGE, useFailure, useIntentKey, useInvalidateNodes, useNodePage, useNodes } from './queries'
+import { NODE_PAGE, useFailure, useIntentKey, useInvalidateNodes, useNodePage, useNodes, useServers } from './queries'
 import { batchStatusResponse, okUpdated, type NodeRow } from './schemas'
 import { NODE_BATCH_EDIT_MAX, trafficPercent, trafficUsageLabel } from './xb'
 
@@ -66,8 +68,12 @@ export function NodesTab() {
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const batchIntent = useIntentKey()
+  // 证书剩余天数按分钟走，不在渲染里读时钟
+  const nowDate = useNow()
+  const now = nowDate.getTime()
 
   const filter = parseNodeFilter(location.query.get('f'))
+  const preselect = location.query.get('new')
   const urlQuery = location.query.get('q') ?? ''
   const tag = location.query.get('tag') ?? ''
   // 搜索框是本地文字，停手 300 毫秒再回写地址（照工单页的 SearchBox）：每个键都 replace 地址会让受控输入框跳光标
@@ -87,6 +93,7 @@ export function NodesTab() {
   const [batchEditing, setBatchEditing] = useState(false)
 
   const list = useNodes()
+  const servers = useServers()
   const serverMode = !!list.data && list.data.total > list.data.nodes.length
   const serverQuery = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS)
   const page = useNodePage({ state: filter, q: serverQuery, tag, offset }, serverMode)
@@ -94,8 +101,8 @@ export function NodesTab() {
   const loaded = source.data?.nodes
 
   const rows = useMemo(
-    () => sorting ?? (serverMode ? (loaded ?? []) : list.data ? filterNodes(list.data.nodes, filter, query, tag) : []),
-    [sorting, serverMode, loaded, list.data, filter, query, tag],
+    () => sorting ?? (serverMode ? (loaded ?? []) : list.data ? filterNodes(list.data.nodes, filter, query, tag, now) : []),
+    [sorting, serverMode, loaded, list.data, filter, query, tag, now],
   )
   const pickedRows = (loaded ?? []).filter((n) => picked.has(n.id))
   const allTags = useMemo(() => tagOptions(list.data?.nodes ?? []), [list.data?.nodes])
@@ -134,7 +141,7 @@ export function NodesTab() {
       void invalidate()
       const verb = to === 'active' ? '启用' : '停用'
       toast(
-        updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}）` : ''}` : `选中的节点当前状态都不能${verb}`,
+        updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}${to === 'active' ? '或没绑服务器' : ''}）` : ''}` : `选中的节点当前状态都不能${verb}`,
         updated ? 'ok' : 'danger',
       )
     },
@@ -240,6 +247,16 @@ export function NodesTab() {
             options={FILTERS.map((f) => ({ ...f }))}
             className={sorting ? s.dimmed : undefined}
           />
+          {filter === 'cert' && (
+            <button
+              type="button"
+              className={`${s.chipf} ${s.chipfSet}`}
+              aria-label="清除「证书异常」筛选"
+              onClick={() => setParams({ f: 'all' })}
+            >
+              证书异常 <span aria-hidden="true">×</span>
+            </button>
+          )}
           {allTags.length > 0 && (
             <Menu
               label="按标签筛选"
@@ -297,10 +314,12 @@ export function NodesTab() {
           rows={6}
           isEmpty={() => rows.length === 0}
           empty={
-            list.data?.nodes.some((n) => n.serving_status !== 'retired') || filter === 'retired' ? (
+            filter === 'cert' ? (
+              <Empty bare title="没有证书要处理的节点" description="在役节点的证书都正常。" />
+            ) : list.data?.nodes.some((n) => n.serving_status !== 'retired') || filter === 'retired' ? (
               <Empty bare title="没有匹配的节点" description="换个筛选条件或搜索词试试。" />
             ) : (
-              <Empty bare title="还没有节点" description="新建节点后，用一键安装命令把它接入面板。" />
+              <Empty bare title="还没有节点" description="新建节点，绑到已接入的服务器后上线，就开始服务用户。" />
             )
           }
         >
@@ -310,6 +329,7 @@ export function NodesTab() {
                 key={n.id}
                 node={n}
                 run={runState(n)}
+                now={now}
                 index={i}
                 picked={picked.has(n.id)}
                 sorting={!!sorting}
@@ -348,12 +368,18 @@ export function NodesTab() {
 
       <NodeBatchEdit rows={pickedRows} open={batchEditing} onClose={() => setBatchEditing(false)} onDone={() => setPicked(new Set())} />
       <NodeCreateWizard
-        key={createKey}
-        open={creating}
-        onClose={() => setCreating(false)}
+        key={`${createKey}-${preselect ?? ''}`}
+        open={creating || !!preselect}
+        initialServerId={preselect ?? undefined}
+        onClose={() => {
+          setCreating(false)
+          if (preselect) navigate('/nodes/nodes', { replace: true, query: listQueryParams(filter, query, tag) })
+        }}
         onCreated={(saved) => {
           setCreating(false)
-          toast('节点已创建为草稿。所在服务器还没接入的，到「服务器」页签发安装令牌；接入后在节点详情右上角上线')
+          const server = saved.server_id ? (servers.data ?? []).find((sv) => sv.id === saved.server_id) : undefined
+          toast(nodeCreatedToast(Boolean(saved.server_id), server, nowDate), 'ok')
+          if (preselect) navigate('/nodes/nodes', { replace: true, query: listQueryParams(filter, query, tag) })
           navigate(`/nodes/nodes/${saved.id}/proto`)
         }}
       />
@@ -364,6 +390,7 @@ export function NodesTab() {
 interface NodeLineProps {
   node: NodeLineData
   run: RunState | null
+  now: number
   index: number
   picked: boolean
   sorting: boolean
@@ -374,8 +401,15 @@ interface NodeLineProps {
   last: boolean
 }
 
-const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
+const NodeLine = memo(function NodeLine({ node: n, run, now, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
   const state = nodeState(n)
+  const cert = certBadge(n.cert, now)
+  // 运行状态已说清的不重复：「等待证书」配「证书申请中」、两边都是「证书已过期」；申请失败照样标出来
+  const showCertTag =
+    cert &&
+    cert.tone !== 'ok' &&
+    !(run?.label === '等待证书' && cert.label === '证书申请中') &&
+    !(run?.label === '证书已过期' && cert.label === '证书已过期')
   const cpu = n.cpu_percent
   const tagList = n.tags
   const visibleTags = tagList.slice(0, 3)
@@ -385,7 +419,8 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
   const percent = trafficPercent(n.traffic)
   const isTrafficWarn = percent !== null && percent >= 90
   const isTrafficExceeded = n.traffic.exceeded_at !== null
-  const mobileSummary = `${protocolLabel(n.node_type)}${n.online_users ? ` · 在线 ${formatCount(n.online_users)}` : ''} · ${formatBytes(n.traffic_bytes_24h)}`
+  const online = onlineUsersView(n)
+  const mobileSummary = `${protocolLabel(n.node_type)}${state.filter === 'online' && n.online_users ? ` · 在线 ${formatCount(n.online_users)}` : ''}${online.note ? ` · ${online.note}` : ''} · ${formatBytes(n.traffic_bytes_24h)}`
 
   return (
     <div className={`${s.grid} ${s.line} ${picked ? s.picked : ''} ${n.serving_status === 'retired' ? s.retired : ''}`}>
@@ -415,9 +450,12 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
         </div>
       </button>
       <span className={`${css.muted} ${s.colHideMobile}`}>{protocolLabel(n.node_type)}</span>
-      <span className={`${css.muted} ${css.ellipsis} ${s.colHideMobile}`}>{n.server_name ?? '—'}</span>
-      <span className={`${css.mono} ${css.right} ${s.colHideMobile}`} title={`在线 IP ${n.online_ips}`}>
-        {n.online_users ? formatCount(n.online_users) : '—'}
+      <span className={`${css.muted} ${css.ellipsis} ${s.colHideMobile}`}>{n.server_name ?? '未绑定'}</span>
+      <span className={`${css.mono} ${css.right} ${s.colHideMobile}`} title={online.note ?? `在线 IP ${n.online_ips}`}>
+        {online.value}
+        {online.note && (
+          <span className={`${s.trafficLine} ${s.trafficFaint}`}>{online.note}</span>
+        )}
       </span>
       <span className={`${s.load} ${s.colHideMobile}`}>
         <span className={s.loadBar}>
@@ -470,6 +508,11 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
                 {run.label}
               </Tag>
             )}
+            {showCertTag && (
+              <Tag tone={cert.tone} title={cert.detail || cert.label} className={s.runTag}>
+                {cert.label}
+              </Tag>
+            )}
           </>
         )}
       </span>
@@ -480,6 +523,7 @@ const NodeLine = memo(function NodeLine({ node: n, run, index, picked, sorting, 
 function sameLineProps(a: NodeLineProps, b: NodeLineProps): boolean {
   return (
     a.index === b.index &&
+    a.now === b.now &&
     a.picked === b.picked &&
     a.sorting === b.sorting &&
     a.first === b.first &&

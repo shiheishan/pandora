@@ -44,7 +44,7 @@ func TestHysteria2PreAuthStreamFloodIsBounded(t *testing.T) {
 	baseG := runtime.NumGoroutine()
 	tlsConf := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13, ServerName: "localhost", NextProtos: []string{http3.NextProtoH3}}
 	conn := dialQUICRetry(t, ctx, port, tlsConf, &quic.Config{EnableDatagrams: true})
-	defer conn.CloseWithError(0, "")
+	defer func() { _ = conn.CloseWithError(0, "") }()
 	// HEADERS 帧头，声明 100 字节却一个也不发：服务端读请求头的 goroutine 一直等。
 	partialHeaders := []byte{0x01, 0x40, 0x64}
 	const attempts = 4000

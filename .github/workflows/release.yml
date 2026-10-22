@@ -1,7 +1,7 @@
 name: Release
 
 # 发版：在默认分支（main）的提交上打 v* 标签并推送 → 构建 linux amd64 / arm64 两份发布包 → 对附件出来源证明
-# → 建 GitHub Release。推标签时在建 Release 之后，再用同一份发布包构建并推送三个多架构镜像到 GHCR，并各出来源证明。
+# → 建 GitHub Release。
 # 部署者在目标机上用 Release 里的 get.sh 一条命令首装或升级（见 README「部署」）。
 # workflow_dispatch 是演练：只构建并上传 workflow artifact，不建 Release、不打标签。
 # 只有「推标签」这一种事件会发布；别的事件（workflow_dispatch，或调试时临时加的分支触发）一律只演练构建。
@@ -30,16 +30,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build release packages
+  preflight:
+    name: Resolve the version
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
       - name: Resolve and check the version
         id: version
         env:
@@ -65,6 +63,11 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = tag ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: The tag must point at a commit on the default branch
         if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
@@ -77,6 +80,79 @@ jobs:
             identical|behind) echo "标签提交 $GITHUB_SHA 在 $DEFAULT_BRANCH 上" ;;
             *) echo "::error::标签 $GITHUB_REF_NAME 指向的提交不在 $DEFAULT_BRANCH 上（compare: $status）；先合进 $DEFAULT_BRANCH 再打标签"; exit 1 ;;
           esac
+
+  pdnd:
+    name: Build and sign the node binaries
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 签名私钥只在这个 job 里出现：它只有 Go（不装 npm 依赖，没有第三方安装脚本能读到私钥），
+    # 推标签发版时进需要审批的 environment release-signing 才拿得到 secret；演练不进环境、不签名。
+    environment: ${{ needs.preflight.outputs.publish == 'true' && 'release-signing' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: pdnd/go.mod
+          cache: false
+      - name: Build the node binaries and the release manifest
+        env:
+          PANDORA_VERSION: ${{ needs.preflight.outputs.version }}
+          PANDORA_PDND_ONLY: '1'
+        run: bash panel/deploy/build-release.sh "$RUNNER_TEMP/pdnd-out"
+      - name: Sign the release manifest
+        if: needs.preflight.outputs.publish == 'true'
+        env:
+          PDND_SIGNING_KEY: ${{ secrets.PDND_SIGNING_KEY }}
+        working-directory: pdnd
+        run: |
+          # 发出去的包必须能在线升级：推标签发版时没有签名私钥就失败
+          if [ -z "${PDND_SIGNING_KEY:-}" ]; then
+            echo "::error::environment release-signing 里没有 secret PDND_SIGNING_KEY：发布包的节点端清单签不了名，节点无法在线升级"
+            exit 1
+          fi
+          keydir="$(mktemp -d "$RUNNER_TEMP/pdnd-key.XXXXXX")"
+          trap 'rm -rf -- "$keydir"' EXIT
+          umask 077
+          printf '%s\n' "$PDND_SIGNING_KEY" > "$keydir/key"
+          unset PDND_SIGNING_KEY
+          manifest="$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json"
+          GOFLAGS='' go run -mod=readonly ./release/signmanifest -key "$keydir/key" -in "$manifest" -out "$manifest.sig"
+          rm -rf -- "$keydir"
+          # 用仓库里内置的公钥核一遍：私钥与 pdnd/upgrade/keys 对不上时在这里失败，而不是发出去后所有节点都拒绝
+          GOFLAGS='' go run -mod=readonly ./release/signmanifest -verify "$manifest.sig" -in "$manifest"
+      - name: Collect the manifest
+        run: |
+          out="$RUNNER_TEMP/pdnd-signed"
+          mkdir -p "$out"
+          cp -- "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json" "$out/"
+          if [ -f "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json.sig" ]; then
+            cp -- "$RUNNER_TEMP/pdnd-out/pdnd-dist/pdnd-manifest.json.sig" "$out/"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pdnd-manifest-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/pdnd-signed/
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    name: Build release packages
+    needs: [preflight, pdnd]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: pdnd-manifest-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/pdnd-signed
       # 发版构建不用缓存（setup-go 关掉 cache、setup-node 不开 npm 缓存）：发布物不吃可能被别的 run 写过的缓存
       - uses: actions/setup-go@v7
         with:
@@ -92,12 +168,26 @@ jobs:
           scope: '@hugeicons-pro'
       - name: Build both architectures
         env:
-          PANDORA_VERSION: ${{ steps.version.outputs.version }}
+          PANDORA_VERSION: ${{ needs.preflight.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.HUGEICONS_NPM_TOKEN }}
-        run: bash panel/deploy/build-release.sh "$RUNNER_TEMP/dist"
+          # 节点端在这里重新构建，清单必须与 pdnd job 签过名的那份逐字节相同（演练没有 .sig，只核复现）
+          PUBLISH: ${{ needs.preflight.outputs.publish }}
+        run: |
+          if [ -f "$RUNNER_TEMP/pdnd-signed/pdnd-manifest.json.sig" ]; then
+            export PDND_SIGNATURE_DIR="$RUNNER_TEMP/pdnd-signed"
+          elif [ "$PUBLISH" = true ]; then
+            echo "::error::pdnd job 没交回 pdnd-manifest.json.sig"
+            exit 1
+          fi
+          bash panel/deploy/build-release.sh "$RUNNER_TEMP/dist"
+          if [ -z "${PDND_SIGNATURE_DIR:-}" ]; then
+            cmp -- "$RUNNER_TEMP/pdnd-signed/pdnd-manifest.json" "$RUNNER_TEMP/dist/pdnd-dist/pdnd-manifest.json" \
+              || { echo "::error::pdnd 没能复现构建：两个 job 构建出的清单不同"; exit 1; }
+          fi
       - name: Collect the release assets and write SHA256SUMS
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          PUBLISH: ${{ needs.preflight.outputs.publish }}
         run: |
           dist="$RUNNER_TEMP/dist"
           out="$RUNNER_TEMP/assets"
@@ -105,6 +195,10 @@ jobs:
           for arch in amd64 arm64; do
             pkg="pandora-panel_${VERSION}_linux_${arch}.tar.gz"
             cp -- "$dist/$pkg" "$dist/$pkg.sha256" "$dist/$pkg.manifest.sha256" "$out/"
+            if [ "$PUBLISH" = true ]; then
+              tar -tzf "$dist/$pkg" | grep -qx "pandora-panel_${VERSION}_linux_${arch}/pdnd-dist/pdnd-manifest.json.sig" \
+                || { echo "::error::发布包缺少 pdnd-manifest.json.sig: $pkg"; exit 1; }
+            fi
           done
           cp -- panel/deploy/get.sh "$out/get.sh"
           cd "$out"
@@ -114,9 +208,9 @@ jobs:
           [ "${#files[@]}" -eq 7 ] || { echo "::error::附件数不对：${files[*]}"; exit 1; }
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: pandora-panel-${{ steps.version.outputs.version }}
+          name: pandora-panel-${{ needs.preflight.outputs.version }}
           path: ${{ runner.temp }}/assets/
           if-no-files-found: error
           retention-days: 14
@@ -133,7 +227,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: pandora-panel-${{ needs.build.outputs.version }}
           path: assets
@@ -166,133 +260,8 @@ jobs:
             printf '核对：`SHA256SUMS` 覆盖本页全部附件；包旁的 `.sha256` 与包同源，只防下载损坏。防篡改核对 GitHub Actions 出的来源证明：\n\n'
             printf '```bash\ngh attestation verify pandora-panel_%s_linux_amd64.tar.gz --repo %s \\\n  --signer-workflow %s/.github/workflows/release.yml --source-ref refs/tags/%s\n```\n' "$TAG" "$GH_REPO" "$GH_REPO" "$TAG"
             printf '\n核过后直接解开这份包跑 `deploy/install.sh`，不要再经 get.sh 重新下载。\n'
-            owner="${GH_REPO%%/*}"
-            owner="${owner,,}"
-            printf '\nDocker / Compose / 1Panel：镜像 `ghcr.io/%s/pandora`、`pandora-nginx`、`pandora-ops`，标签 `%s`，用法见仓库 `panel/deploy/docker/README.md`。\n' "$owner" "$TAG"
           } > "$notes"
           gh release create "$TAG" \
             pandora-panel_*.tar.gz pandora-panel_*.tar.gz.sha256 pandora-panel_*.tar.gz.manifest.sha256 \
             get.sh SHA256SUMS \
             --verify-tag --title "$TAG" --notes-file "$notes" "${prerelease[@]}"
-
-  images:
-    name: Build and push container images
-    needs: [build, publish]
-    # 推标签：等 Release 建好再推镜像；workflow_dispatch：只演练构建、不推、不出证明
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.publish.result == 'skipped')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: pandora-panel-${{ needs.build.outputs.version }}
-          path: assets
-      - name: Check the assets against SHA256SUMS
-        working-directory: assets
-        run: sha256sum --strict -c SHA256SUMS
-      - name: Unpack release packages for image build context
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          # 镜像里的二进制、节点端、离线库与部署脚本就是刚出了来源证明的这两个包里的字节，
-          # 不在镜像构建里重新编译（Dockerfile 的 release 阶段被 --build-context release=… 整体替换）。
-          tree="$RUNNER_TEMP/release-tree"
-          mkdir -p "$tree"
-          for arch in amd64 arm64; do
-            tar -xzf "assets/pandora-panel_${VERSION}_linux_${arch}.tar.gz" -C "$tree"
-            (
-              cd "$tree/pandora-panel_${VERSION}_linux_${arch}"
-              sha256sum --strict -c SHA256SUMS
-            )
-          done
-      - name: Resolve container image repository
-        id: image
-        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # 只打版本号标签、不打 latest（升级是站长在 .env 里改版本号，不会被 pull 意外带走）；
-      # 来源证明用 actions/attest，与发布包同一口径。
-      - name: Build and push pandora image
-        id: build_pandora
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: panel/deploy/docker/Dockerfile
-          target: pandora
-          platforms: linux/amd64,linux/arm64
-          build-contexts: release=${{ runner.temp }}/release-tree
-          build-args: |
-            PANDORA_VERSION=${{ needs.build.outputs.version }}
-            PANDORA_REVISION=${{ github.sha }}
-          tags: ${{ steps.image.outputs.repo }}/pandora:${{ needs.build.outputs.version }}
-          push: ${{ github.event_name == 'push' }}
-          provenance: false
-          sbom: false
-      - name: Attest pandora image
-        if: github.event_name == 'push'
-        uses: actions/attest@v4
-        with:
-          subject-name: ${{ steps.image.outputs.repo }}/pandora
-          subject-digest: ${{ steps.build_pandora.outputs.digest }}
-          push-to-registry: true
-      - name: Build and push pandora-nginx image
-        id: build_nginx
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: panel/deploy/docker/Dockerfile
-          target: pandora-nginx
-          platforms: linux/amd64,linux/arm64
-          build-contexts: release=${{ runner.temp }}/release-tree
-          build-args: |
-            PANDORA_VERSION=${{ needs.build.outputs.version }}
-            PANDORA_REVISION=${{ github.sha }}
-          tags: ${{ steps.image.outputs.repo }}/pandora-nginx:${{ needs.build.outputs.version }}
-          push: ${{ github.event_name == 'push' }}
-          provenance: false
-          sbom: false
-      - name: Attest pandora-nginx image
-        if: github.event_name == 'push'
-        uses: actions/attest@v4
-        with:
-          subject-name: ${{ steps.image.outputs.repo }}/pandora-nginx
-          subject-digest: ${{ steps.build_nginx.outputs.digest }}
-          push-to-registry: true
-      - name: Build and push pandora-ops image
-        id: build_ops
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: panel/deploy/docker/Dockerfile
-          target: pandora-ops
-          platforms: linux/amd64,linux/arm64
-          build-contexts: release=${{ runner.temp }}/release-tree
-          build-args: |
-            PANDORA_VERSION=${{ needs.build.outputs.version }}
-            PANDORA_REVISION=${{ github.sha }}
-          tags: ${{ steps.image.outputs.repo }}/pandora-ops:${{ needs.build.outputs.version }}
-          push: ${{ github.event_name == 'push' }}
-          provenance: false
-          sbom: false
-      - name: Attest pandora-ops image
-        if: github.event_name == 'push'
-        uses: actions/attest@v4
-        with:
-          subject-name: ${{ steps.image.outputs.repo }}/pandora-ops
-          subject-digest: ${{ steps.build_ops.outputs.digest }}
-          push-to-registry: true

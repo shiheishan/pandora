@@ -270,7 +270,8 @@ func (h *Inbound) Start() error {
 	if err != nil {
 		return fmt.Errorf("构建流量模式: %w", err)
 	}
-	endpoints, err := appctlcommon.PortBindingsToUnderlayProperties(
+	// 监听地址传空串即所有地址，与上游 apis/server.Start 相同（v3.37 起该函数多了监听 IP 参数）
+	endpoints, err := appctlcommon.AddrPortToUnderlayProperties("",
 		[]*appctlpb.PortBinding{{
 			Port:     proto.Int32(int32(h.port)),
 			Protocol: h.proto.Enum(),
@@ -436,7 +437,7 @@ func (h *Inbound) handleTCP(ctx context.Context, conn net.Conn, req *model.Reque
 	if err := resp.WriteToSocks5(conn); err != nil {
 		return
 	}
-	mcommon.BidiCopy(conn, target)
+	_ = mcommon.BidiCopy(conn, target)
 }
 
 func (h *Inbound) handleUDP(ctx context.Context, conn net.Conn) {
@@ -621,7 +622,7 @@ func writeMieruUDPPacket(tunnel *apicommon.PacketOverStreamTunnel, addr net.Addr
 	}
 	var buf bytes.Buffer
 	buf.Write([]byte{0, 0, 0})
-	if err := spec.AddrSpec.WriteToSocks5(&buf); err != nil {
+	if err := spec.WriteToSocks5(&buf); err != nil {
 		return 0, err
 	}
 	buf.Write(payload)

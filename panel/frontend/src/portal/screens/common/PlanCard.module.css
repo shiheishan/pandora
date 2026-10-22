@@ -104,6 +104,12 @@
   color: var(--text);
 }
 
+.factsNote {
+  margin: -18px 0 20px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
 .act > * {
   width: 100%;
 }

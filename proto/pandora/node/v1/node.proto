@@ -72,6 +72,7 @@ message SessionRequest {
     ConfigAck config_ack = 14;
     UsersAck users_ack = 15;
     RenewRequest renew = 16;
+    UpgradeReport upgrade_report = 17;
   }
 }
 
@@ -87,6 +88,11 @@ message Hello {
   repeated AppliedConfig applied_configs = 5;
   // 各节点内核里已是哪一版名单。
   repeated AppliedUsers applied_users = 6;
+  // 节点二进制的发版序号（签名发布清单里的 serial；dev 构建为 0）。面板按它判断目标版本是不是更新。
+  uint64 build_serial = 7;
+  // 上一次升级的结局（root 侧助手写在本机的结果文件里，重启或回退后由新进程带上）；没有就不填。
+  // 面板对账幂等：任务已结束的忽略。节点在带着它的 Hello 拿到 Welcome 之后删掉结果文件。
+  UpgradeReport last_upgrade = 8;
 }
 
 message AppliedConfig {
@@ -134,6 +140,23 @@ message NodeRuntime {
   string reason = 3;
   // 端口被同机另一个节点占用时，占用者的 node_id。
   string reason_node_id = 4;
+  // 入站证书的状态：自动申请（acme）的节点每拍都带；手填证书（file）的只带 not_after_unix。
+  // 不用证书的协议不带。
+  CertStatus cert = 5;
+}
+
+// CertStatus 是一个节点入站证书的状态（节点端能力 cert_acme_v1）。
+message CertStatus {
+  // 证书的标识符（域名或 IP，与配置文档的 cert_identifier 相同）；file 模式为空。
+  string identifier = 1;
+  // 当前证书的到期时间（Unix 秒）；0 = 还没有证书。
+  int64 not_after_unix = 2;
+  // 最近一次申请或续期失败的原因码（如 challenge_port_busy、validation_failed）；成功后清空。
+  string error_code = 3;
+  // 失败详情（CA 回的 problem detail，至多 1024 字节、可打印 ASCII）。
+  string error_detail = 4;
+  // 下一次申请或续期的计划时间（Unix 秒）；0 = 没有计划。
+  int64 next_attempt_unix = 5;
 }
 
 enum RuntimeStatus {
@@ -200,6 +223,27 @@ message UsersAck {
   string version = 2;
   bool ok = 3;
   string reason_code = 4;
+}
+
+// UpgradeReport 是升级任务的进度与结局（节点 → 面板）。成功不靠它：面板看新 Hello 的 binary_sha256 等于目标即成功。
+message UpgradeReport {
+  // 面板下发的任务 id（Upgrade.job_id 原样带回）。
+  string job_id = 1;
+  UpgradePhase phase = 2;
+  // 原因码（下载失败、验签失败、序号不更新、健康确认超时等），失败与回退时必填，至多 64 字节。
+  string reason_code = 3;
+  // 详情，至多 1KB，面板截断。不带 URL 与路径以外的敏感值。
+  string detail = 4;
+}
+
+enum UpgradePhase {
+  UPGRADE_PHASE_UNSPECIFIED = 0;
+  // 新二进制已下载、核对过摘要与签名、放进暂存区，已请 root 侧助手替换。
+  UPGRADE_PHASE_STAGED = 1;
+  // 没动现有安装就失败了（下载、摘要、签名、序号、架构不对，或助手没装）。
+  UPGRADE_PHASE_FAILED = 2;
+  // 换上了新版，但新进程在确认时限内没连上面板，已装回旧版。
+  UPGRADE_PHASE_ROLLED_BACK = 3;
 }
 
 // RenewRequest 是会话内续期：证书剩余不到 10 天时，节点生成新私钥发来 CSR。
@@ -303,6 +347,7 @@ message Command {
   oneof kind {
     Reconnect reconnect = 1;
     Tombstone tombstone = 2;
+    Upgrade upgrade = 3;
   }
 }
 
@@ -310,6 +355,21 @@ message Command {
 message Reconnect {
   uint32 in_ms = 1;
   uint32 jitter_ms = 2;
+}
+
+// Upgrade 让节点升级到签名发布清单里的那一版。只发给 Welcome.features 里有 "upgrade_v1" 的节点。
+// URL 与摘要都来自面板，不可信：节点与 root 侧助手各自用内置公钥验 manifest 的签名，二进制摘要以 manifest 为准，
+// manifest 的 serial 不大于本机二进制的 build_serial 就拒绝（防降级与重放）。
+message Upgrade {
+  // 面板的任务 id（UUID），回报时原样带回。
+  string job_id = 1;
+  // 签名发布清单的原字节（pdnd-manifest.json）与它的签名文件原字节（pdnd-manifest.json.sig）。
+  bytes manifest = 2;
+  bytes signature = 3;
+  // 本机架构的二进制下载地址（https，面板托管）。
+  string binary_url = 4;
+  // 新进程要在这么多秒内连上面板（拿到 Welcome），否则助手装回旧版。
+  uint32 confirm_within_sec = 5;
 }
 
 // Tombstone 表示这台服务器的身份已吊销或服务器已删除：节点停止重连，继续用磁盘缓存服务，

@@ -51,7 +51,8 @@
   transition: background 0.15s, color 0.15s;
 }
 
-.navA:hover {
+.navA:hover,
+.navA:active {
   color: var(--text);
   background: color-mix(in srgb, var(--surface) 60%, transparent);
   text-decoration: none;
@@ -70,7 +71,8 @@
     0 6px 14px -10px color-mix(in srgb, var(--shade) 35%, transparent);
 }
 
-.navOn:hover {
+.navOn:hover,
+.navOn:active {
   background: var(--surface);
 }
 
@@ -210,6 +212,7 @@
 
 a.amItem:hover,
 button.amItem:hover,
+.amItem:active,
 .amItem:focus-visible {
   background: var(--surface-3);
   color: var(--text);
@@ -416,7 +419,8 @@ button.amItem:hover,
     text-decoration: none;
   }
 
-  .tab:hover {
+  .tab:hover,
+  .tab:active {
     color: var(--text-2);
     text-decoration: none;
   }
@@ -426,7 +430,8 @@ button.amItem:hover,
   }
 
   .tabOn,
-  .tabOn:hover {
+  .tabOn:hover,
+  .tabOn:active {
     color: var(--brand-ink);
     font-weight: 600;
   }

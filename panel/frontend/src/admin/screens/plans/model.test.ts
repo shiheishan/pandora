@@ -19,7 +19,6 @@ import {
   createFieldKey,
   createProblems,
   createdToast,
-  currentVersion,
   detailTabs,
   draftVersion,
   emptyCreate,
@@ -311,8 +310,6 @@ describe('detail shell', () => {
     expect(draftVersion(planDetail())).toBeUndefined()
     const p = planDetail({ versions: [version({ id: 'v1' }), version({ id: 'v2', version: 2, status: 'draft', published_at: null })] })
     expect(draftVersion(p)?.id).toBe('v2')
-    expect(currentVersion(p)?.id).toBe('v1')
-    expect(currentVersion(planDetail({ version: 2, versions: p.versions }))).toBeUndefined()
   })
 })
 
@@ -431,7 +428,51 @@ describe('price lists', () => {
       ],
     })
     expect(priceListRows(p).map((r) => r.id)).toEqual(['y', 'a2', 'a1'])
-    expect(priceListRows(p)[0]).toEqual({ id: 'y', label: '每年', amount: '¥258.00', active: true, tier: 'year:1', note: '折合每月 ¥21.50' })
+    expect(priceListRows(p)[0]).toEqual({
+      id: 'y',
+      label: '每年',
+      amount: '¥258.00',
+      unitAmount: 25800,
+      active: true,
+      tier: 'year:1',
+      status: { label: '在售', tone: 'ok' },
+      note: '折合每月 ¥21.50',
+      restorable: false,
+    })
+  })
+
+  it('marks archived prices as replaced or restorable depending on whether active price exists', () => {
+    const p = planDetail({
+      prices: [
+        price({ id: 'm-live', billing_interval: 'month', interval_count: 1, unit_amount: 3000, status: 'active', created_at: '2026-03-01T00:00:00' }),
+        price({ id: 'm-old', billing_interval: 'month', interval_count: 1, unit_amount: 2500, status: 'archived', created_at: '2026-01-01T00:00:00' }),
+        price({ id: 'y-old2', billing_interval: 'year', interval_count: 1, unit_amount: 26000, status: 'archived', created_at: '2026-02-01T00:00:00' }),
+        price({ id: 'y-old1', billing_interval: 'year', interval_count: 1, unit_amount: 24000, status: 'archived', created_at: '2026-01-15T00:00:00' }),
+      ],
+    })
+    const rows = priceListRows(p)
+    expect(rows.map((r) => r.id)).toEqual(['m-live', 'y-old2', 'y-old1', 'm-old'])
+
+    const mOld = rows.find((r) => r.id === 'm-old')!
+    expect(mOld.status.label).toBe('已停售')
+    expect(mOld.status.tone).toBe('neutral')
+    expect(mOld.note).toBe('已换成新价')
+    expect(mOld.restorable).toBe(false)
+    expect(mOld.unitAmount).toBe(2500)
+
+    const yOld2 = rows.find((r) => r.id === 'y-old2')!
+    expect(yOld2.status.label).toBe('已停售')
+    expect(yOld2.status.tone).toBe('neutral')
+    expect(yOld2.note).toBe('')
+    expect(yOld2.restorable).toBe(true)
+    expect(yOld2.unitAmount).toBe(26000)
+
+    const yOld1 = rows.find((r) => r.id === 'y-old1')!
+    expect(yOld1.status.label).toBe('已停售')
+    expect(yOld1.status.tone).toBe('neutral')
+    expect(yOld1.note).toBe('')
+    expect(yOld1.restorable).toBe(false)
+    expect(yOld1.unitAmount).toBe(24000)
   })
 
   it('computes perMonthNote', () => {

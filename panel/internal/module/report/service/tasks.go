@@ -56,7 +56,8 @@ func (s *Service) NotificationBacklog(ctx context.Context) (NotificationBacklog,
 	return backlogFrom(b, now), nil
 }
 
-// Tasks 给后台「需要处理」的六项：待处理工单、待审核提现、失联节点、超时未支付订单、通知积压、账本漂移。后台不分权限，六项都给。
+// Tasks 给后台「需要处理」的七项：待处理工单、待审核提现、失联节点、证书异常、超时未支付订单、通知积压、数据巡检。后台不分权限，七项都给。
+// 数据巡检读 integrity_checks 里最近一次的结果（report:integrity 每 30 分钟写），不在请求里现算。
 func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 	now := s.now()
 
@@ -79,6 +80,15 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 		sample[i] = NodeRef{ID: n.ID, Name: n.Name}
 	}
 
+	certs, err := s.deps.Nodes.CertAttentionNodes(ctx, now, 3)
+	if err != nil {
+		return Tasks{}, err
+	}
+	certSample := make([]NodeRef, len(certs.Sample))
+	for i, n := range certs.Sample {
+		certSample[i] = NodeRef{ID: n.ID, Name: n.Name}
+	}
+
 	staleOrders, err := s.deps.Orders.PendingStaleCount(ctx, now.Add(-StaleOrderAfter))
 	if err != nil {
 		return Tasks{}, err
@@ -90,7 +100,7 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 	}
 	bl := backlogFrom(b, now)
 
-	drift, err := s.deps.Ledger.DriftAccounts(ctx)
+	checks, err := s.integrityItems(ctx)
 	if err != nil {
 		return Tasks{}, err
 	}
@@ -111,6 +121,12 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 			Sample:                sample,
 			LongestOfflineSeconds: offline.LongestOfflineSeconds,
 		},
+		NodeCerts: NodeCertsTask{
+			Count:    certs.Count,
+			Failing:  certs.Failing,
+			Expiring: certs.Expiring,
+			Sample:   certSample,
+		},
 		OrdersPendingStale: OrdersPendingStaleTask{
 			Count:            staleOrders,
 			ThresholdSeconds: int64(StaleOrderAfter / time.Second),
@@ -120,6 +136,6 @@ func (s *Service) Tasks(ctx context.Context) (Tasks, error) {
 			FailedTotal:  bl.Failed,
 			BacklogState: bl.State,
 		},
-		LedgerDrift: drift,
+		Integrity: checks,
 	}, nil
 }

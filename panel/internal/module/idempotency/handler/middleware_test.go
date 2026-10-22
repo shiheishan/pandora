@@ -182,7 +182,7 @@ func TestMiddlewareBodyTooLarge(t *testing.T) {
 	e := newTestEngine(New(fake, testFPKey), actor, func(c *gin.Context) {})
 	body := strings.Repeat("x", int(service.MaxBodyBytes)+1)
 	w := post(t, e, "/v1/things", body, "k1")
-	if w.Code != http.StatusBadRequest || errorCode(t, w) != "bad_request" {
+	if w.Code != http.StatusRequestEntityTooLarge || errorCode(t, w) != "payload_too_large" {
 		t.Fatalf("超大 body: %d", w.Code)
 	}
 	if len(fake.claimCalls) != 0 {

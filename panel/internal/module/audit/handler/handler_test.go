@@ -106,7 +106,7 @@ func getExport(t *testing.T, e *gin.Engine, path string) (*httptest.ResponseReco
 
 var wantEventKeys = []string{
 	"id", "occurred_at", "actor_kind", "actor_email", "action", "resource_type", "resource_id",
-	"api_domain", "outcome", "reason", "resource_label", "auth_context", "source_ip",
+	"api_domain", "outcome", "reason", "resource_label", "auth_context", "source_ip", "data",
 }
 
 func TestListAuditQueryAndResponse(t *testing.T) {
@@ -166,6 +166,10 @@ func TestListAuditQueryAndResponse(t *testing.T) {
 	if ev["actor_email"] != "ops@example.com" {
 		t.Fatalf("actor_email %v", ev["actor_email"])
 	}
+	// service 行没有 data 时回空对象，不回 null
+	if d, ok := ev["data"].(map[string]any); !ok || len(d) != 0 {
+		t.Fatalf("data 应为空对象，得 %v", ev["data"])
+	}
 
 	if fake.lastListP.Limit != 20 || fake.lastListP.Offset != 40 {
 		t.Fatalf("Page %+v", fake.lastListP)
@@ -204,6 +208,25 @@ func TestListAuditEmptyEvents(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"events":[]`) {
 		t.Fatalf("body %s", body)
+	}
+}
+
+func TestListAuditPassesDataThrough(t *testing.T) {
+	fake := &fakeSvc{listTotal: 1, listRows: []service.Row{{
+		ID:         uuid.MustParse("018f1234-5678-7abc-8def-0123456789ac"),
+		OccurredAt: time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
+		ActorKind:  "admin",
+		Action:     "balance.adjusted",
+		Outcome:    "success",
+		Data:       json.RawMessage(`{"amount":"12.50","reason":"补偿"}`),
+	}}}
+	e, _ := newTestRouter(fake)
+	code, body := getJSON(t, e, "/v1/audit")
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if !strings.Contains(string(body), `"data":{"amount":"12.50","reason":"补偿"}`) {
+		t.Fatalf("data 应原样带出，body %s", body)
 	}
 }
 

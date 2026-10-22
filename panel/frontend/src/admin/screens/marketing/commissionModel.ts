@@ -42,7 +42,7 @@ export function withdrawalState(status: string): { label: string; tone: Tone; ca
     case 'paid':
       return { label: '已打款', tone: 'ok', canReview: false, canPay: false }
     case 'rejected':
-      return { label: '已拒绝', tone: 'neutral', canReview: false, canPay: false }
+      return { label: '已驳回', tone: 'neutral', canReview: false, canPay: false }
     default:
       return { label: status, tone: 'neutral', canReview: false, canPay: false }
   }

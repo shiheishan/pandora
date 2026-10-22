@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	nodev1 "github.com/aegispanel/nodeapi/pandora/node/v1"
 	"github.com/google/uuid"
@@ -45,6 +46,12 @@ func helloFromProto(h *nodev1.Hello) service.Hello {
 	for _, a := range h.GetAppliedUsers() {
 		if id, ok := parseID(a.GetNodeId()); ok && a.GetVersion() != "" {
 			out.AppliedUsers[id] = a.GetVersion()
+		}
+	}
+	out.BuildSerial = h.GetBuildSerial()
+	if lu := h.GetLastUpgrade(); lu != nil {
+		if r, ok := upgradeReportFromProto(lu); ok {
+			out.LastUpgrade = &r
 		}
 	}
 	return out
@@ -87,6 +94,16 @@ func heartbeatFromProto(hb *nodev1.Heartbeat) service.Heartbeat {
 		rt := service.NodeRuntime{NodeID: id, Status: st, Reason: n.GetReason()}
 		if other, ok := parseID(n.GetReasonNodeId()); ok {
 			rt.ReasonNodeID = &other
+		}
+		if c := n.GetCert(); c != nil {
+			cert := &service.NodeCert{
+				Identifier:  c.GetIdentifier(),
+				ErrorCode:   c.GetErrorCode(),
+				ErrorDetail: c.GetErrorDetail(),
+			}
+			cert.NotAfter = certUnixTime(c.GetNotAfterUnix())
+			cert.NextAttempt = certUnixTime(c.GetNextAttemptUnix())
+			rt.Cert = cert
 		}
 		out.Nodes = append(out.Nodes, rt)
 	}
@@ -151,6 +168,28 @@ func configAckFromProto(a *nodev1.ConfigAck) (service.ConfigAck, bool) {
 	return service.ConfigAck{
 		NodeID: id, SHA256: strings.ToLower(a.GetContentSha256()), Phase: phase,
 		ReasonCode: a.GetReasonCode(), Detail: a.GetDetail(),
+	}, true
+}
+
+// upgradeReportFromProto 转升级回报；job_id 不是 UUID 或阶段未知时 ok 为 false。
+func upgradeReportFromProto(r *nodev1.UpgradeReport) (service.UpgradeReport, bool) {
+	id, ok := parseID(r.GetJobId())
+	if !ok {
+		return service.UpgradeReport{}, false
+	}
+	var phase service.UpgradePhase
+	switch r.GetPhase() {
+	case nodev1.UpgradePhase_UPGRADE_PHASE_STAGED:
+		phase = service.UpgradePhaseStaged
+	case nodev1.UpgradePhase_UPGRADE_PHASE_FAILED:
+		phase = service.UpgradePhaseFailed
+	case nodev1.UpgradePhase_UPGRADE_PHASE_ROLLED_BACK:
+		phase = service.UpgradePhaseRolledBack
+	default:
+		return service.UpgradeReport{}, false
+	}
+	return service.UpgradeReport{
+		JobID: id, Phase: phase, ReasonCode: r.GetReasonCode(), Detail: r.GetDetail(),
 	}, true
 }
 
@@ -262,6 +301,26 @@ func outboundToProto(o service.Outbound) []*nodev1.SessionResponse {
 		return []*nodev1.SessionResponse{command(&nodev1.Command{Kind: &nodev1.Command_Tombstone{Tombstone: &nodev1.Tombstone{
 			Reason: o.Reason,
 		}}})}
+	case service.OutUpgrade:
+		return []*nodev1.SessionResponse{command(&nodev1.Command{Kind: &nodev1.Command_Upgrade{Upgrade: &nodev1.Upgrade{
+			JobId: o.Upgrade.JobID.String(), Manifest: o.Upgrade.Manifest, Signature: o.Upgrade.Signature,
+			BinaryUrl: o.Upgrade.BinaryURL, ConfirmWithinSec: o.Upgrade.ConfirmWithinSec,
+		}}})}
 	}
 	return nil
 }
+
+// certUnixTime 把节点端自报的秒级时间戳转成时间；0 与 2000–2200 年以外的值当没报（nil）。
+// 节点端内容按不可信输入处理：毫秒误写成秒或 int64 极值会让整拍运行状态 json.Marshal 失败（certs 审查 S6）。
+func certUnixTime(u int64) *time.Time {
+	if u < certUnixMin || u > certUnixMax {
+		return nil
+	}
+	t := time.Unix(u, 0).UTC()
+	return &t
+}
+
+var (
+	certUnixMin = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	certUnixMax = time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+)

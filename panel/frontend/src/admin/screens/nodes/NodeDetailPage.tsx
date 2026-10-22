@@ -1,15 +1,15 @@
 import { href, navigate, useHashLocation } from '../../../core/router'
 import { formatBytes } from '../../../core/format'
 import { Empty, QueryView, Tag } from '../../../ui'
-import { DetailPage, SideFact, SideFacts, StatusDot, type StatusTone } from '../../kit'
+import { DetailPage, SideFact, SideFacts, StatusDot, useNow, type StatusTone } from '../../kit'
 import css from './detail.module.css'
-import { addressLabel, nodeState, protocolLabel, REGIONS } from './logic'
+import { addressLabel, nodeState, protocolLabel, regionLabel } from './logic'
 import { NodeIdentity } from './NodeIdentity'
 import { NodeMonitor } from './NodeMonitor'
 import { NodeHeaderAction, NodeOps } from './NodeOps'
 import { NodeProtocol } from './NodeProtocol'
 import { NodeSettings } from './NodeSettings'
-import { runState } from './runtime'
+import { runState, certBadge } from './runtime'
 import { useNodeDetail, useNodes } from './queries'
 import type { NodeRow } from './schemas'
 import { trafficUsageLabel } from './xb'
@@ -17,7 +17,7 @@ import { trafficUsageLabel } from './xb'
 export const DETAIL_TABS = [
   ['metrics', '概览'],
   ['proto', '协议参数'],
-  ['settings', '路由与流量'],
+  ['settings', '设置'],
   ['ops', '身份与操作'],
 ] as const
 export type DetailTab = (typeof DETAIL_TABS)[number][0]
@@ -29,21 +29,16 @@ function statusDotTone(tone: string): StatusTone {
   return 'off'
 }
 
-/** REGIONS 里按两位代码找中文地区名（REGIONS 的名称形如「HK · 香港」，取「·」后半），认不出显示原代码 */
-function regionLabel(code: string | null): string {
-  if (!code) return '—'
-  const label = REGIONS.find(([c]) => c === code)?.[1]
-  return label ? (label.split(' · ')[1] ?? label) : code
-}
-
 /**
  * node 是列表行（列表里有就秒出），列表没加载到时用单取结果 detail 兜底；
- * detail 同时给协议页签带编辑字段。「路由与流量」的编辑器要 traffic_rate，从 detail 取
+ * detail 同时给协议页签带编辑字段。「设置」页签的编辑器要 traffic_rate，从 detail 取
  */
 export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
   const list = useNodes()
   const detail = useNodeDetail(id)
   const location = useHashLocation()
+  // 证书剩余天数按分钟走，不在渲染里读时钟
+  const now = useNow().getTime()
   // 列表页带来的筛选查询串原样带着走，返回时还原
   const listQuery = Object.fromEntries(location.query)
   const back = { href: href('/nodes/nodes', listQuery), label: '节点' }
@@ -62,6 +57,7 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
 
   const state = nodeState(row)
   const run = runState(row)
+  const cert = certBadge(row.cert, now)
 
   return (
     <DetailPage
@@ -90,15 +86,27 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
       side={
         <SideFacts label="节点信息">
           <SideFact label="服务器">
-            {row.server_id ? <a href={href(`/nodes/servers/${row.server_id}`)}>{row.server_name ?? '服务器'}</a> : '未绑定'}
+            {row.server_id ? (
+              <a href={href(`/nodes/servers/${row.server_id}`)}>{row.server_name ?? '服务器'}</a>
+            ) : row.serving_status === 'retired' ? (
+              '未绑定'
+            ) : (
+              <a href={href(`/nodes/nodes/${id}/ops`, { ...listQuery, bind: '1' })}>未绑定 · 去绑定</a>
+            )}
           </SideFact>
           <SideFact label="地区">{regionLabel(row.country_code)}</SideFact>
           <SideFact label="节点池">{row.pool_name ?? '未划入节点池'}</SideFact>
           <SideFact label="是否下发">
             {row.delivered_to_users ? (
-              <span className={css.okText}>正在下发给用户</span>
+              // 下发中但带说明（心跳超时仍下发、运行降级时兜底下发）：说明用警告色原样显示，不说「正在下发」了事
+              row.delivery_note ? (
+                <span className={css.warnText}>{row.delivery_note}</span>
+              ) : (
+                <span className={css.okText}>正在下发给用户</span>
+              )
             ) : (
-              <span className={css.warnText}>不下发：{row.delivery_note}</span>
+              // 后端的说明是完整句子（多数已写明「不下发」），原样显示，不再加前缀
+              <span className={css.warnText}>{row.delivery_note || '不下发'}</span>
             )}
           </SideFact>
           <SideFact label="本周期用量">
@@ -116,6 +124,12 @@ export function NodeDetailPage({ id, tab }: { id: string; tab: DetailTab }) {
             {run === null ? '—' : run.label}
             {run !== null && run.detail !== '' && (
               <span className={css.faint}>{run.detail}</span>
+            )}
+          </SideFact>
+          <SideFact label="证书">
+            {row.cert === null ? '—' : (cert?.label ?? '—')}
+            {cert !== null && cert.detail !== '' && (
+              <span className={css.faint}>{cert.detail}</span>
             )}
           </SideFact>
         </SideFacts>

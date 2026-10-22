@@ -1,10 +1,10 @@
 // Package service 是 content 模块的业务层：版本化的知识库与自定义页面（后台发版、归档、列表），
-// 门户按套餐、平台、客户端版本与语言过滤后的可见文章，以及「这篇有帮助吗」的反馈。别的模块只调本包。
+// 门户按套餐过滤后的可见文章。别的模块只调本包。
 // 门户读单篇文章时按用户替换占位变量、按有无有效订阅处理区块（render.go）。
 //
 // 正文只当纯文本 / Markdown 源存储与下发，两端都不渲染成可信 HTML，所以这里不是 XSS 边界。
-// 每次保存是一个新版本（同一 slug 版本号递增）；发布时把「同一受众」（语言、平台、客户端版本范围、
-// 限定套餐、可见性都相同）里已发布的旧版本归档，受众不同的旧版本照常可见。
+// 每次保存是一个新版本（同一 slug 版本号递增）；发布时把「同一受众」（限定套餐与可见性都相同）里
+// 已发布的旧版本归档，受众不同的旧版本照常可见。
 package service
 
 import (
@@ -41,9 +41,11 @@ type Subscriptions interface {
 	LivePlanIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 }
 
-// Site 是 content 要的站点设置（占位变量 {{siteName}}）；*settingssvc.Service 直接满足。
+// Site 是 content 要的站点设置（占位变量 {{siteName}}、{{siteUrl}}）；*settingssvc.Service 直接满足。
 type Site interface {
 	Site(ctx context.Context) (settingssvc.Site, error)
+	// SiteURL 是当前生效的主域名（以 / 结尾，后台可改；读快照，改了立即生效）
+	SiteURL(ctx context.Context) string
 }
 
 // SubscribeLinks 是占位变量 {{subscribeUrl}} 要的订阅链接（属 subscription），由 app 适配器实现。
@@ -68,9 +70,7 @@ type Service struct {
 	users Users
 	site  Site
 	links SubscribeLinks
-	// publicBaseURL 是面板对外根地址，只在启动装配时写入。
-	publicBaseURL string
-	now           func() time.Time
+	now   func() time.Time
 }
 
 // New 构造 content service：plans 传 catalog service，subs 传 subscription service，users 传 identity service。
@@ -84,10 +84,7 @@ func (s *Service) UseSite(x Site) { s.site = x }
 // UseSubscribeLinks 注入订阅链接端口；只在启动装配时调用，不并发安全。
 func (s *Service) UseSubscribeLinks(x SubscribeLinks) { s.links = x }
 
-// UsePublicBaseURL 设置面板对外根地址；只在启动装配时调用，不并发安全。
-func (s *Service) UsePublicBaseURL(u string) { s.publicBaseURL = u }
-
-// MissingPorts 返回尚未注入的必需端口名；publicBaseURL 是配置值，不算端口。
+// MissingPorts 返回尚未注入的必需端口名。
 func (s *Service) MissingPorts() []string {
 	var missing []string
 	if s.site == nil {
@@ -117,11 +114,7 @@ const (
 	VisibilityAuthenticated = "authenticated"
 	VisibilityInternal      = "internal"
 
-	DefaultKind   = "kb_article"
-	DefaultLocale = "zh-CN"
-
-	// PlatformAny 表示不按平台过滤（帮助中心要看到全部平台的客户端教程）。
-	PlatformAny = "any"
+	DefaultKind = "kb_article"
 )
 
 // Page 是一个版本。列表不带正文；作者两项只在后台列表里填。
@@ -134,19 +127,15 @@ type Page struct {
 	Title            string
 	Summary          string
 	Body             string
-	Locale           string
 	SanitizerVersion string
-	// TargetPlatforms、TargetPlanIDs 已排序去重；永不为 nil
-	TargetPlatforms  []string
-	MinClientVersion string
-	MaxClientVersion string
-	TargetPlanIDs    []string
-	Visibility       string
-	Status           string
-	ReviewDueAt      *time.Time
-	PublishedAt      *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// TargetPlanIDs 已排序去重；永不为 nil
+	TargetPlanIDs []string
+	Visibility    string
+	Status        string
+	ReviewDueAt   *time.Time
+	PublishedAt   *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 	// LatestVersion 是这个 slug 所有版本里最大的版本号（后台用）
 	LatestVersion int
 	// IsLatestInAudience 表示同一受众里没有更新的版本（后台用）
@@ -163,20 +152,16 @@ type ListFilter struct {
 
 // PublishInput 是发一个新版本的输入。
 type PublishInput struct {
-	Slug             string
-	Kind             string
-	Category         string
-	Title            string
-	Summary          string
-	Body             string
-	Locale           string
-	TargetPlatforms  []string
-	MinClientVersion string
-	MaxClientVersion string
-	TargetPlanIDs    []string
-	Visibility       string
-	Status           string
-	ReviewDueAt      *time.Time
+	Slug          string
+	Kind          string
+	Category      string
+	Title         string
+	Summary       string
+	Body          string
+	TargetPlanIDs []string
+	Visibility    string
+	Status        string
+	ReviewDueAt   *time.Time
 	// ExpectedLatestVersion 是编辑时看到的最新版本号（新文章为 0），对不上回 409。
 	ExpectedLatestVersion int
 }
@@ -199,7 +184,7 @@ type ArchiveResult struct {
 
 // VisibleFilter 是门户读取的过滤条件。
 type VisibleFilter struct {
-	Kind, Platform, ClientVersion, Locale string
+	Kind string
 	// Query 对标题、摘要、正文做不区分大小写的包含匹配（≤100 字）；只看每篇文章可见的那一版，旧版本命中不算。只用于列表。
 	Query string
 }

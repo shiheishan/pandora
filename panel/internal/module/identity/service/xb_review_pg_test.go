@@ -55,7 +55,7 @@ func TestPGAdminSetEmailInvalidatesOldEmail(t *testing.T) {
 	if d["before_hmac"] != e.svc.auditEmailHMAC(oldEmail) || d["after_hmac"] != e.svc.auditEmailHMAC(newEmail) {
 		t.Fatalf("审计应带邮箱 HMAC 供对照: %s", data)
 	}
-	if d["before"] != maskEmail(oldEmail) || d["after"] != maskEmail(newEmail) {
+	if d["before"] != MaskEmail(oldEmail) || d["after"] != MaskEmail(newEmail) {
 		t.Fatalf("审计应带打码邮箱: %s", data)
 	}
 }
@@ -118,7 +118,7 @@ func useFakeCaptchaV3(t *testing.T, e *env, actx context.Context) {
 		})
 	}))
 	t.Cleanup(srv.Close)
-	e.svc.captcha = &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, expectedHost: testCaptchaHost}
+	e.svc.captcha = &captchaVerifier{client: srv.Client(), recaptchaURL: srv.URL, turnstileURL: srv.URL, siteURLs: testSiteURLs}
 }
 
 // 注册、找回第 1 步的人机验证接线：各自带自己的 action（v3 令牌挪到别的入口不能用），空令牌不放行。

@@ -55,66 +55,65 @@ type serverDeleteRequest struct {
 // 响应
 // ---------------------------------------------------------------------------
 
+// serverUpgradeOptionResponse 是这台现在能不能在线升级（serverSchema.upgrade）。
+type serverUpgradeOptionResponse struct {
+	Available     bool    `json:"available"`
+	TargetVersion *string `json:"target_version"` // 没有可用发布包时 null
+	Reason        *string `json:"reason"`         // 能升级时 null
+}
+
+// serverLastUpgradeResponse 是最近一次在线升级任务（serverSchema.last_upgrade）。
+type serverLastUpgradeResponse struct {
+	Status        string    `json:"status"`
+	TargetVersion string    `json:"target_version"`
+	ReasonCode    *string   `json:"reason_code"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 // serverResponse 是一台服务器（serverSchema）。
 // 资源指标取最新一个指标点，没有点时为 null。
 type serverResponse struct {
-	ID                 uuid.UUID  `json:"id"`
-	Name               string     `json:"name"`
-	Status             string     `json:"status"`
-	StatusReason       *string    `json:"status_reason"`
-	RowVersion         int64      `json:"row_version"`
-	Region             *string    `json:"region"`
-	Hostname           *string    `json:"hostname"`
-	PublicIPv4         *string    `json:"public_ipv4"`
-	PublicIPv6         *string    `json:"public_ipv6"`
-	PrivateIPv4        *string    `json:"private_ipv4"`
-	Architecture       *string    `json:"architecture"`
-	OSName             *string    `json:"os_name"`
-	AgentVersion       *string    `json:"agent_version"`
-	LastHeartbeatAt    *time.Time `json:"last_heartbeat_at"`
-	HeartbeatOnline    bool       `json:"heartbeat_online"`
-	CPUCores           *int       `json:"cpu_cores"`
-	MemoryMB           *int       `json:"memory_mb"`
-	DiskGB             *int       `json:"disk_gb"`
-	CapacityNodes      int        `json:"capacity_nodes"`
-	Notes              *string    `json:"notes"`
-	NodeCount          int        `json:"node_count"`
-	ActiveNodeCount    int        `json:"active_node_count"`
-	ServingNodeCount   int        `json:"serving_node_count"`
-	NeverSeenNodeCount int        `json:"never_seen_node_count"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	CPUBP              *int       `json:"cpu_bp"`
-	MemUsedMB          *int64     `json:"mem_used_mb"`
-	MemTotalMB         *int64     `json:"mem_total_mb"`
-	DiskUsedGB         *int64     `json:"disk_used_gb"`
-	DiskTotalGB        *int64     `json:"disk_total_gb"`
-	MetricsAt          *time.Time `json:"metrics_at"`
+	ID                 uuid.UUID                   `json:"id"`
+	Name               string                      `json:"name"`
+	Status             string                      `json:"status"`
+	StatusReason       *string                     `json:"status_reason"`
+	RowVersion         int64                       `json:"row_version"`
+	Region             *string                     `json:"region"`
+	Hostname           *string                     `json:"hostname"`
+	PublicIPv4         *string                     `json:"public_ipv4"`
+	PublicIPv6         *string                     `json:"public_ipv6"`
+	PrivateIPv4        *string                     `json:"private_ipv4"`
+	Architecture       *string                     `json:"architecture"`
+	OSName             *string                     `json:"os_name"`
+	AgentVersion       *string                     `json:"agent_version"`
+	LastHeartbeatAt    *time.Time                  `json:"last_heartbeat_at"`
+	HeartbeatOnline    bool                        `json:"heartbeat_online"`
+	Enrolled           bool                        `json:"enrolled"`
+	CPUCores           *int                        `json:"cpu_cores"`
+	MemoryMB           *int                        `json:"memory_mb"`
+	DiskGB             *int                        `json:"disk_gb"`
+	CapacityNodes      int                         `json:"capacity_nodes"`
+	Notes              *string                     `json:"notes"`
+	NodeCount          int                         `json:"node_count"`
+	ActiveNodeCount    int                         `json:"active_node_count"`
+	ServingNodeCount   int                         `json:"serving_node_count"`
+	NeverSeenNodeCount int                         `json:"never_seen_node_count"`
+	CreatedAt          time.Time                   `json:"created_at"`
+	UpdatedAt          time.Time                   `json:"updated_at"`
+	CPUBP              *int                        `json:"cpu_bp"`
+	MemUsedMB          *int64                      `json:"mem_used_mb"`
+	MemTotalMB         *int64                      `json:"mem_total_mb"`
+	DiskUsedGB         *int64                      `json:"disk_used_gb"`
+	DiskTotalGB        *int64                      `json:"disk_total_gb"`
+	MetricsAt          *time.Time                  `json:"metrics_at"`
+	BinarySHA256       *string                     `json:"binary_sha256"`
+	Upgrade            serverUpgradeOptionResponse `json:"upgrade"`
+	LastUpgrade        *serverLastUpgradeResponse  `json:"last_upgrade"`
 }
 
 type serversResponse struct {
 	Servers []serverResponse `json:"servers"`
 	Total   int              `json:"total"`
-}
-
-// serverNodeResponse 是服务器名下的一个节点（serverNodeSchema）。
-type serverNodeResponse struct {
-	ID                uuid.UUID  `json:"id"`
-	Name              string     `json:"name"`
-	ServingStatus     string     `json:"serving_status"`
-	NodeType          *string    `json:"node_type"`
-	DisplayName       *string    `json:"display_name"`
-	ServerHost        *string    `json:"server_host"`
-	ServerPort        *int       `json:"server_port"`
-	TrafficRate       float64    `json:"traffic_rate"`
-	ConfigValidatedAt *time.Time `json:"config_validated_at"`
-	LastHeartbeatAt   *time.Time `json:"last_heartbeat_at"`
-	CreatedAt         time.Time  `json:"created_at"`
-}
-
-type serverNodesResponse struct {
-	Nodes []serverNodeResponse `json:"nodes"`
-	Total int                  `json:"total"`
 }
 
 type serverDeletedResponse struct {
@@ -124,6 +123,15 @@ type serverDeletedResponse struct {
 
 // serverFrom 把 service 的服务器转成响应。
 func serverFrom(s service.Server) serverResponse {
+	var last *serverLastUpgradeResponse
+	if s.LastUpgrade != nil {
+		last = &serverLastUpgradeResponse{
+			Status:        s.LastUpgrade.Status,
+			TargetVersion: s.LastUpgrade.TargetVersion,
+			ReasonCode:    s.LastUpgrade.ReasonCode,
+			UpdatedAt:     s.LastUpgrade.UpdatedAt,
+		}
+	}
 	return serverResponse{
 		ID:                 s.ID,
 		Name:               s.Name,
@@ -140,6 +148,7 @@ func serverFrom(s service.Server) serverResponse {
 		AgentVersion:       s.AgentVersion,
 		LastHeartbeatAt:    s.LastHeartbeatAt,
 		HeartbeatOnline:    s.HeartbeatOnline,
+		Enrolled:           s.Enrolled,
 		CPUCores:           s.CPUCores,
 		MemoryMB:           s.MemoryMB,
 		DiskGB:             s.DiskGB,
@@ -157,7 +166,22 @@ func serverFrom(s service.Server) serverResponse {
 		DiskUsedGB:         s.DiskUsedGB,
 		DiskTotalGB:        s.DiskTotalGB,
 		MetricsAt:          s.MetricsAt,
+		BinarySHA256:       s.BinarySHA256,
+		Upgrade: serverUpgradeOptionResponse{
+			Available:     s.Upgrade.Available,
+			TargetVersion: optString(s.Upgrade.TargetVersion),
+			Reason:        optString(s.Upgrade.Reason),
+		},
+		LastUpgrade: last,
 	}
+}
+
+// optString 把空串转成 nil，便于 JSON 输出 null。
+func optString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 // serversFrom 把服务器列表转成响应（切片非 nil）。
@@ -167,30 +191,4 @@ func serversFrom(list []service.Server) serversResponse {
 		out = append(out, serverFrom(s))
 	}
 	return serversResponse{Servers: out, Total: len(out)}
-}
-
-// serverNodeFrom 把服务器名下的节点转成响应。
-func serverNodeFrom(n service.ServerNode) serverNodeResponse {
-	return serverNodeResponse{
-		ID:                n.ID,
-		Name:              n.Name,
-		ServingStatus:     n.ServingStatus,
-		NodeType:          n.NodeType,
-		DisplayName:       n.DisplayName,
-		ServerHost:        n.ServerHost,
-		ServerPort:        n.ServerPort,
-		TrafficRate:       n.TrafficRate.InexactFloat64(),
-		ConfigValidatedAt: n.ConfigValidatedAt,
-		LastHeartbeatAt:   n.LastHeartbeatAt,
-		CreatedAt:         n.CreatedAt,
-	}
-}
-
-// serverNodesFrom 把服务器名下的节点列表转成响应（切片非 nil）。
-func serverNodesFrom(list []service.ServerNode) serverNodesResponse {
-	out := make([]serverNodeResponse, 0, len(list))
-	for _, n := range list {
-		out = append(out, serverNodeFrom(n))
-	}
-	return serverNodesResponse{Nodes: out, Total: len(out)}
 }

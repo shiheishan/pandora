@@ -29,7 +29,7 @@ export const appearanceSchema = z.object({
         .object({ light: z.record(z.string(), z.string()).optional(), dark: z.record(z.string(), z.string()).optional() })
         .partial()
         .catch({}),
-      branding: z.object({ tagline: z.string().optional(), logo: z.string().optional() }).catch({}),
+      branding: z.object({ tagline: z.string().optional() }).catch({}),
     })
     .nullable(),
   slots: z.record(z.string(), z.string()).catch({}),
@@ -157,10 +157,11 @@ export function useActivePlanName(): string | null {
 // R69 的 paid_invitees / total_earned / transfers 已上线且必回（Go 无 omitempty）。
 // 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
 // ---------------------------------------------------------------------------
-// 佣金条目状态：pending / available / voided（复核作废，门户显示「已作废」）；其余状态留在枚举里防解析失败
+// 状态集合与 Go 一致（commission/service/types.go）：条目 pending / available / voided，提现 requested / approved / rejected / paid。
+// under_review：待复核的冻结中条目，门户显示「审核中」；tx_hash：只有 USDT 提现已打款时非空（链上交易哈希），其余为空串。
 const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
-const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected', 'voided'] as const
-const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
+const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'voided'] as const
+const WITHDRAWAL_STATUSES = ['requested', 'approved', 'rejected', 'paid'] as const
 
 export const commissionSchema = z.object({
   summary: z.object({
@@ -189,7 +190,8 @@ export const commissionSchema = z.object({
       level: z.number().int(),
       share_percent: z.number().int(),
       status: z.enum(COMMISSION_ENTRY_STATUSES),
-      frozen_until: z.string().nullable(),
+      under_review: z.boolean(),
+      frozen_until: z.string(),
       created_at: z.string(),
       order_no: z.string(),
       from: z.string(),
@@ -202,6 +204,7 @@ export const commissionSchema = z.object({
       method: z.string(),
       status: z.enum(WITHDRAWAL_STATUSES),
       reject_reason: z.string(),
+      tx_hash: z.string(),
       requested_at: z.string(),
       completed_at: z.string().nullable(),
     }),

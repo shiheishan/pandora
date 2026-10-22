@@ -15,7 +15,7 @@ paths:
 - 编号严格递增；几路并行时合并按号从小到大。goose 的 Provider 缺省不接受「库里已到更高版本、又冒出一个没跑过的低号」。
 - 每个迁移都要有 `-- +goose Down`，能逆就写真正的逆操作；确实不可逆的在 Down 里写明原因（照 `00001_base.sql` 留 citext 的写法）。
 - 往返两处验证：
-  - `panel/db/migrations/migrations_test.go` 的 `TestRoundTrip`：Up → `DownAll` → Up，并断言全部版本 Applied（要 `PANDORA_TEST_DATABASE_URL`）。
+  - `panel/db/migrations/migrations_test.go` 的 `TestRoundTrip`：Up → `downAll`（测试文件里的辅助函数）→ Up，并断言全部版本 Applied（要 `PANDORA_TEST_DATABASE_URL`）。
   - CI `panel-newstack.yml` 的 Migration round trip 步骤：用编好的二进制跑 `migrate up` → `status` → `down` → `up`。
 - 函数体、DO 块用 `-- +goose StatementBegin` / `StatementEnd` 包住，否则 goose 按分号切错。
 

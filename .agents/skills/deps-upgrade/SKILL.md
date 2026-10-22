@@ -85,11 +85,11 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 
 | 地方 | 依赖的标准库或 x/net 行为 | 守卫 |
 |---|---|---|
-| naive 入站：`kernel/naive.go`（`http2.ConfigureServer`） | net/http 的 CONNECT 与 HTTP/2。1.26.9 后，错误口令的 CONNECT 回 502，不再回落 | `kernel/probe_resistance_test.go` 的 `TestNaiveProbesServeFallback` |
-| 防探测回落：`kernel/probe_fallback.go`（`http2.Server.ServeConn`）、`probe_fallback_http.go`（`httputil.ReverseProxy`） | 回落站点的 HTTP/1.1、HTTP/2 响应形状 | 同一文件里的其余测试：Reality / TLS / Trojan 回落、`TestParseProbeFallback` |
+| naive 入站：`kernel/naive.go`（`http.Server.Protocols` 开 HTTP/1 与 h2） | net/http 的 CONNECT 与 HTTP/2。1.26.9 起 `httputil.ReverseProxy` 对 CONNECT 一律走 ErrorHandler，回落改由 `probeFallbackConnect` 转发（见 pdnd-kernel 规则文件） | `kernel/probe_resistance_test.go` 的 `TestNaiveProbesServeFallback` |
+| 防探测回落：`kernel/probe_fallback.go`（x/net 的 `http2.Server.ServeConn`，理由见代码注释；升 Go 1.27 时 ServeConn 改由 net/http 实现，到时重采 HTTP/2 指纹再看能不能换掉）、`probe_fallback_http.go`（`httputil.ReverseProxy`） | 回落站点的 HTTP/1.1、HTTP/2 响应形状 | 同一文件里的其余测试：Reality / TLS / Trojan 回落、`TestParseProbeFallback` |
 | ShadowTLS 诱饵中继 | TLS 记录层与超时 | `internal/nativewire/shadowtls/service_test.go` |
 | REALITY over QUIC / H3 | `internal/reality` 与 `internal/realityquic` 对标准库 crypto 的引用 | `kernel` 的 `TestNativeRealityH3RoundTrip`、`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` |
-| XHTTP 服务端：`kernel/xhttp_server.go` | net/http 的 HTTP/2 响应写出 | `-tags interop` 的 Xray XHTTP 测试 |
+| gRPC 与 XHTTP 服务端：`kernel/grpc_stream.go`、`kernel/xhttp_server.go`（`inboundH2Protocols`：TLS 上 h2、明文与 REALITY 上 prior knowledge） | net/http 的 HTTP/2 与明文 HTTP/2 分派（非 `*tls.Conn` 且没有返回 `tls.ConnectionState` 的 `ConnectionState()` 方法才走明文 h2） | `-tags interop` 的 Xray XHTTP 测试 |
 | 面板 SSE 推送：`panel/internal/pkg/realtime/sse.go` | net/http | panel 全量单测与 CI 的 PG 用例（panel-newstack 的 test job） |
 
 **本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发；`<go.mod 版本>` 取 `pdnd/go.mod` 的 go 指令，如 `go1.26.9`）：
@@ -180,3 +180,4 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 - 本机 Go 与 CI 不同，「本机过了」不代表 CI 过。复现 CI 或扫漏洞时都要显式写 `GOTOOLCHAIN=go<go.mod 版本>`（本机缓存里没有的版本，切换要联网下载工具链）。
 - `GOFLAGS=-mod=mod` 跑 tools 模块会改写它的 go.mod 和 go.sum。扫描时用脚本（会还原），要改就正式 `go mod tidy` 并提交。
 - 升级的提交只放版本改动和必要的适配。顺手修的旧账（如 tidy）单独提交，验收时才能把升级引起的红和旧账分开。
+- **pdnd 的 `github.com/sagernet/quic-go` 停在 `-sing-box-mod.4`、`sing-quic` 停在 v0.6.1，不要顺手升**（用户 10-21 定「先不升，只摘修复」）：quic-go 从 mod.6 起（sing-quic 0.7 至少要 mod.6）只要 conn 实现 `syscall.Conn` 就直接对 fd 收发，Linux 上的 `batchSalamanderConn` 正好实现了 `SyscallConn()`（给读侧批量用），发包会绕过 Salamander 混淆、以明文 QUIC 上线，开混淆的 hy2 入站整个不通。darwin 走逐包实现，本机测不出来；守卫是 Linux CI 上的 `kernel/hysteria2_obfs_test.go` 的 `TestHysteria2SalamanderBulkTCPAndUDP`。上游给出发送钩子或出漏洞时再升，做法与已摘的修复见 `.claude/rules/pdnd-forks.md`（hysteria2 / tuic 那条）与 TASKS #18。

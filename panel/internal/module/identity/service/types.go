@@ -132,7 +132,6 @@ type UserRow struct {
 	Email       string
 	DisplayName *string
 	Status      string
-	RiskLevel   string
 	GroupID     *uuid.UUID
 	GroupName   string
 	CreatedAt   time.Time

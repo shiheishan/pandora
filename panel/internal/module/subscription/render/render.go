@@ -225,16 +225,11 @@ func UAFamily(ua string) string {
 	}
 }
 
-// Render 把节点渲染成指定格式，返回内容、Content-Type 与实际写进去的节点数（连不上的组合会跳过）。
-// proxyUUID 是这份订阅在节点上的身份；ua 用来挑 sing-box 的版本写法（singbox_template.go），
-// 为空即认不出版本，给兼容写法。等于不带后台模板、过滤参数与信息节点的 RenderRequest。
+// RenderRequest 按一次拉取的全部输入渲染（前处理见 request.go），返回内容、Content-Type 与实际写进去的
+// 节点数（连不上的组合会跳过；不含信息节点）。r.UA 用来挑 sing-box 的版本写法（singbox_template.go），
+// 为空即认不出版本，给兼容写法。
 //
-// 传入的 nodes 可能来自进程内缓存、被所有命中者共享：这里只读不改（shared_test.go 守着）。
-func Render(f Format, nodes []Node, proxyUUID, ua string, opt Options) ([]byte, string, int) {
-	return RenderRequest(Request{Format: f, Nodes: nodes, ProxyUUID: proxyUUID, UA: ua, Options: opt})
-}
-
-// RenderRequest 按一次拉取的全部输入渲染（前处理见 request.go）。返回值同 Render；节点数不含信息节点。
+// 传入的 r.Nodes 可能来自进程内缓存、被所有命中者共享：这里只读不改（shared_test.go 守着）。
 func RenderRequest(r Request) ([]byte, string, int) {
 	rc := prepare(r)
 	switch r.Format {

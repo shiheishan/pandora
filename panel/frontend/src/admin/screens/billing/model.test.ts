@@ -47,6 +47,9 @@ import {
   parseMinAmount,
   previewParams,
   priceChoices,
+  purchaseLimitErrors,
+  purchaseLimitsBody,
+  purchaseLimitsFormFrom,
   providerBody,
   providerFormFrom,
   providerKind,
@@ -231,6 +234,24 @@ describe('orders', () => {
 })
 
 describe('write forms', () => {
+  it('validates purchase limits like the backend and never turns an empty box into 0', () => {
+    expect(purchaseLimitsFormFrom({ max_unpaid_orders: 3, max_subscriptions: 0 })).toEqual({ max_unpaid_orders: '3', max_subscriptions: '0' })
+    expect(purchaseLimitErrors({ max_unpaid_orders: '0', max_subscriptions: ' 50 ' })).toEqual({})
+    expect(purchaseLimitsBody({ max_unpaid_orders: '0', max_subscriptions: ' 50 ' })).toEqual({ max_unpaid_orders: 0, max_subscriptions: 50 })
+    expect(purchaseLimitErrors({ max_unpaid_orders: '', max_subscriptions: '  ' })).toEqual({
+      max_unpaid_orders: '必填（0 表示不限）',
+      max_subscriptions: '必填（0 表示不限）',
+    })
+    expect(purchaseLimitErrors({ max_unpaid_orders: '-1', max_subscriptions: '51' })).toEqual({
+      max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+      max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
+    })
+    expect(purchaseLimitErrors({ max_unpaid_orders: '1.5', max_subscriptions: 'abc' })).toEqual({
+      max_unpaid_orders: '未支付订单上限要在 0 到 50 之间（0 表示不限）',
+      max_subscriptions: '订阅数上限要在 0 到 50 之间（0 表示不限）',
+    })
+  })
+
   it('checks reasons and references by characters like Go', () => {
     expect(reasonProblem('补偿', '开单原因')).toContain('至少 5 个字')
     expect(reasonProblem('  补偿一个月  ', '开单原因')).toBeNull()
@@ -322,6 +343,9 @@ describe('late payments, providers and adjustments', () => {
   it('labels the archived-plan case and its cancel reason (10-16)', () => {
     expect(LATE_KIND_LABELS.archived_plan).toBe('套餐归档后到账')
     expect(cancelReasonLabel('plan_archived')).toBe('套餐已归档，实付已转入用户余额')
+    expect(cancelReasonLabel('user_cancelled')).toBe('用户自己取消')
+    expect(cancelReasonLabel('expired')).toBe('超时未支付')
+    expect(cancelReasonLabel('管理员填的原话')).toBe('管理员填的原话')
   })
 
   it('words late cases and filter query helpers', () => {
@@ -586,6 +610,10 @@ describe('channel query (PAY-009)', () => {
     const late = orderQueriedSchema.parse({ ...base, quarantine_kind: 'released_order', order_status: 'cancelled' })
     expect(queriedView(late)).toMatchObject({ tone: 'warn' })
     expect(queriedView(late).text).toContain('待处理到账')
+    // 状态名本身带「已」（已取消、已支付），不再拼成「订单已已取消」
+    expect(queriedView(late).text).toContain('订单状态是「已取消」')
+    expect(queriedView(late).text).not.toContain('已已')
+    expect(queriedView({ ...late, order_status: 'expired' }).text).toContain('订单状态是「超时取消」')
     expect(queriedView({ ...r, channel_status: 'unpaid', reconciled: false, order_status: 'pending_payment' }).text).toContain('尚未付款')
     expect(queriedView({ ...r, channel_status: 'not_found', reconciled: false, order_status: 'pending_payment' }).text).toContain('没有这笔订单的付款记录')
     expect(orderQueriedSchema.safeParse({ ...base, channel_status: 'error' }).success).toBe(false)

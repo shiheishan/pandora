@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"io"
-	"time"
 
 	"github.com/aegispanel/aegis/internal/module/audit/service"
 	"github.com/aegispanel/aegis/internal/pkg/httpx"
@@ -74,12 +73,7 @@ func (h *Handler) export(c *gin.Context) {
 	started := false
 	open := func() io.Writer {
 		started = true
-		name := "audit-" + time.Now().UTC().Format("20060102-150405") + ".csv"
-		c.Header("Content-Type", "text/csv; charset=utf-8")
-		c.Header("Content-Disposition", `attachment; filename="`+name+`"`)
-		c.Header("Cache-Control", "no-store")
-		c.Status(200)
-		return c.Writer
+		return startCSV(c)
 	}
 
 	if err := h.svc.ExportCSV(c.Request.Context(), f, open); err != nil {

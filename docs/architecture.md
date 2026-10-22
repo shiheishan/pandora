@@ -20,7 +20,7 @@
 | 7 | 鉴权：15 分钟 JWT（HS256 钉死，按域分密钥，带 kid）；会话存 Redis；refresh 放 HttpOnly cookie，带轮换和重放检测；Redis 不可用时回 503 | 栈表要求；吊销保持「下一个请求就生效」 |
 | 8 | 后台权限只分有和没有：在管理员名单里且账号 active 就能做全部后台操作；没有角色、权限码、临时提权，后台路由只要求已登录 | 用户 2026-10-12 定（Q8）；非管理员登不进后台，取消管理员时当场吊销其后台会话，不需要每请求查库 |
 | 9 | 节点通道：一台服务器一个身份、一条 `Session` 双向流，节点通过消息里的 node_id 区分；`Enroll` 用一次性令牌换客户端证书 | 用户先前定过「无逐节点安装命令、服务器卡片显示会话状态」；一台机器 60 个节点不用 60 份身份 |
-| 10 | 删掉 UniProxy、Ed25519 签名通道、配置签名、节点 SSE、nonce；离线发布密钥（签二进制）的位置保留，不在本阶段实现 | mTLS 直达面板进程后，签名和 nonce 防的东西已由 TLS 承担 |
+| 10 | 删掉 UniProxy、Ed25519 签名通道、配置签名、节点 SSE、nonce；离线发布密钥（签二进制）的位置保留，不在本阶段实现（10-20 已做成节点在线升级，见 11.6） | mTLS 直达面板进程后，签名和 nonce 防的东西已由 TLS 承担 |
 | 11 | 定时和异步工作全部进 asynq，Scheduler 只在 worker 里跑一份；库里的 `SKIP LOCKED`、租约和状态条件原样保留，作为第二道保险 | 库仍是事实来源；任务丢了有对账任务补 |
 | 12 | 删掉审计哈希链，审计表保持追加写：触发器加上收回运行角色的 UPDATE/DELETE 权限 | 哈希链没有生产读取方，又是全局串行点和大部分 40001 的来源 |
 | 13 | 实时事件由 service 在事务**提交后**发到 Redis，删掉 `notify_change` 触发器和库到 Valkey 的桥 | 「回归普通」；事件源收拢到各表的属主 service |
@@ -83,7 +83,7 @@ panel/
         render/                  （仅 subscription）订阅格式渲染：纯函数，不依赖任何模块、不碰数据库；node 模块用它的 Node 类型交线路
         protocol/                （仅 node）协议 schema、校验、抹敏感值、端口 L4、内核字段翻译：纯函数，规则同 render
         grpc/                    （仅 node）节点通道的 gRPC 服务（接入与会话），地位同 handler：只调本模块 service
-        provider/                （仅 payment）渠道适配（易支付、BTCPay Server、CoinPayments；safehttp 是共用的外部 HTTP 客户端）
+        provider/                （仅 payment）渠道适配（易支付、BTCPay Server、CoinPayments；外部 HTTP 走 `internal/pkg/safehttp`）
   db/migrations/                 新基线（goose，embed 进二进制）
   tools/depguardgen/             从 internal/module/ 生成 .golangci.yml 的 depguard 规则
 proto/                           节点协议源文件（buf）
@@ -145,17 +145,17 @@ nodeapi/                         buf 生成的 Go 代码，单独的 Go module�
 | ledger | ledger_accounts、ledger_transactions、ledger_entries、balance_holds | 记账、余额、冻结、调账 |
 | promo | coupons、coupon_plans、coupon_redemptions | 优惠券（会员折扣与券的限定周期已在 00054 删除） |
 | commission | commission_entries、withdrawals、commission_transfers、commission_user_overrides、commission_forfeitures | 佣金计提（订单结算时经 order 的 PaidHook；可开三级分销，每级一条条目）、解冻、提现审核与打款、转余额（提现关闭时解冻后自动转）、按用户单独的比例与计佣范围。commission_transfers 记每笔佣金转余额，与账本的 commission_to_balance 交易一一对应，自动转的带 entry_id；账号注销时（identity 经端口在同一事务里调）作废名下冻结、待复核的条目，驳回在途提现，剩下的可提现佣金作废并记进 commission_forfeitures；可用佣金按本模块的表算（已解冻 − 未驳回的提现 − 已转余额 − 注销作废） |
-| giftcard | gift_card_templates、gift_card_prizes、gift_card_template_plans、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
-| subscription | subscriptions、subscription_events、subscription_credentials、quota_balances（含本期赠送 bonus_value，00053）、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log、subscription_trials、subscription_templates、subscription_domain_groups、subscription_domains、subscription_domain_group_user_groups（订阅域名分组，00048） | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
-| node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips、node_relays（中转节点，00045）、node_ech_keys（ECH 密钥，00045） | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
+| giftcard | gift_card_templates、gift_card_prizes、gift_card_codes、gift_card_redemptions、gift_card_batches | 发放调 subscription、ledger 的 service |
+| subscription | subscriptions、subscription_events、subscription_credentials、quota_balances（含本期赠送 bonus_value，00053）、traffic_reset_logs、subscription_usage_daily、subscription_fetch_log、subscription_trials、subscription_domain_groups、subscription_domains、subscription_domain_group_user_groups（订阅域名分组，00048） | 状态口径（生效、可救回、已停用）只在这里定义；节点上报的扣量调它的批量扣量方法 |
+| node | servers、nodes、node_pools、node_pool_user_groups、node_ca（面板 CA）、server_identities、bootstrap_tokens、node_outbounds、node_routes、route_groups、route_group_members、node_traffic_reports、node_traffic_hourly、node_user_traffic_hourly、node_metrics、node_alive_ips、node_relays（中转节点，00045）、node_ech_keys（ECH 密钥，00045）、server_upgrades（在线升级任务，00060） | 后台编排、gRPC 会话、接入、流量入账（入账后调 subscription 扣量）。设计里的 node_configs、node_config_applications、node_user_traffic_daily、node_tasks 没有建：配置文档每次由节点与路由表现算，应用结果按会话回执记在 nodes 上，小时汇总在入账时同事务写 |
 | notify | announcements、notification_templates、notification_preferences、notification_deliveries、notification_inbox、notification_events、notify_scan_cursors、telegram_bindings、telegram_bind_codes、telegram_ticket_messages | 站内信、邮件、Telegram（含管理员群组提醒与工单提醒消息映射） |
 | support | tickets、ticket_messages、ticket_macros | 工单 |
-| content | content_pages、content_page_feedback | 内容页 |
+| content | content_pages | 内容页 |
 | appearance | site_themes、site_slots | 主题和槽位 |
 | plugin | plugin_hooks、plugin_hook_deliveries | 插件钩子 |
 | audit | audit_events、ip_cluster_reviews | 审计写入与查询、风控聚类复核 |
 | idempotency | idempotency_keys | Claim、Complete、Replay |
-| report | activity_daily、revenue_report_adjustments | 看板与营收报表；其余数据一律调属主 service 的聚合读接口 |
+| report | activity_daily、revenue_report_adjustments、integrity_checks | 看板、营收报表与数据巡检结果；其余数据一律调属主 service 的聚合读接口（巡检的检查也是属主 service 的只读方法） |
 
 原来的 adminops 不再作为一个模块：用户管理归 identity 和 auth，目录归 catalog，渠道归 payment，看板归 report。
 
@@ -301,11 +301,11 @@ identity, auth ─► settings, audit
 
 | 项 | 做法 |
 |---|---|
-| 形态 | `<sid>.<32 字节随机 base64url>`；Redis 只存后半段的 SHA-256，比较用常量时间 |
+| 形态 | `<sid>.<代数>.<32 字节 base64url>`：第 g 代的值 = `HMAC(主密钥派生 InfoHMACRefresh, sid ‖ 0 ‖ 种子 ‖ 0 ‖ g)`，种子是会话建立时的 32 字节随机值（Redis 的 `rt_seed`），登录时是第 0 代。只有主密钥、或只有 Redis，都算不出任何一代；Redis 存种子的明文（单有它算不出任何一代）与当前、上一代的 SHA-256，比较用常量时间 |
 | 存放 | HttpOnly、Secure、SameSite=Strict 的 cookie，Path=`/v1/auth`；public 叫 `pandora_rt`，admin 叫 `pandora_admin_rt`（admin 经 nginx 的 `proxy_cookie_path` 改成带后台前缀的路径） |
-| 轮换 | `POST /v1/auth/refresh` 每次生成新值：`rt_prev ← rt_cur`、`rt_cur ← 新值`，Lua 原子完成 |
-| 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新）：只发新的 access，不轮换，也不 Set-Cookie |
-| 重放 | 超出宽限还拿 rt_prev：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。值既不是 rt_cur 也不是 rt_prev：只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人；重放的信号是用过的旧值再出现 |
+| 轮换 | `POST /v1/auth/refresh` 拿当前代来就换成下一代：`rt_prev ← rt_cur`、`rt_cur ← 第 g+1 代`，Lua 原子 CAS |
+| 宽限 | 30 秒内拿 rt_prev 来的请求（多标签页同时刷新，或轮换的响应没送到浏览器：关页、F5、断网、前端超时放弃）：不改任何状态，发新的 access，并把当前那一枚 cookie 原样再发一遍（由上一代的代数重算出来，Redis 里不存明文）。偷到上一枚的人在宽限内拿到的是与合法用户同一枚 |
+| 重放 | 先核真伪：值不是本服务给这个 sid 这一代签发的，只回 401，不吊销——sid 不保密（JWT 明文、审计、会话列表），按「对不上就吊销」任何拿到 sid 的人都能踢掉别人。真值里：超出宽限还拿上一代、或拿更早的任一代（会话已被别人往前轮换过，哪怕连换了几次）：吊销整个会话，审计记 `session.refresh_reuse`（记 anonymous，会话主人放资源），回 401。所以同一枚落在两个人手里，谁先轮换，另一方过了宽限再用（或对方又轮换过一次后再用）就判重放；宽限内再用只会拿回同一枚。退出（logout）凭本会话任一代真值都吊销整条会话 |
 | CSRF | cookie 只在 refresh 和 logout 两个接口上读；SameSite=Strict，再加 Go 标准库的 `http.CrossOriginProtection` 做来源检查。下发 cookie 的登录、快捷登录也挂同一个来源检查（防登录 CSRF：跨站 text/plain 表单能拼出合法 JSON，把受害者浏览器登进攻击者账号） |
 | 刷新不续 rat | 新 access 沿用会话里的 amr；重认证时间只由 reauth 接口改写 |
 
@@ -395,7 +395,7 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 | 吊销 | 身份置为 revoked 后，立即关闭该身份的在途流；每次建流都查库确认身份有效，因此吊销立刻生效，不需要 CRL 或 OCSP |
 | 过期 | 离线超过 30 天、证书已经过期的：节点继续用磁盘缓存服务现有用户（与现在相同），但连不上面板，要在后台生成新令牌重新接入 |
 | 安装证据 | Hello 里带 agent_version 和 binary_sha256，面板记录下来，与当前发布版本不一致时在后台提示。这是节点自报的数据，原来的「两阶段 commit 拒绝」也只是自报，从来不是安全控制，所以改成提示 |
-| 离线发布密钥 | 位置保留：以后升级二进制时，用离线密钥签发布清单。不在本阶段实现 |
+| 离线发布密钥 | ed25519，签发布清单 `pdnd-manifest.json`；公钥 `go:embed` 进 pdnd（`pdnd/upgrade/keys/*.pub`），私钥只在维护者的密码管理器与 GitHub environment `release-signing` 的 secret 里，不在面板、不在仓库。节点在线升级见 11.6 |
 
 ### 11.2 proto
 
@@ -403,8 +403,8 @@ handler 里现在的业务逻辑（第 4 节附表：公告状态机、访问日
 
 - `EnrollmentService.Enroll(EnrollRequest) → EnrollResponse`：服务端 TLS，令牌 + CSR（DER）+ request_id + 主机信息，回 server_id、客户端证书链、CA。
 - `ControlService.Session(stream SessionRequest) → stream SessionResponse`：mTLS 双向流。
-  - 节点发：Hello（版本、二进制摘要、能力、主机信息、各节点已应用的配置摘要与名单版本）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest。
-  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 500 人分块，一块编码后不到 32 KB）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone）。
+  - 节点发：Hello（版本、二进制摘要、build_serial、能力、主机信息、各节点已应用的配置摘要与名单版本、上一次升级的结局）、Heartbeat（整数口径的机器指标 + 各节点运行状态）、TrafficReport（report_id + 按节点、uid 的增量）、OnlineIPs、ConfigAck（按节点、按配置摘要）、UsersAck、RenewRequest、UpgradeReport。
+  - 面板发：Welcome、ServerConfig（这台服务器全部节点的全量配置，每个节点一份 JSON 配置文档 + 摘要）、UsersFull（按 500 人分块，一块编码后不到 32 KB）、UsersDelta、TrafficAck、Certificate、Command（reconnect / tombstone / upgrade）。
 - 名单里的用户号 `uid` 是 `subscriptions.node_uid`（bigint），代理身份是 `proxy_uuid`。
 - 节点配置是 JSON 文档而不是逐协议的消息：协议种类多、字段各异，文档形状由面板 node 模块的配置组装与 pdnd `node/config_apply.go` 共同约定。
 
@@ -433,6 +433,26 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 
 删除 `panel/client.go`（UniProxy）、`signed.go`、`stream.go`（SSE）、`config_key_transition.go`、`effective_release.go`、`bindingcontract`；重写 `enrollment.go` 为 Enroll（保留崩溃安全日志的思路）；新写会话客户端。`node.go` 主循环改为消费会话消息，保留单 goroutine 不变式；`report.go` 改为由 ack 驱动；`users.go` 保留 diff 和「先删后加」，入口改为 proto 消息；`config_apply.go` 保留应用、回滚和坏版本台账，去掉验签。config.json 去掉 token、signed_required，加上证书路径。
 
+入站证书（2026-10-20）：带证书的协议可选「自动申请」（协议配置 `cert_mode=acme`）。面板在配置文档里写 `cert_identifier`（SNI，没有就用节点地址），pdnd 的 `certs` 包按它用 lego 向 Let's Encrypt 申请（HTTP-01，80 端口；IP 用 shortlived 档）、按 ARI 续期，证书与账户落在 `<cache_dir>/acme/`；内核每次握手经 `core.CertSource` 取证书，续期不断连。证书没到时编排层不碰内核，按装失败报 `cert_pending`，证书一到立即重装；状态随心跳 `NodeRuntime.cert` 报给面板，落在 `nodes.cert_*`（迁移 00061）。面板不签发、不下发证书，私钥不离开节点机。详见 `docs/node-certificates.md`。
+
+### 11.6 节点在线升级
+
+信任根是 pdnd 二进制里内置的发版公钥：面板被攻破时最多能改配置、不能在节点上执行代码，升级之后也一样。面板给的清单、签名、下载地址都只当搬运工，面板不验签。
+
+| 项 | 做法 |
+|---|---|
+| 发布清单 | `pdnd-dist/pdnd-manifest.json`：`{schema:1, version, serial, artifacts:{"linux-<arch>":{file, sha256}}}`，原字节即签名对象。serial = 发版提交的提交时间，同值经 `-X main.buildSerial` 编进 pdnd；dev 构建为 0，不接受任何升级 |
+| 签名 | `pdnd-manifest.json.sig`：`{key_id, sig}`，ed25519 对清单原字节签名，`key_id = hex(sha256(公钥))[:16]`。`release.yml` 在 environment `release-signing` 里用 secret `PDND_SIGNING_KEY` 经 `go run ./release/signmanifest` 签；推标签发版时没有这个 secret 就失败。两个文件都进 SHA256SUMS |
+| 公钥 | `pdnd/upgrade/keys/*.pub`，每文件一行 base64，`go:embed`；可同时放两把做轮换。目录里没有公钥的构建一律 `signature_invalid` |
+| 只升不降 | 清单 serial 必须大于本机 build_serial；本地自动回退只用 `.prev`，不经面板指令 |
+| 能力协商 | pdnd 在发布构建、内置公钥非空、二进制在 `/usr/local/bin/pandora-native`、root 助手的 path 单元已装时才声明 `upgrade_v1`；面板只对协商出这项的会话下发 `Command.upgrade` |
+| 节点进程 | 验签 → 解析 → 本机架构 → serial → 下载（https，5 分钟、128 MiB）→ 核摘要，暂存到 `/var/lib/pandora-native/upgrade/`，最后写 `request`；回 STAGED 或 FAILED + 原因码 |
+| root 助手 | `pandora-native-upgrade.path` 触发 `pandora-native upgrade-apply`：把暂存件以 O_NOFOLLOW、只认普通文件、有上限的方式拷进 root 0700 工作区再用自己内置的公钥与 build_serial 验一遍；留 `.prev`、换上新版、重启，在确认时限（面板给 180 秒）内等新进程拿到 Welcome 后写的 `healthy`，等不到就装回 `.prev`（ROLLED_BACK + `confirm_timeout`）。被打断后（含确认窗口里整机重启）由 `.prev` 跑助手、按当前二进制摘要续做，不来回循环：那时装着的新版可能一启动就崩 |
+| 结局 | 失败与回退写结果文件，经 Hello 的 `last_upgrade` 或会话里的 UpgradeReport 报给面板。成功不靠回报：面板看新 Hello 的 binary_sha256 等于目标 |
+| 原因码 | `download_failed`、`sha256_mismatch`、`signature_invalid`、`manifest_invalid`、`serial_not_newer`、`busy`、`apply_failed`、`confirm_timeout`、`rollback_failed`，两端同一张表 |
+
+密钥生成、轮换与手动回退见 `panel/deploy/RUNBOOK.md`「节点在线升级与签名密钥」。
+
 ---
 
 ## 12. 后台任务（asynq）
@@ -456,10 +476,12 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 | `support:auto_close` | `2-59/10 * * * *`（后台开了自动关闭才做事） | 30s | default |
 | `notify:publish_announcements` | `@every 1m` | 20s | default |
 | `report:activity_daily` | `*/10 * * * *` | 2m | low |
+| `report:integrity` | `19,49 * * * *`（数据巡检：逐项跑属主的只读检查、写 integrity_checks，变坏时往管理员群组告警，见 RUNBOOK 第 16 章） | 5m | low |
 | `devices:strict` | `@every 1m`（strict 设备数限制：周期重判在线设备超限的订阅，从名单里摘掉或放回） | 30s | low |
 | `identity:generate_users` | 建 job 的事务提交后入队，TaskID = `gen_users:<job_id>` | 10m | default |
 | `retention:<模块>` | 每天一次，UTC 03:40–03:59 各占一分钟（分钟表见 `.claude/rules/panel-app.md`「每日任务分钟表」），分批删到删完或到批数上限 | 5–10m | low |
 | `reconcile:user_generation` | `@every 1m`，把 queued 或租约过期的 job 重新入队 | 30s | low |
+| `node:upgrade_watch` | `@every 1m`（节点在线升级：过了 deadline 还没结束的任务记 timed_out，见 RUNBOOK 第 17 章） | 30s | low |
 
 - 节点流量的小时汇总在入账时同事务写入（`node_traffic_hourly`、`node_user_traffic_hourly`），不设设计里的 `node:traffic_rollup` 任务。
 - 保留期清理覆盖的表：原有的 node_metrics、node_traffic_reports、各级流量汇总、node_alive_ips、subscription_fetch_log、activity_daily；新补的 idempotency_keys、registration_sessions、verification_codes、plugin_hook_deliveries、user_generation_jobs（结果清除后 N 天删行）、notification_deliveries、telegram_ticket_messages（与投递记录同保留期）。各表的保留期按第 18 节 Q5。
@@ -489,7 +511,7 @@ gRPC 端口直接对外，由面板进程自己终结 mTLS，不经 nginx（经 
 - viper：先读 `/etc/pandora/config.yaml`（root:pandora，0640），再用 `PANDORA_` 前缀的环境变量覆盖（`SetEnvKeyReplacer(".", "_")`）。
 - 秘密只能来自环境变量（systemd `EnvironmentFile=`，0600），或者 `*_FILE` 指向的 0600 文件；放在配置文件里会启动失败。
 - 启动时 Unmarshal 进结构体，再统一 `Validate()`。现有的校验规则（长度、两个 JWT 密钥不同、生产环境禁用某些项、pprof 只能回环）原样搬过去。
-- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做（面板不签发节点入站证书，见 `docs/node-certificates.md`）。
+- 段落（以 `panel/internal/pkg/config/config.go` 为准）：`env`、`public_base_url`、`http.public`、`http.admin`、`grpc.node`、`database`（另有 `migration_url`，只在 migrate 时读）、`redis`、`worker`、`auth`、`ratelimit`、`secrets`、`log`、`subscription.singbox`、`pdnd`、`backup`、`geoip`。设计里的 `node`、`acme` 段没有做（面板不签发节点入站证书；自动申请在节点端做，见 `docs/node-certificates.md`）。
 - `env` 缺省为 `production`（失败即关闭）：注册、找回回显 `dev_code`，以及开发格式的日志，只在显式设成 `development` 或 `test` 时打开；CI 与本地开发显式设 `PANDORA_ENV=development`。
 - 只有部署脚本用的变量（POSTGRES_*、后台路径前缀、告警 Telegram、备份钩子、迁移连接串）放在 `/etc/pandora/deploy.env`（root 0600）给脚本读，不进应用配置；服务的秘密放 `/etc/pandora/secrets.env`。
 

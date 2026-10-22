@@ -5,7 +5,7 @@ import { Button, Empty, FilterTabs, Modal, QueryView, Table, Tag, Toolbar, Searc
 import { PageActions } from '../../kit'
 import { KbEditor } from './KbEditor'
 import css from './kb.module.css'
-import { articleRows, groupArticles, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, platformsLabel, type Article } from './logic'
+import { articleRows, groupArticles, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, type Article } from './logic'
 import { useContentPage, useContentPages } from './queries'
 import { KINDS, type Kind } from './schemas'
 
@@ -97,13 +97,6 @@ export function KbTab({ rest }: { rest: string[] }) {
                     hideOnMobile: true,
                     width: '112px',
                     render: (a) => <span className={css.cat}>{a.latest.category?.trim() || '未分类'}</span>,
-                  },
-                  {
-                    key: 'platforms',
-                    header: '平台',
-                    hideOnMobile: true,
-                    width: '140px',
-                    render: (a) => <span className={css.plats}>{platformsLabel(a.latest.target_platforms)}</span>,
                   },
                   {
                     key: 'status',

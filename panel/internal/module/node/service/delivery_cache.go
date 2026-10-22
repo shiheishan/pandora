@@ -11,7 +11,7 @@ package service
 // （session*.go），不经过这里；订阅生效、主人账号 active、凭据有效由拉取路径每次现查（subscription 的 pull.go），也不经过这里。
 //
 // 缓存里的切片与 render.Node.Config（protocol.KernelConfig 的结果，嵌套的 map、切片是共享引用）被所有命中者同时读：
-// 调用方只读，不改切片、不改 Config（render.Render 只读，有 render/shared_test.go 守着）。
+// 调用方只读，不改切片、不改 Config（render.RenderRequest 只读，有 render/shared_test.go 守着）。
 // 不要在事务里调：事务里读到的未提交数据会经缓存给到别的请求（拉取与门户预览都不在事务里调）。
 
 import (

@@ -151,6 +151,11 @@ func (h *Handler) signupConfig(c *gin.Context) {
 		httpx.Fail(c, err)
 		return
 	}
+	emailOn, err := h.svc.SwitchEnabled(ctx, service.SwitchNotifyEmail)
+	if err != nil {
+		httpx.Fail(c, err)
+		return
+	}
 
 	var captcha *signupConfigCaptcha
 	if signup.CaptchaEnabled() {
@@ -169,6 +174,6 @@ func (h *Handler) signupConfig(c *gin.Context) {
 	httpx.OK(c, signupConfigResponse{
 		Captcha:       captcha,
 		EmailSuffixes: suffixes,
-		MailLinkLogin: signup.MailLinkLogin && mailOK,
+		MailLinkLogin: signup.MailLinkLogin && mailOK && emailOn,
 	})
 }

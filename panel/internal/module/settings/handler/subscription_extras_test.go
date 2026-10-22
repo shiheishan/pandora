@@ -19,15 +19,24 @@ func (f *fakeSettings) SetSubscriptionExtras(ctx context.Context, u service.Subs
 	return nil
 }
 
+func (f *fakeSettings) SubscriptionFetchLimit(ctx context.Context) (int, error) {
+	return 60, nil
+}
+
 type fakeExtras struct {
 	fakeSettings
-	extras service.SubscriptionExtras
-	got    *service.SubscriptionExtrasUpdate
-	setErr error
+	extras     service.SubscriptionExtras
+	fetchLimit int
+	got        *service.SubscriptionExtrasUpdate
+	setErr     error
 }
 
 func (f *fakeExtras) SubscriptionExtras(ctx context.Context) (service.SubscriptionExtras, error) {
 	return f.extras, nil
+}
+
+func (f *fakeExtras) SubscriptionFetchLimit(ctx context.Context) (int, error) {
+	return f.fetchLimit, nil
 }
 
 func (f *fakeExtras) SetSubscriptionExtras(ctx context.Context, u service.SubscriptionExtrasUpdate) error {
@@ -42,13 +51,16 @@ func (f *fakeExtras) SetSubscriptionExtras(ctx context.Context, u service.Subscr
 	if u.ProtocolPrefix != nil {
 		v.ProtocolPrefix = *u.ProtocolPrefix
 	}
+	if u.FetchLimitPerHour != nil {
+		f.fetchLimit = *u.FetchLimitPerHour
+	}
 	f.extras = v
 	return nil
 }
 
 func TestGetSubscriptionExtrasRequiresAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	fake := &fakeExtras{extras: service.SubscriptionExtras{}}
+	fake := &fakeExtras{extras: service.SubscriptionExtras{}, fetchLimit: 60}
 	h := New(fake)
 	e := gin.New()
 	e.Use(httpx.Errors())
@@ -73,6 +85,9 @@ func TestGetSubscriptionExtrasRequiresAuth(t *testing.T) {
 	if _, ok := m["protocol_prefix"]; !ok {
 		t.Fatalf("missing protocol_prefix: %s", rec.Body.String())
 	}
+	if _, ok := m["fetch_limit_per_hour"]; !ok {
+		t.Fatalf("missing fetch_limit_per_hour: %s", rec.Body.String())
+	}
 	if _, ok := m["link_base_urls"]; ok {
 		t.Fatalf("unexpected link_base_urls: %s", rec.Body.String())
 	}
@@ -85,6 +100,7 @@ func TestSetSubscriptionExtras(t *testing.T) {
 			InfoNodes:      false,
 			ProtocolPrefix: false,
 		},
+		fetchLimit: 60,
 	}
 	h := New(fake)
 	e := gin.New()
@@ -111,8 +127,36 @@ func TestSetSubscriptionExtras(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if !resp.InfoNodes || !resp.ProtocolPrefix {
+	if !resp.InfoNodes || !resp.ProtocolPrefix || resp.FetchLimitPerHour != 60 {
 		t.Fatalf("resp %+v", resp)
+	}
+}
+
+func TestSetSubscriptionExtrasFetchLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fake := &fakeExtras{fetchLimit: 60}
+	h := New(fake)
+	e := gin.New()
+	e.Use(httpx.Errors())
+	h.RegisterAdmin(e.Group("/v1"), testKit(h))
+	hdrs := map[string]string{
+		"X-Test-Auth":   "1",
+		"X-Test-Reauth": "1",
+	}
+
+	rec := do(e, http.MethodPost, "/v1/settings/subscription", `{"fetch_limit_per_hour":120}`, hdrs)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp subscriptionExtrasResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.FetchLimitPerHour != 120 {
+		t.Fatalf("resp fetch %d", resp.FetchLimitPerHour)
+	}
+	if fake.got == nil || fake.got.FetchLimitPerHour == nil || *fake.got.FetchLimitPerHour != 120 {
+		t.Fatalf("got %+v", fake.got)
 	}
 }
 
@@ -134,8 +178,8 @@ func TestSetSubscriptionExtrasValidation(t *testing.T) {
 	}
 }
 
-// 只读模式下订阅模板预览照旧放行（只渲染示例节点、不写库），保存与恢复缺省、附加设置仍被挡。
-func TestAdminWritesGateSubscriptionTemplates(t *testing.T) {
+// 只读模式下订阅附加设置被挡。
+func TestAdminWritesGateSubscriptionExtras(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	fake := &fakeExtras{}
 	fake.site = service.Site{Timezone: "UTC"}
@@ -144,23 +188,10 @@ func TestAdminWritesGateSubscriptionTemplates(t *testing.T) {
 	e := gin.New()
 	e.Use(httpx.Errors(), h.AdminWritesGate())
 	h.RegisterAdmin(e.Group("/admin-x/v1"), testKit(h))
-	ok := func(c *gin.Context) { httpx.OK(c, gin.H{}) }
-	e.POST("/admin-x/v1/subscription-templates/:format/preview", ok)
-	e.PUT("/admin-x/v1/subscription-templates/:format", ok)
-	e.DELETE("/admin-x/v1/subscription-templates/:format", ok)
 	hdrs := map[string]string{"X-Test-Auth": "1", "X-Test-Reauth": "1"}
 
-	if rec := do(e, http.MethodPost, "/admin-x/v1/subscription-templates/clash/preview", `{"content":""}`, hdrs); rec.Code != http.StatusOK {
-		t.Fatalf("只读模式下预览 status %d body %s", rec.Code, rec.Body.String())
-	}
-	for _, c := range []struct{ method, path, body string }{
-		{http.MethodPut, "/admin-x/v1/subscription-templates/clash", `{"content":"x"}`},
-		{http.MethodDelete, "/admin-x/v1/subscription-templates/clash", ""},
-		{http.MethodPost, "/admin-x/v1/settings/subscription", `{"info_nodes":true}`},
-	} {
-		rec := do(e, c.method, c.path, c.body, hdrs)
-		if rec.Code != http.StatusServiceUnavailable {
-			t.Fatalf("只读模式下 %s %s 该被挡：status %d", c.method, c.path, rec.Code)
-		}
+	rec := do(e, http.MethodPost, "/admin-x/v1/settings/subscription", `{"info_nodes":true}`, hdrs)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("只读模式下保存订阅附加设置该被挡：status %d", rec.Code)
 	}
 }

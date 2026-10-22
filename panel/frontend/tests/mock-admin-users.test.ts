@@ -1,7 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { resetDoneSchema, userDetailSchema } from '../src/admin/screens/users/schemas'
+import { resetDoneSchema, userDetailSchema, usersSchema } from '../src/admin/screens/users/schemas'
 import { generationJobSchema, generationJobsSchema, trafficGrantedSchema } from '../src/admin/screens/users/opsSchemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
@@ -53,6 +53,18 @@ describe('mock api · admin users ops', () => {
     const oneTimeSub = user3Subs.find((s) => s.quotas[0]?.period === 'total')
     expect(oneTimeSub).toBeDefined()
     expect(oneTimeSub!.plan_name).toBe('流量畅用 500G')
+  })
+
+  it('标出注册试用的那一份：详情订阅与列表的当前订阅都带 is_trial（第 5 位种子用户）', async () => {
+    const TRIAL_USER = '1a2b3c45-0000-4000-8000-000000000005'
+    const detail = userDetailSchema.parse(await (await get(`/v1/users/${TRIAL_USER}`)).json())
+    expect(detail.subscriptions.map((x) => x.is_trial)).toEqual([true])
+    const other = userDetailSchema.parse(await (await get(`/v1/users/${SEED_USER}`)).json())
+    expect(other.subscriptions.every((x) => !x.is_trial)).toBe(true)
+    const list = usersSchema.parse(await (await get('/v1/users?limit=100')).json())
+    const row = list.users.find((u) => u.id === TRIAL_USER)
+    expect(row?.current_subscription?.is_trial).toBe(true)
+    expect(list.users.filter((u) => u.current_subscription?.is_trial).map((u) => u.id)).toEqual([TRIAL_USER])
   })
 
   it('resets traffic one subscription at a time, only after reauth', async () => {

@@ -3,12 +3,13 @@ paths:
   - "panel/internal/**"
 ---
 
-# 面板的统一做法：错误、日志、加密、钱、实时、Redis
+# 面板的统一做法：错误、日志、加密、钱、实时、Redis、站点地址
 
 ## 错误
 - 对外错误只有 `panel/internal/pkg/errs` 一套：封闭的码表、HTTP 状态和中性中文文案。service 返回 `*errs.Error`（`errs.New` / `errs.Newf` / `errs.Wrap` / `errs.Invalid`），handler 交给 `httpx` 写信封；未知错误一律 500 `internal_error`，原因只进日志。
 - 前端 `panel/frontend/src/core/api.ts` 的 `SERVER_ERROR_CODES` 按同一张表解析，新增码两处同改；守卫是 `errs` 包的 `TestServerErrorCodesMatchFrontend`。
 - `reauth_required` 与 `forbidden` 同为 403、码不同，前端靠码弹重认证框。
+- 框架层的出口同样回信封：错方法 405 `method_not_allowed`（引擎开 `HandleMethodNotAllowed` 并挂 `httpx.NoMethod`，带 `Allow` 头）；请求体超限 413 `payload_too_large`（`httpx.BindJSON` 与幂等中间件按 `*http.MaxBytesError` 判；支付回调与 Telegram webhook 的超限照旧 400，对方不解析信封）；请求 ctx 到期（`httpx.Timeout`）后 handler 报的 5xx 且错误链含 `context.DeadlineExceeded`，由 `httpx.Errors` 改成 504 `timeout`——handler 自己另设的短期限到期不算。前端没有信封时按状态兜底（405/413/504 各对应上面的码，502/503 是 `service_unavailable`）。
 - 库的约束违例只经 `db.ConstraintErrors`（`panel/internal/pkg/db/constraint.go`）翻译成模块哨兵：各 repo 一张 `constraintErrs` 表（按约束名 ByName、按 SQLSTATE ByCode），不自己 import pgconn 判码、不用 `gorm.ErrDuplicatedKey` 一类逐个判断；要看码用 `db.AsViolation`（只在 repo 里），死锁与序列化失败用 `db.IsRetryable`。service 只用 `errors.Is(err, 本模块哨兵)` 判；翻译后的哨兵用 `%w` 包着原 PgError，对别的模块传上来的错误调 `db.AsViolation` 会把它的违例当成本模块的。
 - LIKE / ILIKE 的用户输入一律经 `db.EscapeLike` / `db.ContainsPattern` 转义 `\ % _`，不再各写一份。
 
@@ -35,3 +36,10 @@ paths:
 
 ## 列表分页
 - offset 分页的列表接口，limit、offset 一律经 `internal/pkg/pagination.Parse(c, 缺省, 上限)` 解析（游标分页、Top-N、导出上限不在此列）：非法值回 422 `validation_failed`，超上限截到上限。不手写 strconv，不把分页参数当字符串绑定。
+
+## 站点地址（主域名）
+- 面板拼出去的链接（邮件链接、支付回调与回跳、订阅链接兜底、canonical、Telegram webhook、内容 `{{siteUrl}}`、探测的门户源）只经 settings 的 `SiteURL(ctx)` 取（以 / 结尾）；人机验证来源核对、CoinPayments 验签候选、回跳白名单用 `SiteURLAliases(ctx)`（当前、改后 30 天内的上一个、配置的，去重）。消费方在自己已有的 settings 读取接口里加这两个方法，不另存配置字符串、不加 `UsePublicBaseURL` 一类注入。
+- 值：后台站点设置的 `site.url`（`settings/service/site_url.go`），空就回落配置的 `public_base_url`。只收 `scheme://host[:port]`，生产只收 https，开发环境也收 http；不支持子路径（门户与后台都在根 / 下发、回调与订阅路径从根拼，nginx 不跟这个设置走，填子路径只会让链接 404）。主机名转小写、去末尾的点与默认端口，只收 IP 字面量或 `a-z0-9-.` 组成的名字（中文域名填 punycode）。
+- 写：沿用 `POST /v1/settings/site`（RecentReauth）。新值非空且与存的不同时，事务外先经 `internal/pkg/safehttp`（生产拦内网与回环）GET `<新地址>/v1/site-config`：5 秒、不跟随跳转、200 + `application/json` + 带 `registration_mode`，不过回 422 `fields.url`「这个地址打不开本面板」；清空不核对。改动另写审计 `site.url_changed`（新旧值与生效值，域名不是秘密），同时把改之前的生效值写进 `site.url_previous`、把「认到什么时候」（改时 + 30 天，`siteURLPreviousFor`）写进 `site.url_previous_until`；过期或缺期限的旧值不进别名（旧域名停续后可能被别人注册）。
+- 读：进程内快照，本进程提交后（`tx.AfterCommit`）立即失效，worker 等别的进程最多晚 30 秒（`siteURLTTL`）；读库失败回落配置值并 Warn，不缓存失败。用 `testkit.TxCtx` 的用例提交钩子不跑，改值之前别先读 `SiteURL`。
+- nginx、面板证书、节点连面板的地址（`node_channel.go`、`UsePdndDist`）只看配置的 `public_base_url`，不跟主域名走；`grep -rn PublicBaseURL panel/internal` 只该剩 config、`wire.go` 的 `UseSiteURLConfig`、这两处与测试。运维顺序见 `panel/deploy/RUNBOOK.md` 第 15 章。

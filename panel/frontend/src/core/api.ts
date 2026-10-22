@@ -32,6 +32,14 @@ export const SERVER_ERROR_CODES = [
   'order_pending',
   'order_lapsed',
   'payment_in_progress',
+  // 409：发起支付时应付低于所选付款方式的最低额（换一种付款方式）/ 门户新开一份时已到每人份数上限
+  'below_method_minimum',
+  'subscription_limit_reached',
+  // 405 路由存在但方法不对 / 413 请求体超过上限（面板或 nginx 的 client_max_body_size）/
+  // 504 请求超时（面板的请求期限或 nginx 等上游超时）
+  'method_not_allowed',
+  'payload_too_large',
+  'timeout',
 ] as const
 type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
 type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'
@@ -87,16 +95,21 @@ function codeForStatus(status: number): ApiErrorCode {
       return 'forbidden'
     case 404:
       return 'not_found'
+    case 405:
+      return 'method_not_allowed'
     case 409:
       return 'conflict'
+    case 413:
+      return 'payload_too_large'
     case 422:
       return 'validation_failed'
     case 429:
       return 'rate_limited'
     case 502:
     case 503:
-    case 504:
       return 'service_unavailable'
+    case 504:
+      return 'timeout'
     default:
       return status >= 500 ? 'internal_error' : 'invalid_response'
   }
@@ -105,6 +118,9 @@ function codeForStatus(status: number): ApiErrorCode {
 const FALLBACK_MESSAGE: Partial<Record<ApiErrorCode, string>> = {
   unauthorized: '登录已失效，请重新登录',
   not_found: '资源不存在或无权访问',
+  method_not_allowed: '请求方法不被允许',
+  payload_too_large: '请求内容过大',
+  timeout: '请求超时，请稍后再试',
   rate_limited: '操作太频繁，请稍后再试',
   service_unavailable: '服务暂时不可用，请稍后重试',
   internal_error: '服务暂时不可用，请稍后重试',
@@ -203,7 +219,7 @@ interface RequestOptions {
    * 这里的 401 交给表单内联显示，不触发全局登出。
    */
   passwordCheck?: boolean
-  /** 为 true 时本次 fetch 带 same-origin cookie（refresh / logout）；默认 omit。 */
+  /** 为 true 时本次 fetch 带 same-origin cookie；默认 omit。凡是会 Set-Cookie 或凭 cookie 的接口（登录、快捷登录、邮件链接登录、refresh、logout）都要传：omit 模式下浏览器连响应里的 Set-Cookie 也丢掉。 */
   withCookies?: boolean
   signal?: AbortSignal
 }
@@ -227,6 +243,8 @@ export interface ApiClientOptions {
   retryDelays?: readonly number[]
   /** 跨标签页 refresh 互斥锁名；门户/后台各传一个。 */
   refreshLockName?: string
+  /** 一次 refresh（含排队等锁）的时限（毫秒），超时按 network_error 抛出；默认 15 秒。 */
+  refreshTimeoutMs?: number
 }
 
 export interface ApiClient {
@@ -245,6 +263,12 @@ export interface ApiClient {
   reauth(password: string, signal?: AbortSignal): Promise<void>
   /** 以 Bearer 打开一个 text/event-stream 响应，非 2xx 抛 ApiError（401 照常清令牌）。 */
   openStream(path: string, signal?: AbortSignal): Promise<Response>
+  /**
+   * 凭 refresh cookie 换一枚新的 access（开机恢复登录、其它标签页登录后本页跟上时由 runtime 调）：
+   * 成功写进 TokenStore 并返回 true；被拒（429 以外的 4xx：cookie 无效、过期或被吊销）返回 false、不动令牌；
+   * 429、5xx 与断网抛 ApiError（断网是 network_error），调用方按「暂时连不上」处理。与 401 后的刷新共用同一次单飞与跨标签页锁。
+   */
+  refreshSession(): Promise<boolean>
 }
 
 /** 无响应体（204）的接口用它作 schema。 */
@@ -299,37 +323,61 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   const refreshLockName = options.refreshLockName
+  const refreshTimeoutMs = options.refreshTimeoutMs ?? 15_000
   let pendingRefresh: Promise<boolean> | null = null
 
-  async function refreshSessionCore(usedToken: string | null): Promise<boolean> {
+  async function refreshSessionCore(usedToken: string | null, signal: AbortSignal): Promise<boolean> {
+    // 令牌只在内存，这里只看得到本页：拿到锁时本页令牌已被本页别的请求换过（另一个请求刚刷新完或刚重新验证），就不再刷新。
+    // 跨标签页的串行靠 navigator.locks；两页先后用同一枚 cookie、或轮换的响应没送到，由服务端 30 秒宽限兜住
+    // （上一代 cookie 30 秒内还能换 access，并拿回当前那一枚 cookie）。
     const current = tokens.get()
     if (usedToken !== null && current !== null && current !== usedToken) {
       return true
     }
-    const res = await doFetch(resolveApiUrl('v1/auth/refresh', baseUrl()), {
-      method: 'POST',
-      headers: new Headers({ Accept: 'application/json' }),
-      credentials: 'same-origin',
-      cache: 'no-store',
-    })
+    let res: Response
+    try {
+      res = await doFetch(resolveApiUrl('v1/auth/refresh', baseUrl()), {
+        method: 'POST',
+        headers: new Headers({ Accept: 'application/json' }),
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal,
+      })
+    } catch (cause) {
+      throw new ApiError({ status: 0, code: 'network_error', message: '网络连接失败，请检查网络后重试', cause })
+    }
     if (res.ok) {
       const data = await parse(res, tokenResponseSchema)
       tokens.set(data.access_token)
       return true
     }
-    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；5xx 是暂时故障，抛给调用方、不清令牌
+    // 4xx（cookie 无效或被吊销、来源检查不过、没有这个接口）都是刷新被拒；
+    // 429（面板或 nginx 限速，同一出口 IP 后面人多时会碰到）与 5xx 是暂时故障，抛给调用方、不清令牌
     const error = await readError(res)
+    if (error.status === 429) throw error
     if (error.status >= 400 && error.status < 500) return false
     throw error
   }
 
   async function refreshSession(usedToken: string | null): Promise<boolean> {
+    // 时限包住排队等锁与请求本身：别的标签页拿着锁卡住、或请求停滞时，本页按断网处理（开机进「暂时连不上 + 重试」），不一直空白
     const run = async (): Promise<boolean> => {
-      const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
-      if (refreshLockName && locks?.request) {
-        return locks.request(refreshLockName, () => refreshSessionCore(usedToken))
+      const timeout = new AbortController()
+      const timer = setTimeout(() => timeout.abort(), refreshTimeoutMs)
+      try {
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+        if (refreshLockName && locks?.request) {
+          return await locks.request(refreshLockName, { signal: timeout.signal }, () => refreshSessionCore(usedToken, timeout.signal))
+        }
+        return await refreshSessionCore(usedToken, timeout.signal)
+      } catch (cause) {
+        if (timeout.signal.aborted && !(cause instanceof ApiError && cause.code === 'network_error')) {
+          throw new ApiError({ status: 0, code: 'network_error', message: '网络连接失败，请检查网络后重试', cause })
+        }
+        throw cause
+      } finally {
+        clearTimeout(timer)
       }
-      return refreshSessionCore(usedToken)
     }
     pendingRefresh ??= run().finally(() => {
       pendingRefresh = null
@@ -454,6 +502,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       tokens.set(res.access_token)
     },
     openStream: (path, signal) => exchange(path, { method: 'GET', signal }, 'text/event-stream'),
+    refreshSession: () => refreshSession(null),
   }
   return client
 }

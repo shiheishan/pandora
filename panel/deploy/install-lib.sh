@@ -722,9 +722,14 @@ pandora_install_program() {
   mv -f -- "$bin.new" "$bin"
   pandora_own root:root "$bin"
   install -d -m 0755 "$INSTALL_DIR/pdnd-dist"
+  # 清单与签名先删：换成不带签名的包时不能留着上一版的 .sig（面板会显示可升级，节点全回 signature_invalid）
+  rm -f -- "$INSTALL_DIR/pdnd-dist/pdnd-manifest.json" "$INSTALL_DIR/pdnd-dist/pdnd-manifest.json.sig"
   for f in "$root"/pdnd-dist/*; do
     [ -e "$f" ] || continue
-    install -m 0755 "$f" "$INSTALL_DIR/pdnd-dist/"
+    case "$f" in
+      *.json | *.sig) install -m 0644 "$f" "$INSTALL_DIR/pdnd-dist/" ;;
+      *) install -m 0755 "$f" "$INSTALL_DIR/pdnd-dist/" ;;
+    esac
   done
   [ -f "$root/geoip/ip2region_v4.xdb" ] || die "发布目录缺少 geoip/ip2region_v4.xdb"
   install -m 0644 "$root/geoip/ip2region_v4.xdb" "$INSTALL_DIR/geoip/"
@@ -961,7 +966,7 @@ pandora_print_summary() {
         ;;
     esac
     case "${PANDORA_ADMIN_STATE:-manual}" in
-      created) printf '    %s\n' "用刚建的管理员 ${PANDORA_ADMIN_EMAIL:-} 登录，然后尽快绑定两步验证" ;;
+      created) printf '    %s\n' "用刚建的管理员 ${PANDORA_ADMIN_EMAIL:-} 登录" ;;
       existing) printf '    %s\n' "用库里已有的管理员登录" ;;
     esac
   else

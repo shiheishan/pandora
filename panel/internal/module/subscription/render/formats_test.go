@@ -42,13 +42,13 @@ func TestSupportedRenderersProduceAllAdvertisedFormats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			node := Node{Name: "edge-" + tt.name, Type: tt.nodeType, Host: "203.0.113.9", Port: 443, Config: tt.config}
 
-			clash, contentType, count := Render(FormatClash, []Node{node}, credential, "", Options{})
+			clash, contentType, count := renderPlain(FormatClash, []Node{node}, credential, "", Options{})
 			if count != 1 || contentType != "text/yaml; charset=utf-8" ||
 				!strings.Contains(string(clash), `type: "`+tt.clashType+`"`) {
 				t.Fatalf("clash count=%d contentType=%q body=%s", count, contentType, clash)
 			}
 
-			singbox, contentType, count := Render(FormatSingbox, []Node{node}, credential, "", Options{})
+			singbox, contentType, count := renderPlain(FormatSingbox, []Node{node}, credential, "", Options{})
 			if count != 1 || contentType != "application/json; charset=utf-8" {
 				t.Fatalf("sing-box count=%d contentType=%q", count, contentType)
 			}
@@ -69,7 +69,7 @@ func TestSupportedRenderersProduceAllAdvertisedFormats(t *testing.T) {
 				t.Fatalf("sing-box outbound %q not found: %s", tt.singboxType, singbox)
 			}
 
-			uriBody, contentType, count := Render(FormatURI, []Node{node}, credential, "", Options{})
+			uriBody, contentType, count := renderPlain(FormatURI, []Node{node}, credential, "", Options{})
 			if count != 1 || contentType != "text/plain; charset=utf-8" {
 				t.Fatalf("URI count=%d contentType=%q", count, contentType)
 			}
@@ -83,7 +83,7 @@ func TestSupportedRenderersProduceAllAdvertisedFormats(t *testing.T) {
 
 func TestProtocolWithoutPortableURIIsSkipped(t *testing.T) {
 	node := Node{Name: "mieru", Type: "mieru", Host: "203.0.113.10", Port: 443, Config: map[string]any{"transport": "TCP"}}
-	body, _, count := Render(FormatURI, []Node{node}, fixtureUUID, "", Options{})
+	body, _, count := renderPlain(FormatURI, []Node{node}, fixtureUUID, "", Options{})
 	if count != 0 {
 		t.Fatalf("protocol without URI form falsely rendered, count=%d", count)
 	}
@@ -94,7 +94,7 @@ func TestProtocolWithoutPortableURIIsSkipped(t *testing.T) {
 }
 
 func TestSingboxRenderUsesCurrentRouteSchemaAndHandlesEmptyNodes(t *testing.T) {
-	body, _, count := Render(FormatSingbox, nil, fixtureUUID, "", Options{})
+	body, _, count := renderPlain(FormatSingbox, nil, fixtureUUID, "", Options{})
 	if count != 0 {
 		t.Fatalf("empty render count=%d", count)
 	}
@@ -136,7 +136,7 @@ func TestRenderDeduplicatesDisplayNames(t *testing.T) {
 		{Name: "direct", Type: "shadowsocks", Host: "203.0.113.4", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
 		{Name: "自动选择", Type: "shadowsocks", Host: "203.0.113.5", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
 	}
-	body, _, count := Render(FormatSingbox, nodes, fixtureUUID, "", Options{})
+	body, _, count := renderPlain(FormatSingbox, nodes, fixtureUUID, "", Options{})
 	if count != len(nodes) {
 		t.Fatalf("count=%d", count)
 	}
@@ -416,7 +416,7 @@ func TestRenderSingboxSkipsMKCPNodes(t *testing.T) {
 		{Name: "tcp-node", Type: "vless", Host: "203.0.113.32", Port: 443,
 			Config: map[string]any{"network": "tcp", "security": "none"}},
 	}
-	body, _, count := Render(FormatSingbox, nodes, credential, "", Options{})
+	body, _, count := renderPlain(FormatSingbox, nodes, credential, "", Options{})
 	if count != 1 {
 		t.Fatalf("sing-box 渲染出 %d 个节点，期望跳过 mKCP 只剩 1 个", count)
 	}
@@ -441,7 +441,7 @@ func TestRenderSkipsMKCPNodesWithMask(t *testing.T) {
 	}
 
 	for _, format := range []Format{FormatURI, FormatClash, FormatSingbox} {
-		body, _, count := Render(format, []Node{masked, plain}, credential, "", Options{})
+		body, _, count := renderPlain(format, []Node{masked, plain}, credential, "", Options{})
 		if count != 1 {
 			t.Errorf("%s：渲染出 %d 个节点，带掩码的那个应当被跳过", format, count)
 		}
@@ -466,7 +466,7 @@ func TestRenderKeepsUnmaskedMKCPInURI(t *testing.T) {
 			cfg["mask"] = mask
 		}
 		node := Node{Name: "bare-kcp", Type: "vless", Host: "203.0.113.43", Port: 2096, Config: cfg}
-		_, _, count := Render(FormatURI, []Node{node}, credential, "", Options{})
+		_, _, count := renderPlain(FormatURI, []Node{node}, credential, "", Options{})
 		if count != 1 {
 			t.Errorf("mask=%v：裸 mKCP 节点被误跳过", mask)
 		}

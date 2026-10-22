@@ -39,7 +39,7 @@ export interface SystemRow {
   attention: boolean // state !== 'ok'
   why: string // 说明
   metric: string // 指标
-  action?: { kind: 'go'; target: Target } | { kind: 'backup' } // node_fabric → nodes/nodes；mail、telegram → system/notify；backup → { kind: 'backup' }；其余无
+  action?: { kind: 'go'; target: Target } | { kind: 'backup' } // node_fabric → nodes/nodes，有离线时带 f=offline；mail、telegram → system/notify；backup → { kind: 'backup' }；其余无
 }
 
 export interface SystemView {
@@ -52,7 +52,7 @@ export interface SystemView {
 const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   postgres: 'PostgreSQL 主库',
   redis: 'Redis 缓存',
-  node_fabric: 'NativeCore 调度',
+  node_fabric: '节点调度',
   payment_callbacks: '支付回调队列',
   mail: '邮件投递',
   telegram: 'Telegram',
@@ -61,9 +61,19 @@ const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
 }
 
 const ROW_ACTIONS: Partial<Record<SystemComponent['key'], Target>> = {
-  node_fabric: { module: 'nodes', tab: 'nodes' },
   mail: { module: 'system', tab: 'notify' },
   telegram: { module: 'system', tab: 'notify' },
+}
+
+function rowTarget(c: SystemComponent): Target | undefined {
+  if (c.key === 'node_fabric') {
+    const { online, total } = c.metrics
+    if (typeof online === 'number' && typeof total === 'number' && online < total) {
+      return { module: 'nodes', tab: 'nodes', query: { f: 'offline' } }
+    }
+    return { module: 'nodes', tab: 'nodes' }
+  }
+  return ROW_ACTIONS[c.key]
 }
 
 const num = (v: number | null | undefined) => (v == null ? '—' : formatCount(v))
@@ -81,15 +91,23 @@ function stateTone(state: ComponentState): 'ok' | 'warn' | 'bad' | 'off' {
   }
 }
 
-function computeWhy(c: SystemComponent): string {
+function computeWhy(c: SystemComponent, offlineNames: readonly string[]): string {
   if (c.state === 'ok') return '正常'
   const msg = c.message?.trim()
   if (msg) return msg
 
   switch (c.key) {
     case 'node_fabric': {
-      const lagging = c.metrics.config_lagging ?? 0
-      if (lagging > 0) return `${lagging} 个节点配置未同步`
+      const { online, total, config_lagging } = c.metrics
+      const parts: string[] = []
+      if (typeof total === 'number' && typeof online === 'number') {
+        const offline = total - online
+        // 点名：待办接口的 nodes_offline 带最多 3 个离线节点名，多出来的写「等」
+        if (offline > 0) parts.push(`${offline} 个节点离线${offlineNames.length > 0 ? `：${offlineNames.join('、')}${offline > offlineNames.length ? ' 等' : ''}` : ''}`)
+      }
+      const lagging = config_lagging ?? 0
+      if (lagging > 0) parts.push(`${lagging} 个节点配置未同步`)
+      if (parts.length > 0) return parts.join(' · ')
       break
     }
     case 'mail': {
@@ -142,7 +160,7 @@ function computeMetric(c: SystemComponent): string {
   }
 }
 
-export function systemView(status: SystemStatus): SystemView {
+export function systemView(status: SystemStatus, offlineNames: readonly string[] = []): SystemView {
   const backupServer = status.components.find((c) => c.key === 'backup')
   const backupSummaryResult = backupSummary(status.backup)
   const backupState = backupServer ? backupServer.state : backupSummaryResult.state
@@ -161,14 +179,14 @@ export function systemView(status: SystemStatus): SystemView {
   const otherComponents = status.components.filter((c) => c.key !== 'backup')
 
   const otherRows: SystemRow[] = otherComponents.map((c) => {
-    const target = ROW_ACTIONS[c.key]
+    const target = rowTarget(c)
     const attention = c.state !== 'ok'
     return {
       key: c.key,
       name: COMPONENT_NAMES[c.key],
       tone: stateTone(c.state),
       attention,
-      why: computeWhy(c),
+      why: computeWhy(c, offlineNames),
       metric: computeMetric(c),
       action: target ? { kind: 'go', target } : undefined,
     }

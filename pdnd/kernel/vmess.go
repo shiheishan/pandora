@@ -122,12 +122,14 @@ func (a *vmessAdapter) Validate(spec InboundSpec) error {
 		if err != nil {
 			return err
 		}
-		if strings.EqualFold(network, "xhttp-h3") && (strings.TrimSpace(rawString(spec.Config.Raw, "cert_path")) == "" || strings.TrimSpace(rawString(spec.Config.Raw, "key_path")) == "") {
-			return fmt.Errorf("vmess xhttp-h3 requires cert_path and key_path")
+		if strings.EqualFold(network, "xhttp-h3") {
+			if err := checkInboundCertificate(spec.Config.Raw); err != nil {
+				return fmt.Errorf("vmess xhttp-h3 %w", err)
+			}
 		}
 	}
 	if enabled, ok := spec.Config.Raw["tls"].(bool); ok && enabled {
-		if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
+		if err := validateInboundTLSConfig(spec.Config.Raw); err != nil {
 			return err
 		}
 	}
@@ -159,7 +161,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.xhttpSessions = make(map[string]*xhttpSession)
 	}
 	var tlsErr error
-	a.tlsConfig, _, tlsErr = loadInboundTLSConfig(spec.Config.Raw)
+	a.tlsConfig, _, tlsErr = loadInboundTLSConfig(spec.Config.Raw, hooks.Certs)
 	if tlsErr != nil {
 		a.cancel()
 		a.mu.Unlock()
@@ -200,10 +202,10 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.cancel()
 			return parseErr
 		}
-		cert, certErr := tls.LoadX509KeyPair(rawString(spec.Config.Raw, "cert_path"), rawString(spec.Config.Raw, "key_path"))
+		getCert, certErr := inboundCertificate(spec.Config.Raw, hooks.Certs)
 		if certErr != nil {
 			a.cancel()
-			return fmt.Errorf("vmess xhttp-h3 TLS: %w", certErr)
+			return fmt.Errorf("vmess xhttp-h3 %w", certErr)
 		}
 		packet, listenErr := net.ListenPacket("udp", net.JoinHostPort(listen, strconv.Itoa(spec.Config.Port)))
 		if listenErr != nil {
@@ -231,7 +233,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			defer conn.Close()
 			return a.handleConn(ctx, conn)
 		}}
-		h3Server, serveErr := handler.ServeH3(packet, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
+		h3Server, serveErr := handler.ServeH3(packet, &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS13})
 		if serveErr != nil {
 			_ = packet.Close()
 			a.cancel()
@@ -339,7 +341,6 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.cancel()
 			return pathErr
 		}
-		h2cMode := a.tlsConfig == nil
 		if a.tlsConfig != nil {
 			grpcTLS := a.tlsConfig.Clone()
 			grpcTLS.NextProtos = []string{"h2"}
@@ -368,7 +369,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 				a.mu.Unlock()
 			}
 		}
-		server, serveErr := serveNativeGRPC(ln, path, host, 16<<20, h2cMode, onConn)
+		server, serveErr := serveNativeGRPC(ln, path, host, 16<<20, onConn)
 		if serveErr != nil {
 			_ = ln.Close()
 			a.cancel()

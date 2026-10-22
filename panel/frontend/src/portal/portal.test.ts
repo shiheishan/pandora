@@ -1,6 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
+import { parseHash } from '../core/router'
+import { darkBrandTokens } from '../styles/brand-palette'
 import { APPEARANCE_CACHE_KEY, pickThemeTokens, portalBranding, readThemeCache, themeCacheValue, writeThemeCache } from './appearance'
-import { mailLoginTokenFromHash, quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
+import type { Appearance } from './queries'
+import {
+  authTabFromPath,
+  isHomePath,
+  LOGIN_PATH,
+  mailLoginTokenFromHash,
+  quickLoginLink,
+  quickLoginTokenFromHash,
+  quickLoginTokenFromInput,
+  readStoredInvite,
+  REGISTER_PATH,
+  takeInviteFromUrl,
+  INVITE_STORAGE_KEY,
+} from './entry-links'
+import { hasServerHome, setHomeHidden, HOME_ATTR } from './home'
 import { HIDDEN_TITLE_PAGES, PAGES, SIDE_GROUPS, TAB_PAGES, WIDE_PAGES, resolvePage, sideOwner, tabLabel, tabOwner } from './pages'
 import { displayName } from './queries'
 
@@ -114,6 +130,40 @@ describe('mail-login tokens', () => {
   })
 })
 
+describe('home entry', () => {
+  it('maps hash paths to auth tabs and home path', () => {
+    expect(authTabFromPath(parseHash('#/login').path)).toBe('login')
+    expect(authTabFromPath(parseHash('#/register').path)).toBe('reg')
+    expect(authTabFromPath(parseHash('#/register/').path)).toBe('reg')
+    expect(authTabFromPath(parseHash('#/subs').path)).toBeNull()
+    expect(authTabFromPath(parseHash('#/').path)).toBeNull()
+    expect(authTabFromPath(parseHash('').path)).toBeNull()
+
+    expect(isHomePath(parseHash('').path)).toBe(true)
+    expect(isHomePath(parseHash('#').path)).toBe(true)
+    expect(isHomePath(parseHash('#/').path)).toBe(true)
+    expect(isHomePath(parseHash('#/login').path)).toBe(false)
+    expect(isHomePath(parseHash('#/subs').path)).toBe(false)
+
+    expect(LOGIN_PATH).toBe('/login')
+    expect(REGISTER_PATH).toBe('/register')
+  })
+
+  it('detects server home fragment and toggles data-home', () => {
+    expect(hasServerHome({ getElementById: (id: string) => (id === 'ph-home' ? ({} as HTMLElement) : null) })).toBe(true)
+    expect(hasServerHome({ getElementById: () => null })).toBe(false)
+
+    const root = {
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+    }
+    setHomeHidden(true, root)
+    expect(root.setAttribute).toHaveBeenCalledWith(HOME_ATTR, 'off')
+    setHomeHidden(false, root)
+    expect(root.removeAttribute).toHaveBeenCalledWith(HOME_ATTR)
+  })
+})
+
 describe('pickThemeTokens', () => {
   it('takes the group for the current theme and drops keys outside the design whitelist', () => {
     const appearance = {
@@ -122,22 +172,34 @@ describe('pickThemeTokens', () => {
       slots: {},
     }
     expect(pickThemeTokens(appearance, 'light')).toEqual([['--brand', '#b9442b']])
-    expect(pickThemeTokens(appearance, 'dark')).toEqual([['--brand', '#e46e52']])
+    expect(Object.fromEntries(pickThemeTokens(appearance, 'dark'))).toEqual(darkBrandTokens('#b9442b'))
     expect(pickThemeTokens({ site_name: 'Pandora', theme: null, slots: {} }, 'light')).toEqual([])
     expect(pickThemeTokens(undefined, 'dark')).toEqual([])
+  })
+
+  it('keeps stored dark tokens when light --brand is missing or invalid', () => {
+    const noLightBrand = {
+      site_name: 'Pandora',
+      theme: { tokens: { light: {}, dark: { '--brand': '#e46e52' } }, branding: {} },
+      slots: {},
+    }
+    expect(pickThemeTokens(noLightBrand, 'dark')).toEqual([['--brand', '#e46e52']])
+    const invalidLight = {
+      site_name: 'Pandora',
+      theme: { tokens: { light: { '--brand': 'red' }, dark: { '--brand': '#e46e52' } }, branding: {} },
+      slots: {},
+    }
+    expect(pickThemeTokens(invalidLight, 'dark')).toEqual([['--brand', '#e46e52']])
   })
 })
 
 describe('portalBranding', () => {
   const with_ = (site_name: string, branding: Record<string, string> = {}) => ({ site_name, theme: { tokens: {}, branding }, slots: {} })
   it('keeps the design wordmark for the default site name and follows a switched theme otherwise', () => {
-    expect(portalBranding(with_('Pandora'))).toEqual({ siteName: null, tagline: null, logo: null })
-    expect(portalBranding(undefined)).toEqual({ siteName: null, tagline: null, logo: null })
-    expect(portalBranding(with_(' 夜海加速 ', { tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通', logo: null })
-    // 默认站点名但带了 Logo：照样画 Logo + 站点名
-    expect(portalBranding(with_('Pandora', { logo: 'data:image/png;base64,AAAA' })).siteName).toBe('Pandora')
-    // 外链 Logo 不认（CSP 只放 data: 图片）
-    expect(portalBranding(with_('X', { logo: 'https://evil.test/a.png' })).logo).toBeNull()
+    expect(portalBranding(with_('Pandora'))).toEqual({ siteName: null, tagline: null })
+    expect(portalBranding(undefined)).toEqual({ siteName: null, tagline: null })
+    expect(portalBranding(with_(' 夜海加速 ', { tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通' })
+    expect(portalBranding(with_('Pandora', { logo: 'data:image/png;base64,AAAA' }))).toEqual({ siteName: null, tagline: null })
     // 主题 branding 里残留的 site_name 不起作用
     expect(portalBranding({ site_name: 'Pandora', theme: { tokens: {}, branding: { site_name: '旧名' } as Record<string, string> }, slots: {} } as never).siteName).toBeNull()
   })
@@ -145,8 +207,8 @@ describe('portalBranding', () => {
 
 describe('displayName', () => {
   it('prefers display_name, then the email local part', () => {
-    expect(displayName({ email: 'zhang.wei@qq.com', display_name: '张伟' })).toBe('张伟')
-    expect(displayName({ email: 'zhang.wei@qq.com', display_name: null })).toBe('zhang.wei')
+    expect(displayName({ email: 'zhang.wei@example.net', display_name: '张伟' })).toBe('张伟')
+    expect(displayName({ email: 'zhang.wei@example.net', display_name: null })).toBe('zhang.wei')
     expect(displayName(undefined)).toBe('')
   })
 })
@@ -161,19 +223,20 @@ describe('theme cache', () => {
       removeItem: (k: string) => void data.delete(k),
     }
   }
+  // branding.logo 模拟库里残留的旧字段；经 zod 解析后不会出现，这里用断言喂给 writeThemeCache
   const custom = {
     site_name: 'Pandora',
     theme: { tokens: { light: { '--brand': '#b9442b', 'not-a-token': 'red' }, dark: { '--brand': '#e46e52' } }, branding: { logo: 'data:image/png;base64,AAAA' } },
     slots: {},
-  }
+  } as Appearance
 
   it('stores only whitelisted colours of both themes, never the logo', () => {
     const storage = memoryStorage()
     writeThemeCache(custom, storage)
     const raw = storage.data.get(APPEARANCE_CACHE_KEY)!
-    expect(JSON.parse(raw)).toEqual({ v: 1, light: { '--brand': '#b9442b' }, dark: { '--brand': '#e46e52' } })
+    expect(JSON.parse(raw)).toEqual({ v: 1, light: { '--brand': '#b9442b' }, dark: darkBrandTokens('#b9442b') })
     expect(raw).not.toContain('data:image')
-    expect(readThemeCache('dark', storage)).toEqual([['--brand', '#e46e52']])
+    expect(readThemeCache('dark', storage)).toEqual(Object.entries(darkBrandTokens('#b9442b')!))
   })
 
   it('clears the cache when the default theme is back in effect', () => {

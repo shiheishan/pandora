@@ -30,6 +30,12 @@ import (
 //
 // 线上每个 UDP 包与逐包混淆逐字节同格式（盐 8 字节 + 异或后的 QUIC 包）。
 // 只暴露上面这些方法，不内嵌 *net.UDPConn：任何未混淆的收发方法都不透出。
+//
+// 升级注意：SyscallConn 是给 quic-go 读侧批量用的。sagernet/quic-go 从
+// -sing-box-mod.6 起（sing-quic 0.7 起要求）见到 syscall.Conn 就直接对 fd
+// sendmsg，发包不再经过 WriteMsgUDP，等于明文 QUIC 上线、开混淆的入站整个不通。
+// 所以 quic-go 停在 mod.4、sing-quic 停在 v0.6.1（10-21 定）；要升先解决发送
+// 路径，守卫是 Linux 上的 kernel TestHysteria2SalamanderBulkTCPAndUDP。
 
 const udpSegmentOption = 103 // linux/udp.h 的 UDP_SEGMENT
 

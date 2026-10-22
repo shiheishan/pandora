@@ -299,9 +299,14 @@ func TestShapeTasks(t *testing.T) {
 		NodesOffline: service.NodesOfflineTask{
 			Count: 1, Sample: []service.NodeRef{{ID: uuid.New(), Name: "n"}}, LongestOfflineSeconds: &wait,
 		},
+		NodeCerts: service.NodeCertsTask{
+			Count: 2, Failing: 1, Expiring: 1, Sample: []service.NodeRef{{ID: uuid.New(), Name: "c"}},
+		},
 		OrdersPendingStale:   service.OrdersPendingStaleTask{Count: 3, ThresholdSeconds: 1800},
 		NotificationsBacklog: service.NotificationsBacklogTask{Queued: 4, FailedTotal: 5, BacklogState: "clear"},
-		LedgerDrift:          6,
+		Integrity: []service.IntegrityItem{
+			{Code: service.CheckLedgerDrift, Count: 6, CheckedAt: time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)},
+		},
 	}}
 	w := do(newAdminEngine(f, nil, nil), http.MethodGet, "/v1/dashboard/tasks", "")
 	if w.Code != http.StatusOK {
@@ -311,10 +316,10 @@ func TestShapeTasks(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &root)
 	wantKeys(t, "tasks", root, "as_of", "items")
 	items := root["items"].([]any)
-	if len(items) != 6 {
+	if len(items) != 7 {
 		t.Fatalf("items len %d", len(items))
 	}
-	kinds := []string{"tickets_open", "withdrawals_pending", "nodes_offline", "orders_pending_stale", "notifications_backlog", "ledger_drift"}
+	kinds := []string{"tickets_open", "withdrawals_pending", "nodes_offline", "node_certs", "orders_pending_stale", "notifications_backlog", "integrity"}
 	for i, kind := range kinds {
 		m := items[i].(map[string]any)
 		if m["kind"] != kind {
@@ -325,12 +330,22 @@ func TestShapeTasks(t *testing.T) {
 		{"kind", "count", "high_priority", "oldest_wait_seconds"},
 		{"kind", "count", "amount"},
 		{"kind", "count", "sample", "longest_offline_seconds"},
+		{"kind", "count", "failing", "expiring", "sample"},
 		{"kind", "count", "threshold_seconds"},
 		{"kind", "queued", "failed_total", "backlog_state"},
-		{"kind", "count"},
+		{"kind", "checks"},
 	}
 	for i, keys := range itemKeys {
 		wantKeys(t, kinds[i], items[i].(map[string]any), keys...)
+	}
+	checks := items[6].(map[string]any)["checks"].([]any)
+	if len(checks) != 1 {
+		t.Fatalf("checks len %d", len(checks))
+	}
+	ck := checks[0].(map[string]any)
+	wantKeys(t, "integrity check", ck, "code", "count", "checked_at")
+	if ck["code"] != "ledger_drift" || ck["count"].(float64) != 6 || ck["checked_at"] != "2026-10-20T08:00:00Z" {
+		t.Fatalf("check %v", ck)
 	}
 	wd := items[1].(map[string]any)
 	assertInt(t, "withdraw amount", wd["amount"])

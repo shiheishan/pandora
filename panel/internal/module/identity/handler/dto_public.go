@@ -116,10 +116,11 @@ func inviteCodeFrom(v service.InviteCodeView) inviteCodeResponse {
 }
 
 type myInviteResponse struct {
-	Invite   inviteResponse       `json:"invite"`
-	Invitees []inviteeResponse    `json:"invitees"`
-	Codes    []inviteCodeResponse `json:"codes"`
-	MaxCodes int                  `json:"max_codes"`
+	Invite    inviteResponse       `json:"invite"`
+	Invitees  []inviteeResponse    `json:"invitees"`
+	Codes     []inviteCodeResponse `json:"codes"`
+	MaxCodes  int                  `json:"max_codes"`
+	SingleUse bool                 `json:"single_use"`
 }
 
 const (
@@ -137,10 +138,11 @@ func myInviteFrom(inv service.Invite, invitees []service.Invitee, codes service.
 			MaxUses:   inv.MaxUses,
 			CreatedAt: inv.CreatedAt,
 		},
-		Invitees: make([]inviteeResponse, len(invitees)),
-		Codes:    make([]inviteCodeResponse, len(codes.Codes)),
-		MaxCodes: codes.MaxCodes,
+		MaxCodes:  codes.MaxCodes,
+		SingleUse: codes.SingleUse,
 	}
+	out.Invitees = make([]inviteeResponse, len(invitees))
+	out.Codes = make([]inviteCodeResponse, len(codes.Codes))
 	for i, v := range invitees {
 		out.Invitees[i] = inviteeResponse{Email: v.Email, BoundAt: v.BoundAt, RiskFlag: v.RiskFlag}
 	}
