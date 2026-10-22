@@ -282,6 +282,9 @@ func TestEnrollPG(t *testing.T) {
 	if hostname != "host.example.test" || osName != "linux" || agent != "pdnd/1.0" || cpu != 2 || mem != 2048 || disk != 40 {
 		t.Fatalf("主机信息 = %s %s %s %d %d %d", hostname, osName, agent, cpu, mem, disk)
 	}
+	if v4, v6 := identServerIPs(t, ctx, e, sid); v4 != "192.0.2.10" || v6 != "" {
+		t.Fatalf("接入应按来源地址回填公网 IPv4，得到 %q / %q", v4, v6)
+	}
 	var actor, remoteIP string
 	if err := e.row(ctx, `SELECT actor_kind, coalesce(data->>'remote_ip', '') FROM audit_events
 		WHERE action = 'server.enrollment.commit' AND resource_id = ?`, sid).Scan(&actor, &remoteIP); err != nil {
@@ -293,6 +296,51 @@ func TestEnrollPG(t *testing.T) {
 	if remoteIP != "192.0.2.10" {
 		t.Fatalf("接入审计应记来源 IP，得到 %q", remoteIP)
 	}
+}
+
+// 管理员填过的 IP 不覆盖；内网来源不回填；IPv6 来源只填 public_ipv6。
+func TestEnrollPublicIPFillPG(t *testing.T) {
+	e, ctx := newIdentEnv(t, false)
+	enroll := func(sid uuid.UUID, remote string) {
+		t.Helper()
+		if _, err := e.svc.Enroll(ctx, EnrollInput{
+			Token: identIssueToken(t, e, sid), CSRDER: identCSR(t, identKey(t)), RequestID: reqid.New(), RemoteIP: remote,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	kept := seedIdentServer(t, ctx, e, "draft")
+	if err := e.exec(ctx, `UPDATE servers SET public_ipv4 = '198.51.100.7' WHERE id = ?`, kept); err != nil {
+		t.Fatal(err)
+	}
+	enroll(kept, "192.0.2.10")
+	if v4, _ := identServerIPs(t, ctx, e, kept); v4 != "198.51.100.7" {
+		t.Fatalf("管理员填过的 IPv4 不该被覆盖，得到 %q", v4)
+	}
+
+	private := seedIdentServer(t, ctx, e, "draft")
+	enroll(private, "10.0.0.5")
+	if v4, v6 := identServerIPs(t, ctx, e, private); v4 != "" || v6 != "" {
+		t.Fatalf("内网来源不该回填，得到 %q / %q", v4, v6)
+	}
+
+	v6only := seedIdentServer(t, ctx, e, "draft")
+	enroll(v6only, "2001:db8::1")
+	if v4, v6 := identServerIPs(t, ctx, e, v6only); v4 != "" || v6 != "2001:db8::1" {
+		t.Fatalf("IPv6 来源应只填 public_ipv6，得到 %q / %q", v4, v6)
+	}
+}
+
+// identServerIPs 读服务器的公网 IPv4 / IPv6（空列读成空串）。
+func identServerIPs(t *testing.T, ctx context.Context, e *identEnv, sid uuid.UUID) (string, string) {
+	t.Helper()
+	var v4, v6 string
+	if err := e.row(ctx, `SELECT coalesce(host(public_ipv4), ''), coalesce(host(public_ipv6), '') FROM servers WHERE id = ?`, sid).
+		Scan(&v4, &v6); err != nil {
+		t.Fatal(err)
+	}
+	return v4, v6
 }
 
 func TestEnrollDeniedPG(t *testing.T) {

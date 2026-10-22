@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 
 	"github.com/google/uuid"
@@ -41,7 +42,7 @@ type EnrollInput struct {
 	RequestID    string
 	Host         EnrollHostInfo
 	AgentVersion string
-	// RemoteIP 是 gRPC 对端 IP（TCP 源地址，不读任何头）：进审计，并用来给地区为空的服务器回填地区。
+	// RemoteIP 是 gRPC 对端 IP（TCP 源地址，不读任何头）：进审计，并用来给地区、公网 IP 为空的服务器回填。
 	RemoteIP string
 }
 
@@ -78,6 +79,7 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 	if in.RemoteIP != "" && s.geo != nil {
 		region = regionText(s.geo.Lookup(in.RemoteIP))
 	}
+	ipv4, ipv6 := enrollPublicIP(in.RemoteIP)
 	err = s.tx.Do(ctx, func(ctx context.Context) error {
 		// 锁序统一为「服务器 → 令牌」（与吊销、退役、删除一致，免得互相死锁）：
 		// 先不加锁查出令牌属于哪台服务器，锁服务器行，再锁令牌行重读。令牌的 server_id 有触发器保证不变。
@@ -159,6 +161,12 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 				return err
 			}
 		}
+		// 后台「添加服务器」不让填 IP、新建节点的地址框按服务器 IP 预填，都靠这一步回填
+		if ipv4 != "" || ipv6 != "" {
+			if err := s.repo.FillServerPublicIPIfEmpty(ctx, serverID, ipv4, ipv6); err != nil {
+				return err
+			}
+		}
 		agent := ""
 		if host.AgentVersion != nil {
 			agent = *host.AgentVersion
@@ -199,6 +207,26 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (EnrollResult, err
 		return EnrollResult{}, err
 	}
 	return res, nil
+}
+
+// enrollCGNAT 是运营商级 NAT 段（RFC 6598），netip 不把它算作私网。
+var enrollCGNAT = netip.MustParsePrefix("100.64.0.0/10")
+
+// enrollPublicIP 把接入时的对端地址按族分成公网 IPv4 / IPv6，只有一族非空；内网、回环、链路本地、CGNAT
+// 等非公网地址两个都返回空（面板与节点同在内网时对端是内网地址，填进去用户连不上）。
+func enrollPublicIP(remote string) (ipv4, ipv6 string) {
+	addr, err := netip.ParseAddr(remote)
+	if err != nil {
+		return "", ""
+	}
+	addr = addr.Unmap().WithZone("")
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || enrollCGNAT.Contains(addr) {
+		return "", ""
+	}
+	if addr.Is4() {
+		return addr.String(), ""
+	}
+	return "", addr.String()
 }
 
 // enrollHostInfo 把自报主机信息整理成库里的列（与 Hello 走同一套 agentInfo 规整）。

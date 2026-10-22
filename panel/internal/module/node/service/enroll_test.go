@@ -52,6 +52,31 @@ func TestEnrollHostInfo(t *testing.T) {
 	}
 }
 
+func TestEnrollPublicIP(t *testing.T) {
+	cases := []struct{ in, v4, v6 string }{
+		{"192.0.2.10", "192.0.2.10", ""},
+		{"::ffff:192.0.2.10", "192.0.2.10", ""},
+		{"2001:db8::1", "", "2001:db8::1"},
+		{"10.0.0.5", "", ""},
+		{"172.16.3.4", "", ""},
+		{"192.168.1.1", "", ""},
+		{"100.64.0.1", "", ""},
+		{"127.0.0.1", "", ""},
+		{"169.254.1.1", "", ""},
+		{"fd00::1", "", ""},
+		{"fe80::1%eth0", "", ""},
+		{"::1", "", ""},
+		{"", "", ""},
+		{"not-an-ip", "", ""},
+	}
+	for _, c := range cases {
+		v4, v6 := enrollPublicIP(c.in)
+		if v4 != c.v4 || v6 != c.v6 {
+			t.Errorf("enrollPublicIP(%q) = %q, %q；应为 %q, %q", c.in, v4, v6, c.v4, c.v6)
+		}
+	}
+}
+
 func TestEnrollRequestIDPattern(t *testing.T) {
 	if !enrollRequestIDPattern.MatchString(uuid.NewString()) {
 		t.Fatal("uuid 应通过")
