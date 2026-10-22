@@ -20,7 +20,8 @@ paths:
   - Vite 的 `base` 保持 `'./'`
   - 请求路径只写 `v1/...`，不写 `/v1` 或绝对 URL；`resolveApiUrl` 会拒绝不合规的写法
   - 页面地址只用 hash 路由。门户根下还有订阅通配 `/:prefix/:token`（`panel/internal/module/subscription/handler/handler.go` 的 `RegisterRoot`），任何两段式路径都会撞上
-- 依赖：运行时依赖只有 react、react-dom、@tanstack/react-query、zod，不引入任何 UI 组件库
+- 依赖：运行时依赖只有 react、react-dom、@tanstack/react-query、zod，加图标库 Hugeicons Pro（`@hugeicons/react` 与 `@hugeicons-pro/core-stroke-rounded`，构建时把用到的图标打进产物，运行时不外取），不引入任何 UI 组件库
+  - Pro 包走私有源 `npm.collectui.pro`：本机令牌在 `~/.npmrc`，CI 与发版用仓库密钥 `HUGEICONS_NPM_TOKEN`，只在装依赖那一步经 `NODE_AUTH_TOKEN` 传入；令牌失效只会让装依赖失败，已发的包不受影响
   - `package.json` 里版本全部精确锁定，不写 `^` 或 `~`
   - 装依赖只走 `npm ci`（`panel/Makefile` 的 `frontend-check` / `frontend-embed`）
 - typescript 停在 6.0.x：typescript-eslint 8 的 peer 要求是 `<6.1.0`（见 `package-lock.json`）

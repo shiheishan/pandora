@@ -130,7 +130,7 @@ GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags interop -run 'TestExternalX
 ## 5. npm 依赖
 
 - 约束见 `rules/frontend-build-csp.md`：
-  - 运行时依赖只有 4 个；
+  - 运行时依赖只有 6 个（react、react-dom、@tanstack/react-query、zod 与两个 Hugeicons 图标包；Pro 包走私有源，令牌见该规则文件）；
   - `package.json` 精确锁版本，不写 `^` 或 `~`；
   - 只用 `npm ci` 装；
   - typescript 停在 6.0.x。
