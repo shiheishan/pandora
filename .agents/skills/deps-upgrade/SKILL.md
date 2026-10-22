@@ -7,7 +7,7 @@ description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck �
 
 本 skill 管「改哪些地方、额外跑哪些测试」；常规本地检查和推送后等哪个结论照 verify skill，CI 红了用 ci-triage 分流。
 
-背景：CI 有只报告、不挡合并的 govulncheck 扫描（`.github/workflows/go-vulncheck.yml`），改 Go 文件或 go.mod、go.sum 的推送会在开发分支上触发，结论在 job summary 与 warning 注解里，检查机也回放。**dependabot 与那条每周定时扫描按用户 10-09 的决定暂不启用**（配置不推到 main，首次公开发布、main 正常使用后再议），所以升依赖时靠本 skill 手动扫（第 1 节）。CI 只告诉你有没有，不告诉你比升级前多了还是少了，升级前后都要本地跑。d157159 把 go 指令从 1.26.5 升到 1.26.9 后，pdnd 的 `TestNaiveProbesServeFallback` 因标准库行为变化变红。所以每次升级都要按第 3 节先跑基线、再比对。
+背景：CI 有只报告、不挡合并的 govulncheck 扫描（`.github/workflows/go-vulncheck.yml`），改 Go 文件或 go.mod、go.sum 的推送会在开发分支上触发，结论在 job summary 与 warning 注解里，检查机也回放。dependabot 已启用（`.github/dependabot.yml` 在 main 上，用户 10-21 定保留，推翻 10-09 的「暂不启用」）：每周一开 Go 模块与 Actions 的升级 PR，只当提醒，处理见第 8 节；它不报被调用的漏洞，升依赖时照样靠本 skill 手动扫（第 1 节）。CI 只告诉你有没有，不告诉你比升级前多了还是少了，升级前后都要本地跑。d157159 把 go 指令从 1.26.5 升到 1.26.9 后，pdnd 的 `TestNaiveProbesServeFallback` 因标准库行为变化变红。所以每次升级都要按第 3 节先跑基线、再比对。
 
 ## 1. 扫漏洞
 
@@ -171,9 +171,9 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 | node-e2e 真客户端（sing-box、mihomo、Xray、Juicity、mieru） | ops-local `vultr-test2/node-e2e/scripts/install-clients.sh` 里的版本变量和逐个写死的 SHA-256 | node-e2e skill | 版本与 SHA 成对改，sing-box 用 `-glibc` 包 |
 | 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | node-e2e 的接入证据 | 见 node-e2e |
 
-## 8. dependabot PR（暂不启用）
+## 8. dependabot PR
 
-现状：dependabot 和每周定时的 govulncheck 都不启用（用户 10-09 决定，首次公开发布后再议；两者只读默认分支 main 上的配置，要放进 main 须用户点头），所以眼下没有 PR。以后启用了，PR 只当「哪个模块升到哪个版本」的通知，不在 GitHub 上合：照第 4 节在开发分支上重做、第 3 节跑测试，CI 绿后 `gh pr close <号> --comment "已在 <sha> 搬进开发分支"`。
+现状：dependabot 已启用（用户 10-21 定），配置只读 main 上的 `.github/dependabot.yml`，改它要推 main、先问用户。PR 只当「哪个模块升到哪个版本」的通知，不在 GitHub 上合：照第 4 节在开发分支上重做、第 3 节跑测试，CI 绿后 `gh pr close <号> --comment "已在 <sha> 搬进开发分支"`。
 
 ## 坑
 
