@@ -40,7 +40,7 @@ import {
   type FormValues,
   type ProtocolField,
 } from './logic'
-import { wizardServerHint } from './infra'
+import { serverPublicIp, wizardServerHint } from './infra'
 import css from './form.module.css'
 import { endsIntent, useFailure, useIntentKey, useInvalidateNodes, useNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeDetail, type ProtocolSchema } from './schemas'
@@ -296,10 +296,11 @@ export function NodeCreateWizard({
     })
   }
 
-  // 地址空着（或还是上次自动填的）时，选服务器顺手填它的公网 IPv4；用户改过就不动
+  // 地址空着（或还是上次自动填的）时，选服务器顺手填它的公网 IP（IPv4 优先，没有用 IPv6）；用户改过就不动
   const hostAuto = useRef('')
   const withServerHost = (b: BasicForm, serverId: string): BasicForm => {
-    const ip = (servers.data ?? []).find((sv) => sv.id === serverId)?.public_ipv4?.trim() ?? ''
+    const sv = (servers.data ?? []).find((x) => x.id === serverId)
+    const ip = sv ? serverPublicIp(sv) : ''
     if (!ip || (b.host.trim() !== '' && b.host !== hostAuto.current)) return b
     hostAuto.current = ip
     return { ...b, host: ip }

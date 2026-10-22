@@ -56,11 +56,17 @@ export function serverDeleteBlock(s: Pick<Server, 'status'>): string | null {
   return canDeleteServer(s) ? null : '只有草稿或已退役的服务器能删除'
 }
 
+/** 服务器的公网 IP：有 IPv4 用 IPv4，没有就用 IPv6（双栈机器接入时走 IPv6，面板只回填了 IPv6）；都没有返回 '' */
+export function serverPublicIp(s: Pick<Server, 'public_ipv4' | 'public_ipv6'>): string {
+  return s.public_ipv4?.trim() || s.public_ipv6?.trim() || ''
+}
+
 /** 卡片与详情副行：「地区 · IP · agent 版本」；没有 IP 省掉那一段；没有 agent 写「未连接」，有则「agent 1.8.2」 */
-export function serverSubtitle(s: Pick<Server, 'region' | 'public_ipv4' | 'agent_version'>): string {
+export function serverSubtitle(s: Pick<Server, 'region' | 'public_ipv4' | 'public_ipv6' | 'agent_version'>): string {
   const region = s.region?.trim() || '地区待识别'
   const parts = [region]
-  if (s.public_ipv4?.trim()) parts.push(s.public_ipv4.trim())
+  const ip = serverPublicIp(s)
+  if (ip) parts.push(ip)
   parts.push(s.agent_version?.trim() ? `agent ${s.agent_version.trim()}` : '未连接')
   return parts.join(' · ')
 }

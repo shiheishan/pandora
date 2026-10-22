@@ -743,6 +743,9 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
           s.memory_mb ??= 8192
           s.disk_gb ??= 80
           s.probe ??= { cpu_bp: 1200, mem_used_mb: 900, mem_total_mb: 8192, disk_used_gb: 6, disk_total_gb: 80 }
+          // 真后端按 gRPC 对端地址回填地区与公网 IP（只填空的）
+          s.region ??= '新加坡'
+          if (!s.public_ipv4 && !s.public_ipv6) s.public_ipv4 = `203.0.113.${(seq % 200) + 10}`
           s.last_heartbeat_at = now
           touchServer(s)
         }, 15_000).unref()

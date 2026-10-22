@@ -26,6 +26,7 @@ import {
   serverNotes,
   serverLink,
   serverNextStep,
+  serverPublicIp,
   serverSubtitle,
   wizardServerHint,
   nodeCreatedToast,
@@ -184,8 +185,13 @@ describe('server status', () => {
   it('serverDeleteBlock, serverSubtitle, serverNotes and serverNodeLines', () => {
     expect(serverDeleteBlock(server({ status: 'ready' }))).toBe('只有草稿或已退役的服务器能删除')
     expect(serverDeleteBlock(server({ status: 'draft' }))).toBeNull()
-    expect(serverSubtitle({ region: '香港', public_ipv4: '192.0.2.8', agent_version: '1.8.2' })).toBe('香港 · 192.0.2.8 · agent 1.8.2')
-    expect(serverSubtitle({ region: null, public_ipv4: null, agent_version: null })).toBe('地区待识别 · 未连接')
+    expect(serverSubtitle({ region: '香港', public_ipv4: '192.0.2.8', public_ipv6: '2001:db8::8', agent_version: '1.8.2' })).toBe('香港 · 192.0.2.8 · agent 1.8.2')
+    expect(serverSubtitle({ region: '东京', public_ipv4: null, public_ipv6: '2001:db8::8', agent_version: null })).toBe('东京 · 2001:db8::8 · 未连接')
+    expect(serverSubtitle({ region: null, public_ipv4: null, public_ipv6: null, agent_version: null })).toBe('地区待识别 · 未连接')
+    // 只有 IPv6 的机器（双栈接入时面板看到的是 v6）也要能预填节点地址
+    expect(serverPublicIp({ public_ipv4: ' 192.0.2.8 ', public_ipv6: '2001:db8::8' })).toBe('192.0.2.8')
+    expect(serverPublicIp({ public_ipv4: null, public_ipv6: '2001:db8::8' })).toBe('2001:db8::8')
+    expect(serverPublicIp({ public_ipv4: '', public_ipv6: null })).toBe('')
     const now = new Date('2026-09-24T10:05:00Z')
     const notes = serverNotes(
       {

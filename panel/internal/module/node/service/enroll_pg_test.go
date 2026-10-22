@@ -318,6 +318,11 @@ func TestEnrollPublicIPFillPG(t *testing.T) {
 	if v4, _ := identServerIPs(t, ctx, e, kept); v4 != "198.51.100.7" {
 		t.Fatalf("管理员填过的 IPv4 不该被覆盖，得到 %q", v4)
 	}
+	// 已有 IPv4 的机器从 IPv6 重新接入：只补空着的 IPv6
+	enroll(kept, "2001:db8::2")
+	if v4, v6 := identServerIPs(t, ctx, e, kept); v4 != "198.51.100.7" || v6 != "2001:db8::2" {
+		t.Fatalf("应保留 IPv4、补上 IPv6，得到 %q / %q", v4, v6)
+	}
 
 	private := seedIdentServer(t, ctx, e, "draft")
 	enroll(private, "10.0.0.5")
