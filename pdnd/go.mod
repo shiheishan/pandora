@@ -19,7 +19,7 @@ require (
 	github.com/sagernet/sing-vmess v0.2.8
 	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f
 	github.com/xtls/xray-core v1.260327.0
-	go.uber.org/mock v0.5.2
+	go.uber.org/mock v0.6.0
 	golang.org/x/net v0.61.0
 	google.golang.org/protobuf v1.36.12
 )

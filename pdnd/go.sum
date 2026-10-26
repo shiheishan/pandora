@@ -119,8 +119,8 @@ github.com/xtls/xray-core v1.260327.0 h1:g4TzxMwyPrxslZh6uD+FiG3lXKTrnNO+b4ky2Oh
 github.com/xtls/xray-core v1.260327.0/go.mod h1:OXMlhBloFry8mw0KwWLWLd3RQyXJzEYsCGlgsX36h60=
 gitlab.com/yawning/chacha20.git v0.0.0-20230427033715-7877545b1b37 h1:ZrWBE3u/o9cHU2mySXf1687MaK09JOeZt1A+fHnCjmU=
 gitlab.com/yawning/chacha20.git v0.0.0-20230427033715-7877545b1b37/go.mod h1:3x6b94nWCP/a2XB/joOPMiGYUBvqbLfeY/BkHLeDs6s=
-go.uber.org/mock v0.5.2 h1:LbtPTcP8A5k9WPXj54PPPbjcI4Y6lhyOZXn+VS7wNko=
-go.uber.org/mock v0.5.2/go.mod h1:wLlUxC2vVTPTaE3UD51E0BGOAElKrILxhVSDYQLld5o=
+go.uber.org/mock v0.6.0 h1:hyF9dfmbgIX5EfOdasqLsWD6xqpNZlXblLB/Dbnwv3Y=
+go.uber.org/mock v0.6.0/go.mod h1:KiVJ4BqZJaMj4svdfmHM0AUx4NJYO8ZNpPnZn1Z+BBU=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 go4.org/netipx v0.0.0-20231129151722-fdeea329fbba h1:0b9z3AuHCjxk0x/opv64kcgZLBseWJUpBw5I82+2U4M=
