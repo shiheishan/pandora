@@ -14,7 +14,7 @@ require (
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
 	github.com/sagernet/sing v0.8.14
 	github.com/sagernet/sing-quic v0.6.1
-	github.com/sagernet/sing-shadowsocks v0.2.8
+	github.com/sagernet/sing-shadowsocks v0.2.9
 	github.com/sagernet/sing-shadowsocks2 v0.2.2
 	github.com/sagernet/sing-vmess v0.2.8
 	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f
