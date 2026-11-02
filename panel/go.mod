@@ -23,11 +23,10 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.28.0
-	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
 	golang.org/x/sync v0.24.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
@@ -41,6 +40,7 @@ require (
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 )
 
